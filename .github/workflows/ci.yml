@@ -6,13 +6,28 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  OMO_REV: ${{ github.event.pull_request.head.sha || github.sha }}
+
 jobs:
   lint:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workspace/projects/omo
     steps:
       - uses: actions/checkout@v4
         with:
+          repository: starlink-awaken/omostation
+          ref: main
+          path: workspace
           fetch-depth: 0
+          submodules: recursive
+      - name: Overlay OMO revision
+        working-directory: workspace
+        run: |
+          git -C projects/omo fetch --no-tags origin main "$OMO_REV"
+          git -C projects/omo checkout --detach "$OMO_REV"
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
@@ -32,10 +47,22 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workspace/projects/omo
     steps:
       - uses: actions/checkout@v4
         with:
+          repository: starlink-awaken/omostation
+          ref: main
+          path: workspace
           fetch-depth: 0
+          submodules: recursive
+      - name: Overlay OMO revision
+        working-directory: workspace
+        run: |
+          git -C projects/omo fetch --no-tags origin main "$OMO_REV"
+          git -C projects/omo checkout --detach "$OMO_REV"
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
@@ -57,10 +84,22 @@ jobs:
 
   test-cov:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workspace/projects/omo
     steps:
       - uses: actions/checkout@v4
         with:
+          repository: starlink-awaken/omostation
+          ref: main
+          path: workspace
           fetch-depth: 0
+          submodules: recursive
+      - name: Overlay OMO revision
+        working-directory: workspace
+        run: |
+          git -C projects/omo fetch --no-tags origin main "$OMO_REV"
+          git -C projects/omo checkout --detach "$OMO_REV"
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
