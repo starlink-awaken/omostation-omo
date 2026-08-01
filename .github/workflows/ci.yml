@@ -6,28 +6,13 @@ on:
   pull_request:
     branches: [main]
 
-env:
-  OMO_REV: ${{ github.event.pull_request.head.sha || github.sha }}
-
 jobs:
   lint:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: workspace/projects/omo
     steps:
       - uses: actions/checkout@v4
         with:
-          repository: starlink-awaken/omostation
-          ref: main
-          path: workspace
           fetch-depth: 0
-          submodules: recursive
-      - name: Overlay OMO revision
-        working-directory: workspace
-        run: |
-          git -C projects/omo fetch --no-tags origin main "$OMO_REV"
-          git -C projects/omo checkout --detach "$OMO_REV"
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
@@ -47,22 +32,10 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: workspace/projects/omo
     steps:
       - uses: actions/checkout@v4
         with:
-          repository: starlink-awaken/omostation
-          ref: main
-          path: workspace
           fetch-depth: 0
-          submodules: recursive
-      - name: Overlay OMO revision
-        working-directory: workspace
-        run: |
-          git -C projects/omo fetch --no-tags origin main "$OMO_REV"
-          git -C projects/omo checkout --detach "$OMO_REV"
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
@@ -70,7 +43,8 @@ jobs:
           python-version: "3.13"
       - name: Run tests
         run: |
-          env PYTHONPATH=src:. uv run --no-project \
+          # Workspace-only integration and release tests run in root CI.
+          env PYTHONPATH="$PWD/src:$PWD" uv run --no-project \
             --with "pytest>=9" \
             --with "pytest-asyncio>=1.4.0" \
             --with "pyyaml>=6.0.3" \
@@ -79,27 +53,20 @@ jobs:
             --with "pydantic>=2.0" \
             --with "fastmcp>=3.4.2" \
             pytest tests/ --tb=short \
+            --ignore=tests/integration \
+            --ignore=tests/test_append_only_log_schemas.py \
+            --ignore=tests/test_omo_direct_io_gate.py \
             --ignore=tests/test_omo_daemon_publish_e2e.py \
-            --ignore=tests/test_phase3_acceptance_runner.py
+            --ignore=tests/test_phase3_acceptance_runner.py \
+            --ignore=tests/unit/test_release.py \
+            -k "not test_find_omo_dir_prefers_workspace_root_over_subrepo_shadow"
 
   test-cov:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: workspace/projects/omo
     steps:
       - uses: actions/checkout@v4
         with:
-          repository: starlink-awaken/omostation
-          ref: main
-          path: workspace
           fetch-depth: 0
-          submodules: recursive
-      - name: Overlay OMO revision
-        working-directory: workspace
-        run: |
-          git -C projects/omo fetch --no-tags origin main "$OMO_REV"
-          git -C projects/omo checkout --detach "$OMO_REV"
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
@@ -107,7 +74,8 @@ jobs:
           python-version: "3.13"
       - name: Run tests with coverage
         run: |
-          env PYTHONPATH=src:. uv run --no-project \
+          # Workspace-only integration and release tests run in root CI.
+          env PYTHONPATH="$PWD/src:$PWD" uv run --no-project \
             --with "pytest>=9" \
             --with "pytest-asyncio>=1.4.0" \
             --with "pytest-cov>=5" \
@@ -117,5 +85,10 @@ jobs:
             --with "pydantic>=2.0" \
             --with "fastmcp>=3.4.2" \
             pytest tests/ --tb=short --cov \
+            --ignore=tests/integration \
+            --ignore=tests/test_append_only_log_schemas.py \
+            --ignore=tests/test_omo_direct_io_gate.py \
             --ignore=tests/test_omo_daemon_publish_e2e.py \
-            --ignore=tests/test_phase3_acceptance_runner.py
+            --ignore=tests/test_phase3_acceptance_runner.py \
+            --ignore=tests/unit/test_release.py \
+            -k "not test_find_omo_dir_prefers_workspace_root_over_subrepo_shadow"

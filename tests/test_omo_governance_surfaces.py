@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import yaml
+
 from omo.omo_governance import main as omo_governance_main
 from omo.omo_governance_surfaces import build_governance_surfaces_report
 
