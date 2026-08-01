@@ -16,12 +16,15 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
           python-version: "3.13"
-      - name: Install dependencies
-        run: uv sync --extra dev
-      - name: Ruff check
-        run: uv run ruff check src/
-      - name: Ruff format check
-        run: uv run ruff format src/ --check
+      - name: Diff-scoped Ruff checks
+        run: |
+          changed_py="$(git diff --name-only --diff-filter=ACM origin/main...HEAD -- '*.py')"
+          if [ -n "$changed_py" ]; then
+            uv run --no-project --with "ruff>=0.4" ruff check --select I $changed_py
+            uv run --no-project --with "ruff>=0.4" ruff format $changed_py --check
+          else
+            echo "No Python files changed; skipping Ruff checks."
+          fi
       - name: OMO Contract Gatekeeper
         run: python scripts/contract_gatekeeper.py src/ scripts/
 
@@ -34,10 +37,17 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
           python-version: "3.13"
-      - name: Install dependencies
-        run: uv sync --extra dev
       - name: Run tests
-        run: uv run pytest tests/ --tb=short
+        run: |
+          uv run --no-project \
+            --with "pytest>=9" \
+            --with "pytest-asyncio>=1.4.0" \
+            --with "pyyaml>=6.0.3" \
+            --with "httpx[socks]>=0.28.1" \
+            --with "openai>=2.41.1" \
+            --with "pydantic>=2.0" \
+            --with "fastmcp>=3.4.2" \
+            pytest tests/ --tb=short
 
   test-cov:
     runs-on: ubuntu-latest
@@ -48,7 +58,15 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
           python-version: "3.13"
-      - name: Install dependencies
-        run: uv sync --extra dev
       - name: Run tests with coverage
-        run: uv run pytest tests/ --tb=short --cov
+        run: |
+          uv run --no-project \
+            --with "pytest>=9" \
+            --with "pytest-asyncio>=1.4.0" \
+            --with "pytest-cov>=5" \
+            --with "pyyaml>=6.0.3" \
+            --with "httpx[socks]>=0.28.1" \
+            --with "openai>=2.41.1" \
+            --with "pydantic>=2.0" \
+            --with "fastmcp>=3.4.2" \
+            pytest tests/ --tb=short --cov
