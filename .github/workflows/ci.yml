@@ -43,7 +43,7 @@ jobs:
           python-version: "3.13"
       - name: Run tests
         run: |
-          uv run --no-project \
+          env PYTHONPATH=src:. uv run --no-project \
             --with "pytest>=9" \
             --with "pytest-asyncio>=1.4.0" \
             --with "pyyaml>=6.0.3" \
@@ -51,9 +51,9 @@ jobs:
             --with "openai>=2.41.1" \
             --with "pydantic>=2.0" \
             --with "fastmcp>=3.4.2" \
-            PYTHONPATH=src:. pytest tests/ --tb=short \
-              --ignore=tests/test_omo_daemon_publish_e2e.py \
-              --ignore=tests/test_phase3_acceptance_runner.py
+            pytest tests/ --tb=short \
+            --ignore=tests/test_omo_daemon_publish_e2e.py \
+            --ignore=tests/test_phase3_acceptance_runner.py
 
   test-cov:
     runs-on: ubuntu-latest
@@ -68,7 +68,7 @@ jobs:
           python-version: "3.13"
       - name: Run tests with coverage
         run: |
-          uv run --no-project \
+          env PYTHONPATH=src:. uv run --no-project \
             --with "pytest>=9" \
             --with "pytest-asyncio>=1.4.0" \
             --with "pytest-cov>=5" \
@@ -77,6 +77,6 @@ jobs:
             --with "openai>=2.41.1" \
             --with "pydantic>=2.0" \
             --with "fastmcp>=3.4.2" \
-            PYTHONPATH=src:. pytest tests/ --tb=short --cov \
-              --ignore=tests/test_omo_daemon_publish_e2e.py \
-              --ignore=tests/test_phase3_acceptance_runner.py
+            pytest tests/ --tb=short --cov \
+            --ignore=tests/test_omo_daemon_publish_e2e.py \
+            --ignore=tests/test_phase3_acceptance_runner.py
