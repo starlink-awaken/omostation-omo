@@ -181,7 +181,9 @@ def setup_worker_parser(subparsers: Any) -> None:
 
     mesh_ack_parser = worker_sub.add_parser("mesh-ack")
     _add_mesh_worker_context(mesh_ack_parser)
-    mesh_ack_parser.add_argument("--lease-seconds", type=int, default=_mesh_lease_seconds())
+    mesh_ack_parser.add_argument(
+        "--lease-seconds", type=int, default=_mesh_lease_seconds()
+    )
     mesh_ack_parser.add_argument("--now")
 
     mesh_heartbeat_parser = worker_sub.add_parser("mesh-heartbeat")
