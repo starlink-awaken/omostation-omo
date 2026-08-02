@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+# ruff: noqa: I001
+
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 import yaml
+
 from omo.workflow_dispatch import (
     WorkflowDispatchError,
     admit_workflow,

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+# ruff: noqa: I001
+
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
+
 from omo.worker_lifecycle import (
     WorkerLifecycleError,
     acknowledge_worker,
