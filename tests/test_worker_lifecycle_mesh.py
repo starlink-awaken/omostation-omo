@@ -72,10 +72,15 @@ def _context(tmp_path, run_id: str = "run-worker") -> dict[str, str]:
 
 def test_worker_lifecycle_is_durable_and_idempotent(tmp_path):
     context = _context(tmp_path)
-    ack = acknowledge_worker(tmp_path, **context, lease_seconds=60, now="2026-08-02T00:00:00Z")
-    assert acknowledge_worker(
+    ack = acknowledge_worker(
         tmp_path, **context, lease_seconds=60, now="2026-08-02T00:00:00Z"
-    ) == ack
+    )
+    assert (
+        acknowledge_worker(
+            tmp_path, **context, lease_seconds=60, now="2026-08-02T00:00:00Z"
+        )
+        == ack
+    )
 
     renewed = renew_worker_lease(
         tmp_path,
@@ -98,9 +103,7 @@ def test_worker_lease_expires_only_after_deadline_and_can_be_reclaimed(tmp_path)
         tmp_path, **context, lease_seconds=60, now="2026-08-02T00:00:00Z"
     )
     with pytest.raises(WorkerLifecycleError, match="not expired"):
-        expire_worker_lease(
-            tmp_path, **context, now="2026-08-02T00:00:30Z"
-        )
+        expire_worker_lease(tmp_path, **context, now="2026-08-02T00:00:30Z")
 
     expired = expire_worker_lease(
         tmp_path,
@@ -109,12 +112,15 @@ def test_worker_lease_expires_only_after_deadline_and_can_be_reclaimed(tmp_path)
         reason="worker_lost",
     )
     assert expired["event_type"] == "WorkerLeaseExpired"
-    assert expire_worker_lease(
-        tmp_path,
-        **context,
-        now="2026-08-02T00:02:00Z",
-        reason="worker_lost",
-    ) == expired
+    assert (
+        expire_worker_lease(
+            tmp_path,
+            **context,
+            now="2026-08-02T00:02:00Z",
+            reason="worker_lost",
+        )
+        == expired
+    )
 
     reclaimed = reclaim_worker(
         tmp_path,

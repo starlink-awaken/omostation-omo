@@ -118,9 +118,7 @@ def test_dispatch_bridge_records_step_dispatch_worker_context(tmp_path: Path) ->
         now="2026-08-01T10:00:00+00:00",
     )
 
-    snapshot = WorkflowMeshStore(tmp_path / ".omo").snapshot(
-        "run-dispatch-bridge"
-    )
+    snapshot = WorkflowMeshStore(tmp_path / ".omo").snapshot("run-dispatch-bridge")
     assert snapshot["state"] == "dispatched"
     assert snapshot["worker"]["dispatch_id"] == packet["worker_dispatch"]["dispatch_id"]
     assert snapshot["worker"]["worker_id"] == "worker-a"

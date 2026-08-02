@@ -218,9 +218,15 @@ def renew_worker_lease(
         admission_id=admission_id,
     )
     current = snapshot.get("worker")
-    if not isinstance(current, dict) or current.get("state") not in {"acknowledged", "active"}:
+    if not isinstance(current, dict) or current.get("state") not in {
+        "acknowledged",
+        "active",
+    }:
         raise WorkerLifecycleError("worker must ACK before renewing its lease")
-    if current.get("dispatch_id") != dispatch_id or current.get("worker_id") != worker_id:
+    if (
+        current.get("dispatch_id") != dispatch_id
+        or current.get("worker_id") != worker_id
+    ):
         raise WorkerLifecycleError("worker lease owner mismatch")
     payload = {
         "dispatch_id": dispatch_id,
@@ -269,9 +275,15 @@ def expire_worker_lease(
         admission_id=admission_id,
     )
     current = snapshot.get("worker")
-    if not isinstance(current, dict) or current.get("state") not in {"acknowledged", "active"}:
+    if not isinstance(current, dict) or current.get("state") not in {
+        "acknowledged",
+        "active",
+    }:
         raise WorkerLifecycleError("worker has no live lease to expire")
-    if current.get("dispatch_id") != dispatch_id or current.get("worker_id") != worker_id:
+    if (
+        current.get("dispatch_id") != dispatch_id
+        or current.get("worker_id") != worker_id
+    ):
         raise WorkerLifecycleError("worker lease owner mismatch")
     observed_at = _stamp(now)
     lease_expires_at = str(current.get("lease_expires_at", ""))

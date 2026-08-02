@@ -134,7 +134,9 @@ def admit_workflow(
         raise WorkflowDispatchError("; ".join(validation_errors))
     task = load_yaml(task_file)
     approval = _approval_state(root, task, task_file)
-    health = _parse_health(capability_health, list(dict.fromkeys(required_capabilities)))
+    health = _parse_health(
+        capability_health, list(dict.fromkeys(required_capabilities))
+    )
     if requested_budget < 0:
         raise WorkflowDispatchError("requested budget must be non-negative")
     if remaining_budget is not None and requested_budget > remaining_budget:
@@ -252,7 +254,11 @@ def dispatch_admitted_workflow(
         step_run_id=grant["step_run_ids"][0],
         admission_id=grant["admission_id"],
     )
-    return {**packet, "worker_dispatch": worker_dispatch, "dispatch_state": "dispatched"}
+    return {
+        **packet,
+        "worker_dispatch": worker_dispatch,
+        "dispatch_state": "dispatched",
+    }
 
 
 __all__ = [

@@ -59,10 +59,25 @@ EVENT_STATE = {
 TERMINAL_STATES = {"closed"}
 _ALLOWED_TRANSITIONS = {
     "unknown": {"planned"},
-    "planned": {"admitted", "dispatched", "running", "failed", "unavailable", "cancelled"},
+    "planned": {
+        "admitted",
+        "dispatched",
+        "running",
+        "failed",
+        "unavailable",
+        "cancelled",
+    },
     "admitted": {"dispatched", "running", "failed", "unavailable", "cancelled"},
     "dispatched": {"dispatched", "running", "failed", "unavailable", "cancelled"},
-    "running": {"running", "waiting_approval", "compensating", "failed", "unavailable", "succeeded", "cancelled"},
+    "running": {
+        "running",
+        "waiting_approval",
+        "compensating",
+        "failed",
+        "unavailable",
+        "succeeded",
+        "cancelled",
+    },
     "waiting_approval": {"running", "failed", "unavailable", "cancelled"},
     "compensating": {"running", "failed", "unavailable", "succeeded", "cancelled"},
     "failed": {"running", "failed", "closed"},
@@ -75,15 +90,74 @@ _ALLOWED_TRANSITIONS = {
 }
 _ALLOWED_EVENTS = {
     "unknown": {"WorkflowRequested"},
-    "planned": {"WorkflowAdmitted", "StepDispatched", "StepStarted", "WorkflowFailed", "BackendUnavailable", "WorkflowCancelled"},
-    "admitted": {"StepDispatched", "StepStarted", "WorkflowFailed", "BackendUnavailable", "WorkflowCancelled"},
-    "dispatched": {"StepDispatched", "StepStarted", "WorkerAcknowledged", "WorkerLeaseRenewed", "WorkerLeaseExpired", "WorkflowFailed", "BackendUnavailable", "WorkflowCancelled"},
-    "running": {"StepDispatched", "StepStarted", "StepHeartbeat", "StepRetryScheduled", "CheckpointSaved", "WorkerAcknowledged", "WorkerLeaseRenewed", "WorkerLeaseExpired", "ApprovalRequested", "CompensationStarted", "StepFailed", "BackendUnavailable", "WorkflowSucceeded", "WorkflowCancelled"},
-    "waiting_approval": {"ApprovalGranted", "StepFailed", "BackendUnavailable", "WorkflowCancelled"},
-    "compensating": {"WorkflowRecovered", "StepFailed", "WorkflowFailed", "BackendUnavailable", "WorkflowSucceeded", "WorkflowCancelled"},
+    "planned": {
+        "WorkflowAdmitted",
+        "StepDispatched",
+        "StepStarted",
+        "WorkflowFailed",
+        "BackendUnavailable",
+        "WorkflowCancelled",
+    },
+    "admitted": {
+        "StepDispatched",
+        "StepStarted",
+        "WorkflowFailed",
+        "BackendUnavailable",
+        "WorkflowCancelled",
+    },
+    "dispatched": {
+        "StepDispatched",
+        "StepStarted",
+        "WorkerAcknowledged",
+        "WorkerLeaseRenewed",
+        "WorkerLeaseExpired",
+        "WorkflowFailed",
+        "BackendUnavailable",
+        "WorkflowCancelled",
+    },
+    "running": {
+        "StepDispatched",
+        "StepStarted",
+        "StepHeartbeat",
+        "StepRetryScheduled",
+        "CheckpointSaved",
+        "WorkerAcknowledged",
+        "WorkerLeaseRenewed",
+        "WorkerLeaseExpired",
+        "ApprovalRequested",
+        "CompensationStarted",
+        "StepFailed",
+        "BackendUnavailable",
+        "WorkflowSucceeded",
+        "WorkflowCancelled",
+    },
+    "waiting_approval": {
+        "ApprovalGranted",
+        "StepFailed",
+        "BackendUnavailable",
+        "WorkflowCancelled",
+    },
+    "compensating": {
+        "WorkflowRecovered",
+        "StepFailed",
+        "WorkflowFailed",
+        "BackendUnavailable",
+        "WorkflowSucceeded",
+        "WorkflowCancelled",
+    },
     "failed": {"WorkflowRecovered", "StepFailed", "WorkflowFailed", "WorkflowClosed"},
-    "unavailable": {"WorkflowRecovered", "WorkerReclaimed", "BackendUnavailable", "WorkflowClosed"},
-    "succeeded": {"WorkflowSucceeded", "EvidenceRecorded", "WorkflowVerified", "WorkflowClosed"},
+    "unavailable": {
+        "WorkflowRecovered",
+        "WorkerReclaimed",
+        "BackendUnavailable",
+        "WorkflowClosed",
+    },
+    "succeeded": {
+        "WorkflowSucceeded",
+        "EvidenceRecorded",
+        "WorkflowVerified",
+        "WorkflowClosed",
+    },
     "verified": {"PRMerged", "WorkflowClosed"},
     "merged": {"WorkflowClosed"},
     "cancelled": {"WorkflowClosed"},
@@ -129,9 +203,7 @@ def _validate_admission_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise WorkflowMeshEventError(f"Admission grant missing fields: {missing}")
     if admission["status"] != "admitted":
         raise WorkflowMeshEventError("WorkflowAdmitted grant must be admitted")
-    unsigned = {
-        key: value for key, value in admission.items() if key != "proof"
-    }
+    unsigned = {key: value for key, value in admission.items() if key != "proof"}
     expected_proof = hashlib.sha256(_canonical_admission(unsigned)).hexdigest()
     if admission["proof"] != expected_proof:
         raise WorkflowMeshEventError("Admission grant proof mismatch")
@@ -170,7 +242,8 @@ def new_workflow_event(
         "occurred_at": _utc_now(),
         "producer": producer,
         "schema_version": "workflow-mesh/v1",
-        "idempotency_key": idempotency_key or f"{workflow_run_id}:{event_type}:{event_payload.get('step_run_id', 'workflow')}",
+        "idempotency_key": idempotency_key
+        or f"{workflow_run_id}:{event_type}:{event_payload.get('step_run_id', 'workflow')}",
         "payload": event_payload,
     }
 
@@ -184,7 +257,9 @@ def validate_workflow_event(event: dict[str, Any]) -> dict[str, Any]:
     if event["schema_version"] != "workflow-mesh/v1":
         raise WorkflowMeshEventError("Unsupported Workflow Mesh event schema")
     if event["event_type"] not in EVENT_STATE:
-        raise WorkflowMeshEventError(f"Unknown Workflow Mesh event: {event['event_type']}")
+        raise WorkflowMeshEventError(
+            f"Unknown Workflow Mesh event: {event['event_type']}"
+        )
     if not isinstance(event["payload"], dict):
         raise WorkflowMeshEventError("Workflow Mesh event payload must be an object")
     return event
@@ -240,10 +315,9 @@ def project_workflow_run(
             raise WorkflowMeshEventError(
                 f"Workflow run is terminal; event is not allowed: {event['event_type']}"
             )
-        if (
-            event_type not in _ALLOWED_EVENTS.get(snapshot["state"], set())
-            or next_state not in _ALLOWED_TRANSITIONS.get(snapshot["state"], set())
-        ):
+        if event_type not in _ALLOWED_EVENTS.get(
+            snapshot["state"], set()
+        ) or next_state not in _ALLOWED_TRANSITIONS.get(snapshot["state"], set()):
             raise WorkflowMeshEventError(
                 "Workflow run is terminal or requires recovery; "
                 f"invalid transition {snapshot['state']} -> {next_state} "
@@ -256,15 +330,19 @@ def project_workflow_run(
             if admission["workflow_run_id"] != workflow_run_id:
                 raise WorkflowMeshEventError("Admission grant workflow_run_id mismatch")
             snapshot["admission"] = dict(admission)
-        if event_type in {
-            "StepDispatched",
-            "StepStarted",
-            "StepHeartbeat",
-            "StepRetryScheduled",
-            "CheckpointSaved",
-            "CompensationStarted",
-            "StepFailed",
-        } | _WORKER_EVENTS:
+        if (
+            event_type
+            in {
+                "StepDispatched",
+                "StepStarted",
+                "StepHeartbeat",
+                "StepRetryScheduled",
+                "CheckpointSaved",
+                "CompensationStarted",
+                "StepFailed",
+            }
+            | _WORKER_EVENTS
+        ):
             step_run_id = event["payload"].get("step_run_id")
             admission = snapshot.get("admission")
             if not step_run_id or not isinstance(admission, dict):
@@ -272,14 +350,13 @@ def project_workflow_run(
                     f"{event_type} requires an admitted StepRun"
                 )
             if event["payload"].get("admission_id") != admission["admission_id"]:
-                raise WorkflowMeshEventError(
-                    f"{event_type} admission_id mismatch"
-                )
+                raise WorkflowMeshEventError(f"{event_type} admission_id mismatch")
             if not _step_is_admitted(step_run_id, admission):
-                raise WorkflowMeshEventError(
-                    f"StepRun is not admitted: {step_run_id}"
-                )
-            if event_type != "StepDispatched" and step_run_id not in snapshot["step_runs"]:
+                raise WorkflowMeshEventError(f"StepRun is not admitted: {step_run_id}")
+            if (
+                event_type != "StepDispatched"
+                and step_run_id not in snapshot["step_runs"]
+            ):
                 raise WorkflowMeshEventError(
                     f"{event_type} requires prior StepDispatched"
                 )
@@ -393,10 +470,9 @@ def project_workflow_run(
                     "admission_id": event["payload"].get("admission_id"),
                 },
             )
-            step_projection["step_name"] = (
-                step_projection.get("step_name")
-                or event["payload"].get("step_name")
-            )
+            step_projection["step_name"] = step_projection.get("step_name") or event[
+                "payload"
+            ].get("step_name")
             step_projection["state"] = {
                 "StepDispatched": "dispatched",
                 "StepStarted": "running",
@@ -415,7 +491,8 @@ def project_workflow_run(
             )
             if event_type == "CheckpointSaved":
                 checkpoint = {
-                    "checkpoint_id": event["payload"].get("checkpoint_id") or event["event_id"],
+                    "checkpoint_id": event["payload"].get("checkpoint_id")
+                    or event["event_id"],
                     "step_run_id": step_run_id,
                     "attempt": event["payload"].get("attempt", 1),
                     "next_turn": event["payload"].get("next_turn"),
@@ -499,7 +576,9 @@ def project_workflow_run(
             approval_id = event["payload"].get("approval_id") or "workflow"
             snapshot["approvals"][approval_id] = {
                 "approval_id": approval_id,
-                "state": "requested" if event_type == "ApprovalRequested" else "granted",
+                "state": "requested"
+                if event_type == "ApprovalRequested"
+                else "granted",
                 "event_id": event["event_id"],
             }
     return snapshot
@@ -566,9 +645,13 @@ class WorkflowMeshStore:
     def snapshots(self) -> list[dict[str, Any]]:
         """返回所有运行快照，顺序按事件日志中最后一次出现的顺序。"""
         events = self.events()
-        run_ids = list(dict.fromkeys(
-            event.get("workflow_run_id") for event in events if event.get("workflow_run_id")
-        ))
+        run_ids = list(
+            dict.fromkeys(
+                event.get("workflow_run_id")
+                for event in events
+                if event.get("workflow_run_id")
+            )
+        )
         last_indexes = {
             str(run_id): index
             for index, event in enumerate(events)
