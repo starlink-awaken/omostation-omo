@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from .omo_shared import load_yaml
 from .omo_task_schema import validate_task_file
+from .worker_lifecycle import record_step_dispatch
 from .workflow_mesh import WorkflowMeshStore, new_workflow_event
 
 
@@ -240,6 +241,16 @@ def dispatch_admitted_workflow(
         launch=launch,
         transport=transport,
         workflow_packet=packet,
+    )
+    grant = packet["admission"]
+    record_step_dispatch(
+        root / Path(admission_options.get("omo_dir", ".omo")),
+        workflow_run_id=packet["workflow_run_id"],
+        trace_id=packet["trace_id"],
+        dispatch_id=worker_dispatch["dispatch_id"],
+        worker_id=worker_id,
+        step_run_id=grant["step_run_ids"][0],
+        admission_id=grant["admission_id"],
     )
     return {**packet, "worker_dispatch": worker_dispatch, "dispatch_state": "dispatched"}
 
