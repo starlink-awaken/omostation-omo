@@ -31,7 +31,7 @@ class OMOPanoramaEngine:
         self.root = root.resolve()
         self.omo_dir = self.root / ".omo"
 
-    def gather_execution_dim(self) -> Dict[str, Any]:
+    def gather_execution_dim(self) -> dict[str, Any]:
         """Dim 1: 执行过程 (Execution)"""
         runs_dir = self.omo_dir / "agent-workflows" / "runs"
         active_runs = 0
@@ -57,7 +57,7 @@ class OMOPanoramaEngine:
             "status": "normal" if active_runs < 5 else "high_concurrency",
         }
 
-    def gather_service_dim(self) -> Dict[str, Any]:
+    def gather_service_dim(self) -> dict[str, Any]:
         """Dim 2: 服务 (Service)"""
         bos_path = self.root / "projects" / "agora" / "etc" / "bos-services.yaml"
         bos_count = 0
@@ -86,7 +86,7 @@ class OMOPanoramaEngine:
             "status": "active",
         }
 
-    def gather_content_dim(self) -> Dict[str, Any]:
+    def gather_content_dim(self) -> dict[str, Any]:
         """Dim 3: 内容与产物 (Content & Artifacts)"""
         scene_cards_dir = self.root / "docs" / "scene-cards"
         scene_cards_count = len(list(scene_cards_dir.glob("*.yaml"))) if scene_cards_dir.exists() else 0
@@ -107,7 +107,7 @@ class OMOPanoramaEngine:
             "status": "synchronized",
         }
 
-    def gather_knowledge_dim(self) -> Dict[str, Any]:
+    def gather_knowledge_dim(self) -> dict[str, Any]:
         """Dim 4: 知识与记忆 (Knowledge & Memory)"""
         beliefs_path = self.omo_dir / "state" / "agent-beliefs" / "index.yaml"
         beliefs_count = 0
@@ -128,7 +128,7 @@ class OMOPanoramaEngine:
             "status": "crystallized",
         }
 
-    def gather_data_dim(self) -> Dict[str, Any]:
+    def gather_data_dim(self) -> dict[str, Any]:
         """Dim 5: 数据与度量 (Data & Metrics)"""
         sys_path = self.omo_dir / "state" / "system.yaml"
         xplane_score = 100.0
@@ -158,7 +158,7 @@ class OMOPanoramaEngine:
             "status": "healthy",
         }
 
-    def gather_exception_dim(self) -> Dict[str, Any]:
+    def gather_exception_dim(self) -> dict[str, Any]:
         """Dim 6: 异常与抗熵 (Exception & Anti-Entropy)"""
         health_path = self.omo_dir / "state" / "health.yaml"
         drifts = 0
@@ -177,7 +177,7 @@ class OMOPanoramaEngine:
             "status": "pass",
         }
 
-    def gather_debt_and_asset_dim(self) -> Dict[str, Any]:
+    def gather_debt_and_asset_dim(self) -> dict[str, Any]:
         """Dim 7: 债务与资产 (Debt & Asset)"""
         debt_dir = self.omo_dir / "debt" / "items"
         debt_items_count = len(list(debt_dir.glob("*.yaml"))) if debt_dir.exists() else 0
@@ -199,7 +199,7 @@ class OMOPanoramaEngine:
             "status": "managed",
         }
 
-    def get_full_panorama(self) -> Dict[str, Any]:
+    def get_full_panorama(self) -> dict[str, Any]:
         """拉出 7 维全景终极可观测视图"""
         return {
             "engine": "OMO Full-Spectrum Panorama Engine",
@@ -216,7 +216,7 @@ class OMOPanoramaEngine:
         }
 
 
-def format_panorama_report(data: Dict[str, Any]) -> str:
+def format_panorama_report(data: dict[str, Any]) -> str:
     """格式化渲染 7 维全景立体重构报告"""
     dims = data.get("dimensions", {})
     lines = []

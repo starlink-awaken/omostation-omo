@@ -640,7 +640,6 @@ def closeout_run(
                     source_run_id=run_id,
                 )
             except Exception:
-                pass
                 # 3.2 Ontology Rebuild
                 subprocess.run(
                     [sys.executable, str(kos_cli_path), "onto", "rebuild"],

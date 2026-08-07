@@ -254,7 +254,7 @@ __all__ = [
     "AgentProtocol",
     "AgentTickResult",
     "HealthMonitorAgent",
-    "KnowledgeCuratorAgent",
     "JourneyRunnerAgent",
+    "KnowledgeCuratorAgent",
     "run_agent_tick",
 ]

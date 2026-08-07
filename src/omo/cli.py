@@ -762,7 +762,7 @@ def _cmd_belief(args: list[str]) -> int:
     p_list.add_argument("--keyword", default="", help="关键词过滤")
     p_list.add_argument("--json", action="store_true", help="JSON 输出")
     
-    p_audit = subparsers.add_parser("audit", help="查看信念审计日志")
+    subparsers.add_parser("audit", help="查看信念审计日志")
     
     parsed = parser.parse_args(args)
     mgr = MOSBeliefManager()

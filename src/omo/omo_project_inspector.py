@@ -28,9 +28,9 @@ class OMOProjectInspector:
         self.root = root.resolve()
         self.registry_path = self.root / "docs" / "project-registry.yaml"
         self.projects_dir = self.root / "projects"
-        self._registry_data: Optional[Dict[str, Any]] = None
+        self._registry_data: dict[str, Any] | None = None
 
-    def _load_registry(self) -> Dict[str, Any]:
+    def _load_registry(self) -> dict[str, Any]:
         if self._registry_data is None:
             if self.registry_path.exists():
                 try:
@@ -42,12 +42,12 @@ class OMOProjectInspector:
                 self._registry_data = {}
         return self._registry_data or {}
 
-    def get_registered_projects(self) -> List[str]:
+    def get_registered_projects(self) -> list[str]:
         data = self._load_registry()
         projects = data.get("projects", {})
-        return sorted(list(projects.keys()))
+        return sorted(projects.keys())
 
-    def _count_loc(self, proj_dir: Path) -> Dict[str, int]:
+    def _count_loc(self, proj_dir: Path) -> dict[str, int]:
         """统计项目内的代码行数与文件数"""
         file_count = 0
         total_loc = 0
@@ -68,7 +68,7 @@ class OMOProjectInspector:
                         pass
         return {"files": file_count, "loc": total_loc}
 
-    def _check_git_pointer_drift(self, proj_name: str) -> Dict[str, Any]:
+    def _check_git_pointer_drift(self, proj_name: str) -> dict[str, Any]:
         """判定子模块 Git 指针是否存在离针或未提交修改"""
         proj_dir = self.projects_dir / proj_name
         if not proj_dir.exists():
@@ -96,7 +96,7 @@ class OMOProjectInspector:
         except Exception:
             return {"is_submodule": False, "is_dirty": False, "head_commit": "N/A", "drift": False}
 
-    def inspect_project(self, project_name: str) -> Dict[str, Any]:
+    def inspect_project(self, project_name: str) -> dict[str, Any]:
         """对指定项目做 360 度体检并计算 0-100 健康度"""
         reg_data = self._load_registry()
         projects_meta = reg_data.get("projects", {})
@@ -156,7 +156,7 @@ class OMOProjectInspector:
             "deductions": deductions,
         }
 
-    def inspect_all_projects(self) -> Dict[str, Any]:
+    def inspect_all_projects(self) -> dict[str, Any]:
         """批量对 17 个项目进行全景体检"""
         projects = self.get_registered_projects()
         results = {}
@@ -183,7 +183,7 @@ class OMOProjectInspector:
         }
 
 
-def format_project_inspection(data: Dict[str, Any]) -> str:
+def format_project_inspection(data: dict[str, Any]) -> str:
     """渲染人类友好的项目体检报告"""
     if not data.get("ok"):
         return f"❌ 错误: {data.get('error')}"
