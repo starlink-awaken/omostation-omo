@@ -36,9 +36,7 @@ def test_evaluate_persists_to_mos(tmp_path: Path):
 
 def test_multiple_decisions_persist(tmp_path: Path):
     mos = MOSBeliefManager(root=tmp_path)
-    watcher = SceneWatcher(
-        scene_id="s1", scene_path=tmp_path, mos_manager=mos
-    )
+    watcher = SceneWatcher(scene_id="s1", scene_path=tmp_path, mos_manager=mos)
     watcher.evaluate_confidence({"a": 1}, node="n1")
     watcher.evaluate_confidence({"b": 2}, node="n2")
     watcher.evaluate_confidence({"c": 3}, node="n3")
@@ -53,9 +51,7 @@ def test_mos_failure_does_not_break_decision(tmp_path: Path):
         def record_decision_outcome(self, **kwargs):
             raise RuntimeError("MOS unavailable")
 
-    watcher = SceneWatcher(
-        scene_id="s1", scene_path=tmp_path, mos_manager=BrokenMOS()
-    )
+    watcher = SceneWatcher(scene_id="s1", scene_path=tmp_path, mos_manager=BrokenMOS())
     result = watcher.evaluate_confidence({"x": 1}, node="n1")
     assert isinstance(result, DecisionResult)
     assert len(watcher.decision_log) == 1
@@ -66,7 +62,9 @@ def test_persistence_survives_reinit(tmp_path: Path):
     w1 = SceneWatcher(scene_id="s1", scene_path=tmp_path, mos_manager=mos)
     w1.evaluate_confidence({"key": "val"}, node="decision_node")
 
-    w2 = SceneWatcher(scene_id="s1", scene_path=tmp_path, mos_manager=MOSBeliefManager(root=tmp_path))
+    w2 = SceneWatcher(
+        scene_id="s1", scene_path=tmp_path, mos_manager=MOSBeliefManager(root=tmp_path)
+    )
     state = w2.mos_manager._load_state()
     assert len(state["decision_outcomes"]) == 1
     assert "decision_node" in state["decision_outcomes"][0]["input_summary"]
@@ -74,9 +72,7 @@ def test_persistence_survives_reinit(tmp_path: Path):
 
 def test_on_journey_decision_also_persists(tmp_path: Path):
     mos = MOSBeliefManager(root=tmp_path)
-    watcher = SceneWatcher(
-        scene_id="doc-review", scene_path=tmp_path, mos_manager=mos
-    )
+    watcher = SceneWatcher(scene_id="doc-review", scene_path=tmp_path, mos_manager=mos)
     result = watcher.on_journey_decision("escalate_node", {"priority": "high"})
     assert isinstance(result, DecisionResult)
 
