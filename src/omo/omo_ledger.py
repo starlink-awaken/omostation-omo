@@ -92,7 +92,15 @@ def _legacy_snapshot(omo_dir: Path, message: str) -> int:
 
 
 SUBCMDS = frozenset(
-    {"append", "read", "verify", "status", "import-jsonl", "export-jsonl", "compare-jsonl"}
+    {
+        "append",
+        "read",
+        "verify",
+        "status",
+        "import-jsonl",
+        "export-jsonl",
+        "compare-jsonl",
+    }
 )
 
 # Allowed fields per subcommand (for Agora envelope validation).

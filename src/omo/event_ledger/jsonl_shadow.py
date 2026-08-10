@@ -247,7 +247,10 @@ def import_jsonl(
     """
     file_path = Path(file_path)
     source = derive_source(file_path, source_id)
-    if quarantine_path is not None and Path(quarantine_path).resolve() == file_path.resolve():
+    if (
+        quarantine_path is not None
+        and Path(quarantine_path).resolve() == file_path.resolve()
+    ):
         raise JsonlShadowError(
             "quarantine_path must not be the same file as the JSONL source"
         )
@@ -375,9 +378,7 @@ def export_jsonl(broker: Any, output_path: Path | str) -> dict[str, Any]:
             )
         )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        "\n".join(lines) + ("\n" if lines else ""), encoding="utf-8"
-    )
+    output_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
     return {"exported": len(lines), "output": str(output_path)}
 
 
@@ -417,9 +418,7 @@ def compare_jsonl(
             source_by_hash[record_hash] = record
 
     ledger_by_hash: dict[str, Any] = {}
-    for event in broker.read(
-        event_type=SHADOW_EVENT_TYPE, producer=SHADOW_PRODUCER
-    ):
+    for event in broker.read(event_type=SHADOW_EVENT_TYPE, producer=SHADOW_PRODUCER):
         payload = json.loads(event["payload_json"])
         if payload.get("source") != source:
             continue

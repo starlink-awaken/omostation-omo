@@ -302,7 +302,9 @@ def test_compare_missing(tmp_path: Path) -> None:
 
     # 相同 basename、不同目录：source 推导一致，ledger 只有 2 条 → missing=1
     imported = _write_jsonl(tmp_path / "a" / "m.jsonl", [_healthy(1), _healthy(2)])
-    full = _write_jsonl(tmp_path / "b" / "m.jsonl", [_healthy(1), _healthy(2), _healthy(3)])
+    full = _write_jsonl(
+        tmp_path / "b" / "m.jsonl", [_healthy(1), _healthy(2), _healthy(3)]
+    )
     db = tmp_path / "m.db"
     with EventLedgerSurface(db_path=db) as surface:
         import_jsonl(surface.broker, imported)
@@ -319,7 +321,9 @@ def test_compare_missing(tmp_path: Path) -> None:
 def test_compare_extra(tmp_path: Path) -> None:
     from omo.event_ledger.jsonl_shadow import compare_jsonl, import_jsonl
 
-    src = _write_jsonl(tmp_path / "extra.jsonl", [_healthy(1), _healthy(2), _healthy(3)])
+    src = _write_jsonl(
+        tmp_path / "extra.jsonl", [_healthy(1), _healthy(2), _healthy(3)]
+    )
     db = tmp_path / "extra.db"
     with EventLedgerSurface(db_path=db) as surface:
         import_jsonl(surface.broker, src)
@@ -503,9 +507,7 @@ def test_cli_import_jsonl_rejects_agora(tmp_path: Path) -> None:
 def test_full_cycle_verify_chain_ok(tmp_path: Path) -> None:
     from omo.event_ledger.jsonl_shadow import export_jsonl, import_jsonl
 
-    src = _write_jsonl(
-        tmp_path / "f.jsonl", [_healthy(i) for i in range(1, 6)]
-    )
+    src = _write_jsonl(tmp_path / "f.jsonl", [_healthy(i) for i in range(1, 6)])
     db = tmp_path / "f.db"
     out = tmp_path / "f-out.jsonl"
     with EventLedgerSurface(db_path=db) as surface:
