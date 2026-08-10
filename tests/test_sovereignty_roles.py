@@ -17,8 +17,10 @@ import pytest
 
 from omo.event_ledger.broker import DuplicateEventError, LedgerBroker
 from omo.sovereignty import (
-    PRODUCER,
     EVT_ASSIGN,
+    PRODUCER,
+    STATUS_ACTIVE,
+    STATUS_REVOKED,
     IllegalTransitionError,
     InvalidIdError,
     Principal,
@@ -29,8 +31,6 @@ from omo.sovereignty import (
     SovereigntyReplayError,
     SovereigntyService,
     StaleVersionError,
-    STATUS_ACTIVE,
-    STATUS_REVOKED,
     generate_id,
     validate_id,
 )
@@ -86,16 +86,16 @@ def test_valid_ids(kind, good):
 @pytest.mark.parametrize(
     "kind,bad",
     [
-        ("principal", "alice"),                     # missing prefix
-        ("principal", "role:alice"),                # wrong prefix
-        ("principal", "principal:"),                # empty slug
-        ("role", "principal:family"),               # wrong prefix
-        ("role", "role:"),                          # empty slug
-        ("role", "role:fam ily"),                   # space not allowed
-        ("responsibility", "responsibility:"),      # empty slug
-        ("responsibility", "school-pickup"),        # missing prefix
-        ("assignment", "assignment:"),              # empty slug
-        ("assignment", "rasg_abc"),                 # wrong prefix
+        ("principal", "alice"),  # missing prefix
+        ("principal", "role:alice"),  # wrong prefix
+        ("principal", "principal:"),  # empty slug
+        ("role", "principal:family"),  # wrong prefix
+        ("role", "role:"),  # empty slug
+        ("role", "role:fam ily"),  # space not allowed
+        ("responsibility", "responsibility:"),  # empty slug
+        ("responsibility", "school-pickup"),  # missing prefix
+        ("assignment", "assignment:"),  # empty slug
+        ("assignment", "rasg_abc"),  # wrong prefix
         ("principal", None),
         ("principal", 42),
     ],
@@ -133,9 +133,7 @@ def test_responsibility_roundtrip():
 
 
 def test_role_roundtrip():
-    role = Role(
-        role_id="role:family-steward", name="Family Steward", scope="family"
-    )
+    role = Role(role_id="role:family-steward", name="Family Steward", scope="family")
     assert role.to_dict() == {
         "role_id": "role:family-steward",
         "name": "Family Steward",
@@ -246,9 +244,7 @@ def test_replace_bumps_version_and_updates_definition(svc):
         "Meal prep",
         "Driving",
     ]
-    assert (
-        svc.query("principal:alice").assignments["role:family-steward"].version == 2
-    )
+    assert svc.query("principal:alice").assignments["role:family-steward"].version == 2
 
 
 def test_replace_preserves_responsibilities_when_omitted(svc):
@@ -342,9 +338,7 @@ def test_revoke_revoked_role_illegal(svc):
 
 def test_versions_strictly_monotonic_across_lifecycle(svc):
     a1 = _alice(svc)  # v1 active
-    a2 = svc.replace(
-        "principal:alice", "role:family-steward", role_name="V2"
-    )  # v2
+    a2 = svc.replace("principal:alice", "role:family-steward", role_name="V2")  # v2
     a3 = svc.revoke("principal:alice", "role:family-steward")  # v3 revoked
     a4 = svc.assign(
         "principal:alice", "role:family-steward", role_name="Reactivated"
@@ -364,9 +358,7 @@ def test_four_model_monotonic_versions(svc):
         responsibilities=["School pickup", "Meal prep", "Driving"],
     )
     svc.revoke("principal:alice", "role:family-steward")
-    a4 = svc.assign(
-        "principal:alice", "role:family-steward", role_name="Reactivated"
-    )
+    a4 = svc.assign("principal:alice", "role:family-steward", role_name="Reactivated")
 
     state = svc.versions("principal:alice")
 
@@ -399,7 +391,9 @@ def test_responsibility_version_bumps_on_definition_change(svc):
     svc.replace(
         "principal:alice",
         "role:family-steward",
-        responsibilities=[{"resp_id": "responsibility:school-pickup", "name": "Carline"}],
+        responsibilities=[
+            {"resp_id": "responsibility:school-pickup", "name": "Carline"}
+        ],
     )
     state = svc.versions("principal:alice")
     assert state.responsibilities["responsibility:school-pickup"].name == "Carline"
@@ -861,7 +855,8 @@ def test_replay_rejects_status_kind_mismatch(svc, db_path):
         db_path,
         envelope_principal="principal:alice",
         payload=_valid_assign_payload(
-            role_id="role:career-engineer", status="revoked"  # assign must be active
+            role_id="role:career-engineer",
+            status="revoked",  # assign must be active
         ),
         ik="status-kind-1",
     )
@@ -877,17 +872,17 @@ def test_replay_rejects_status_kind_mismatch(svc, db_path):
 @pytest.mark.parametrize(
     "bad_responsibilities",
     [
-        [{"name": "X", "version": 1}],                              # missing resp_id
-        [{"resp_id": "responsibility:x", "version": 1}],            # missing name
-        [{"resp_id": "responsibility:x", "name": "X"}],             # missing version
-        [{"resp_id": "responsibility:x", "name": "X", "version": "1"}],  # non-int version
+        [{"name": "X", "version": 1}],  # missing resp_id
+        [{"resp_id": "responsibility:x", "version": 1}],  # missing name
+        [{"resp_id": "responsibility:x", "name": "X"}],  # missing version
+        [
+            {"resp_id": "responsibility:x", "name": "X", "version": "1"}
+        ],  # non-int version
         [{"resp_id": "school-pickup", "name": "X", "version": 1}],  # invalid prefix
-        [42],                                                       # not an object
+        [42],  # not an object
     ],
 )
-def test_replay_rejects_malformed_responsibility(
-    svc, db_path, bad_responsibilities
-):
+def test_replay_rejects_malformed_responsibility(svc, db_path, bad_responsibilities):
     _alice(svc)
     _inject_event(
         db_path,
@@ -920,7 +915,11 @@ def test_replay_rejects_responsibility_rename_version_drift(svc, db_path):
             prev_version=1,
             role_version=2,
             responsibilities=[
-                {"resp_id": "responsibility:school-pickup", "name": "Carline", "version": 1}
+                {
+                    "resp_id": "responsibility:school-pickup",
+                    "name": "Carline",
+                    "version": 1,
+                }
             ],  # rename must bump to 2
         ),
         ik="resp-rename-1",
@@ -948,7 +947,7 @@ def test_concurrent_different_role_principal_version_collision(svc, db_path):
             EVT_ASSIGN,
             _valid_assign_payload(
                 role_id="role:career-engineer",  # different role
-                principal_version=1,             # same base → same key
+                principal_version=1,  # same base → same key
                 assignment_id="assignment:career",
             ),
         )

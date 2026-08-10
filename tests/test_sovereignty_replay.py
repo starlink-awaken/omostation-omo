@@ -215,7 +215,10 @@ def test_malformed_payload_json_is_stable_domain_failure(tmp_path):
             space_id="sovereignty",
             correlation_id="bad-json-1",
             idempotency_key="principal:alice|role:oops|badjson|1",
-            payload={"kind": "assign", "role_id": "role:oops"},  # missing required fields
+            payload={
+                "kind": "assign",
+                "role_id": "role:oops",
+            },  # missing required fields
         )
     reopened = SovereigntyService.open(db)
     try:
@@ -663,12 +666,30 @@ def test_cli_query_after_revoke(tmp_path):
 def test_registered_smoke_exact(tmp_path):
     """The registered smoke scenario, verbatim ids, 3 assigns → ledger total 3."""
     for args in (
-        ("sovereignty-assign", "--principal-id", "principal:alice",
-         "--role-id", "role:family-steward", "--json"),
-        ("sovereignty-assign", "--principal-id", "principal:alice",
-         "--role-id", "role:professional", "--json"),
-        ("sovereignty-assign", "--principal-id", "principal:bob",
-         "--role-id", "role:learner", "--json"),
+        (
+            "sovereignty-assign",
+            "--principal-id",
+            "principal:alice",
+            "--role-id",
+            "role:family-steward",
+            "--json",
+        ),
+        (
+            "sovereignty-assign",
+            "--principal-id",
+            "principal:alice",
+            "--role-id",
+            "role:professional",
+            "--json",
+        ),
+        (
+            "sovereignty-assign",
+            "--principal-id",
+            "principal:bob",
+            "--role-id",
+            "role:learner",
+            "--json",
+        ),
     ):
         proc, _ = run_cli(tmp_path, *args)
         assert proc.returncode == 0, proc.stderr
@@ -698,26 +719,48 @@ def test_registered_smoke_exact(tmp_path):
 
 def test_cli_db_isolation(tmp_path):
     run_cli(
-        tmp_path, "sovereignty-assign", "--principal-id", "principal:alice",
-        "--role-id", "role:family-steward", db_name="one.db",
+        tmp_path,
+        "sovereignty-assign",
+        "--principal-id",
+        "principal:alice",
+        "--role-id",
+        "role:family-steward",
+        db_name="one.db",
     )
     run_cli(
-        tmp_path, "sovereignty-assign", "--principal-id", "principal:bob",
-        "--role-id", "role:tenant", db_name="two.db",
+        tmp_path,
+        "sovereignty-assign",
+        "--principal-id",
+        "principal:bob",
+        "--role-id",
+        "role:tenant",
+        db_name="two.db",
     )
     proc_a, _ = run_cli(
-        tmp_path, "sovereignty-query", "--principal-id", "principal:alice", "--json",
+        tmp_path,
+        "sovereignty-query",
+        "--principal-id",
+        "principal:alice",
+        "--json",
         db_name="one.db",
     )
     proc_b, _ = run_cli(
-        tmp_path, "sovereignty-query", "--principal-id", "principal:bob", "--json",
+        tmp_path,
+        "sovereignty-query",
+        "--principal-id",
+        "principal:bob",
+        "--json",
         db_name="two.db",
     )
     assert json.loads(proc_a.stdout)["count"] == 1
     assert json.loads(proc_b.stdout)["count"] == 1
     # Alice does not exist in bob's db and vice versa.
     proc_a2, _ = run_cli(
-        tmp_path, "sovereignty-query", "--principal-id", "principal:bob", "--json",
+        tmp_path,
+        "sovereignty-query",
+        "--principal-id",
+        "principal:bob",
+        "--json",
         db_name="one.db",
     )
     assert json.loads(proc_a2.stdout)["count"] == 0

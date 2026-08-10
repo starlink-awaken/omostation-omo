@@ -269,9 +269,13 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         "sovereignty-assign",
         help="Assign (or replace) a role to a principal (local only)",
     )
-    psa.add_argument("--principal-id", required=True, help="Principal id (principal:...)")
+    psa.add_argument(
+        "--principal-id", required=True, help="Principal id (principal:...)"
+    )
     psa.add_argument("--role-id", required=True, help="Role id (role:...)")
-    psa.add_argument("--role-name", default=None, help="Display name (default: role-id)")
+    psa.add_argument(
+        "--role-name", default=None, help="Display name (default: role-id)"
+    )
     psa.add_argument("--scope", default="", help="Role scope (e.g. family, career)")
     psa.add_argument(
         "--responsibilities",
@@ -296,7 +300,9 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         "sovereignty-query",
         help="Query a principal's roles by replaying the ledger (local only)",
     )
-    psq.add_argument("--principal-id", required=True, help="Principal id (principal:...)")
+    psq.add_argument(
+        "--principal-id", required=True, help="Principal id (principal:...)"
+    )
     _add_local_flags(psq)
 
     return parser

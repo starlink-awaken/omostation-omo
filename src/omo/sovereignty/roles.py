@@ -259,7 +259,9 @@ class Principal:
             raise SovereigntyError(
                 f"principal version must be >= 0, got {self.version}"
             )
-        object.__setattr__(self, "assignments", MappingProxyType(dict(self.assignments)))
+        object.__setattr__(
+            self, "assignments", MappingProxyType(dict(self.assignments))
+        )
 
     @property
     def count(self) -> int:
@@ -417,8 +419,7 @@ class SovereigntyService:
         current = state.assignments.get(role_id)
         if current is not None and current.status == STATUS_ACTIVE:
             raise IllegalTransitionError(
-                f"role {role_id} is already active for {principal_id}; "
-                "use replace"
+                f"role {role_id} is already active for {principal_id}; use replace"
             )
 
         base_version = current.version if current is not None else 0
@@ -429,9 +430,7 @@ class SovereigntyService:
             )
         version = base_version + 1
         assignment_id = (
-            current.assignment_id
-            if current is not None
-            else generate_id("assignment")
+            current.assignment_id if current is not None else generate_id("assignment")
         )
 
         if responsibilities is None:
@@ -445,8 +444,8 @@ class SovereigntyService:
         resp_snapshots = _with_versions(state.responsibilities, resp_list)
 
         role_version = (
-            (state.roles.get(role_id).version if role_id in state.roles else 0) + 1
-        )
+            state.roles.get(role_id).version if role_id in state.roles else 0
+        ) + 1
         payload: dict[str, Any] = {
             "kind": "assign",
             "assignment_id": assignment_id,
@@ -489,8 +488,7 @@ class SovereigntyService:
         current = state.assignments.get(role_id)
         if current is None or current.status != STATUS_ACTIVE:
             raise IllegalTransitionError(
-                f"role {role_id} is not active for {principal_id}; "
-                "cannot replace"
+                f"role {role_id} is not active for {principal_id}; cannot replace"
             )
         if expected_version is not None and expected_version != current.version:
             raise StaleVersionError(
@@ -507,9 +505,10 @@ class SovereigntyService:
 
         version = current.version + 1
         role_version = (
-            (state.roles.get(role_id).version if role_id in state.roles else current.version)
-            + 1
-        )
+            state.roles.get(role_id).version
+            if role_id in state.roles
+            else current.version
+        ) + 1
         payload: dict[str, Any] = {
             "kind": "replace",
             "assignment_id": current.assignment_id,
@@ -548,8 +547,7 @@ class SovereigntyService:
         current = state.assignments.get(role_id)
         if current is None or current.status != STATUS_ACTIVE:
             raise IllegalTransitionError(
-                f"role {role_id} is not active for {principal_id}; "
-                "cannot revoke"
+                f"role {role_id} is not active for {principal_id}; cannot revoke"
             )
         if expected_version is not None and expected_version != current.version:
             raise StaleVersionError(
@@ -669,7 +667,10 @@ class SovereigntyService:
                     f"assignment version {event_version} != prev_version + 1 "
                     f"({prev_version + 1}) for {role_id}"
                 )
-            if previous is not None and payload["assignment_id"] != previous.assignment_id:
+            if (
+                previous is not None
+                and payload["assignment_id"] != previous.assignment_id
+            ):
                 raise SovereigntyReplayError(
                     f"malformed sovereignty event at seq {sequence}: "
                     f"assignment_id changed for {role_id} (was "
@@ -713,9 +714,7 @@ class SovereigntyService:
 
             # Role version rules: bump by exactly one on assign/reactivate/
             # replace; unchanged on revoke.
-            previous_role_version = (
-                roles[role_id].version if role_id in roles else 0
-            )
+            previous_role_version = roles[role_id].version if role_id in roles else 0
             if kind == "revoke":
                 if event_role_version != previous_role_version:
                     raise SovereigntyReplayError(
@@ -868,26 +867,32 @@ class SovereigntyService:
         kind = payload.get("kind")
         if kind not in ("assign", "replace", "revoke"):
             raise SovereigntyReplayError(
-                f"malformed sovereignty event at seq {sequence}: "
-                f"unknown kind {kind!r}"
+                f"malformed sovereignty event at seq {sequence}: unknown kind {kind!r}"
             )
         if not isinstance(payload.get("role_id"), str) or not payload["role_id"]:
             raise SovereigntyReplayError(
                 f"malformed sovereignty event at seq {sequence}: missing role_id"
             )
-        if not isinstance(payload.get("assignment_id"), str) or not payload[
-            "assignment_id"
-        ]:
+        if (
+            not isinstance(payload.get("assignment_id"), str)
+            or not payload["assignment_id"]
+        ):
             raise SovereigntyReplayError(
                 f"malformed sovereignty event at seq {sequence}: missing assignment_id"
             )
-        if not isinstance(payload.get("principal_id"), str) or not payload[
-            "principal_id"
-        ]:
+        if (
+            not isinstance(payload.get("principal_id"), str)
+            or not payload["principal_id"]
+        ):
             raise SovereigntyReplayError(
                 f"malformed sovereignty event at seq {sequence}: missing principal_id"
             )
-        for field_name in ("version", "prev_version", "principal_version", "role_version"):
+        for field_name in (
+            "version",
+            "prev_version",
+            "principal_version",
+            "role_version",
+        ):
             value = payload.get(field_name)
             if not isinstance(value, int):
                 raise SovereigntyReplayError(
@@ -951,8 +956,7 @@ class SovereigntyService:
             role_name=payload.get("role_name", payload["role_id"]),
             role_scope=payload.get("role_scope", ""),
             responsibilities=tuple(
-                Responsibility.from_dict(r)
-                for r in payload.get("responsibilities", [])
+                Responsibility.from_dict(r) for r in payload.get("responsibilities", [])
             ),
             version=int(payload["version"]),
             status=status,
