@@ -32,15 +32,15 @@ if str(OMO_SRC) not in sys.path:
 from omo.event_ledger import (  # noqa: E402
     DEFAULT_OUTBOX_DESTINATION,
     DEFAULT_SCHEMA_VERSION,
+    OUTBOX_FAILED,
+    OUTBOX_PENDING,
+    OUTBOX_SENT,
     DuplicateEventError,
     IntegrityViolationError,
     InvalidPayloadError,
     LedgerBroker,
     LedgerError,
     LedgerSchemaError,
-    OUTBOX_FAILED,
-    OUTBOX_PENDING,
-    OUTBOX_SENT,
     apply_schema,
     is_wal_allowed,
     schema_fingerprint,
@@ -1005,8 +1005,9 @@ def test_busy_timeout_actually_set(tmp_path: Path) -> None:
 
 
 def test_checksum_derived_from_actual_sql_text() -> None:
-    from omo.event_ledger.schema import LEDGER_DDL, LEDGER_TRIGGERS, SCHEMA_CHECKSUM
     import hashlib
+
+    from omo.event_ledger.schema import LEDGER_DDL, LEDGER_TRIGGERS, SCHEMA_CHECKSUM
 
     expected = hashlib.sha256(
         (LEDGER_DDL + "\n" + LEDGER_TRIGGERS).encode("utf-8")
@@ -1017,8 +1018,9 @@ def test_checksum_derived_from_actual_sql_text() -> None:
 def test_checksum_changes_when_sql_text_changes() -> None:
     """The checksum must not be a hand-written column list; it must track the
     actual SQL text, so altering triggers/indexes/CHECK changes it."""
-    from omo.event_ledger.schema import LEDGER_DDL, LEDGER_TRIGGERS
     import hashlib
+
+    from omo.event_ledger.schema import LEDGER_DDL, LEDGER_TRIGGERS
 
     base = hashlib.sha256(
         (LEDGER_DDL + "\n" + LEDGER_TRIGGERS).encode("utf-8")
