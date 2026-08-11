@@ -14,10 +14,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import yaml
+
 from .omo_io import AppendOnlyLog, fcntl_lock, write_yaml_atomic
 from .omo_paths import DELIVERY_DIR
-
-import yaml
 
 if TYPE_CHECKING:
     from .omo_autonomy_level import AutonomyLadder

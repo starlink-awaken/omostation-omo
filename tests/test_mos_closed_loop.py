@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from omo.omo_adjudication import AdjudicationStore, VERDICT_CONFIDENCE_DELTA
-from omo.omo_autonomy_level import AutonomyLadder, REGISTRY_PATH
+from omo.omo_adjudication import VERDICT_CONFIDENCE_DELTA, AdjudicationStore
+from omo.omo_autonomy_level import REGISTRY_PATH, AutonomyLadder
 from omo.omo_belief import MOSBeliefManager
 from omo.scenewatcher import SceneWatcher, create_watcher
 
@@ -97,8 +97,8 @@ def test_adjudication_triggers_belief_update(tmp_path: Path):
         actual_outcome="pass confidence=0.9",
     )
 
-    from omo.omo_io import AppendOnlyLog, fcntl_lock
     from omo.omo_adjudication import ADJUDICATIONS_LOG
+    from omo.omo_io import AppendOnlyLog, fcntl_lock
 
     log_path = tmp_path / "adj.jsonl"
     lock_path = tmp_path / "adj.lock"
@@ -337,9 +337,7 @@ def test_explicit_observation_state_stays_in_injected_runtime_paths(
     from omo.omo_io import AppendOnlyLog, fcntl_lock
 
     default_summary = OUTCOMES_DIR / "capability_calibration_summary.yaml"
-    before_summary = (
-        default_summary.read_bytes() if default_summary.exists() else None
-    )
+    before_summary = default_summary.read_bytes() if default_summary.exists() else None
     before_ladder = REGISTRY_PATH.read_bytes() if REGISTRY_PATH.exists() else None
 
     runtime_root = tmp_path / "runtime/omo"
@@ -367,7 +365,9 @@ def test_explicit_observation_state_stays_in_injected_runtime_paths(
     assert (
         default_summary.read_bytes() if default_summary.exists() else None
     ) == before_summary
-    assert (REGISTRY_PATH.read_bytes() if REGISTRY_PATH.exists() else None) == before_ladder
+    assert (
+        REGISTRY_PATH.read_bytes() if REGISTRY_PATH.exists() else None
+    ) == before_ladder
 
 
 def test_missing_observation_dependencies_do_not_write_global_state(tmp_path: Path):
@@ -382,9 +382,7 @@ def test_missing_observation_dependencies_do_not_write_global_state(tmp_path: Pa
     from omo.omo_io import AppendOnlyLog
 
     default_summary = OUTCOMES_DIR / "capability_calibration_summary.yaml"
-    before_summary = (
-        default_summary.read_bytes() if default_summary.exists() else None
-    )
+    before_summary = default_summary.read_bytes() if default_summary.exists() else None
     before_ladder = REGISTRY_PATH.read_bytes() if REGISTRY_PATH.exists() else None
     log_path = tmp_path / "adjudications.jsonl"
     store = AdjudicationStore(
@@ -398,7 +396,9 @@ def test_missing_observation_dependencies_do_not_write_global_state(tmp_path: Pa
     assert (
         default_summary.read_bytes() if default_summary.exists() else None
     ) == before_summary
-    assert (REGISTRY_PATH.read_bytes() if REGISTRY_PATH.exists() else None) == before_ladder
+    assert (
+        REGISTRY_PATH.read_bytes() if REGISTRY_PATH.exists() else None
+    ) == before_ladder
 
 
 def test_observation_failure_is_not_silenced_after_primary_append(tmp_path: Path):
@@ -492,10 +492,7 @@ def test_feedback_composes_runtime_observation_dependencies(
     before_root_truth = root_truth.read_bytes()
 
     assert (
-        cli._cmd_feedback(
-            ["--decision-id", decision_id, "--verdict", "accepted"]
-        )
-        == 0
+        cli._cmd_feedback(["--decision-id", decision_id, "--verdict", "accepted"]) == 0
     )
     assert root_truth.read_bytes() == before_root_truth
 
@@ -504,15 +501,24 @@ def test_feedback_composes_runtime_observation_dependencies(
     )
     autonomy_state = runtime_truth / "registry/autonomy-levels.yaml"
     memory_summary = runtime_truth / "registry/memory-os.yaml"
-    assert yaml.safe_load(calibration_summary.read_text(encoding="utf-8"))[
-        "deploy-check"
-    ]["total"] == 1
-    assert yaml.safe_load(autonomy_state.read_text(encoding="utf-8"))[
-        "capabilities"
-    ]["deploy-check"]["observations"] == 1
-    assert yaml.safe_load(memory_summary.read_text(encoding="utf-8"))[
-        "total_capability_calibrations"
-    ] == 1
     assert (
-        primary_outcomes / "adjudications.jsonl"
-    ).read_text(encoding="utf-8").count("\n") == 1
+        yaml.safe_load(calibration_summary.read_text(encoding="utf-8"))["deploy-check"][
+            "total"
+        ]
+        == 1
+    )
+    assert (
+        yaml.safe_load(autonomy_state.read_text(encoding="utf-8"))["capabilities"][
+            "deploy-check"
+        ]["observations"]
+        == 1
+    )
+    assert (
+        yaml.safe_load(memory_summary.read_text(encoding="utf-8"))[
+            "total_capability_calibrations"
+        ]
+        == 1
+    )
+    assert (primary_outcomes / "adjudications.jsonl").read_text(encoding="utf-8").count(
+        "\n"
+    ) == 1

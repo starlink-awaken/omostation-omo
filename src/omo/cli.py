@@ -776,6 +776,7 @@ def _cmd_cache(args: list[str]) -> int:
 def _cmd_belief(args: list[str]) -> int:
     """MOS Agent Belief 经验可观测管理"""
     import argparse
+
     from omo.omo_belief import MOSBeliefManager
 
     parser = argparse.ArgumentParser(
@@ -886,7 +887,7 @@ def _cmd_feedback(args: list[str]) -> int:
     """MOS 闭环: 人类裁决 → 信念修正 (BET-Y1Q2-T1-03)."""
     import argparse
 
-    from omo.omo_adjudication import AdjudicationStore, VERDICT_CONFIDENCE_DELTA
+    from omo.omo_adjudication import VERDICT_CONFIDENCE_DELTA, AdjudicationStore
     from omo.omo_autonomy_level import AutonomyLadder
     from omo.omo_belief import MOSBeliefManager
     from omo.omo_paths import RUNTIME_DELIVERY_DIR, RUNTIME_TRUTH_DIR
@@ -941,9 +942,7 @@ def _cmd_feedback(args: list[str]) -> int:
     store = AdjudicationStore(
         mos_manager=mos,
         calibration_summary_path=(
-            RUNTIME_DELIVERY_DIR
-            / "outcomes"
-            / "capability_calibration_summary.yaml"
+            RUNTIME_DELIVERY_DIR / "outcomes" / "capability_calibration_summary.yaml"
         ),
         autonomy_ladder=AutonomyLadder(
             registry_path=RUNTIME_TRUTH_DIR / "registry" / "autonomy-levels.yaml"
