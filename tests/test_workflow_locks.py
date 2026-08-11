@@ -12,9 +12,10 @@ import pytest
 import yaml
 
 import omo.workflow.lifecycle as lifecycle_mod
+from omo.workflow.core import WorkflowError
 from omo.workflow.lifecycle import (
-    _classify_existing_lock,
     _HEARTBEAT_STALE_SECONDS,
+    _classify_existing_lock,
     acquire_locks,
     claim_run,
     closeout_run,
@@ -24,7 +25,6 @@ from omo.workflow.lifecycle import (
     sanitize_lock_name,
     scan_locks,
 )
-from omo.workflow.core import WorkflowError
 
 
 @pytest.fixture()

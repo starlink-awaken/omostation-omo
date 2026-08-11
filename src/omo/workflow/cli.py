@@ -398,8 +398,9 @@ def main(argv: list[str] | None = None) -> int:
             objective = args.objective
             if getattr(args, "bet", None):
                 bet_id = args.bet
-                from ..omo_paths import WORKSPACE_ROOT
                 import yaml
+
+                from ..omo_paths import WORKSPACE_ROOT
 
                 ledger_file = WORKSPACE_ROOT / "docs/plans/3y-bet-ledger.yaml"
                 if ledger_file.exists():
