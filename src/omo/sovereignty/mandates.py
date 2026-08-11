@@ -187,11 +187,13 @@ _MATRIX: dict[str, dict[str, str]] = {
 # Terminal outcomes: cannot be loosened by approval_mode tightening.
 # Note: "deny" is NOT a frozen stable reason; approval_mode=deny maps to
 # autonomy_forbids, which is a terminal reason.
-_TERMINAL = frozenset({
-    REASON_SUGGEST_ONLY,
-    REASON_AUTONOMY_FORBIDS,
-    REASON_HUMAN_ADJUDICATION_REQUIRED,
-})
+_TERMINAL = frozenset(
+    {
+        REASON_SUGGEST_ONLY,
+        REASON_AUTONOMY_FORBIDS,
+        REASON_HUMAN_ADJUDICATION_REQUIRED,
+    }
+)
 
 
 def _utc_now() -> str:
@@ -302,8 +304,10 @@ class MandateManager:
                 f"supplied {mandate.role_assignment_id!r} vs actual "
                 f"{actual.role_assignment_id!r}"
             )
-        if (mandate.role_assignment_version != actual.role_assignment_version or
-                mandate.responsibility_version != actual.responsibility_version):
+        if (
+            mandate.role_assignment_version != actual.role_assignment_version
+            or mandate.responsibility_version != actual.responsibility_version
+        ):
             raise MandateError(
                 f"version mismatch in grant for {mandate.mandate_id}: "
                 f"supplied (assignment={mandate.role_assignment_version}, "
@@ -340,9 +344,7 @@ class MandateManager:
         state = self._replay_all()
         current = state.mandates.get(mandate_id)
         if current is None:
-            raise IllegalMandateTransitionError(
-                f"mandate {mandate_id} not found"
-            )
+            raise IllegalMandateTransitionError(f"mandate {mandate_id} not found")
         if current.principal_id != principal_id:
             raise IllegalMandateTransitionError(
                 f"principal mismatch for mandate {mandate_id}: "
@@ -373,16 +375,17 @@ class MandateManager:
         try:
             # Build full data dict and re-validate through Pydantic (never
             # model_copy without validation).
-            revoked = DelegationMandate.model_validate({
-                **current.model_dump(mode="json"),
-                "mandate_version": 2,
-                "status": STATUS_REVOKED,
-                "trace_id": trace,
-            })
+            revoked = DelegationMandate.model_validate(
+                {
+                    **current.model_dump(mode="json"),
+                    "mandate_version": 2,
+                    "status": STATUS_REVOKED,
+                    "trace_id": trace,
+                }
+            )
         except PydanticValidationError as exc:
             raise MandateError(
-                f"invalid revoke payload for mandate {mandate_id}: "
-                f"{exc.errors()}"
+                f"invalid revoke payload for mandate {mandate_id}: {exc.errors()}"
             ) from exc
 
         payload = revoked.model_dump(mode="json")
@@ -574,8 +577,11 @@ class MandateManager:
         # Envelope fields MUST be present and exactly equal to payload fields.
         # None/missing for required envelope fields is malformed.
         _REQUIRED_ENVELOPE = (
-            "principal_id", "episode_id", "mandate_id",
-            "role_context_id", "responsibility_id",
+            "principal_id",
+            "episode_id",
+            "mandate_id",
+            "role_context_id",
+            "responsibility_id",
         )
         for fld in _REQUIRED_ENVELOPE:
             env_val = row.get(fld)
@@ -671,8 +677,7 @@ class MandateManager:
             payload = json.loads(row["payload_json"])
         except (TypeError, ValueError, KeyError):
             raise MandateReplayError(
-                f"malformed mandate event at seq {sequence}: "
-                "payload is not valid JSON"
+                f"malformed mandate event at seq {sequence}: payload is not valid JSON"
             ) from None
         if not isinstance(payload, dict):
             raise MandateReplayError(
@@ -696,8 +701,7 @@ class MandateManager:
         )
         if assignment is None or assignment.status != STATUS_ACTIVE:
             raise MandateError(
-                f"role {mandate.role_context_id} not active for "
-                f"{mandate.principal_id}"
+                f"role {mandate.role_context_id} not active for {mandate.principal_id}"
             )
         resp_ids = {r.resp_id for r in assignment.responsibilities}
         if mandate.responsibility_id not in resp_ids:
@@ -706,7 +710,8 @@ class MandateManager:
                 f"assignment {assignment.assignment_id}"
             )
         resp = next(
-            r for r in assignment.responsibilities
+            r
+            for r in assignment.responsibilities
             if r.resp_id == mandate.responsibility_id
         )
         return _RoleSnapshot(
@@ -824,9 +829,7 @@ def _budget_exceeds(
 # ---------------------------------------------------------------------------
 
 
-def _evaluate_matrix_cell(
-    autonomy: str, risk: str, mandate: DelegationMandate
-) -> str:
+def _evaluate_matrix_cell(autonomy: str, risk: str, mandate: DelegationMandate) -> str:
     """Return the fixed matrix cell result.  All 16 cells are explicit."""
     row = _MATRIX.get(autonomy, {})
     base = row.get(risk, REASON_AUTONOMY_FORBIDS)

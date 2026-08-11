@@ -12,7 +12,6 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
-
 from ecos.ssot.mof.generated.control.mof_control_models import DelegationMandate
 
 from omo import omo_ledger
@@ -56,6 +55,7 @@ def now():
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _setup_mandate(svc, mgr, now, cap="bos://mail/draft"):
     assignment = svc.assign(
@@ -185,11 +185,14 @@ def test_malformed_event_raises_replay_error(broker, now):
         role_context_id="role:family-steward",
         responsibility_id="responsibility:family-commitments",
         mandate_id="mandate:malformed",
-        payload={"kind": "grant", "mandate_id": "mandate:malformed",
-                 "principal_id": "principal:alice",
-                 "episode_id": "episode_replay",
-                 "role_context_id": "role:family-steward",
-                 "responsibility_id": "responsibility:family-commitments"},
+        payload={
+            "kind": "grant",
+            "mandate_id": "mandate:malformed",
+            "principal_id": "principal:alice",
+            "episode_id": "episode_replay",
+            "role_context_id": "role:family-steward",
+            "responsibility_id": "responsibility:family-commitments",
+        },
     )
     fresh_broker.close()
 
@@ -234,13 +237,15 @@ def test_replay_rejects_executor_mutation_on_revoke(svc, broker, now):
     mgr = MandateManager(broker)
     granted = _setup_mandate(svc, mgr, now)
     revoked_payload = granted.model_dump(mode="json")
-    revoked_payload.update({
-        "status": "revoked",
-        "mandate_version": 2,
-        "executor_id": "agent:intruder",
-        "kind": "revoke",
-        "prev_version": 1,
-    })
+    revoked_payload.update(
+        {
+            "status": "revoked",
+            "mandate_version": 2,
+            "executor_id": "agent:intruder",
+            "kind": "revoke",
+            "prev_version": 1,
+        }
+    )
     broker.append(
         event_type="Mandate.Revoked.v1",
         producer=MANDATE_PRODUCER,
@@ -263,7 +268,8 @@ def test_grant_rejects_naive_clock(svc, broker, now):
     """A naive (non-tz-aware) clock must raise MandateError and not append."""
     mgr = MandateManager(broker, clock=lambda: now.isoformat().replace("+00:00", ""))
     assignment = svc.assign(
-        "principal:alice", "role:family-steward",
+        "principal:alice",
+        "role:family-steward",
         responsibilities=["family-commitments"],
     )
     resp = assignment.responsibilities[0]
@@ -302,7 +308,8 @@ def test_grant_rejects_malformed_clock(svc, broker, now):
     """A malformed clock must raise MandateError and not append."""
     mgr = MandateManager(broker, clock=lambda: "not-a-datetime")
     assignment = svc.assign(
-        "principal:alice", "role:family-steward",
+        "principal:alice",
+        "role:family-steward",
         responsibilities=["family-commitments"],
     )
     resp = assignment.responsibilities[0]
@@ -342,7 +349,8 @@ def test_grant_uses_validated_clock_for_occurred_at(svc, broker, now):
     fixed = "2026-01-01T00:00:00+00:00"
     mgr = MandateManager(broker, clock=lambda: fixed)
     assignment = svc.assign(
-        "principal:alice", "role:family-steward",
+        "principal:alice",
+        "role:family-steward",
         responsibilities=["family-commitments"],
     )
     resp = assignment.responsibilities[0]
@@ -383,7 +391,8 @@ def test_injected_clock_not_yet_valid(svc, broker, now):
     mgr = MandateManager(broker, clock=clock_future)
 
     assignment = svc.assign(
-        "principal:alice", "role:future",
+        "principal:alice",
+        "role:future",
         responsibilities=["future-duty"],
     )
     resp = assignment.responsibilities[0]
@@ -415,9 +424,17 @@ def test_injected_clock_not_yet_valid(svc, broker, now):
     )
     mgr.grant(mandate)
     result = mgr.admit(
-        "mandate:future-001", "principal:alice", "agent:planner",
-        "episode_future", "role:future", resp.resp_id,
-        "bos://mail/draft", "R2", 1.0, "call", "disclosure:private",
+        "mandate:future-001",
+        "principal:alice",
+        "agent:planner",
+        "episode_future",
+        "role:future",
+        resp.resp_id,
+        "bos://mail/draft",
+        "R2",
+        1.0,
+        "call",
+        "disclosure:private",
     )
     assert result.reason == "mandate_not_yet_valid"
     assert not result.allowed
@@ -433,9 +450,17 @@ def test_injected_clock_expired(svc, broker, now):
     assignment = svc.current_assignment("principal:alice", "role:family-steward")
     resp = assignment.responsibilities[0]
     result = mgr2.admit(
-        "mandate:replay-001", "principal:alice", "agent:planner",
-        "episode_replay", "role:family-steward", resp.resp_id,
-        "bos://mail/draft", "R2", 1.0, "call", "disclosure:private",
+        "mandate:replay-001",
+        "principal:alice",
+        "agent:planner",
+        "episode_replay",
+        "role:family-steward",
+        resp.resp_id,
+        "bos://mail/draft",
+        "R2",
+        1.0,
+        "call",
+        "disclosure:private",
     )
     assert result.reason == "mandate_expired"
     assert not result.allowed
@@ -452,14 +477,30 @@ def test_ledger_count_unchanged_after_admission(svc, broker, now):
     assignment = svc.current_assignment("principal:alice", "role:family-steward")
     resp = assignment.responsibilities[0]
     mgr.admit(
-        "mandate:replay-001", "principal:alice", "agent:planner",
-        "episode_replay", "role:family-steward", resp.resp_id,
-        "bos://mail/draft", "R2", 1.0, "call", "disclosure:private",
+        "mandate:replay-001",
+        "principal:alice",
+        "agent:planner",
+        "episode_replay",
+        "role:family-steward",
+        resp.resp_id,
+        "bos://mail/draft",
+        "R2",
+        1.0,
+        "call",
+        "disclosure:private",
     )
     mgr.admit(
-        "mandate:nonexistent", "principal:alice", "agent:planner",
-        "episode_replay", "role:family-steward", resp.resp_id,
-        "bos://mail/draft", "R2", 1.0, "call", "disclosure:private",
+        "mandate:nonexistent",
+        "principal:alice",
+        "agent:planner",
+        "episode_replay",
+        "role:family-steward",
+        resp.resp_id,
+        "bos://mail/draft",
+        "R2",
+        1.0,
+        "call",
+        "disclosure:private",
     )
 
     rows_after = list(broker.read(producer=MANDATE_PRODUCER))
@@ -474,19 +515,31 @@ def test_ledger_count_unchanged_after_admission(svc, broker, now):
 def _cli_admit(db_path, capsys, **overrides):
     args = [
         "mandate-admit",
-        "--db", str(db_path),
+        "--db",
+        str(db_path),
         "--json",
-        "--mandate-id", "mandate:replay-001",
-        "--principal-id", "principal:alice",
-        "--executor-id", "agent:planner",
-        "--episode-id", "episode_replay",
-        "--role-context-id", "role:family-steward",
-        "--responsibility-id", "responsibility:family-commitments",
-        "--capability", "bos://mail/draft",
-        "--risk-level", "R2",
-        "--requested-budget", "1.0",
-        "--budget-unit", "call",
-        "--disclosure-policy", "disclosure:private",
+        "--mandate-id",
+        "mandate:replay-001",
+        "--principal-id",
+        "principal:alice",
+        "--executor-id",
+        "agent:planner",
+        "--episode-id",
+        "episode_replay",
+        "--role-context-id",
+        "role:family-steward",
+        "--responsibility-id",
+        "responsibility:family-commitments",
+        "--capability",
+        "bos://mail/draft",
+        "--risk-level",
+        "R2",
+        "--requested-budget",
+        "1.0",
+        "--budget-unit",
+        "call",
+        "--disclosure-policy",
+        "disclosure:private",
     ]
     for flag, value in overrides.items():
         args += ["--" + flag.replace("_", "-"), str(value)]
@@ -496,7 +549,10 @@ def _cli_admit(db_path, capsys, **overrides):
 
 
 def test_cli_admit_maps_corrupted_ledger_to_replay_error(
-    svc, broker, now, capsys,
+    svc,
+    broker,
+    now,
+    capsys,
 ):
     mgr = MandateManager(broker)
     granted = _setup_mandate(svc, mgr, now)

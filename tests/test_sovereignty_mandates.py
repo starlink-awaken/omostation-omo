@@ -15,7 +15,6 @@ from datetime import datetime, timedelta, timezone
 from threading import Barrier
 
 import pytest
-
 from ecos.ssot.mof.generated.control.mof_control_models import DelegationMandate
 
 from omo.event_ledger.broker import DuplicateEventError, LedgerBroker
@@ -77,6 +76,7 @@ def expires_at(now):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _assign_family_steward(svc):
     return svc.assign(
@@ -174,16 +174,19 @@ def test_grant_requires_active_role_assignment(mgr, valid_from, expires_at):
 def test_grant_requires_role_context_match(mgr, valid_from, expires_at):
     # Assign role:professional to alice
     svc = SovereigntyService(mgr._broker)
-    svc.assign("principal:alice", "role:professional",
-               responsibilities=["professional-duty"])
+    svc.assign(
+        "principal:alice", "role:professional", responsibilities=["professional-duty"]
+    )
 
     # Try to grant with role:family-steward context
     assignment = svc.current_assignment("principal:alice", "role:professional")
     mandate = _make_mandate(assignment, valid_from, expires_at)
-    mandate = mandate.model_copy(update={
-        "role_context_id": "role:family-steward",
-        "responsibility_id": "responsibility:professional-duty",
-    })
+    mandate = mandate.model_copy(
+        update={
+            "role_context_id": "role:family-steward",
+            "responsibility_id": "responsibility:professional-duty",
+        }
+    )
     # role_context_id mismatch with current_assignment call
     # This should fail because role:family-steward is not active
     with pytest.raises(MandateError):
@@ -279,8 +282,9 @@ def test_revoke_rejects_empty_trace_id(svc, mgr, broker, valid_from, expires_at)
 
     rows_before = list(broker.read(producer=MANDATE_PRODUCER))
     with pytest.raises(MandateError, match="invalid revoke payload"):
-        mgr.revoke("mandate:test-001", "principal:alice", expected_version=1,
-                   trace_id="")
+        mgr.revoke(
+            "mandate:test-001", "principal:alice", expected_version=1, trace_id=""
+        )
     rows_after = list(broker.read(producer=MANDATE_PRODUCER))
     assert len(rows_after) == len(rows_before)
     assert broker.verify_chain()["ok"] is True
@@ -293,8 +297,9 @@ def test_revoke_rejects_malformed_trace_id(svc, mgr, broker, valid_from, expires
 
     rows_before = list(broker.read(producer=MANDATE_PRODUCER))
     with pytest.raises(MandateError, match="invalid revoke payload"):
-        mgr.revoke("mandate:test-001", "principal:alice", expected_version=1,
-                   trace_id="!!!")
+        mgr.revoke(
+            "mandate:test-001", "principal:alice", expected_version=1, trace_id="!!!"
+        )
     rows_after = list(broker.read(producer=MANDATE_PRODUCER))
     assert len(rows_after) == len(rows_before)
 
@@ -305,8 +310,9 @@ def test_revoke_uses_supplied_trace_id(svc, mgr, broker, valid_from, expires_at)
     mgr.grant(mandate)
 
     supplied = "supplied-trace-000001"
-    revoked = mgr.revoke("mandate:test-001", "principal:alice",
-                         expected_version=1, trace_id=supplied)
+    revoked = mgr.revoke(
+        "mandate:test-001", "principal:alice", expected_version=1, trace_id=supplied
+    )
     assert revoked.trace_id == supplied
     rows = list(broker.read(producer=MANDATE_PRODUCER))
     revoked_row = next(r for r in rows if r["event_type"] == EVT_MANDATE_REVOKE)
@@ -320,7 +326,12 @@ def test_revoke_uses_supplied_trace_id(svc, mgr, broker, valid_from, expires_at)
 
 
 def test_concurrent_duplicate_grant_uses_idempotency_backstop(
-    svc, mgr, broker, valid_from, expires_at, monkeypatch,
+    svc,
+    mgr,
+    broker,
+    valid_from,
+    expires_at,
+    monkeypatch,
 ):
     assignment = _assign_family_steward(svc)
     mandate = _make_mandate(assignment, valid_from, expires_at)

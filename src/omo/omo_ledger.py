@@ -325,62 +325,69 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     pmg.add_argument(
         "--principal-id", required=True, help="Principal id (principal:...)"
     )
-    pmg.add_argument(
-        "--executor-id", required=True, help="Executor id (agent:...)"
-    )
-    pmg.add_argument(
-        "--episode-id", required=True, help="Episode id"
-    )
+    pmg.add_argument("--executor-id", required=True, help="Executor id (agent:...)")
+    pmg.add_argument("--episode-id", required=True, help="Episode id")
     pmg.add_argument(
         "--role-context-id", required=True, help="Role context id (role:...)"
     )
     pmg.add_argument(
-        "--responsibility-id", required=True,
-        help="Responsibility id (responsibility:...)"
+        "--responsibility-id",
+        required=True,
+        help="Responsibility id (responsibility:...)",
     )
     pmg.add_argument(
-        "--capability", action="append", default=None,
-        help="Capability URI (e.g. bos://mail/draft), repeatable"
+        "--capability",
+        action="append",
+        default=None,
+        help="Capability URI (e.g. bos://mail/draft), repeatable",
     )
     pmg.add_argument(
-        "--autonomy-level", required=True, choices=["A0", "A1", "A2", "A3"],
-        help="Autonomy level (A0-A3)"
+        "--autonomy-level",
+        required=True,
+        choices=["A0", "A1", "A2", "A3"],
+        help="Autonomy level (A0-A3)",
     )
     pmg.add_argument(
-        "--risk-ceiling", required=True, choices=["R0", "R1", "R2", "R3"],
-        help="Risk ceiling (R0-R3)"
+        "--risk-ceiling",
+        required=True,
+        choices=["R0", "R1", "R2", "R3"],
+        help="Risk ceiling (R0-R3)",
     )
     pmg.add_argument(
-        "--approval-mode", required=True,
-        choices=["matrix", "approval_required", "per_action_approval_required",
-                 "human_adjudication_required", "deny"],
-        help="Approval mode"
+        "--approval-mode",
+        required=True,
+        choices=[
+            "matrix",
+            "approval_required",
+            "per_action_approval_required",
+            "human_adjudication_required",
+            "deny",
+        ],
+        help="Approval mode",
     )
     pmg.add_argument(
-        "--disclosure-policy", required=True,
-        help="Disclosure policy (disclosure:...)"
+        "--disclosure-policy", required=True, help="Disclosure policy (disclosure:...)"
     )
     pmg.add_argument(
         "--budget-limit", type=float, required=True, help="Budget limit (>= 0)"
     )
+    pmg.add_argument("--budget-unit", required=True, help="Budget unit (e.g. call)")
     pmg.add_argument(
-        "--budget-unit", required=True, help="Budget unit (e.g. call)"
+        "--revocable",
+        action="store_true",
+        default=False,
+        help="Mandate is revocable before expiry",
     )
     pmg.add_argument(
-        "--revocable", action="store_true", default=False,
-        help="Mandate is revocable before expiry"
+        "--purpose", default="Granted via CLI", help="Mandate purpose description"
     )
     pmg.add_argument(
-        "--purpose", default="Granted via CLI",
-        help="Mandate purpose description"
+        "--valid-from", default=None, help="Valid from ISO-8601 datetime (default: now)"
     )
     pmg.add_argument(
-        "--valid-from", default=None,
-        help="Valid from ISO-8601 datetime (default: now)"
-    )
-    pmg.add_argument(
-        "--expires-at", default=None,
-        help="Expires at ISO-8601 datetime (default: 1 year from now)"
+        "--expires-at",
+        default=None,
+        help="Expires at ISO-8601 datetime (default: 1 year from now)",
     )
     _add_local_flags(pmg)
 
@@ -393,8 +400,10 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         "--principal-id", required=True, help="Principal id (principal:...)"
     )
     pmr.add_argument(
-        "--expected-version", type=int, required=True,
-        help="Expected mandate version (must be 1 for active mandate)"
+        "--expected-version",
+        type=int,
+        required=True,
+        help="Expected mandate version (must be 1 for active mandate)",
     )
     _add_local_flags(pmr)
 
@@ -406,34 +415,31 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     pma.add_argument(
         "--principal-id", required=True, help="Principal id (principal:...)"
     )
-    pma.add_argument(
-        "--executor-id", required=True, help="Executor id (agent:...)"
-    )
+    pma.add_argument("--executor-id", required=True, help="Executor id (agent:...)")
     pma.add_argument("--episode-id", required=True, help="Episode id")
     pma.add_argument(
         "--role-context-id", required=True, help="Role context id (role:...)"
     )
     pma.add_argument(
-        "--responsibility-id", required=True,
-        help="Responsibility id (responsibility:...)"
+        "--responsibility-id",
+        required=True,
+        help="Responsibility id (responsibility:...)",
     )
     pma.add_argument(
         "--capability", required=True, help="Capability URI (exact match required)"
     )
     pma.add_argument(
-        "--risk-level", required=True, choices=["R0", "R1", "R2", "R3"],
-        help="Request risk level (R0-R3)"
+        "--risk-level",
+        required=True,
+        choices=["R0", "R1", "R2", "R3"],
+        help="Request risk level (R0-R3)",
     )
     pma.add_argument(
-        "--requested-budget", type=float, required=True,
-        help="Requested budget amount"
+        "--requested-budget", type=float, required=True, help="Requested budget amount"
     )
+    pma.add_argument("--budget-unit", required=True, help="Budget unit (e.g. call)")
     pma.add_argument(
-        "--budget-unit", required=True, help="Budget unit (e.g. call)"
-    )
-    pma.add_argument(
-        "--disclosure-policy", required=True,
-        help="Disclosure policy (disclosure:...)"
+        "--disclosure-policy", required=True, help="Disclosure policy (disclosure:...)"
     )
     _add_local_flags(pma)
 
@@ -1054,8 +1060,11 @@ def _cmd_mandate_grant(
         return 1
 
     resp = next(
-        (r for r in assignment.responsibilities
-         if r.resp_id == params["responsibility_id"]),
+        (
+            r
+            for r in assignment.responsibilities
+            if r.resp_id == params["responsibility_id"]
+        ),
         None,
     )
     if resp is None:

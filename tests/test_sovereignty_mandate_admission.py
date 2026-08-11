@@ -17,14 +17,11 @@ import math
 from datetime import datetime, timedelta, timezone
 
 import pytest
-
 from ecos.ssot.mof.generated.control.mof_control_models import DelegationMandate
 
 from omo import omo_ledger
 from omo.event_ledger.broker import LedgerBroker
 from omo.sovereignty import (
-    MandateError,
-    MandateManager,
     REASON_ALLOW,
     REASON_APPROVAL_REQUIRED,
     REASON_AUTONOMY_FORBIDS,
@@ -44,6 +41,8 @@ from omo.sovereignty import (
     REASON_RISK_CEILING_EXCEEDED,
     REASON_ROLE_CONTEXT_STALE,
     REASON_SUGGEST_ONLY,
+    MandateError,
+    MandateManager,
     SovereigntyService,
 )
 
@@ -77,6 +76,7 @@ def now():
 # ---------------------------------------------------------------------------
 # Helper: create a mandate with specific parameters
 # ---------------------------------------------------------------------------
+
 
 def _make_mandate_kwargs(assignment, now):
     resp = assignment.responsibilities[0]
@@ -263,7 +263,8 @@ def test_admit_responsibility_stale(svc, broker, now):
 
     # Re-assign with a different responsibility (replace bumps all versions)
     svc.replace(
-        "principal:alice", "role:family-steward",
+        "principal:alice",
+        "role:family-steward",
         responsibilities=["family-commitments", "new-duty"],
     )
     # After replace, assignment.version changes → role_context_stale is checked first
@@ -339,6 +340,7 @@ def test_admit_responsibility_not_in_assignment(svc, broker, now):
 # A2: R0=allow, R1=approval_required, R2=per_action, R3=autonomy_forbids
 # A3: R0=allow, R1=allow, R2=allow(if revocable), R3=human_adjudication_required
 
+
 @pytest.mark.parametrize(
     "autonomy,risk,expected_reason",
     [
@@ -367,7 +369,9 @@ def test_admit_responsibility_not_in_assignment(svc, broker, now):
 def test_matrix_cell(svc, broker, now, autonomy, risk, expected_reason):
     mgr = MandateManager(broker)
     _grant_mandate(
-        svc, mgr, now,
+        svc,
+        mgr,
+        now,
         autonomy_level=autonomy,
         risk_ceiling=risk,
         approval_mode="matrix",
@@ -381,7 +385,9 @@ def test_matrix_cell(svc, broker, now, autonomy, risk, expected_reason):
 def test_a3_r2_non_revocable_tightens(svc, broker, now):
     mgr = MandateManager(broker)
     _grant_mandate(
-        svc, mgr, now,
+        svc,
+        mgr,
+        now,
         autonomy_level="A3",
         risk_ceiling="R2",
         approval_mode="matrix",
@@ -399,8 +405,15 @@ def test_a3_r2_non_revocable_tightens(svc, broker, now):
 
 def test_approval_mode_deny_overrides_allow(svc, broker, now):
     mgr = MandateManager(broker)
-    _grant_mandate(svc, mgr, now, autonomy_level="A3", risk_ceiling="R2",
-                   approval_mode="deny", revocable=True)
+    _grant_mandate(
+        svc,
+        mgr,
+        now,
+        autonomy_level="A3",
+        risk_ceiling="R2",
+        approval_mode="deny",
+        revocable=True,
+    )
     result = _admit(mgr, risk_level="R2")
     assert result.reason == REASON_AUTONOMY_FORBIDS
     assert result.allowed is False
@@ -408,8 +421,15 @@ def test_approval_mode_deny_overrides_allow(svc, broker, now):
 
 def test_approval_mode_required_tightens_allow(svc, broker, now):
     mgr = MandateManager(broker)
-    _grant_mandate(svc, mgr, now, autonomy_level="A3", risk_ceiling="R2",
-                   approval_mode="approval_required", revocable=True)
+    _grant_mandate(
+        svc,
+        mgr,
+        now,
+        autonomy_level="A3",
+        risk_ceiling="R2",
+        approval_mode="approval_required",
+        revocable=True,
+    )
     result = _admit(mgr, risk_level="R2")
     assert result.reason == REASON_APPROVAL_REQUIRED
     assert result.allowed is False
@@ -417,8 +437,15 @@ def test_approval_mode_required_tightens_allow(svc, broker, now):
 
 def test_approval_mode_per_action_tightens_allow(svc, broker, now):
     mgr = MandateManager(broker)
-    _grant_mandate(svc, mgr, now, autonomy_level="A3", risk_ceiling="R2",
-                   approval_mode="per_action_approval_required", revocable=True)
+    _grant_mandate(
+        svc,
+        mgr,
+        now,
+        autonomy_level="A3",
+        risk_ceiling="R2",
+        approval_mode="per_action_approval_required",
+        revocable=True,
+    )
     result = _admit(mgr, risk_level="R2")
     assert result.reason == REASON_PER_ACTION_APPROVAL_REQUIRED
     assert result.allowed is False
@@ -426,8 +453,15 @@ def test_approval_mode_per_action_tightens_allow(svc, broker, now):
 
 def test_approval_mode_human_tightens_allow(svc, broker, now):
     mgr = MandateManager(broker)
-    _grant_mandate(svc, mgr, now, autonomy_level="A3", risk_ceiling="R2",
-                   approval_mode="human_adjudication_required", revocable=True)
+    _grant_mandate(
+        svc,
+        mgr,
+        now,
+        autonomy_level="A3",
+        risk_ceiling="R2",
+        approval_mode="human_adjudication_required",
+        revocable=True,
+    )
     result = _admit(mgr, risk_level="R2")
     assert result.reason == REASON_HUMAN_ADJUDICATION_REQUIRED
     assert result.allowed is False
@@ -437,7 +471,9 @@ def test_approval_tightening_cannot_loosen_terminal_deny(svc, broker, now):
     """Even with matrix mode, terminal reasons cannot be loosened."""
     mgr = MandateManager(broker)
     _grant_mandate(
-        svc, mgr, now,
+        svc,
+        mgr,
+        now,
         autonomy_level="A2",
         risk_ceiling="R3",
         approval_mode="matrix",
@@ -492,19 +528,31 @@ def test_admit_exact_scope_success(svc, broker, now):
 def _cli_admit_rc(db_path, capsys, **overrides):
     args = [
         "mandate-admit",
-        "--db", str(db_path),
+        "--db",
+        str(db_path),
         "--json",
-        "--mandate-id", "mandate:admit-001",
-        "--principal-id", "principal:alice",
-        "--executor-id", "agent:planner",
-        "--episode-id", "episode_admit",
-        "--role-context-id", "role:family-steward",
-        "--responsibility-id", "responsibility:family-commitments",
-        "--capability", "bos://mail/draft",
-        "--risk-level", "R2",
-        "--requested-budget", "1.0",
-        "--budget-unit", "call",
-        "--disclosure-policy", "disclosure:private",
+        "--mandate-id",
+        "mandate:admit-001",
+        "--principal-id",
+        "principal:alice",
+        "--executor-id",
+        "agent:planner",
+        "--episode-id",
+        "episode_admit",
+        "--role-context-id",
+        "role:family-steward",
+        "--responsibility-id",
+        "responsibility:family-commitments",
+        "--capability",
+        "bos://mail/draft",
+        "--risk-level",
+        "R2",
+        "--requested-budget",
+        "1.0",
+        "--budget-unit",
+        "call",
+        "--disclosure-policy",
+        "disclosure:private",
     ]
     for flag, value in overrides.items():
         args += ["--" + flag.replace("_", "-"), str(value)]
@@ -514,7 +562,11 @@ def _cli_admit_rc(db_path, capsys, **overrides):
 
 
 def test_cli_admit_reports_mandate_error_reason_and_message(
-    svc, broker, now, capsys, monkeypatch,
+    svc,
+    broker,
+    now,
+    capsys,
+    monkeypatch,
 ):
     import omo.sovereignty as sov
 
