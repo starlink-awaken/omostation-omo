@@ -53,6 +53,7 @@ def _worker_registry(root: Path) -> None:
                     {
                         "id": "worker-dogfood",
                         "enabled": True,
+                        "admission_state": "admitted",
                         "transports": {"cli_prompt": {"command": "worker-dogfood"}},
                     }
                 ]
