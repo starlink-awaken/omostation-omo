@@ -121,6 +121,37 @@ class PersonalSignalIngestResult:
 
 
 @dataclass(frozen=True)
+class EpisodeDraftSnapshot:
+    """Safe persisted Episode fields sufficient for a deterministic local draft.
+
+    Carries only episode identity and draft fields (summary, why_now,
+    deadline).  It deliberately has **no** raw signal body, filesystem
+    path, content digest, or source URI — callers can hand this object
+    to a draft-generation step without leaking private local-file
+    metadata.
+
+    Unlike :class:`PersonalExecutionContext`, the snapshot is available
+    as soon as the episode decision is persisted; no active mandate is
+    required.
+    """
+
+    episode_id: str
+    request_id: str
+    summary: str
+    why_now: str | None = None
+    deadline: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "episode_id": self.episode_id,
+            "request_id": self.request_id,
+            "summary": self.summary,
+            "why_now": self.why_now,
+            "deadline": self.deadline,
+        }
+
+
+@dataclass(frozen=True)
 class PersonalExecutionContext:
     """Ledger-replayed context consumable as ``arguments._omo_policy``."""
 
@@ -460,6 +491,30 @@ class PersonalEpisodeService:
             trace_id=mandate.trace_id,
         )
 
+    def get_draft_snapshot(
+        self, episode_id: str, principal_id: str
+    ) -> EpisodeDraftSnapshot:
+        """Return safe persisted Episode fields for a deterministic local draft.
+
+        Reads only the ``Episode.Decision.v1`` event from the ledger.
+        The snapshot contains identity and draft fields (summary,
+        why_now, deadline) but never raw signal body, filesystem paths,
+        or source URIs.  Unlike :meth:`reload_execution_context`, this
+        method does **not** require an active mandate — the snapshot is
+        available as soon as the episode decision is persisted.
+        """
+        self._required("episode_id", episode_id)
+        self._required("principal_id", principal_id)
+        start_row = self._start_for_episode(episode_id, principal_id)
+        payload = _payload(start_row)
+        return EpisodeDraftSnapshot(
+            episode_id=str(payload.get("episode_id", episode_id)),
+            request_id=_required_payload(payload, "request_id"),
+            summary=_required_payload(payload, "summary"),
+            why_now=payload.get("why_now"),
+            deadline=payload.get("deadline"),
+        )
+
     def record_evidence(self, context: PersonalExecutionContext, evidence_uri: str) -> int:
         """Record the server-created local-draft artifact in the same episode."""
         self._required("evidence_uri", evidence_uri)
@@ -677,6 +732,7 @@ __all__ = [
     "PERSONAL_SIGNAL_JOURNEY_ID",
     "PERSONAL_SIGNAL_OUTCOME_METRIC",
     "PERSONAL_SIGNAL_SCENE_ID",
+    "EpisodeDraftSnapshot",
     "PersonalEpisodeCard",
     "PersonalEpisodeConfirmation",
     "PersonalEpisodeError",

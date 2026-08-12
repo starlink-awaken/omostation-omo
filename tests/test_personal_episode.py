@@ -17,6 +17,7 @@ from omo.personal_episode import (
     PERSONAL_SIGNAL_JOURNEY_ID,
     PERSONAL_SIGNAL_OUTCOME_METRIC,
     PERSONAL_SIGNAL_SCENE_ID,
+    EpisodeDraftSnapshot,
     PersonalEpisodeError,
     PersonalEpisodeService,
     PersonalLocalSignal,
@@ -400,3 +401,126 @@ def test_ingest_local_signal_replays_after_process_restart(tmp_path):
         assert restarted_broker.verify_chain()["ok"] is True
     finally:
         restarted_broker.close()
+
+
+# ---------------------------------------------------------------------------
+# BET-Y1Q2-T2-02 — EpisodeDraftSnapshot (safe persisted fields for local draft)
+# ---------------------------------------------------------------------------
+
+
+def test_get_draft_snapshot_returns_safe_fields_for_start_episode(broker, service):
+    """Snapshot from a start() episode carries summary/why_now/deadline/identity."""
+    _assign(broker)
+    episode = _start(service)
+
+    snapshot = service.get_draft_snapshot(episode.episode_id, "principal:alice")
+
+    assert isinstance(snapshot, EpisodeDraftSnapshot)
+    assert snapshot.episode_id == episode.episode_id
+    assert snapshot.request_id == "request-001"
+    assert snapshot.summary == "Prepare a local follow-up draft"
+    assert snapshot.why_now == "A commitment needs review"
+    assert snapshot.deadline == "2026-08-13"
+
+
+def test_get_draft_snapshot_returns_safe_fields_for_signal_episode(broker, service):
+    """Snapshot from an ingest_local_signal() episode carries the same safe fields."""
+    _assign(broker)
+    result = service.ingest_local_signal(_local_signal())
+
+    snapshot = service.get_draft_snapshot(
+        result.episode.episode_id, "principal:alice"
+    )
+
+    assert snapshot.episode_id == result.episode.episode_id
+    assert snapshot.request_id == result.episode.request_id
+    assert snapshot.summary == "Follow up with the project team"
+    assert snapshot.why_now == "A private local item was observed"
+    assert snapshot.deadline is None
+
+
+def test_get_draft_snapshot_available_before_confirmation(broker, service):
+    """Snapshot is available immediately — no active mandate required."""
+    _assign(broker)
+    episode = _start(service)
+
+    # reload_execution_context would raise episode_not_confirmed here,
+    # but get_draft_snapshot must succeed.
+    snapshot = service.get_draft_snapshot(episode.episode_id, "principal:alice")
+    assert snapshot.summary == "Prepare a local follow-up draft"
+
+
+def test_get_draft_snapshot_raises_for_missing_episode(broker, service):
+    _assign(broker)
+
+    with pytest.raises(PersonalEpisodeError) as exc:
+        service.get_draft_snapshot("episode:nope", "principal:alice")
+
+    assert exc.value.reason == "episode_not_found"
+
+
+def test_get_draft_snapshot_is_immutable(broker, service):
+    """Frozen dataclass: mutation must raise FrozenInstanceError."""
+    _assign(broker)
+    episode = _start(service)
+    snapshot = service.get_draft_snapshot(episode.episode_id, "principal:alice")
+
+    with pytest.raises(AttributeError):
+        snapshot.summary = "tampered"  # type: ignore[misc]
+
+
+def test_get_draft_snapshot_survives_process_restart(tmp_path):
+    """Snapshot is deterministic across a process restart from the same ledger."""
+    db_path = tmp_path / "draft-snapshot-restart.db"
+    first_broker = LedgerBroker.connect(db_path)
+    try:
+        _assign(first_broker)
+        episode = PersonalEpisodeService(
+            first_broker, clock=lambda: NOW
+        ).start(
+            principal_id="principal:alice",
+            role_id="role:personal-steward",
+            responsibility_id="responsibility:follow-up",
+            executor_id="agent:personal-steward",
+            request_id="restart-draft-001",
+            summary="Draft after restart",
+            why_now="Needs attention",
+            deadline="2026-09-01",
+        )
+    finally:
+        first_broker.close()
+
+    restarted_broker = LedgerBroker.connect(db_path)
+    try:
+        snapshot = PersonalEpisodeService(
+            restarted_broker, clock=lambda: NOW
+        ).get_draft_snapshot(episode.episode_id, "principal:alice")
+    finally:
+        restarted_broker.close()
+
+    assert snapshot.episode_id == episode.episode_id
+    assert snapshot.request_id == "restart-draft-001"
+    assert snapshot.summary == "Draft after restart"
+    assert snapshot.why_now == "Needs attention"
+    assert snapshot.deadline == "2026-09-01"
+
+
+def test_get_draft_snapshot_to_dict_round_trips_safe_fields(broker, service):
+    """to_dict() exposes exactly the safe draft fields, no body/path/uri."""
+    _assign(broker)
+    episode = _start(service)
+    snapshot = service.get_draft_snapshot(episode.episode_id, "principal:alice")
+
+    data = snapshot.to_dict()
+    assert set(data.keys()) == {
+        "episode_id",
+        "request_id",
+        "summary",
+        "why_now",
+        "deadline",
+    }
+    # Ensure no signal body / path / uri leak into the snapshot.
+    assert not hasattr(snapshot, "source_id")
+    assert not hasattr(snapshot, "item_id")
+    assert not hasattr(snapshot, "source_uri")
+    assert not hasattr(snapshot, "content_sha256")
