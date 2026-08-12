@@ -14,7 +14,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Callable, Mapping
 
-from ecos.ssot.mof.generated.control.mof_control_models import DelegationMandate
+from ecos.ssot.mof.generated.control.mof_control_models import (
+    DelegationMandate,
+    EventEnvelope,
+    Signal,
+)
 
 from omo.event_ledger.broker import LedgerBroker
 from omo.sovereignty.mandates import MandateError, MandateManager, STATUS_ACTIVE
@@ -28,8 +32,13 @@ RISK = "R0"
 DISCLOSURE_POLICY = "disclosure:private"
 
 EVT_EPISODE_DECISION = "Episode.Decision.v1"
+EVT_SIGNAL_OBSERVED = "SignalObserved.v1"
 EVT_EVIDENCE_LOCAL_DRAFT = "Evidence.LocalDraft.v1"
 EVT_OUTCOME_HUMAN = "Outcome.Human.v1"
+
+PERSONAL_SIGNAL_SCENE_ID = "personal-followup-dogfood"
+PERSONAL_SIGNAL_JOURNEY_ID = "manual-signal-to-adopted-local-draft"
+PERSONAL_SIGNAL_OUTCOME_METRIC = "adopted_real_personal_outcome_count"
 
 _OUTCOMES = frozenset({"accept", "edit", "reject", "defer"})
 
@@ -69,6 +78,44 @@ class PersonalEpisodeConfirmation:
         return {
             "episode_id": self.episode_id,
             "mandate_id": self.mandate_id,
+            "reused": self.reused,
+        }
+
+
+@dataclass(frozen=True)
+class PersonalLocalSignal:
+    """Trusted, server-resolved metadata for one private local Markdown item.
+
+    The web boundary must resolve the opaque ``item_id`` with Iris before it
+    constructs this descriptor.  In particular, this type intentionally has
+    no filesystem path and no document body field.
+    """
+
+    source_id: str
+    item_id: str
+    title: str
+    content_sha256: str
+    source_uri: str
+    principal_id: str
+    role_id: str
+    responsibility_id: str
+    executor_id: str
+
+
+@dataclass(frozen=True)
+class PersonalSignalIngestResult:
+    """The causal signal/episode pair created from one local item."""
+
+    signal_event_id: str
+    signal_id: str
+    episode: PersonalEpisodeCard
+    reused: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "signal_event_id": self.signal_event_id,
+            "signal_id": self.signal_id,
+            "episode": self.episode.to_dict(),
             "reused": self.reused,
         }
 
@@ -187,6 +234,141 @@ class PersonalEpisodeService:
             occurred_at=self._clock_ts(),
         )
         return PersonalEpisodeCard(episode_id=episode_id, request_id=request_id, summary=summary)
+
+    def ingest_local_signal(
+        self, signal: PersonalLocalSignal
+    ) -> PersonalSignalIngestResult:
+        """Turn one trusted Iris-resolved local item into a causal draft card.
+
+        This is deliberately a thin, single-user ingress: validation is
+        complete before the first append; raw file content and paths never
+        enter the Event Ledger; and replay is deterministic by
+        ``source_id + item_id + content_sha256``.  It does not attempt a
+        cross-event transaction or concurrent exactly-once protocol.
+        """
+        self._validate_local_signal(signal)
+        occurred_at = self._clock_ts()
+        source_key = _short_hash(signal.source_id, signal.item_id, signal.content_sha256)
+        event_id = _deterministic("evt_", "local-signal", source_key)
+        signal_id = _deterministic("signal_", "local-signal", source_key)
+
+        existing = self._find_local_signal(signal.principal_id, source_key)
+        if existing is not None:
+            existing_payload = _payload(existing)
+            existing_episode = self._episode_for_signal(
+                str(existing["event_id"]), signal.principal_id
+            )
+            episode_payload = _payload(existing_episode)
+            return PersonalSignalIngestResult(
+                signal_event_id=str(existing["event_id"]),
+                signal_id=str(existing_payload["signal_id"]),
+                episode=PersonalEpisodeCard(
+                    episode_id=str(existing_episode["episode_id"]),
+                    request_id=str(episode_payload["request_id"]),
+                    summary=str(episode_payload["summary"]),
+                    reused=True,
+                ),
+                reused=True,
+            )
+
+        # Validate authority only for a new mutation.  A durably completed
+        # item remains replayable even if the role later changes.
+        self._active_assignment(
+            signal.principal_id, signal.role_id, signal.responsibility_id
+        )
+        episode_id = _deterministic(
+            "episode_",
+            "local-signal",
+            signal.principal_id,
+            signal.role_id,
+            signal.responsibility_id,
+            source_key,
+        )
+        request_id = f"local-signal:{source_key}"
+        envelope = EventEnvelope(
+            event_id=event_id,
+            schema_version="event-envelope/v1",
+            source_ref=signal.source_uri,
+            emitted_at=occurred_at,
+            payload={
+                "source_id": signal.source_id,
+                "item_id": signal.item_id,
+                "title": signal.title,
+                "content_sha256": signal.content_sha256,
+                "source_uri": signal.source_uri,
+            },
+            trace_id=_deterministic("trace_", "local-signal", source_key),
+        )
+        generated_signal = Signal(
+            signal_id=signal_id,
+            schema_version="signal/v1",
+            source_event_ref=envelope,
+            detected_at=occurred_at,
+            pattern="local_markdown_observed",
+            confidence=1.0,
+        )
+        self._broker.append(
+            EVT_SIGNAL_OBSERVED,
+            producer=PERSONAL_EPISODE_PRODUCER,
+            principal_id=signal.principal_id,
+            space_id=PERSONAL_EPISODE_SPACE_ID,
+            correlation_id=f"personal-signal|{event_id}",
+            idempotency_key=f"local-signal|{source_key}",
+            event_id=event_id,
+            privacy_class="private",
+            payload={
+                "source_key": source_key,
+                "source_id": signal.source_id,
+                "item_id": signal.item_id,
+                "title": signal.title,
+                "content_sha256": signal.content_sha256,
+                "source_uri": signal.source_uri,
+                "signal_id": signal_id,
+                "event_envelope": envelope.model_dump(mode="json"),
+                "signal": generated_signal.model_dump(mode="json"),
+            },
+            occurred_at=occurred_at,
+        )
+        self._broker.append(
+            EVT_EPISODE_DECISION,
+            producer=PERSONAL_EPISODE_PRODUCER,
+            principal_id=signal.principal_id,
+            space_id=PERSONAL_EPISODE_SPACE_ID,
+            correlation_id=f"personal-episode|{episode_id}",
+            idempotency_key=f"local-signal-episode|{source_key}",
+            episode_id=episode_id,
+            role_context_id=signal.role_id,
+            responsibility_id=signal.responsibility_id,
+            causation_id=event_id,
+            privacy_class="private",
+            payload={
+                "episode_id": episode_id,
+                "request_id": request_id,
+                "summary": signal.title,
+                "why_now": "A private local item was observed",
+                "deadline": None,
+                "risk": RISK,
+                "authority": "human_confirmation_required",
+                "status": "pending_confirmation",
+                "executor_id": signal.executor_id,
+                "role_id": signal.role_id,
+                "responsibility_id": signal.responsibility_id,
+                "source_signal_ref": event_id,
+                "scene_id": PERSONAL_SIGNAL_SCENE_ID,
+                "journey_id": PERSONAL_SIGNAL_JOURNEY_ID,
+                "outcome_metric": PERSONAL_SIGNAL_OUTCOME_METRIC,
+            },
+            occurred_at=occurred_at,
+        )
+        return PersonalSignalIngestResult(
+            signal_event_id=event_id,
+            signal_id=signal_id,
+            episode=PersonalEpisodeCard(
+                episode_id=episode_id,
+                request_id=request_id,
+                summary=signal.title,
+            ),
+        )
 
     def confirm(
         self,
@@ -339,6 +521,58 @@ class PersonalEpisodeService:
             )
         return assignment
 
+    def _validate_local_signal(self, signal: PersonalLocalSignal) -> None:
+        if not isinstance(signal, PersonalLocalSignal):
+            raise PersonalEpisodeError(
+                "invalid_signal_descriptor", "signal must be a PersonalLocalSignal"
+            )
+        for name in (
+            "source_id",
+            "item_id",
+            "title",
+            "content_sha256",
+            "source_uri",
+            "principal_id",
+            "role_id",
+            "responsibility_id",
+            "executor_id",
+        ):
+            self._required(name, getattr(signal, name))
+        if "\n" in signal.title or "\r" in signal.title or len(signal.title) > 240:
+            raise PersonalEpisodeError(
+                "invalid_signal_title", "title must be one line and at most 240 characters"
+            )
+        if len(signal.content_sha256) != 64 or any(
+            char not in "0123456789abcdef" for char in signal.content_sha256.lower()
+        ):
+            raise PersonalEpisodeError(
+                "invalid_signal_digest", "content_sha256 must be a SHA-256 hex digest"
+            )
+        if not all(
+            char.isalnum() or char in "._:-" for char in signal.source_id
+        ):
+            raise PersonalEpisodeError(
+                "invalid_signal_source", "source_id must be a stable source identifier"
+            )
+        source_prefix = "iris://local-files/"
+        source_item_id = (
+            signal.source_uri.removeprefix(source_prefix)
+            if signal.source_uri.startswith(source_prefix)
+            else ""
+        )
+        if (
+            not source_item_id
+            or source_item_id != signal.item_id
+            or any(
+                char
+                not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-="
+                for char in source_item_id
+            )
+        ):
+            raise PersonalEpisodeError(
+                "invalid_signal_source", "source_uri must be a safe Iris local-files URI"
+            )
+
     def _find_start(self, principal_id: str, request_id: str) -> Mapping[str, Any] | None:
         for row in self._broker.read(producer=PERSONAL_EPISODE_PRODUCER):
             if row.get("event_type") != EVT_EPISODE_DECISION or row.get("principal_id") != principal_id:
@@ -346,6 +580,34 @@ class PersonalEpisodeService:
             if _payload(row).get("request_id") == request_id:
                 return row
         return None
+
+    def _find_local_signal(
+        self, principal_id: str, source_key: str
+    ) -> Mapping[str, Any] | None:
+        for row in self._broker.read(producer=PERSONAL_EPISODE_PRODUCER):
+            if row.get("event_type") != EVT_SIGNAL_OBSERVED:
+                continue
+            if row.get("principal_id") != principal_id:
+                continue
+            if _payload(row).get("source_key") == source_key:
+                return row
+        return None
+
+    def _episode_for_signal(
+        self, signal_event_id: str, principal_id: str
+    ) -> Mapping[str, Any]:
+        for row in self._broker.read(producer=PERSONAL_EPISODE_PRODUCER):
+            if row.get("event_type") != EVT_EPISODE_DECISION:
+                continue
+            if row.get("principal_id") != principal_id:
+                continue
+            if row.get("causation_id") == signal_event_id:
+                return row
+            if _payload(row).get("source_signal_ref") == signal_event_id:
+                return row
+        raise PersonalEpisodeError(
+            "malformed_signal", "local signal has no causal episode decision"
+        )
 
     def _start_for_episode(self, episode_id: str, principal_id: str) -> Mapping[str, Any]:
         for row in self._broker.read(episode_id=episode_id):
@@ -410,10 +672,16 @@ __all__ = [
     "EVT_EPISODE_DECISION",
     "EVT_EVIDENCE_LOCAL_DRAFT",
     "EVT_OUTCOME_HUMAN",
+    "EVT_SIGNAL_OBSERVED",
     "PERSONAL_EPISODE_PRODUCER",
+    "PERSONAL_SIGNAL_JOURNEY_ID",
+    "PERSONAL_SIGNAL_OUTCOME_METRIC",
+    "PERSONAL_SIGNAL_SCENE_ID",
     "PersonalEpisodeCard",
     "PersonalEpisodeConfirmation",
     "PersonalEpisodeError",
     "PersonalEpisodeService",
     "PersonalExecutionContext",
+    "PersonalLocalSignal",
+    "PersonalSignalIngestResult",
 ]
