@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, Callable, Mapping
 
 from ecos.ssot.mof.generated.control.mof_control_models import (
@@ -22,6 +23,7 @@ from ecos.ssot.mof.generated.control.mof_control_models import (
 
 from omo.event_ledger.broker import LedgerBroker
 from omo.sovereignty.mandates import MandateError, MandateManager, STATUS_ACTIVE
+from omo.sovereignty.enforcement import EVT_ACTION_SUCCEEDED, PDP_PRODUCER
 from omo.sovereignty.roles import SovereigntyError, SovereigntyService
 
 
@@ -40,7 +42,8 @@ PERSONAL_SIGNAL_SCENE_ID = "personal-followup-dogfood"
 PERSONAL_SIGNAL_JOURNEY_ID = "manual-signal-to-adopted-local-draft"
 PERSONAL_SIGNAL_OUTCOME_METRIC = "adopted_real_personal_outcome_count"
 
-_OUTCOMES = frozenset({"accept", "edit", "reject", "defer"})
+_OUTCOMES = frozenset({"accept", "edit", "reject", "defer", "ignore"})
+VALID_OUTPUT_ORIGINS = frozenset({"system", "user_provided", "unknown"})
 
 
 class PersonalEpisodeError(ValueError):
@@ -189,6 +192,81 @@ class PersonalExecutionContext:
         result = dict(self.omo_policy)
         result["_omo_policy"] = dict(self.omo_policy)
         return result
+
+
+@dataclass(frozen=True)
+class WeeklySample:
+    """One natural-week (ISO Monday-based) aggregate for a principal.
+
+    No raw signal body, path, source URI, or digest is exposed — only
+    counts, verdict distributions, and summed burden fields.
+    """
+
+    week_key: str
+    total_episodes: int
+    qualifying_episodes: int
+    system_accept_episodes: int
+    complete_burden_episodes: int
+    review_lt_saved_episodes: int
+    summed_review_seconds: float | None
+    summed_saved_seconds: float | None
+    verdict_distribution: dict[str, int]
+    system_evidence_count: int
+    user_evidence_count: int
+    unknown_evidence_count: int
+    gate_met: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "week_key": self.week_key,
+            "total_episodes": self.total_episodes,
+            "qualifying_episodes": self.qualifying_episodes,
+            "system_accept_episodes": self.system_accept_episodes,
+            "complete_burden_episodes": self.complete_burden_episodes,
+            "review_lt_saved_episodes": self.review_lt_saved_episodes,
+            "summed_review_seconds": self.summed_review_seconds,
+            "summed_saved_seconds": self.summed_saved_seconds,
+            "verdict_distribution": dict(self.verdict_distribution),
+            "system_evidence_count": self.system_evidence_count,
+            "user_evidence_count": self.user_evidence_count,
+            "unknown_evidence_count": self.unknown_evidence_count,
+            "gate_met": self.gate_met,
+        }
+
+
+@dataclass(frozen=True)
+class PrincipalObservation:
+    """Deterministic, read-only per-principal observation over the same Ledger.
+
+    The observation never exposes raw signal body, filesystem path,
+    source URI, or content digest.  It leaves event count and hash chain
+    unchanged — it only calls ``broker.read()``.
+    """
+
+    principal_id: str
+    readiness: str
+    total_episodes: int
+    verdict_distribution: dict[str, int]
+    system_evidence_count: int
+    user_evidence_count: int
+    unknown_evidence_count: int
+    signal_to_verdict_latency_seconds: float | None
+    weekly_samples: list[WeeklySample]
+    gate_gaps: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "principal_id": self.principal_id,
+            "readiness": self.readiness,
+            "total_episodes": self.total_episodes,
+            "verdict_distribution": dict(self.verdict_distribution),
+            "system_evidence_count": self.system_evidence_count,
+            "user_evidence_count": self.user_evidence_count,
+            "unknown_evidence_count": self.unknown_evidence_count,
+            "signal_to_verdict_latency_seconds": self.signal_to_verdict_latency_seconds,
+            "weekly_samples": [s.to_dict() for s in self.weekly_samples],
+            "gate_gaps": list(self.gate_gaps),
+        }
 
 
 def _utc_now() -> str:
@@ -515,9 +593,24 @@ class PersonalEpisodeService:
             deadline=payload.get("deadline"),
         )
 
-    def record_evidence(self, context: PersonalExecutionContext, evidence_uri: str) -> int:
-        """Record the server-created local-draft artifact in the same episode."""
+    def record_evidence(
+        self,
+        context: PersonalExecutionContext,
+        evidence_uri: str,
+        *,
+        output_origin: str = "unknown",
+    ) -> int:
+        """Record the server-created local-draft artifact in the same episode.
+
+        ``output_origin`` is a controlled vocabulary: ``system`` or
+        ``user_provided``.  Legacy or omitted values persist as ``unknown``.
+        """
         self._required("evidence_uri", evidence_uri)
+        if output_origin not in VALID_OUTPUT_ORIGINS:
+            raise PersonalEpisodeError(
+                "invalid_output_origin",
+                "output_origin must be system/user_provided/unknown",
+            )
         existing = self._find_event(
             context.episode_id, EVT_EVIDENCE_LOCAL_DRAFT, "evidence_uri", evidence_uri
         )
@@ -534,17 +627,37 @@ class PersonalEpisodeService:
             role_context_id=context.role_context_id,
             responsibility_id=context.responsibility_id,
             mandate_id=context.mandate_id,
-            payload={"evidence_uri": evidence_uri, "action_id": context.action_id},
+            payload={
+                "evidence_uri": evidence_uri,
+                "action_id": context.action_id,
+                "output_origin": output_origin,
+            },
             evidence_uri=evidence_uri,
             occurred_at=self._clock_ts(),
         )
 
-    def record_outcome(self, context: PersonalExecutionContext, verdict: str) -> int:
-        """Record one human feedback outcome using the closed vocabulary."""
+    def record_outcome(
+        self,
+        context: PersonalExecutionContext,
+        verdict: str,
+        *,
+        review_duration_seconds: float | None = None,
+        estimated_time_saved_seconds: float | None = None,
+    ) -> int:
+        """Record one human feedback outcome using the closed vocabulary.
+
+        ``verdict`` is limited to accept/edit/reject/defer/ignore.
+        ``review_duration_seconds`` and ``estimated_time_saved_seconds``
+        are optional explicit non-negative finite values; omitted stays
+        null.
+        """
         if verdict not in _OUTCOMES:
             raise PersonalEpisodeError(
-                "invalid_outcome_verdict", "verdict must be accept/edit/reject/defer"
+                "invalid_outcome_verdict",
+                "verdict must be accept/edit/reject/defer/ignore",
             )
+        _validate_burden("review_duration_seconds", review_duration_seconds)
+        _validate_burden("estimated_time_saved_seconds", estimated_time_saved_seconds)
         existing = self._find_event(context.episode_id, EVT_OUTCOME_HUMAN, "verdict", verdict)
         if existing is not None:
             return int(existing["sequence"])
@@ -559,9 +672,124 @@ class PersonalEpisodeService:
             role_context_id=context.role_context_id,
             responsibility_id=context.responsibility_id,
             mandate_id=context.mandate_id,
-            payload={"verdict": verdict, "action_id": context.action_id},
+            payload={
+                "verdict": verdict,
+                "action_id": context.action_id,
+                "review_duration_seconds": review_duration_seconds,
+                "estimated_time_saved_seconds": estimated_time_saved_seconds,
+            },
             occurred_at=self._clock_ts(),
         )
+
+    def observe_principal(self, principal_id: str) -> PrincipalObservation:
+        """Deterministic, read-only per-principal observation over the same Ledger.
+
+        Computes verdict distribution, evidence origin counts, signal-to-
+        verdict latency, natural-week samples, and a strict four-consecutive-
+        week readiness gate.  Never exposes raw body, path, source_uri, or
+        digest.  Leaves count and hash chain unchanged — only calls
+        ``broker.read()``.
+        """
+        self._required("principal_id", principal_id)
+
+        rows = [
+            row
+            for row in self._broker.read(producer=PERSONAL_EPISODE_PRODUCER)
+            if row.get("principal_id") == principal_id
+        ]
+        if not rows:
+            return PrincipalObservation(
+                principal_id=principal_id,
+                readiness="not_ready",
+                total_episodes=0,
+                verdict_distribution={},
+                system_evidence_count=0,
+                user_evidence_count=0,
+                unknown_evidence_count=0,
+                signal_to_verdict_latency_seconds=None,
+                weekly_samples=[],
+                gate_gaps=["no episodes observed"],
+            )
+
+        # Read Action.Succeeded events from PDP producer (Blocker 1).
+        succeeded_keys: set[tuple[str, str]] = set()
+        for prow in self._broker.read(producer=PDP_PRODUCER):
+            if prow.get("event_type") != EVT_ACTION_SUCCEEDED:
+                continue
+            if prow.get("principal_id") != principal_id:
+                continue
+            pp = _payload(prow)
+            succeeded_keys.add(
+                (str(prow.get("episode_id", "")), str(pp.get("action_id", "")))
+            )
+
+        # Index signal events by event_id for latency/source lookup.
+        signal_lookup: dict[str, Mapping[str, Any]] = {}
+        for row in rows:
+            eid = row.get("event_id")
+            if eid and row.get("event_type") == EVT_SIGNAL_OBSERVED:
+                signal_lookup[eid] = row
+
+        # Group episode-scoped events by episode_id.
+        ep_rows: dict[str, list[Mapping[str, Any]]] = {}
+        for row in rows:
+            ep_id = row.get("episode_id")
+            if ep_id:
+                ep_rows.setdefault(ep_id, []).append(row)
+
+        observations: list[dict[str, Any]] = []
+        for ep_id, ep_events in ep_rows.items():
+            decision_row: Mapping[str, Any] | None = None
+            evidence_payloads: list[Mapping[str, Any]] = []
+            outcome_rows: list[tuple[int, Mapping[str, Any], datetime | None]] = []
+            for er in ep_events:
+                et = er.get("event_type")
+                if et == EVT_EPISODE_DECISION:
+                    decision_row = er
+                elif et == EVT_EVIDENCE_LOCAL_DRAFT:
+                    evidence_payloads.append(_payload(er))
+                elif et == EVT_OUTCOME_HUMAN:
+                    outcome_rows.append(
+                        (int(er.get("sequence", 0)), _payload(er), _parse_ts(er.get("occurred_at")))
+                    )
+            if decision_row is None:
+                continue
+            dp = _payload(decision_row)
+            decision_dt = _parse_ts(decision_row.get("occurred_at"))
+            # Signal source: only signal-ingested episodes are gate-eligible (Blocker 2).
+            signal_dt = decision_dt
+            has_signal_source = False
+            sig_ref = dp.get("source_signal_ref") or decision_row.get("causation_id")
+            if sig_ref and sig_ref in signal_lookup:
+                has_signal_source = True
+                sig_dt = _parse_ts(signal_lookup[sig_ref].get("occurred_at"))
+                if sig_dt is not None:
+                    signal_dt = sig_dt
+            # Effective outcome: last by ledger sequence (Blocker 4).
+            outcome_rows.sort(key=lambda t: t[0])
+            effective_outcome: Mapping[str, Any] | None = None
+            effective_outcome_dt: datetime | None = None
+            if outcome_rows:
+                _, effective_outcome, effective_outcome_dt = outcome_rows[-1]
+            # Action.Succeeded matching for same episode/action_id (Blocker 1).
+            action_id = _deterministic("action:personal-", ep_id)
+            has_action_succeeded = (ep_id, action_id) in succeeded_keys
+            observations.append(
+                {
+                    "episode_id": ep_id,
+                    "signal_dt": signal_dt,
+                    "decision_dt": decision_dt,
+                    "has_signal_source": has_signal_source,
+                    "has_action_succeeded": has_action_succeeded,
+                    "evidence_origins": [
+                        ep.get("output_origin", "unknown") for ep in evidence_payloads
+                    ],
+                    "effective_outcome": effective_outcome,
+                    "effective_outcome_dt": effective_outcome_dt,
+                }
+            )
+
+        return _build_observation(principal_id, observations)
 
     def _active_assignment(self, principal_id: str, role_id: str, responsibility_id: str):
         try:
@@ -721,6 +949,263 @@ def _deterministic(prefix: str, *parts: str) -> str:
     return prefix + _short_hash(*parts)
 
 
+def _validate_burden(name: str, value: float | None) -> None:
+    """Reject negative, infinite, NaN, or non-numeric burden values."""
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise PersonalEpisodeError("invalid_burden", f"{name} must be a number")
+    v = float(value)
+    if v < 0 or not math.isfinite(v):
+        raise PersonalEpisodeError("invalid_burden", f"{name} must be non-negative and finite")
+
+
+def _iso_week_key(dt: datetime) -> str:
+    """ISO Monday-based natural week key, e.g. '2026-W32'."""
+    iso = dt.isocalendar()
+    return f"{iso[0]}-W{iso[1]:02d}"
+
+
+def _week_monday(week_key: str) -> date:
+    """Parse 'YYYY-Www' back to the Monday date."""
+    year_str, week_str = week_key.split("-W")
+    return date.fromisocalendar(int(year_str), int(week_str), 1)
+
+
+def _are_consecutive_weeks(samples: list[WeeklySample]) -> bool:
+    """True iff every adjacent pair is exactly one ISO week apart."""
+    if len(samples) < 2:
+        return len(samples) >= 1
+    mondays = [_week_monday(s.week_key) for s in samples]
+    for i in range(1, len(mondays)):
+        if (mondays[i] - mondays[i - 1]).days != 7:
+            return False
+    return True
+
+
+def _parse_ts(value: Any) -> datetime | None:
+    """Best-effort ISO-8601 parse; returns None on failure."""
+    if value is None:
+        return None
+    try:
+        return datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _median(values: list[float]) -> float | None:
+    """Median of a list; None for empty input."""
+    if not values:
+        return None
+    s = sorted(values)
+    n = len(s)
+    mid = n // 2
+    if n % 2 == 1:
+        return float(s[mid])
+    return (float(s[mid - 1]) + float(s[mid])) / 2.0
+
+
+def _build_observation(
+    principal_id: str,
+    observations: list[dict[str, Any]],
+) -> PrincipalObservation:
+    """Aggregate per-episode data into a PrincipalObservation with gate."""
+    total_episodes = len(observations)
+
+    # Global verdict distribution — effective verdict only (Blocker 4).
+    verdict_dist: dict[str, int] = {}
+    for ep in observations:
+        eff = ep["effective_outcome"]
+        if eff is not None:
+            v = eff.get("verdict")
+            if v:
+                verdict_dist[v] = verdict_dist.get(v, 0) + 1
+
+    # Global evidence origin counts.
+    system_ev = sum(1 for ep in observations for o in ep["evidence_origins"] if o == "system")
+    user_ev = sum(
+        1 for ep in observations for o in ep["evidence_origins"] if o == "user_provided"
+    )
+    unknown_ev = sum(
+        1 for ep in observations for o in ep["evidence_origins"] if o not in ("system", "user_provided")
+    )
+
+    # Signal-to-effective-outcome latency (median).
+    latencies: list[float] = []
+    for ep in observations:
+        sig_dt: datetime | None = ep["signal_dt"]
+        outcome_dt: datetime | None = ep["effective_outcome_dt"]
+        if sig_dt is not None and outcome_dt is not None:
+            delta = (outcome_dt - sig_dt).total_seconds()
+            if delta >= 0:
+                latencies.append(delta)
+    median_latency = _median(latencies)
+
+    # Weekly samples — bucketed by effective outcome time (Blocker 3).
+    week_groups: dict[str, list[dict[str, Any]]] = {}
+    for ep in observations:
+        outcome_dt = ep["effective_outcome_dt"]
+        if outcome_dt is None:
+            continue
+        wk = _iso_week_key(outcome_dt)
+        week_groups.setdefault(wk, []).append(ep)
+
+    weekly_samples: list[WeeklySample] = []
+    for wk in sorted(week_groups):
+        eps = week_groups[wk]
+        total = len(eps)
+
+        vd: dict[str, int] = {}
+        sys_ev_w = usr_ev_w = unk_ev_w = 0
+        for ep in eps:
+            eff = ep["effective_outcome"]
+            if eff is not None:
+                v = eff.get("verdict")
+                if v:
+                    vd[v] = vd.get(v, 0) + 1
+            for o in ep["evidence_origins"]:
+                if o == "system":
+                    sys_ev_w += 1
+                elif o == "user_provided":
+                    usr_ev_w += 1
+                else:
+                    unk_ev_w += 1
+
+        sys_accept_eps = 0
+        complete_burden_eps = 0
+        review_lt_saved_eps = 0
+        qualifying_eps = 0
+        summed_review = 0.0
+        summed_saved = 0.0
+        has_review = False
+        has_saved = False
+
+        for ep in eps:
+            has_system = "system" in ep["evidence_origins"]
+            eff = ep["effective_outcome"]
+            is_accept = eff is not None and eff.get("verdict") == "accept"
+            review_raw = eff.get("review_duration_seconds") if eff else None
+            saved_raw = eff.get("estimated_time_saved_seconds") if eff else None
+            complete = review_raw is not None and saved_raw is not None
+            review_lt = False
+            if review_raw is not None and saved_raw is not None:
+                try:
+                    review_lt = float(review_raw) < float(saved_raw)
+                except (TypeError, ValueError):
+                    review_lt = False
+
+            if review_raw is not None:
+                summed_review += float(review_raw)
+                has_review = True
+            if saved_raw is not None:
+                summed_saved += float(saved_raw)
+                has_saved = True
+
+            if is_accept and has_system:
+                sys_accept_eps += 1
+            if complete:
+                complete_burden_eps += 1
+            if review_lt:
+                review_lt_saved_eps += 1
+            # Gate qualifying requires: signal-sourced + Action.Succeeded +
+            # accept + system evidence + complete burden + review < saved.
+            if (
+                is_accept
+                and has_system
+                and complete
+                and review_lt
+                and ep.get("has_signal_source", False)
+                and ep.get("has_action_succeeded", False)
+            ):
+                qualifying_eps += 1
+
+        gate_met = qualifying_eps >= 3
+        weekly_samples.append(
+            WeeklySample(
+                week_key=wk,
+                total_episodes=total,
+                qualifying_episodes=qualifying_eps,
+                system_accept_episodes=sys_accept_eps,
+                complete_burden_episodes=complete_burden_eps,
+                review_lt_saved_episodes=review_lt_saved_eps,
+                summed_review_seconds=summed_review if has_review else None,
+                summed_saved_seconds=summed_saved if has_saved else None,
+                verdict_distribution=vd,
+                system_evidence_count=sys_ev_w,
+                user_evidence_count=usr_ev_w,
+                unknown_evidence_count=unk_ev_w,
+                gate_met=gate_met,
+            )
+        )
+
+    # Gate evaluation: 4 consecutive qualifying weeks.
+    readiness, gaps = _evaluate_readiness_gate(weekly_samples)
+
+    return PrincipalObservation(
+        principal_id=principal_id,
+        readiness=readiness,
+        total_episodes=total_episodes,
+        verdict_distribution=verdict_dist,
+        system_evidence_count=system_ev,
+        user_evidence_count=user_ev,
+        unknown_evidence_count=unknown_ev,
+        signal_to_verdict_latency_seconds=median_latency,
+        weekly_samples=weekly_samples,
+        gate_gaps=gaps,
+    )
+
+
+def _evaluate_readiness_gate(
+    weekly_samples: list[WeeklySample],
+) -> tuple[str, list[str]]:
+    """Strict four-consecutive-week gate.
+
+    Each qualifying week needs >= 3 episodes with system evidence + accept
+    outcome + complete burden + review < saved.  Returns (readiness, gaps).
+    """
+    if not weekly_samples:
+        return "not_ready", ["no weekly samples"]
+
+    qualifying = [s for s in weekly_samples if s.gate_met]
+
+    if len(qualifying) >= 4:
+        for i in range(len(qualifying) - 3):
+            window = qualifying[i : i + 4]
+            if _are_consecutive_weeks(window):
+                return "passed", []
+
+    gaps: list[str] = []
+    met_weeks = [s for s in weekly_samples if s.gate_met]
+    if not met_weeks:
+        gaps.append(
+            "no qualifying weeks yet "
+            "(need >=3 system-accept episodes with complete burden "
+            "and review<saved per week)"
+        )
+    else:
+        gaps.append(
+            f"only {len(met_weeks)} qualifying week(s), need 4 consecutive"
+        )
+        for i in range(len(met_weeks) - 1):
+            wk_a = met_weeks[i]
+            wk_b = met_weeks[i + 1]
+            monday_a = _week_monday(wk_a.week_key)
+            monday_b = _week_monday(wk_b.week_key)
+            if (monday_b - monday_a).days != 7:
+                gaps.append(
+                    f"non-consecutive gap between {wk_a.week_key} and {wk_b.week_key}"
+                )
+        # Weeks below threshold.
+        below = [s for s in weekly_samples if not s.gate_met]
+        if below:
+            gaps.append(
+                f"{len(below)} week(s) below threshold "
+                f"(need >=3 qualifying episodes each)"
+            )
+
+    return "collecting", gaps
+
+
 __all__ = [
     "CAPABILITY",
     "DISCLOSURE_POLICY",
@@ -732,6 +1217,7 @@ __all__ = [
     "PERSONAL_SIGNAL_JOURNEY_ID",
     "PERSONAL_SIGNAL_OUTCOME_METRIC",
     "PERSONAL_SIGNAL_SCENE_ID",
+    "VALID_OUTPUT_ORIGINS",
     "EpisodeDraftSnapshot",
     "PersonalEpisodeCard",
     "PersonalEpisodeConfirmation",
@@ -740,4 +1226,6 @@ __all__ = [
     "PersonalExecutionContext",
     "PersonalLocalSignal",
     "PersonalSignalIngestResult",
+    "PrincipalObservation",
+    "WeeklySample",
 ]

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -13,16 +14,23 @@ from omo.episode_projection import build_episode_projection_snapshot
 from omo.event_ledger import LedgerBroker
 from omo.personal_episode import (
     EVT_EPISODE_DECISION,
+    EVT_EVIDENCE_LOCAL_DRAFT,
+    EVT_OUTCOME_HUMAN,
     EVT_SIGNAL_OBSERVED,
     PERSONAL_SIGNAL_JOURNEY_ID,
     PERSONAL_SIGNAL_OUTCOME_METRIC,
     PERSONAL_SIGNAL_SCENE_ID,
+    VALID_OUTPUT_ORIGINS,
     EpisodeDraftSnapshot,
+    PersonalEpisodeCard,
     PersonalEpisodeError,
     PersonalEpisodeService,
     PersonalLocalSignal,
+    PrincipalObservation,
+    WeeklySample,
 )
 from omo.sovereignty import REASON_ALLOW, MandateManager, SovereigntyService
+from omo.sovereignty.enforcement import EVT_ACTION_SUCCEEDED, PDP_PRODUCER
 
 
 NOW = "2026-08-12T12:00:00+00:00"
@@ -524,3 +532,662 @@ def test_get_draft_snapshot_to_dict_round_trips_safe_fields(broker, service):
     assert not hasattr(snapshot, "item_id")
     assert not hasattr(snapshot, "source_uri")
     assert not hasattr(snapshot, "content_sha256")
+
+
+# ---------------------------------------------------------------------------
+# BET-Y1Q2-T4-02 — Evidence output_origin, Outcome burden fields, observe_principal
+# ---------------------------------------------------------------------------
+
+
+def _confirmed_context(service, *, request_id="request-001"):
+    """Helper: start + confirm + reload context. Assumes _assign already called."""
+    episode = _start(service, request_id=request_id)
+    service.confirm(
+        episode_id=episode.episode_id,
+        principal_id="principal:alice",
+        executor_id="agent:personal-steward",
+        human_confirmed=True,
+    )
+    return service.reload_execution_context(episode.episode_id, "principal:alice")
+
+
+# ---- Evidence output_origin ----
+
+
+def test_record_evidence_persists_system_output_origin(broker, service):
+    _assign(broker)
+    ctx = _confirmed_context(service)
+    service.record_evidence(ctx, "file:///drafts/system.json", output_origin="system")
+
+    rows = broker.read(episode_id=ctx.episode_id, event_type=EVT_EVIDENCE_LOCAL_DRAFT)
+    payload = json.loads(rows[0]["payload_json"])
+    assert payload["output_origin"] == "system"
+
+
+def test_record_evidence_persists_user_provided_output_origin(broker, service):
+    _assign(broker)
+    ctx = _confirmed_context(service)
+    service.record_evidence(ctx, "file:///drafts/user.json", output_origin="user_provided")
+
+    rows = broker.read(episode_id=ctx.episode_id, event_type=EVT_EVIDENCE_LOCAL_DRAFT)
+    payload = json.loads(rows[0]["payload_json"])
+    assert payload["output_origin"] == "user_provided"
+
+
+def test_record_evidence_defaults_output_origin_to_unknown(broker, service):
+    _assign(broker)
+    ctx = _confirmed_context(service)
+    service.record_evidence(ctx, "file:///drafts/legacy.json")
+
+    rows = broker.read(episode_id=ctx.episode_id, event_type=EVT_EVIDENCE_LOCAL_DRAFT)
+    payload = json.loads(rows[0]["payload_json"])
+    assert payload["output_origin"] == "unknown"
+
+
+def test_record_evidence_rejects_invalid_output_origin(broker, service):
+    _assign(broker)
+    ctx = _confirmed_context(service)
+
+    with pytest.raises(PersonalEpisodeError) as exc:
+        service.record_evidence(ctx, "file:///drafts/bad.json", output_origin="hacker")
+
+    assert exc.value.reason == "invalid_output_origin"
+
+
+def test_record_evidence_idempotent_with_output_origin(broker, service):
+    _assign(broker)
+    ctx = _confirmed_context(service)
+    seq1 = service.record_evidence(ctx, "file:///drafts/dup.json", output_origin="system")
+    seq2 = service.record_evidence(ctx, "file:///drafts/dup.json", output_origin="user_provided")
+
+    assert seq1 == seq2
+    rows = broker.read(episode_id=ctx.episode_id, event_type=EVT_EVIDENCE_LOCAL_DRAFT)
+    assert len(rows) == 1  # only one event, origin stays system
+
+
+# ---- Outcome ignore + burden fields ----
+
+
+def test_record_outcome_accepts_ignore_verdict(broker, service):
+    _assign(broker)
+    ctx = _confirmed_context(service)
+    seq = service.record_outcome(ctx, "ignore")
+
+    rows = broker.read(episode_id=ctx.episode_id, event_type=EVT_OUTCOME_HUMAN)
+    payload = json.loads(rows[0]["payload_json"])
+    assert payload["verdict"] == "ignore"
+    assert seq > 0
+
+
+def test_record_outcome_persists_burden_fields(broker, service):
+    _assign(broker)
+    ctx = _confirmed_context(service)
+    service.record_outcome(
+        ctx,
+        "accept",
+        review_duration_seconds=30,
+        estimated_time_saved_seconds=300,
+    )
+
+    rows = broker.read(episode_id=ctx.episode_id, event_type=EVT_OUTCOME_HUMAN)
+    payload = json.loads(rows[0]["payload_json"])
+    assert payload["review_duration_seconds"] == 30
+    assert payload["estimated_time_saved_seconds"] == 300
+
+
+def test_record_outcome_omitted_burden_stays_null(broker, service):
+    _assign(broker)
+    ctx = _confirmed_context(service)
+    service.record_outcome(ctx, "accept")
+
+    rows = broker.read(episode_id=ctx.episode_id, event_type=EVT_OUTCOME_HUMAN)
+    payload = json.loads(rows[0]["payload_json"])
+    assert payload["review_duration_seconds"] is None
+    assert payload["estimated_time_saved_seconds"] is None
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"review_duration_seconds": -1},
+        {"estimated_time_saved_seconds": -0.1},
+        {"review_duration_seconds": float("inf")},
+        {"estimated_time_saved_seconds": float("nan")},
+    ],
+)
+def test_record_outcome_rejects_invalid_burden(broker, service, kwargs):
+    _assign(broker)
+    ctx = _confirmed_context(service)
+
+    with pytest.raises(PersonalEpisodeError) as exc:
+        service.record_outcome(ctx, "accept", **kwargs)
+
+    assert exc.value.reason == "invalid_burden"
+
+
+def test_record_outcome_accepts_zero_burden(broker, service):
+    _assign(broker)
+    ctx = _confirmed_context(service)
+    service.record_outcome(
+        ctx,
+        "accept",
+        review_duration_seconds=0,
+        estimated_time_saved_seconds=0,
+    )
+
+    rows = broker.read(episode_id=ctx.episode_id, event_type=EVT_OUTCOME_HUMAN)
+    payload = json.loads(rows[0]["payload_json"])
+    assert payload["review_duration_seconds"] == 0
+    assert payload["estimated_time_saved_seconds"] == 0
+
+
+# ---- observe_principal ----
+
+
+def _make_full_episode(
+    broker,
+    *,
+    clock_ts: str,
+    request_id: str,
+    output_origin: str = "system",
+    verdict: str = "accept",
+    review_seconds: float | None = 10,
+    saved_seconds: float | None = 100,
+    principal: str = "principal:alice",
+    signal_sourced: bool = True,
+    action_succeeded: bool = True,
+):
+    """Create a confirmed episode with evidence and outcome.
+
+    When *signal_sourced* is True (default) the episode is created via
+    ``ingest_local_signal`` and is gate-eligible.  When False it is a manual
+    ``start()`` episode — observable but never gate-qualifying.
+
+    When *action_succeeded* is True (default) an ``Action.Succeeded.v1``
+    event is appended to the PDP producer, making the episode gate-eligible.
+    """
+    svc = PersonalEpisodeService(broker, clock=lambda ts=clock_ts: ts)
+
+    if signal_sourced:
+        sha = hashlib.sha256(f"sha-{request_id}".encode()).hexdigest()
+        item_id = hashlib.sha256(f"item-{request_id}".encode()).hexdigest()[:24]
+        signal = _local_signal(
+            content_sha256=sha,
+            item_id=item_id,
+            source_uri=f"iris://local-files/{item_id}",
+            title=f"Signal {request_id}",
+            principal_id=principal,
+        )
+        result = svc.ingest_local_signal(signal)
+        episode_id = result.episode.episode_id
+    else:
+        ep = svc.start(
+            principal_id=principal,
+            role_id="role:personal-steward",
+            responsibility_id="responsibility:follow-up",
+            executor_id="agent:personal-steward",
+            request_id=request_id,
+            summary=f"Episode {request_id}",
+        )
+        episode_id = ep.episode_id
+
+    svc.confirm(
+        episode_id=episode_id,
+        principal_id=principal,
+        executor_id="agent:personal-steward",
+        human_confirmed=True,
+    )
+    ctx = svc.reload_execution_context(episode_id, principal)
+    svc.record_evidence(ctx, f"file:///drafts/{request_id}.json", output_origin=output_origin)
+    svc.record_outcome(
+        ctx,
+        verdict,
+        review_duration_seconds=review_seconds,
+        estimated_time_saved_seconds=saved_seconds,
+    )
+
+    if action_succeeded:
+        broker.append(
+            EVT_ACTION_SUCCEEDED,
+            producer=PDP_PRODUCER,
+            principal_id=principal,
+            space_id="sovereignty",
+            correlation_id=f"action|{ctx.action_id}|succeeded",
+            idempotency_key=f"{ctx.action_id}|succeeded",
+            episode_id=episode_id,
+            payload={
+                "action_id": ctx.action_id,
+                "episode_id": episode_id,
+                "principal_id": principal,
+                "status": "succeeded",
+            },
+            occurred_at=clock_ts,
+        )
+
+    return PersonalEpisodeCard(
+        episode_id=episode_id,
+        request_id=request_id,
+        summary=f"Episode {request_id}",
+    )
+
+
+_W1 = "2026-08-03T12:00:00+00:00"  # ISO week 32 Monday
+_W2 = "2026-08-10T12:00:00+00:00"  # ISO week 33 Monday
+_W3 = "2026-08-17T12:00:00+00:00"  # ISO week 34 Monday
+_W4 = "2026-08-24T12:00:00+00:00"  # ISO week 35 Monday
+
+
+def test_observe_principal_not_ready_when_empty(broker, service):
+    obs = service.observe_principal("principal:alice")
+
+    assert isinstance(obs, PrincipalObservation)
+    assert obs.readiness == "not_ready"
+    assert obs.total_episodes == 0
+    assert obs.weekly_samples == []
+    assert obs.signal_to_verdict_latency_seconds is None
+
+
+def test_observe_principal_collecting_with_partial_data(broker, service):
+    _assign(broker)
+    _make_full_episode(broker, clock_ts=_W1, request_id="w1-1")
+    _make_full_episode(broker, clock_ts=_W1, request_id="w1-2")
+
+    obs = service.observe_principal("principal:alice")
+
+    assert obs.readiness == "collecting"
+    assert len(obs.weekly_samples) == 1
+    assert obs.weekly_samples[0].gate_met is False
+    assert "below threshold" in obs.gate_gaps[0] or "qualifying" in obs.gate_gaps[0]
+
+
+def test_observe_principal_passed_four_consecutive_weeks(broker, service):
+    _assign(broker)
+    for wi, wk in enumerate([_W1, _W2, _W3, _W4]):
+        for ei in range(3):
+            _make_full_episode(
+                broker,
+                clock_ts=wk,
+                request_id=f"w{wi}-ep{ei}",
+            )
+
+    obs = service.observe_principal("principal:alice")
+
+    assert obs.readiness == "passed"
+    assert obs.gate_gaps == []
+    assert len(obs.weekly_samples) == 4
+    assert all(s.gate_met for s in obs.weekly_samples)
+    assert all(s.qualifying_episodes >= 3 for s in obs.weekly_samples)
+
+
+def test_observe_principal_not_candidate_non_consecutive_weeks(broker, service):
+    _assign(broker)
+    # Weeks 1 and 3 only — gap in week 2
+    for ei in range(3):
+        _make_full_episode(broker, clock_ts=_W1, request_id=f"w1-{ei}")
+        _make_full_episode(broker, clock_ts=_W3, request_id=f"w3-{ei}")
+
+    obs = service.observe_principal("principal:alice")
+
+    assert obs.readiness == "collecting"
+    assert any("consecutive" in g or "gap" in g for g in obs.gate_gaps)
+
+
+def test_observe_principal_not_candidate_missing_burden(broker, service):
+    _assign(broker)
+    for ei in range(3):
+        _make_full_episode(
+            broker,
+            clock_ts=_W1,
+            request_id=f"noburden-{ei}",
+            review_seconds=None,
+            saved_seconds=None,
+        )
+
+    obs = service.observe_principal("principal:alice")
+
+    assert obs.readiness == "collecting"
+    sample = obs.weekly_samples[0]
+    assert sample.qualifying_episodes == 0
+    assert sample.complete_burden_episodes == 0
+
+
+def test_observe_principal_not_candidate_review_ge_saved(broker, service):
+    _assign(broker)
+    for ei in range(3):
+        _make_full_episode(
+            broker,
+            clock_ts=_W1,
+            request_id=f"revge-{ei}",
+            review_seconds=200,
+            saved_seconds=100,
+        )
+
+    obs = service.observe_principal("principal:alice")
+
+    sample = obs.weekly_samples[0]
+    assert sample.review_lt_saved_episodes == 0
+    assert sample.qualifying_episodes == 0
+
+
+def test_observe_principal_cross_principal_isolation(broker, service):
+    _assign(broker)
+    # Alice's data
+    _make_full_episode(broker, clock_ts=_W1, request_id="alice-1")
+    # Assign bob and create bob's data
+    SovereigntyService(broker).assign(
+        "principal:bob",
+        "role:personal-steward",
+        role_name="Personal Steward",
+        scope="personal",
+        responsibilities=["follow-up"],
+    )
+    _make_full_episode(
+        broker,
+        clock_ts=_W1,
+        request_id="bob-1",
+        principal="principal:bob",
+    )
+
+    obs_alice = service.observe_principal("principal:alice")
+    obs_bob = service.observe_principal("principal:bob")
+
+    assert obs_alice.total_episodes == 1
+    assert obs_bob.total_episodes == 1
+    # Different episode_ids — no cross-contamination
+    alice_eps = {s.week_key for s in obs_alice.weekly_samples}
+    bob_eps = {s.week_key for s in obs_bob.weekly_samples}
+    assert alice_eps == bob_eps  # same week, but different episodes
+
+
+def test_observe_principal_verdict_distribution(broker, service):
+    _assign(broker)
+    ctx1 = _confirmed_context(service, request_id="vd-1")
+    service.record_evidence(ctx1, "file:///d/vd-1.json", output_origin="system")
+    service.record_outcome(ctx1, "accept")
+
+    ctx2 = _confirmed_context(service, request_id="vd-2")
+    service.record_evidence(ctx2, "file:///d/vd-2.json", output_origin="system")
+    service.record_outcome(ctx2, "reject")
+
+    ctx3 = _confirmed_context(service, request_id="vd-3")
+    service.record_evidence(ctx3, "file:///d/vd-3.json", output_origin="system")
+    service.record_outcome(ctx3, "ignore")
+
+    obs = service.observe_principal("principal:alice")
+
+    assert obs.verdict_distribution == {"accept": 1, "reject": 1, "ignore": 1}
+
+
+def test_observe_principal_evidence_origin_counts(broker, service):
+    _assign(broker)
+    ctx1 = _confirmed_context(service, request_id="ev-1")
+    service.record_evidence(ctx1, "file:///d/ev-1.json", output_origin="system")
+    service.record_outcome(ctx1, "accept")
+
+    ctx2 = _confirmed_context(service, request_id="ev-2")
+    service.record_evidence(ctx2, "file:///d/ev-2.json", output_origin="user_provided")
+    service.record_outcome(ctx2, "accept")
+
+    ctx3 = _confirmed_context(service, request_id="ev-3")
+    service.record_evidence(ctx3, "file:///d/ev-3.json")  # default unknown
+    service.record_outcome(ctx3, "accept")
+
+    obs = service.observe_principal("principal:alice")
+
+    assert obs.system_evidence_count == 1
+    assert obs.user_evidence_count == 1
+    assert obs.unknown_evidence_count == 1
+
+
+def test_observe_principal_signal_to_verdict_latency(broker, service):
+    _assign(broker)
+    signal_time = "2026-08-12T10:00:00+00:00"
+    outcome_time = "2026-08-12T12:00:00+00:00"
+
+    svc_signal = PersonalEpisodeService(broker, clock=lambda: signal_time)
+    ep = svc_signal.start(
+        principal_id="principal:alice",
+        role_id="role:personal-steward",
+        responsibility_id="responsibility:follow-up",
+        executor_id="agent:personal-steward",
+        request_id="latency-1",
+        summary="Latency test",
+    )
+    svc_signal.confirm(
+        episode_id=ep.episode_id,
+        principal_id="principal:alice",
+        executor_id="agent:personal-steward",
+        human_confirmed=True,
+    )
+    ctx = svc_signal.reload_execution_context(ep.episode_id, "principal:alice")
+    svc_signal.record_evidence(ctx, "file:///d/lat.json", output_origin="system")
+
+    svc_outcome = PersonalEpisodeService(broker, clock=lambda: outcome_time)
+    svc_outcome.record_outcome(ctx, "accept", review_duration_seconds=10, estimated_time_saved_seconds=100)
+
+    obs = service.observe_principal("principal:alice")
+
+    assert obs.signal_to_verdict_latency_seconds is not None
+    assert obs.signal_to_verdict_latency_seconds == 7200.0  # 2 hours
+
+
+def test_observe_principal_read_only_leaves_count_and_hash_unchanged(broker, service):
+    _assign(broker)
+    _make_full_episode(broker, clock_ts=_W1, request_id="ro-1")
+
+    before_count = broker.count()
+    before_rows = broker.read()
+    before_last_hash = before_rows[-1]["event_hash"]
+
+    service.observe_principal("principal:alice")
+
+    after_count = broker.count()
+    after_rows = broker.read()
+    after_last_hash = after_rows[-1]["event_hash"]
+
+    assert after_count == before_count
+    assert after_last_hash == before_last_hash
+
+
+def test_observe_principal_no_raw_leakage_in_output(broker, service):
+    _assign(broker)
+    result = service.ingest_local_signal(_local_signal())
+    episode_id = result.episode.episode_id
+    service.confirm(
+        episode_id=episode_id,
+        principal_id="principal:alice",
+        executor_id="agent:personal-steward",
+        human_confirmed=True,
+    )
+    ctx = service.reload_execution_context(episode_id, "principal:alice")
+    service.record_evidence(ctx, "file:///drafts/secret.json", output_origin="system")
+    service.record_outcome(ctx, "accept", review_duration_seconds=5, estimated_time_saved_seconds=50)
+
+    obs = service.observe_principal("principal:alice")
+    data = obs.to_dict()
+    serialized = json.dumps(data)
+
+    # No raw body / path / uri / digest in observation output
+    assert "file:///drafts/secret.json" not in serialized
+    assert "/Users/" not in serialized
+    assert "iris://local-files/" not in serialized
+    assert "a" * 64 not in serialized
+    assert "bm90ZXMv" not in serialized
+
+
+def test_observe_principal_to_dict_round_trips(broker, service):
+    _assign(broker)
+    _make_full_episode(broker, clock_ts=_W1, request_id="td-1")
+
+    obs = service.observe_principal("principal:alice")
+    data = obs.to_dict()
+
+    assert set(data.keys()) == {
+        "principal_id",
+        "readiness",
+        "total_episodes",
+        "verdict_distribution",
+        "system_evidence_count",
+        "user_evidence_count",
+        "unknown_evidence_count",
+        "signal_to_verdict_latency_seconds",
+        "weekly_samples",
+        "gate_gaps",
+    }
+    assert isinstance(data["weekly_samples"], list)
+    if data["weekly_samples"]:
+        ws = data["weekly_samples"][0]
+        assert isinstance(ws, dict)
+        assert "week_key" in ws
+        assert "gate_met" in ws
+        assert "verdict_distribution" in ws
+
+
+def test_observe_principal_legacy_evidence_treated_as_unknown(broker, service):
+    """Evidence recorded without output_origin (legacy) counts as unknown."""
+    _assign(broker)
+    ctx = _confirmed_context(service, request_id="legacy-ev")
+    # Record evidence without output_origin — simulates legacy data
+    service.record_evidence(ctx, "file:///drafts/legacy.json")
+    service.record_outcome(ctx, "accept")
+
+    obs = service.observe_principal("principal:alice")
+
+    assert obs.unknown_evidence_count == 1
+    assert obs.system_evidence_count == 0
+
+
+def test_observe_principal_candidate_requires_system_evidence(broker, service):
+    """user_provided evidence doesn't count for the gate."""
+    _assign(broker)
+    for wi, wk in enumerate([_W1, _W2, _W3, _W4]):
+        for ei in range(3):
+            _make_full_episode(
+                broker,
+                clock_ts=wk,
+                request_id=f"usr-{wi}-{ei}",
+                output_origin="user_provided",
+            )
+
+    obs = service.observe_principal("principal:alice")
+
+    # user_provided evidence doesn't qualify for the gate
+    assert obs.readiness == "collecting"
+    assert obs.system_evidence_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Review-blocker regression tests
+# ---------------------------------------------------------------------------
+
+
+def test_gate_requires_action_succeeded(broker, service):
+    """Blocker 1: episodes without matching Action.Succeeded never qualify."""
+    _assign(broker)
+    for ei in range(3):
+        _make_full_episode(
+            broker,
+            clock_ts=_W1,
+            request_id=f"no-pdp-{ei}",
+            action_succeeded=False,
+        )
+    obs = service.observe_principal("principal:alice")
+    sample = obs.weekly_samples[0]
+    assert sample.qualifying_episodes == 0
+    assert sample.gate_met is False
+
+
+def test_gate_requires_signal_source(broker, service):
+    """Blocker 2: manually-started episodes never gate-qualify."""
+    _assign(broker)
+    for ei in range(3):
+        _make_full_episode(
+            broker,
+            clock_ts=_W1,
+            request_id=f"manual-{ei}",
+            signal_sourced=False,
+        )
+    obs = service.observe_principal("principal:alice")
+    sample = obs.weekly_samples[0]
+    assert sample.qualifying_episodes == 0
+
+
+def test_week_bucket_uses_outcome_time(broker, service):
+    """Blocker 3: week bucket is effective outcome occurred_at, not signal time."""
+    _assign(broker)
+    # Signal + decision at _W1, outcome recorded at _W2 (next ISO week).
+    svc = PersonalEpisodeService(broker, clock=lambda: _W1)
+    sha = hashlib.sha256(b"wbucket").hexdigest()
+    item_id = hashlib.sha256(b"wbucket-item").hexdigest()[:24]
+    signal = _local_signal(
+        content_sha256=sha,
+        item_id=item_id,
+        source_uri=f"iris://local-files/{item_id}",
+        title="Week-bucket test",
+    )
+    result = svc.ingest_local_signal(signal)
+    episode_id = result.episode.episode_id
+    svc.confirm(
+        episode_id=episode_id,
+        principal_id="principal:alice",
+        executor_id="agent:personal-steward",
+        human_confirmed=True,
+    )
+    ctx = svc.reload_execution_context(episode_id, "principal:alice")
+    svc.record_evidence(ctx, "file:///drafts/wbucket.json", output_origin="system")
+
+    # Record outcome at _W2 (one week later).
+    svc2 = PersonalEpisodeService(broker, clock=lambda: _W2)
+    svc2.record_outcome(ctx, "accept", review_duration_seconds=5, estimated_time_saved_seconds=50)
+
+    broker.append(
+        EVT_ACTION_SUCCEEDED,
+        producer=PDP_PRODUCER,
+        principal_id="principal:alice",
+        space_id="sovereignty",
+        correlation_id=f"action|{ctx.action_id}|succeeded",
+        idempotency_key=f"{ctx.action_id}|succeeded",
+        episode_id=episode_id,
+        payload={"action_id": ctx.action_id, "episode_id": episode_id, "status": "succeeded"},
+        occurred_at=_W2,
+    )
+
+    obs = service.observe_principal("principal:alice")
+    assert len(obs.weekly_samples) == 1
+    # _W1 = 2026-W32, _W2 = 2026-W33
+    assert obs.weekly_samples[0].week_key == "2026-W33"
+
+
+def test_effective_verdict_accept_then_reject(broker, service):
+    """Blocker 4: accept→reject makes effective verdict reject; no double-count."""
+    _assign(broker)
+    ep = _make_full_episode(
+        broker,
+        clock_ts=_W1,
+        request_id="accept-reject",
+        verdict="accept",
+    )
+    # Record a later reject on the same episode.
+    svc = PersonalEpisodeService(broker, clock=lambda: _W1)
+    ctx = svc.reload_execution_context(ep.episode_id, "principal:alice")
+    svc.record_outcome(ctx, "reject")
+
+    obs = service.observe_principal("principal:alice")
+
+    # Effective verdict is reject (latest by sequence), not accept.
+    assert obs.verdict_distribution.get("accept", 0) == 0
+    assert obs.verdict_distribution.get("reject", 0) == 1
+    if obs.weekly_samples:
+        assert obs.weekly_samples[0].qualifying_episodes == 0
+
+
+def test_gate_passed_then_rename_from_candidate(broker, service):
+    """Blocker 5: four-week success returns 'passed', not 'candidate'."""
+    _assign(broker)
+    for wi, wk in enumerate([_W1, _W2, _W3, _W4]):
+        for ei in range(3):
+            _make_full_episode(broker, clock_ts=wk, request_id=f"rn-{wi}-{ei}")
+
+    obs = service.observe_principal("principal:alice")
+    assert obs.readiness == "passed"
+    assert "candidate" not in obs.readiness
