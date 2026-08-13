@@ -80,9 +80,7 @@ def _bridge_dispatch_to_mesh(
         step_run_id = f"{run_id}:execute"
         admission_id = f"legacy-{uuid4().hex[:12]}"
         issued_at = now
-        expires_at = (
-            datetime.fromisoformat(now) + timedelta(seconds=1200)
-        ).isoformat()
+        expires_at = (datetime.fromisoformat(now) + timedelta(seconds=1200)).isoformat()
 
         grant = {
             "admission_id": admission_id,
@@ -460,7 +458,11 @@ def dispatch_task(
             "successor_dispatch_id": None,
             "note_ref": str(reclaim_path),
         },
-        **({"blueprint": blueprint, "control_state": control_state} if blueprint else {}),
+        **(
+            {"blueprint": blueprint, "control_state": control_state}
+            if blueprint
+            else {}
+        ),
     }
     _write_yaml(root / dispatch_path, dispatch)
 
@@ -567,7 +569,11 @@ def dispatch_task(
         "checkpoint_path": str(checkpoint_path),
         "reclaim_path": str(reclaim_path),
         "review_path": str(review_path),
-        **({"blueprint": blueprint, "control_state": control_state} if blueprint else {}),
+        **(
+            {"blueprint": blueprint, "control_state": control_state}
+            if blueprint
+            else {}
+        ),
     }
 
 

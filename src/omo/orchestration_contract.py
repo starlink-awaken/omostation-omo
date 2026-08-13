@@ -512,7 +512,9 @@ def _validate_transport_receipt(
             "transport receipt changed_paths do not bind manifest",
         )
     receipt_digest = _required_text(receipt["receipt_digest"], "receipt_digest")
-    canonical_receipt = {key: value for key, value in receipt.items() if key != "receipt_digest"}
+    canonical_receipt = {
+        key: value for key, value in receipt.items() if key != "receipt_digest"
+    }
     if receipt_digest != compute_packet_hash(canonicalize(canonical_receipt)):
         raise OrchestrationContractError(
             "verification_unprovable", "transport receipt digest is invalid"
