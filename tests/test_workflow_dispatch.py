@@ -96,6 +96,53 @@ def test_admit_workflow_records_request_and_grant(tmp_path: Path) -> None:
     assert snapshot["admission"]["admission_id"] == grant["admission_id"]
 
 
+def test_admit_workflow_merges_validated_blueprint_identity_into_request(
+    tmp_path: Path,
+) -> None:
+    _task(tmp_path)
+    identity = {
+        "bet_id": "BET-1",
+        "packet_id": "WP-BP-0123456789abcdef",
+        "packet_hash": "sha256:" + "a" * 64,
+        "task_ref": ".omo/tasks/active/TASK-MESH-1.yaml",
+    }
+
+    admit_workflow(
+        tmp_path,
+        task_id="TASK-MESH-1",
+        backend="runtime",
+        required_capabilities=["runtime"],
+        capability_health=_health(),
+        workflow_run_id="run-identity",
+        request_identity=identity,
+    )
+
+    requested = WorkflowMeshStore(tmp_path / ".omo").events()[0]
+    assert requested["event_type"] == "WorkflowRequested"
+    assert {key: requested["payload"][key] for key in identity} == identity
+
+
+def test_admit_workflow_rejects_invalid_blueprint_identity_before_mesh_write(
+    tmp_path: Path,
+) -> None:
+    _task(tmp_path)
+    with pytest.raises(WorkflowDispatchError, match="request identity"):
+        admit_workflow(
+            tmp_path,
+            task_id="TASK-MESH-1",
+            backend="runtime",
+            required_capabilities=["runtime"],
+            capability_health=_health(),
+            request_identity={
+                "bet_id": "BET-1",
+                "packet_id": "WP-1",
+                "packet_hash": "not-a-hash",
+                "task_ref": ".omo/tasks/active/TASK-MESH-1.yaml",
+            },
+        )
+    assert WorkflowMeshStore(tmp_path / ".omo").events() == []
+
+
 def test_admit_workflow_fails_closed_for_unhealthy_capability(tmp_path: Path) -> None:
     _task(tmp_path)
     health = _health()
