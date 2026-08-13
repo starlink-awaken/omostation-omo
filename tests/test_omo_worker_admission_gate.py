@@ -561,3 +561,32 @@ def test_launch_failure_is_visible_and_keeps_redacted_stdout_evidence(
     log = (tmp_path / dispatch["execution"]["log_ref"]).read_text(encoding="utf-8")
     assert "partial result" in log
     assert "secret-value" not in log
+
+
+def test_interactive_supervisor_worker_rejects_legacy_direct_launch_without_writes(
+    tmp_path: Path,
+) -> None:
+    worker = _admitted_pi_worker()
+    worker["id"] = "codex"
+    worker["supervision"] = {"controller_direct_start_required": True}
+    task_path = _task_fixture(tmp_path, worker=worker)
+    task = yaml.safe_load(task_path.read_text(encoding="utf-8"))
+    task["risk_level"] = "L0"
+    task["allowed_operation_level"] = "L0"
+    task_path.write_text(yaml.safe_dump(task, sort_keys=False), encoding="utf-8")
+    before = _file_snapshot(tmp_path)
+
+    with pytest.raises(
+        ValueError,
+        match="controller direct start is required for worker_id=codex",
+    ):
+        dispatch_task(
+            tmp_path,
+            task_id="TASK-ADMISSION-GATE",
+            worker_id="codex",
+            allowed_write_paths=[],
+            launch=True,
+            now="2026-08-14T01:02:03+00:00",
+        )
+
+    assert _file_snapshot(tmp_path) == before

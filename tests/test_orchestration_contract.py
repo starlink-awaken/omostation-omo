@@ -138,8 +138,8 @@ def _manifest(
         "claims": [
             {
                 "acceptance_id": "AC1",
-                "assertion": "candidate ready",
-                "evidence_refs": ["evidence://fixture"],
+                "assertion": packet["acceptance"]["done_when"][0]["assertion"],
+                "evidence_refs": ["git-object://" + "a" * 40],
             }
         ],
         "checks": [build_command_check(["pytest", "-q"], 0, "fixture green")],
@@ -808,13 +808,7 @@ def test_claim_or_check_change_for_same_external_task_is_a_manifest_conflict(tmp
         fixture=fixture,
     )
     changed = _manifest(packet)
-    changed["claims"] = [
-        {
-            "acceptance_id": "AC1",
-            "assertion": "altered",
-            "evidence_refs": ["evidence://fixture"],
-        }
-    ]
+    changed["checks"][0]["stdout_hash"] = "sha256:" + "b" * 64
 
     with pytest.raises(OrchestrationContractError, match="manifest_conflict"):
         coordinator.record_kandev_candidate(
@@ -823,6 +817,30 @@ def test_claim_or_check_change_for_same_external_task_is_a_manifest_conflict(tmp
             packet=packet,
             manifest=changed,
             fixture=fixture,
+        )
+
+
+@pytest.mark.parametrize("mutation", ["duplicate_id", "wrong_assertion", "unbound_ref"])
+def test_candidate_claims_must_be_directly_bound_to_packet_and_durable_artifacts(
+    tmp_path, mutation
+):
+    step_run_id = _seed_succeeded_run(tmp_path)
+    packet = _packet()
+    manifest = _manifest(packet)
+    if mutation == "duplicate_id":
+        manifest["claims"].append(dict(manifest["claims"][0]))
+    elif mutation == "wrong_assertion":
+        manifest["claims"][0]["assertion"] = "executor invented this assertion"
+    else:
+        manifest["claims"][0]["evidence_refs"] = ["git-object://" + "b" * 40]
+
+    with pytest.raises(OrchestrationContractError, match="verification_unprovable"):
+        OrchestrationContractCoordinator(tmp_path).record_kandev_candidate(
+            workflow_run_id="run-orch",
+            step_run_id=step_run_id,
+            packet=packet,
+            manifest=manifest,
+            fixture=_fixture(packet),
         )
 
 

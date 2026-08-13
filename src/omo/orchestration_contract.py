@@ -301,6 +301,12 @@ def _validate_candidate(
         raise OrchestrationContractError(
             "verification_unprovable", "candidate checks must all pass"
         )
+    acceptance_by_id = {
+        str(item.get("id")): str(item.get("assertion") or "").strip()
+        for item in packet_value["acceptance"].get("done_when", [])
+        if isinstance(item, Mapping) and item.get("id")
+    }
+    seen_claim_ids: set[str] = set()
     for claim in manifest_value["claims"]:
         if not str(claim.get("assertion") or "").strip() or not claim.get(
             "evidence_refs"
@@ -309,11 +315,19 @@ def _validate_candidate(
                 "verification_unprovable",
                 "every claim requires assertion and evidence_refs",
             )
-    required_acceptance_ids = {
-        str(item.get("id"))
-        for item in packet_value["acceptance"].get("done_when", [])
-        if isinstance(item, Mapping) and item.get("id")
-    }
+        acceptance_id = str(claim.get("acceptance_id") or "")
+        if (
+            acceptance_id in seen_claim_ids
+            or acceptance_id not in acceptance_by_id
+            or str(claim.get("assertion") or "").strip()
+            != acceptance_by_id[acceptance_id]
+        ):
+            raise OrchestrationContractError(
+                "verification_unprovable",
+                "candidate claims must uniquely match packet acceptance",
+            )
+        seen_claim_ids.add(acceptance_id)
+    required_acceptance_ids = set(acceptance_by_id)
     claimed_acceptance_ids = {
         str(item.get("acceptance_id"))
         for item in manifest_value["claims"]
@@ -362,6 +376,16 @@ def _validate_candidate(
     ):
         raise OrchestrationContractError(
             "verification_unprovable", "candidate requires durable artifact refs"
+        )
+    artifact_ref_set = {str(ref) for ref in artifact_refs}
+    if any(
+        str(ref) not in artifact_ref_set
+        for claim in manifest_value["claims"]
+        for ref in claim.get("evidence_refs", [])
+    ):
+        raise OrchestrationContractError(
+            "verification_unprovable",
+            "claim evidence must be a durable candidate artifact",
         )
 
     write_surfaces = packet_value["scope"].get("write_surfaces", [])
