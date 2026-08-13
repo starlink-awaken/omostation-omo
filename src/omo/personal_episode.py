@@ -22,10 +22,9 @@ from ecos.ssot.mof.generated.control.mof_control_models import (
 )
 
 from omo.event_ledger.broker import LedgerBroker
-from omo.sovereignty.mandates import MandateError, MandateManager, STATUS_ACTIVE
 from omo.sovereignty.enforcement import EVT_ACTION_SUCCEEDED, PDP_PRODUCER
+from omo.sovereignty.mandates import STATUS_ACTIVE, MandateError, MandateManager
 from omo.sovereignty.roles import SovereigntyError, SovereigntyService
-
 
 PERSONAL_EPISODE_PRODUCER = "omo-personal-episode"
 PERSONAL_EPISODE_SPACE_ID = "personal"
@@ -315,7 +314,9 @@ class PersonalEpisodeService:
             )
 
         self._active_assignment(principal_id, role_id, responsibility_id)
-        episode_id = _deterministic("episode_", principal_id, role_id, responsibility_id, request_id)
+        episode_id = _deterministic(
+            "episode_", principal_id, role_id, responsibility_id, request_id
+        )
         payload = {
             "episode_id": episode_id,
             "request_id": request_id,
@@ -342,7 +343,9 @@ class PersonalEpisodeService:
             payload=payload,
             occurred_at=self._clock_ts(),
         )
-        return PersonalEpisodeCard(episode_id=episode_id, request_id=request_id, summary=summary)
+        return PersonalEpisodeCard(
+            episode_id=episode_id, request_id=request_id, summary=summary
+        )
 
     def ingest_local_signal(
         self, signal: PersonalLocalSignal
@@ -357,7 +360,9 @@ class PersonalEpisodeService:
         """
         self._validate_local_signal(signal)
         occurred_at = self._clock_ts()
-        source_key = _short_hash(signal.source_id, signal.item_id, signal.content_sha256)
+        source_key = _short_hash(
+            signal.source_id, signal.item_id, signal.content_sha256
+        )
         event_id = _deterministic("evt_", "local-signal", source_key)
         signal_id = _deterministic("signal_", "local-signal", source_key)
 
@@ -495,7 +500,9 @@ class PersonalEpisodeService:
         start_row = self._start_for_episode(episode_id, principal_id)
         payload = _payload(start_row)
         if payload.get("executor_id") != executor_id:
-            raise PersonalEpisodeError("executor_mismatch", "executor does not match episode")
+            raise PersonalEpisodeError(
+                "executor_mismatch", "executor does not match episode"
+            )
         role_id = _required_payload(payload, "role_id")
         responsibility_id = _required_payload(payload, "responsibility_id")
         assignment = self._active_assignment(principal_id, role_id, responsibility_id)
@@ -504,7 +511,9 @@ class PersonalEpisodeService:
         current = manager.get(mandate_id, principal_id)
         if current is not None:
             if current.status != STATUS_ACTIVE:
-                raise PersonalEpisodeError("mandate_not_active", "episode mandate is revoked")
+                raise PersonalEpisodeError(
+                    "mandate_not_active", "episode mandate is revoked"
+                )
             return PersonalEpisodeConfirmation(episode_id, mandate_id, reused=True)
 
         responsibility = next(
@@ -555,9 +564,13 @@ class PersonalEpisodeService:
         role_id = _required_payload(payload, "role_id")
         responsibility_id = _required_payload(payload, "responsibility_id")
         mandate_id = _deterministic("mandate:personal-", episode_id)
-        mandate = MandateManager(self._broker, clock=self._clock).get(mandate_id, principal_id)
+        mandate = MandateManager(self._broker, clock=self._clock).get(
+            mandate_id, principal_id
+        )
         if mandate is None or mandate.status != STATUS_ACTIVE:
-            raise PersonalEpisodeError("episode_not_confirmed", "episode has no active mandate")
+            raise PersonalEpisodeError(
+                "episode_not_confirmed", "episode has no active mandate"
+            )
         return PersonalExecutionContext(
             episode_id=episode_id,
             mandate_id=mandate_id,
@@ -658,7 +671,9 @@ class PersonalEpisodeService:
             )
         _validate_burden("review_duration_seconds", review_duration_seconds)
         _validate_burden("estimated_time_saved_seconds", estimated_time_saved_seconds)
-        existing = self._find_event(context.episode_id, EVT_OUTCOME_HUMAN, "verdict", verdict)
+        existing = self._find_event(
+            context.episode_id, EVT_OUTCOME_HUMAN, "verdict", verdict
+        )
         if existing is not None:
             return int(existing["sequence"])
         return self._broker.append(
@@ -750,7 +765,11 @@ class PersonalEpisodeService:
                     evidence_payloads.append(_payload(er))
                 elif et == EVT_OUTCOME_HUMAN:
                     outcome_rows.append(
-                        (int(er.get("sequence", 0)), _payload(er), _parse_ts(er.get("occurred_at")))
+                        (
+                            int(er.get("sequence", 0)),
+                            _payload(er),
+                            _parse_ts(er.get("occurred_at")),
+                        )
                     )
             if decision_row is None:
                 continue
@@ -791,16 +810,25 @@ class PersonalEpisodeService:
 
         return _build_observation(principal_id, observations)
 
-    def _active_assignment(self, principal_id: str, role_id: str, responsibility_id: str):
+    def _active_assignment(
+        self, principal_id: str, role_id: str, responsibility_id: str
+    ):
         try:
-            assignment = SovereigntyService(self._broker).current_assignment(principal_id, role_id)
+            assignment = SovereigntyService(self._broker).current_assignment(
+                principal_id, role_id
+            )
         except SovereigntyError as exc:
             raise PersonalEpisodeError("role_not_active", str(exc)) from exc
         if assignment is None or assignment.status != STATUS_ACTIVE:
-            raise PersonalEpisodeError("role_not_active", "role assignment is not active")
-        if not any(item.resp_id == responsibility_id for item in assignment.responsibilities):
             raise PersonalEpisodeError(
-                "responsibility_not_active", "responsibility is not assigned to active role"
+                "role_not_active", "role assignment is not active"
+            )
+        if not any(
+            item.resp_id == responsibility_id for item in assignment.responsibilities
+        ):
+            raise PersonalEpisodeError(
+                "responsibility_not_active",
+                "responsibility is not assigned to active role",
             )
         return assignment
 
@@ -823,7 +851,8 @@ class PersonalEpisodeService:
             self._required(name, getattr(signal, name))
         if "\n" in signal.title or "\r" in signal.title or len(signal.title) > 240:
             raise PersonalEpisodeError(
-                "invalid_signal_title", "title must be one line and at most 240 characters"
+                "invalid_signal_title",
+                "title must be one line and at most 240 characters",
             )
         if len(signal.content_sha256) != 64 or any(
             char not in "0123456789abcdef" for char in signal.content_sha256.lower()
@@ -831,9 +860,7 @@ class PersonalEpisodeService:
             raise PersonalEpisodeError(
                 "invalid_signal_digest", "content_sha256 must be a SHA-256 hex digest"
             )
-        if not all(
-            char.isalnum() or char in "._:-" for char in signal.source_id
-        ):
+        if not all(char.isalnum() or char in "._:-" for char in signal.source_id):
             raise PersonalEpisodeError(
                 "invalid_signal_source", "source_id must be a stable source identifier"
             )
@@ -853,12 +880,18 @@ class PersonalEpisodeService:
             )
         ):
             raise PersonalEpisodeError(
-                "invalid_signal_source", "source_uri must be a safe Iris local-files URI"
+                "invalid_signal_source",
+                "source_uri must be a safe Iris local-files URI",
             )
 
-    def _find_start(self, principal_id: str, request_id: str) -> Mapping[str, Any] | None:
+    def _find_start(
+        self, principal_id: str, request_id: str
+    ) -> Mapping[str, Any] | None:
         for row in self._broker.read(producer=PERSONAL_EPISODE_PRODUCER):
-            if row.get("event_type") != EVT_EPISODE_DECISION or row.get("principal_id") != principal_id:
+            if (
+                row.get("event_type") != EVT_EPISODE_DECISION
+                or row.get("principal_id") != principal_id
+            ):
                 continue
             if _payload(row).get("request_id") == request_id:
                 return row
@@ -892,17 +925,27 @@ class PersonalEpisodeService:
             "malformed_signal", "local signal has no causal episode decision"
         )
 
-    def _start_for_episode(self, episode_id: str, principal_id: str) -> Mapping[str, Any]:
+    def _start_for_episode(
+        self, episode_id: str, principal_id: str
+    ) -> Mapping[str, Any]:
         for row in self._broker.read(episode_id=episode_id):
-            if row.get("event_type") == EVT_EPISODE_DECISION and row.get("principal_id") == principal_id:
+            if (
+                row.get("event_type") == EVT_EPISODE_DECISION
+                and row.get("principal_id") == principal_id
+            ):
                 return row
-        raise PersonalEpisodeError("episode_not_found", "personal episode decision was not found")
+        raise PersonalEpisodeError(
+            "episode_not_found", "personal episode decision was not found"
+        )
 
     def _find_event(
         self, episode_id: str, event_type: str, payload_key: str, payload_value: str
     ) -> Mapping[str, Any] | None:
         for row in self._broker.read(episode_id=episode_id):
-            if row.get("event_type") == event_type and _payload(row).get(payload_key) == payload_value:
+            if (
+                row.get("event_type") == event_type
+                and _payload(row).get(payload_key) == payload_value
+            ):
                 return row
         return None
 
@@ -913,7 +956,9 @@ class PersonalEpisodeService:
         try:
             value = datetime.fromisoformat(self._clock())
         except (TypeError, ValueError) as exc:
-            raise PersonalEpisodeError("invalid_clock", "clock must return ISO-8601") from exc
+            raise PersonalEpisodeError(
+                "invalid_clock", "clock must return ISO-8601"
+            ) from exc
         if value.tzinfo is None:
             raise PersonalEpisodeError("invalid_clock", "clock must be timezone-aware")
         return value
@@ -928,16 +973,22 @@ def _payload(row: Mapping[str, Any]) -> Mapping[str, Any]:
     try:
         value = json.loads(str(row["payload_json"]))
     except (KeyError, TypeError, ValueError) as exc:
-        raise PersonalEpisodeError("malformed_episode", "episode payload is invalid") from exc
+        raise PersonalEpisodeError(
+            "malformed_episode", "episode payload is invalid"
+        ) from exc
     if not isinstance(value, Mapping):
-        raise PersonalEpisodeError("malformed_episode", "episode payload must be an object")
+        raise PersonalEpisodeError(
+            "malformed_episode", "episode payload must be an object"
+        )
     return value
 
 
 def _required_payload(payload: Mapping[str, Any], key: str) -> str:
     value = payload.get(key)
     if not isinstance(value, str) or not value:
-        raise PersonalEpisodeError("malformed_episode", f"episode payload missing {key}")
+        raise PersonalEpisodeError(
+            "malformed_episode", f"episode payload missing {key}"
+        )
     return value
 
 
@@ -957,7 +1008,9 @@ def _validate_burden(name: str, value: float | None) -> None:
         raise PersonalEpisodeError("invalid_burden", f"{name} must be a number")
     v = float(value)
     if v < 0 or not math.isfinite(v):
-        raise PersonalEpisodeError("invalid_burden", f"{name} must be non-negative and finite")
+        raise PersonalEpisodeError(
+            "invalid_burden", f"{name} must be non-negative and finite"
+        )
 
 
 def _iso_week_key(dt: datetime) -> str:
@@ -1022,12 +1075,17 @@ def _build_observation(
                 verdict_dist[v] = verdict_dist.get(v, 0) + 1
 
     # Global evidence origin counts.
-    system_ev = sum(1 for ep in observations for o in ep["evidence_origins"] if o == "system")
+    system_ev = sum(
+        1 for ep in observations for o in ep["evidence_origins"] if o == "system"
+    )
     user_ev = sum(
         1 for ep in observations for o in ep["evidence_origins"] if o == "user_provided"
     )
     unknown_ev = sum(
-        1 for ep in observations for o in ep["evidence_origins"] if o not in ("system", "user_provided")
+        1
+        for ep in observations
+        for o in ep["evidence_origins"]
+        if o not in ("system", "user_provided")
     )
 
     # Signal-to-effective-outcome latency (median).
@@ -1183,9 +1241,7 @@ def _evaluate_readiness_gate(
             "and review<saved per week)"
         )
     else:
-        gaps.append(
-            f"only {len(met_weeks)} qualifying week(s), need 4 consecutive"
-        )
+        gaps.append(f"only {len(met_weeks)} qualifying week(s), need 4 consecutive")
         for i in range(len(met_weeks) - 1):
             wk_a = met_weeks[i]
             wk_b = met_weeks[i + 1]

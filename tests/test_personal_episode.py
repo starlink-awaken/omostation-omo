@@ -8,8 +8,8 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
-
 from ecos.ssot.mof.generated.control.mof_control_models import EventEnvelope, Signal
+
 from omo.episode_projection import build_episode_projection_snapshot
 from omo.event_ledger import LedgerBroker
 from omo.personal_episode import (
@@ -31,7 +31,6 @@ from omo.personal_episode import (
 )
 from omo.sovereignty import REASON_ALLOW, MandateManager, SovereigntyService
 from omo.sovereignty.enforcement import EVT_ACTION_SUCCEEDED, PDP_PRODUCER
-
 
 NOW = "2026-08-12T12:00:00+00:00"
 
@@ -88,7 +87,9 @@ def _local_signal(**changes):
     )
 
 
-def test_start_requires_active_assignment_with_requested_responsibility(broker, service):
+def test_start_requires_active_assignment_with_requested_responsibility(
+    broker, service
+):
     _assign(broker, responsibility="other-duty")
 
     with pytest.raises(PersonalEpisodeError) as exc:
@@ -192,9 +193,9 @@ def test_fresh_instance_replays_execution_context_for_pep(broker, service):
         human_confirmed=True,
     )
 
-    context = PersonalEpisodeService(broker, clock=lambda: NOW).reload_execution_context(
-        episode.episode_id, "principal:alice"
-    )
+    context = PersonalEpisodeService(
+        broker, clock=lambda: NOW
+    ).reload_execution_context(episode.episode_id, "principal:alice")
 
     assert context.episode_id == episode.episode_id
     assert context.mandate_id.startswith("mandate:")
@@ -299,7 +300,10 @@ def test_ingest_local_signal_is_causal_private_and_mof_validated(broker, service
     assert "Follow up with the project team" in signal_row["payload_json"]
     assert "/Users/" not in signal_row["payload_json"]
     assert "file://" not in signal_row["payload_json"]
-    assert EventEnvelope.model_validate(signal_payload["event_envelope"]).event_id == result.signal_event_id
+    assert (
+        EventEnvelope.model_validate(signal_payload["event_envelope"]).event_id
+        == result.signal_event_id
+    )
     assert Signal.model_validate(signal_payload["signal"]).signal_id == result.signal_id
     assert broker.verify_chain()["ok"] is True
 
@@ -367,7 +371,10 @@ def test_ingest_local_signal_changed_digest_creates_a_new_causal_pair(broker, se
         ),
         (_local_signal(title=""), "invalid_request"),
         (_local_signal(content_sha256="not-a-digest"), "invalid_signal_digest"),
-        (_local_signal(source_uri="file:///Users/alice/private.md"), "invalid_signal_source"),
+        (
+            _local_signal(source_uri="file:///Users/alice/private.md"),
+            "invalid_signal_source",
+        ),
     ],
 )
 def test_ingest_local_signal_rejects_invalid_input_before_any_append(
@@ -391,9 +398,9 @@ def test_ingest_local_signal_replays_after_process_restart(tmp_path):
     first_broker = LedgerBroker.connect(db_path)
     try:
         _assign(first_broker)
-        first = PersonalEpisodeService(first_broker, clock=lambda: NOW).ingest_local_signal(
-            _local_signal()
-        )
+        first = PersonalEpisodeService(
+            first_broker, clock=lambda: NOW
+        ).ingest_local_signal(_local_signal())
     finally:
         first_broker.close()
 
@@ -436,9 +443,7 @@ def test_get_draft_snapshot_returns_safe_fields_for_signal_episode(broker, servi
     _assign(broker)
     result = service.ingest_local_signal(_local_signal())
 
-    snapshot = service.get_draft_snapshot(
-        result.episode.episode_id, "principal:alice"
-    )
+    snapshot = service.get_draft_snapshot(result.episode.episode_id, "principal:alice")
 
     assert snapshot.episode_id == result.episode.episode_id
     assert snapshot.request_id == result.episode.request_id
@@ -483,9 +488,7 @@ def test_get_draft_snapshot_survives_process_restart(tmp_path):
     first_broker = LedgerBroker.connect(db_path)
     try:
         _assign(first_broker)
-        episode = PersonalEpisodeService(
-            first_broker, clock=lambda: NOW
-        ).start(
+        episode = PersonalEpisodeService(first_broker, clock=lambda: NOW).start(
             principal_id="principal:alice",
             role_id="role:personal-steward",
             responsibility_id="responsibility:follow-up",
@@ -567,7 +570,9 @@ def test_record_evidence_persists_system_output_origin(broker, service):
 def test_record_evidence_persists_user_provided_output_origin(broker, service):
     _assign(broker)
     ctx = _confirmed_context(service)
-    service.record_evidence(ctx, "file:///drafts/user.json", output_origin="user_provided")
+    service.record_evidence(
+        ctx, "file:///drafts/user.json", output_origin="user_provided"
+    )
 
     rows = broker.read(episode_id=ctx.episode_id, event_type=EVT_EVIDENCE_LOCAL_DRAFT)
     payload = json.loads(rows[0]["payload_json"])
@@ -597,8 +602,12 @@ def test_record_evidence_rejects_invalid_output_origin(broker, service):
 def test_record_evidence_idempotent_with_output_origin(broker, service):
     _assign(broker)
     ctx = _confirmed_context(service)
-    seq1 = service.record_evidence(ctx, "file:///drafts/dup.json", output_origin="system")
-    seq2 = service.record_evidence(ctx, "file:///drafts/dup.json", output_origin="user_provided")
+    seq1 = service.record_evidence(
+        ctx, "file:///drafts/dup.json", output_origin="system"
+    )
+    seq2 = service.record_evidence(
+        ctx, "file:///drafts/dup.json", output_origin="user_provided"
+    )
 
     assert seq1 == seq2
     rows = broker.read(episode_id=ctx.episode_id, event_type=EVT_EVIDENCE_LOCAL_DRAFT)
@@ -738,7 +747,9 @@ def _make_full_episode(
         human_confirmed=True,
     )
     ctx = svc.reload_execution_context(episode_id, principal)
-    svc.record_evidence(ctx, f"file:///drafts/{request_id}.json", output_origin=output_origin)
+    svc.record_evidence(
+        ctx, f"file:///drafts/{request_id}.json", output_origin=output_origin
+    )
     svc.record_outcome(
         ctx,
         verdict,
@@ -963,7 +974,9 @@ def test_observe_principal_signal_to_verdict_latency(broker, service):
     svc_signal.record_evidence(ctx, "file:///d/lat.json", output_origin="system")
 
     svc_outcome = PersonalEpisodeService(broker, clock=lambda: outcome_time)
-    svc_outcome.record_outcome(ctx, "accept", review_duration_seconds=10, estimated_time_saved_seconds=100)
+    svc_outcome.record_outcome(
+        ctx, "accept", review_duration_seconds=10, estimated_time_saved_seconds=100
+    )
 
     obs = service.observe_principal("principal:alice")
 
@@ -1001,7 +1014,9 @@ def test_observe_principal_no_raw_leakage_in_output(broker, service):
     )
     ctx = service.reload_execution_context(episode_id, "principal:alice")
     service.record_evidence(ctx, "file:///drafts/secret.json", output_origin="system")
-    service.record_outcome(ctx, "accept", review_duration_seconds=5, estimated_time_saved_seconds=50)
+    service.record_outcome(
+        ctx, "accept", review_duration_seconds=5, estimated_time_saved_seconds=50
+    )
 
     obs = service.observe_principal("principal:alice")
     data = obs.to_dict()
@@ -1138,7 +1153,9 @@ def test_week_bucket_uses_outcome_time(broker, service):
 
     # Record outcome at _W2 (one week later).
     svc2 = PersonalEpisodeService(broker, clock=lambda: _W2)
-    svc2.record_outcome(ctx, "accept", review_duration_seconds=5, estimated_time_saved_seconds=50)
+    svc2.record_outcome(
+        ctx, "accept", review_duration_seconds=5, estimated_time_saved_seconds=50
+    )
 
     broker.append(
         EVT_ACTION_SUCCEEDED,
@@ -1148,7 +1165,11 @@ def test_week_bucket_uses_outcome_time(broker, service):
         correlation_id=f"action|{ctx.action_id}|succeeded",
         idempotency_key=f"{ctx.action_id}|succeeded",
         episode_id=episode_id,
-        payload={"action_id": ctx.action_id, "episode_id": episode_id, "status": "succeeded"},
+        payload={
+            "action_id": ctx.action_id,
+            "episode_id": episode_id,
+            "status": "succeeded",
+        },
         occurred_at=_W2,
     )
 
