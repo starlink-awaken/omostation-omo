@@ -1000,6 +1000,7 @@ class BlueprintControlService:
             )
             raise
         orca = receipt.get("orca")
+        approval = receipt.get("approval")
         residual_resources = receipt.get("residual_resources")
         if not isinstance(residual_resources, list) or any(
             not isinstance(value, str) or not value.startswith("orca:")
@@ -1016,6 +1017,13 @@ class BlueprintControlService:
             or set(orca) != {"run_id", "task_id", "dispatch_id", "terminal_handle"}
             or not all(isinstance(value, str) and value for value in orca.values())
             or receipt.get("human_action_required") is not True
+            or approval
+            != {
+                "mode": "manual_click",
+                "policy": "on-request",
+                "sandbox": "read-only",
+                "write_requires_human_click": True,
+            }
             or receipt.get("input_accepted") != "unproven"
             or receipt.get("model_completion") != "unproven"
         ):
@@ -1042,6 +1050,7 @@ class BlueprintControlService:
             {
                 "state": "awaiting_human_action",
                 "orca": dict(orca),
+                "approval": dict(approval),
                 "supervisor_receipt_digest": compute_packet_hash(canonicalize(receipt)),
             }
         )

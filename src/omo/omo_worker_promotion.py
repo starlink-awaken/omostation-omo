@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import contextlib
+import io
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -46,6 +48,7 @@ from .omo_promotion_request import (
     promotion_approval_ref,
 )
 from .omo_redaction import redact_sensitive_text
+from .omo_state import cmd_state_sync
 from .omo_task_schema import validate_task_file
 from .omo_worker_core import (
     _append_unique,
@@ -255,13 +258,10 @@ def _execute_governance_overlay_target_actions(
 
 
 def _sync_omo_state(root: Path, omo_dir: str | Path) -> None:
-    subprocess.run(
-        ["python3", "scripts/sync_omo_state.py", "--omo-dir", str(omo_dir)],
-        cwd=root,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    with contextlib.redirect_stdout(io.StringIO()):
+        returncode = cmd_state_sync(_omo_path(root, omo_dir), dry_run=False, fmt="json")
+    if returncode != 0:
+        raise subprocess.CalledProcessError(returncode, ["omo", "state", "sync"])
 
 
 def _apply_task_promotion(
