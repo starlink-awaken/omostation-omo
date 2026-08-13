@@ -619,6 +619,33 @@ class BlueprintControlService:
             "prompt_digest": str(prompt_binding["prompt_digest"]),
         }
 
+    @staticmethod
+    def _clone_attestation(
+        source: Mapping[str, Any], *, expected_agent_id: str | None = None
+    ) -> dict[str, str] | None:
+        clone_agent_id = source.get("clone_agent_id")
+        canonical_root_digest = source.get("canonical_root_digest")
+        guard_receipt_digest = source.get("guard_receipt_digest")
+        orca_worktree_id = source.get("orca_worktree_id")
+        if (
+            not isinstance(clone_agent_id, str)
+            or not clone_agent_id.strip()
+            or clone_agent_id != clone_agent_id.strip()
+            or (expected_agent_id is not None and clone_agent_id != expected_agent_id)
+            or not _is_sha256(canonical_root_digest, prefixed=True)
+            or not _is_sha256(guard_receipt_digest, prefixed=True)
+            or not isinstance(orca_worktree_id, str)
+            or not orca_worktree_id.strip()
+            or orca_worktree_id != orca_worktree_id.strip()
+        ):
+            return None
+        return {
+            "clone_agent_id": clone_agent_id,
+            "canonical_root_digest": canonical_root_digest,
+            "guard_receipt_digest": guard_receipt_digest,
+            "orca_worktree_id": orca_worktree_id,
+        }
+
     def _default_supervisor(
         self,
         *,
@@ -648,6 +675,8 @@ class BlueprintControlService:
             str(values["prompt_ref"]),
             "--prompt-digest",
             str(values["prompt_digest"]),
+            "--agent-id",
+            str(values["agent_id"]),
         ]
         if action == "start":
             command.extend(
@@ -669,6 +698,12 @@ class BlueprintControlService:
                     str(values["orca_dispatch_id"]),
                     "--terminal-handle",
                     str(values["terminal_handle"]),
+                    "--canonical-root-digest",
+                    str(values["canonical_root_digest"]),
+                    "--guard-receipt-digest",
+                    str(values["guard_receipt_digest"]),
+                    "--orca-worktree-id",
+                    str(values["orca_worktree_id"]),
                 ]
             )
         else:
@@ -766,12 +801,37 @@ class BlueprintControlService:
             .strip()
         )
         orca = execution.get("orca")
+        placement = self._clone_attestation(execution)
+        git_dir = self.root / ".git"
+        identity_path = git_dir / "agent-clone-identity.json"
+        try:
+            if (
+                not git_dir.is_dir()
+                or git_dir.is_symlink()
+                or identity_path.is_symlink()
+            ):
+                raise OSError("clone identity is not local to an independent clone")
+            clone_identity = json.loads(identity_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise BlueprintControlError("execution clone identity mismatch") from exc
+        branch = (
+            self._git(["branch", "--show-current"], check=False).stdout.decode().strip()
+        )
         if (
             object_type != "tree"
             or execution.get("baseline_digest")
             != self._tree_scope_digest(baseline_tree, expected_surfaces)
             or execution.get("write_surfaces") != expected_surfaces
             or execution.get("worker_id") != dispatch_doc.get("worker_id")
+            or placement is None
+            or not isinstance(clone_identity, Mapping)
+            or clone_identity.get("schema") != "agent-clone-identity/v1"
+            or clone_identity.get("ready") is not True
+            or clone_identity.get("agent_id") != execution.get("clone_agent_id")
+            or clone_identity.get("canonical_root") != str(self.root)
+            or clone_identity.get("working_branch") != branch
+            or execution.get("canonical_root_digest")
+            != _sha256(str(self.root).encode())
             or not isinstance(orca, Mapping)
             or set(orca) != {"run_id", "task_id", "dispatch_id", "terminal_handle"}
             or not all(isinstance(value, str) and value for value in orca.values())
@@ -859,6 +919,18 @@ class BlueprintControlService:
             if value
         )
         orca = execution["orca"] if execution is not None else None
+        execution_placement = (
+            self._clone_attestation(execution) if execution is not None else None
+        )
+        expected_clone_agent_id = (
+            str(execution["clone_agent_id"]) if execution is not None else None
+        )
+        projection_placement = self._clone_attestation(
+            projection, expected_agent_id=expected_clone_agent_id
+        )
+        receipt_placement = self._clone_attestation(
+            receipt, expected_agent_id=expected_clone_agent_id
+        )
         if (
             (
                 execution is not None
@@ -874,6 +946,14 @@ class BlueprintControlService:
             or receipt.get("changed_paths") != changed_paths
             or manifest.get("agent_id") != worker_id
             or receipt.get("worker_id") != worker_id
+            or (
+                execution is not None
+                and (
+                    execution_placement is None
+                    or projection_placement != execution_placement
+                    or receipt_placement != execution_placement
+                )
+            )
             or (
                 orca is not None
                 and (
@@ -916,6 +996,7 @@ class BlueprintControlService:
         compiled: CompiledBlueprintPacket,
         dispatch_result: Mapping[str, Any],
         *,
+        clone_agent_id: str,
         supervisor: Supervisor | None = None,
         timeout_seconds: int = 60,
     ) -> dict[str, Any]:
@@ -928,11 +1009,19 @@ class BlueprintControlService:
         prompt_binding = {"prompt_ref": prompt_ref, "prompt_digest": prompt_digest}
         execution_path = self._execution_projection_path(dispatch_result)
         if execution_path.is_file():
-            return self._read_execution_projection(
+            execution = self._read_execution_projection(
                 path=execution_path,
                 binding=binding,
                 prompt_binding=prompt_binding,
             )
+            if execution.get("clone_agent_id") != clone_agent_id:
+                raise BlueprintControlError("clone agent identity mismatch")
+            self._validate_execution_external_facts(
+                execution=execution,
+                packet=packet,
+                dispatch_result=dispatch_result,
+            )
+            return execution
 
         allowed = _required_string_list(packet["scope"], "write_surfaces")
         dispatch_doc = load_yaml(
@@ -942,6 +1031,12 @@ class BlueprintControlService:
         worker_id = str(dispatch_doc.get("worker_id") or "").strip()
         if not worker_id:
             raise BlueprintControlError("dispatch worker identity is missing")
+        if (
+            not isinstance(clone_agent_id, str)
+            or not clone_agent_id.strip()
+            or clone_agent_id != clone_agent_id.strip()
+        ):
+            raise BlueprintControlError("clone agent identity is invalid")
         with tempfile.TemporaryDirectory(prefix="omo-blueprint-start-") as directory:
             baseline_tree = self._snapshot_tree(Path(directory) / "baseline.index")
         baseline_digest = self._tree_scope_digest(baseline_tree, allowed)
@@ -952,6 +1047,7 @@ class BlueprintControlService:
                     {
                         **self._supervisor_binding(binding, prompt_binding),
                         "workspace_root": str(self.root),
+                        "clone_agent_id": clone_agent_id,
                     },
                     sort_keys=True,
                     separators=(",", ":"),
@@ -970,6 +1066,7 @@ class BlueprintControlService:
             "baseline_digest": baseline_digest,
             "write_surfaces": allowed,
             "worker_id": worker_id,
+            "clone_agent_id": clone_agent_id,
             "human_action_required": True,
             "input_accepted": "unproven",
             "model_completion": "unproven",
@@ -987,6 +1084,7 @@ class BlueprintControlService:
                 timeout_seconds=timeout_seconds,
                 **self._supervisor_binding(binding, prompt_binding),
                 workspace_root=str(self.root),
+                agent_id=clone_agent_id,
                 idempotency_key=idempotency_key,
             )
         except Exception:
@@ -1001,6 +1099,11 @@ class BlueprintControlService:
             raise
         orca = receipt.get("orca")
         approval = receipt.get("approval")
+        receipt_binding = receipt.get("binding")
+        placement = self._clone_attestation(
+            receipt_binding if isinstance(receipt_binding, Mapping) else {},
+            expected_agent_id=clone_agent_id,
+        )
         residual_resources = receipt.get("residual_resources")
         if not isinstance(residual_resources, list) or any(
             not isinstance(value, str) or not value.startswith("orca:")
@@ -1011,8 +1114,9 @@ class BlueprintControlService:
             receipt.get("schema") != "orca-codex-supervisor/v1"
             or receipt.get("ok") is not True
             or receipt.get("state") != "awaiting_human_action"
-            or receipt.get("binding")
-            != self._supervisor_binding(binding, prompt_binding)
+            or placement is None
+            or receipt_binding
+            != {**self._supervisor_binding(binding, prompt_binding), **placement}
             or not isinstance(orca, Mapping)
             or set(orca) != {"run_id", "task_id", "dispatch_id", "terminal_handle"}
             or not all(isinstance(value, str) and value for value in orca.values())
@@ -1051,6 +1155,7 @@ class BlueprintControlService:
                 "state": "awaiting_human_action",
                 "orca": dict(orca),
                 "approval": dict(approval),
+                **placement,
                 "supervisor_receipt_digest": compute_packet_hash(canonicalize(receipt)),
             }
         )
@@ -1125,19 +1230,31 @@ class BlueprintControlService:
         )
         orca = execution.get("orca")
         assert isinstance(orca, Mapping)
+        placement = self._clone_attestation(execution)
+        assert placement is not None
         receipt = (supervisor or self._default_supervisor)(
             action="collect",
             timeout_seconds=timeout_seconds,
             **self._supervisor_binding(binding, prompt_binding),
             workspace_root=str(self.root),
+            agent_id=str(execution["clone_agent_id"]),
+            **placement,
             orca_run_id=orca["run_id"],
             orca_task_id=orca["task_id"],
             orca_dispatch_id=orca["dispatch_id"],
             terminal_handle=orca["terminal_handle"],
         )
-        if receipt.get("binding") != self._supervisor_binding(
-            binding, prompt_binding
-        ) or receipt.get("orca") != dict(orca):
+        receipt_binding = receipt.get("binding")
+        receipt_placement = self._clone_attestation(
+            receipt_binding if isinstance(receipt_binding, Mapping) else {},
+            expected_agent_id=str(execution["clone_agent_id"]),
+        )
+        if (
+            receipt_binding
+            != {**self._supervisor_binding(binding, prompt_binding), **placement}
+            or receipt.get("orca") != dict(orca)
+            or receipt_placement != placement
+        ):
             raise BlueprintControlError("supervisor collect binding mismatch")
         if receipt.get("ok") is not True:
             if receipt.get("reason") == "worker_not_settled":
@@ -1340,6 +1457,7 @@ class BlueprintControlService:
             "orca_task_id": orca["task_id"],
             "orca_dispatch_id": orca["dispatch_id"],
             "terminal_handle": orca["terminal_handle"],
+            **placement,
             "output_digest": str(receipt["transcript_digest"]).removeprefix("sha256:"),
             "changed_paths": changed_paths,
             "observed_at": datetime.now().astimezone().isoformat(),
@@ -1429,6 +1547,7 @@ class BlueprintControlService:
             "baseline_digest": execution["baseline_digest"],
             "post_tree": post_tree,
             "write_surfaces": allowed,
+            **placement,
             "patch_ref": f"git-object://{patch_oid}",
             "patch_digest": patch_digest,
             "acceptance_measurements": measurements,
@@ -2270,6 +2389,7 @@ def _parser() -> _BlueprintArgumentParser:
     execute_parser.add_argument("--dispatch-file", required=True)
     execute_parser.add_argument("--candidate-file", required=True)
     execute_parser.add_argument("--approval-ref", required=True)
+    execute_parser.add_argument("--clone-agent-id", required=True)
     execute_parser.add_argument("--supervised", action="store_true")
     execute_parser.add_argument("--timeout-seconds", type=int, default=900)
 
@@ -2412,7 +2532,10 @@ def main(argv: list[str] | None = None) -> int:
                 raise BlueprintControlError("controller approval reference mismatch")
             _artifact_path(root, parsed.approval_ref, field_name="approval reference")
             projection = service.start_supervised_execution(
-                compiled, dispatch, timeout_seconds=parsed.timeout_seconds
+                compiled,
+                dispatch,
+                clone_agent_id=parsed.clone_agent_id,
+                timeout_seconds=parsed.timeout_seconds,
             )
             _emit({"ok": True, **projection})
             return 0
