@@ -11,7 +11,6 @@ from .omo_io import write_text_atomic, write_yaml_atomic
 from .omo_redaction import redact_sensitive_text
 from .omo_shared import load_yaml
 
-
 _OPERATION_LEVELS = {"L0": 0, "L1": 1, "L2": 2, "L3": 3}
 
 
