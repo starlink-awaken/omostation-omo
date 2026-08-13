@@ -73,6 +73,49 @@ def _packet() -> dict[str, object]:
     }
 
 
+def _v2_packet(
+    workspace_root,
+    *,
+    spec_ref: str = "repo://specs/orchestration-contract.md",
+    decision_ref: str = "decision://accepted/BET-Y1Q2-T1-14",
+    content: bytes = b"# Accepted orchestration contract\n",
+) -> dict[str, object]:
+    spec_path = workspace_root / "specs" / "orchestration-contract.md"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_bytes(content)
+    ledger_path = workspace_root / "docs" / "plans" / "3y-bet-ledger.yaml"
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    digest = "sha256:" + hashlib.sha256(content).hexdigest()
+    ledger_path.write_text(
+        "---\nmeta: {}\n---\nbets:\n"
+        "- id: BET-Y1Q2-T1-14\n"
+        "  status: done\n"
+        "  accepted_specifications:\n"
+        f"  - spec_ref: {spec_ref}\n"
+        "    spec_version: 1.0.0\n"
+        f"    content_digest: {digest}\n",
+        encoding="utf-8",
+    )
+    base = _packet()
+    base["scope"] = {
+        **base["scope"],
+        "read_surfaces": [
+            *base["scope"]["read_surfaces"],
+            "specs/orchestration-contract.md",
+        ],
+    }
+    return {
+        **base,
+        "schema_version": "work-packet/v2",
+        "spec_binding": {
+            "spec_ref": spec_ref,
+            "spec_version": "1.0.0",
+            "content_digest": digest,
+            "decision_ref": decision_ref,
+        },
+    }
+
+
 def _hash(packet: dict[str, object]) -> str:
     return compute_packet_hash(canonicalize(packet))
 
@@ -256,6 +299,161 @@ def test_candidate_evidence_then_acceptance_forms_one_identity_chain(tmp_path):
         f"{verified['payload']['manifest_digest']}\n{_receipt(packet).receipt_hash}"
     )
     assert WorkflowMeshStore(tmp_path).snapshot("run-orch")["state"] == "verified"
+
+
+def test_v2_spec_binding_is_revalidated_before_candidate_and_acceptance(
+    tmp_path, monkeypatch
+):
+    workspace_root = tmp_path / "workspace"
+    omo_dir = workspace_root / ".omo"
+    step_run_id = _seed_succeeded_run(omo_dir)
+    packet = _v2_packet(workspace_root)
+    monkeypatch.setattr("omo.orchestration_contract.WORKSPACE_ROOT", workspace_root)
+    coordinator = OrchestrationContractCoordinator(omo_dir)
+
+    evidence = coordinator.record_kandev_candidate(
+        workflow_run_id="run-orch",
+        step_run_id=step_run_id,
+        packet=packet,
+        manifest=_manifest(packet),
+        fixture=_fixture(packet),
+    )
+    verified = coordinator.accept_verification(
+        workflow_run_id="run-orch",
+        packet=packet,
+        manifest=_manifest(packet),
+        verification_receipt=_receipt(packet),
+    )
+
+    assert evidence["event_type"] == "EvidenceRecorded"
+    assert verified["event_type"] == "WorkflowVerified"
+
+
+@pytest.mark.parametrize(
+    ("case", "reason"),
+    [
+        ("missing_binding", "spec_binding_invalid"),
+        ("missing_file", "spec_ref_invalid"),
+        ("absolute", "spec_ref_invalid"),
+        ("traversal", "spec_ref_invalid"),
+        ("digest_mismatch", "spec_digest_mismatch"),
+        ("decision_unconfirmed", "spec_binding_invalid"),
+        ("decision_unknown", "spec_binding_invalid"),
+        ("decision_binding_mismatch", "spec_binding_invalid"),
+        ("workspace_unavailable", "spec_binding_invalid"),
+        ("outside_read_scope", "spec_ref_invalid"),
+    ],
+)
+def test_v2_invalid_spec_binding_fails_closed_before_evidence(
+    tmp_path, monkeypatch, case, reason
+):
+    workspace_root = tmp_path / "workspace"
+    omo_dir = workspace_root / ".omo"
+    step_run_id = _seed_succeeded_run(omo_dir)
+    packet = _v2_packet(workspace_root)
+    monkeypatch.setattr("omo.orchestration_contract.WORKSPACE_ROOT", workspace_root)
+    manifest_packet = packet
+    if case == "missing_binding":
+        packet.pop("spec_binding")
+        manifest_packet = _packet()
+    elif case == "missing_file":
+        packet["spec_binding"] = {
+            **packet["spec_binding"],
+            "spec_ref": "repo://specs/missing.md",
+        }
+    elif case == "absolute":
+        packet["spec_binding"] = {
+            **packet["spec_binding"],
+            "spec_ref": "repo:///tmp/spec.md",
+        }
+    elif case == "traversal":
+        packet["spec_binding"] = {
+            **packet["spec_binding"],
+            "spec_ref": "repo://../outside.md",
+        }
+    elif case == "digest_mismatch":
+        packet["spec_binding"] = {
+            **packet["spec_binding"],
+            "content_digest": "sha256:" + "0" * 64,
+        }
+    elif case == "decision_unconfirmed":
+        packet["spec_binding"] = {
+            **packet["spec_binding"],
+            "decision_ref": "decision://proposed/BET-Y1Q2-T1-14",
+        }
+    elif case == "decision_unknown":
+        packet["spec_binding"] = {
+            **packet["spec_binding"],
+            "decision_ref": "decision://accepted/BET-UNKNOWN",
+        }
+    elif case == "decision_binding_mismatch":
+        ledger_path = workspace_root / "docs" / "plans" / "3y-bet-ledger.yaml"
+        ledger_path.write_text(
+            ledger_path.read_text().replace(
+                packet["spec_binding"]["content_digest"], "sha256:" + "f" * 64
+            ),
+            encoding="utf-8",
+        )
+    elif case == "outside_read_scope":
+        packet["scope"] = {
+            **packet["scope"],
+            "read_surfaces": ["projects/omo/src/omo/"],
+        }
+    else:
+        monkeypatch.setattr("omo.orchestration_contract.WORKSPACE_ROOT", None)
+
+    with pytest.raises(OrchestrationContractError, match=reason):
+        OrchestrationContractCoordinator(omo_dir).record_kandev_candidate(
+            workflow_run_id="run-orch",
+            step_run_id=step_run_id,
+            packet=packet,
+            manifest=_manifest(manifest_packet),
+            fixture=_fixture(manifest_packet),
+        )
+
+    event_types = [event["event_type"] for event in WorkflowMeshStore(omo_dir).events()]
+    assert "EvidenceRecorded" not in event_types
+    assert "WorkflowVerified" not in event_types
+
+
+def test_coordinator_rejects_caller_supplied_workspace_authority(tmp_path):
+    with pytest.raises(TypeError, match="workspace_root"):
+        OrchestrationContractCoordinator(  # type: ignore[call-arg]
+            tmp_path / ".omo", workspace_root=tmp_path
+        )
+
+
+def test_v2_spec_digest_drift_after_collection_blocks_verification(
+    tmp_path, monkeypatch
+):
+    workspace_root = tmp_path / "workspace"
+    omo_dir = workspace_root / ".omo"
+    step_run_id = _seed_succeeded_run(omo_dir)
+    packet = _v2_packet(workspace_root)
+    monkeypatch.setattr("omo.orchestration_contract.WORKSPACE_ROOT", workspace_root)
+    coordinator = OrchestrationContractCoordinator(omo_dir)
+    coordinator.record_kandev_candidate(
+        workflow_run_id="run-orch",
+        step_run_id=step_run_id,
+        packet=packet,
+        manifest=_manifest(packet),
+        fixture=_fixture(packet),
+    )
+    (workspace_root / "specs" / "orchestration-contract.md").write_text(
+        "# Mutated after collection\n"
+    )
+
+    with pytest.raises(OrchestrationContractError, match="spec_digest_mismatch"):
+        coordinator.accept_verification(
+            workflow_run_id="run-orch",
+            packet=packet,
+            manifest=_manifest(packet),
+            verification_receipt=_receipt(packet),
+        )
+
+    event_types = [event["event_type"] for event in WorkflowMeshStore(omo_dir).events()]
+    assert event_types.count("EvidenceRecorded") == 1
+    assert "WorkflowVerified" not in event_types
 
 
 @pytest.mark.parametrize(
