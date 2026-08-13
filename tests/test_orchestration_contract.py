@@ -12,13 +12,13 @@ from ecos.ssot.tools.work_packet_compiler import (
     canonicalize,
     compute_packet_hash,
 )
+
 from omo.orchestration_contract import (
     KandevFixtureAdapter,
     OrchestrationContractCoordinator,
     OrchestrationContractError,
 )
 from omo.workflow_mesh import WorkflowMeshStore, new_workflow_event
-
 
 NOW = "2026-08-13T06:00:00Z"
 
@@ -40,9 +40,19 @@ def _packet() -> dict[str, object]:
             "write_surfaces": ["projects/omo/src/omo/", "README.md"],
             "non_goals": ["live Kandev", "scheduler"],
         },
-        "dependencies": {"required_packets": [], "required_services": [], "required_decisions": []},
+        "dependencies": {
+            "required_packets": [],
+            "required_services": [],
+            "required_decisions": [],
+        },
         "acceptance": {
-            "done_when": [{"id": "AC1", "assertion": "receipt is independently verifiable", "evidence_type": "test_result"}],
+            "done_when": [
+                {
+                    "id": "AC1",
+                    "assertion": "receipt is independently verifiable",
+                    "evidence_type": "test_result",
+                }
+            ],
             "verify_commands": [["pytest", "-q"]],
         },
         "budgets": {
@@ -67,15 +77,27 @@ def _hash(packet: dict[str, object]) -> str:
     return compute_packet_hash(canonicalize(packet))
 
 
-def _manifest(packet: dict[str, object], *, changed_paths: list[str] | None = None, packet_hash: str | None = None) -> dict[str, object]:
+def _manifest(
+    packet: dict[str, object],
+    *,
+    changed_paths: list[str] | None = None,
+    packet_hash: str | None = None,
+) -> dict[str, object]:
     return {
         "packet_id": packet["packet_id"],
         "packet_hash": packet_hash or _hash(packet),
         "assignment_id": "ASG-ORCH-001",
         "agent_id": "kandev-fixture-agent",
         "status": "candidate",
-        "changed_paths": changed_paths or ["projects/omo/src/omo/orchestration_contract.py"],
-        "claims": [{"acceptance_id": "AC1", "assertion": "candidate ready", "evidence_refs": ["evidence://fixture"]}],
+        "changed_paths": changed_paths
+        or ["projects/omo/src/omo/orchestration_contract.py"],
+        "claims": [
+            {
+                "acceptance_id": "AC1",
+                "assertion": "candidate ready",
+                "evidence_refs": ["evidence://fixture"],
+            }
+        ],
         "checks": [build_command_check(["pytest", "-q"], 0, "fixture green")],
         "recommended_next": "verify",
         "surface_delta": {"files": 1, "loc": 20},
@@ -84,7 +106,9 @@ def _manifest(packet: dict[str, object], *, changed_paths: list[str] | None = No
 
 
 def _manifest_digest(manifest: dict[str, object]) -> str:
-    return compute_packet_hash(json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+    return compute_packet_hash(
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    )
 
 
 def _fixture(
@@ -125,7 +149,9 @@ def _grant(run_id: str, step_run_id: str) -> dict[str, object]:
         "issued_at": NOW,
         "expires_at": "2026-08-13T07:00:00Z",
     }
-    canonical = json.dumps(grant, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    canonical = json.dumps(
+        grant, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
     grant["proof"] = hashlib.sha256(canonical).hexdigest()
     return grant
 
@@ -134,8 +160,16 @@ def _seed_succeeded_run(tmp_path, run_id: str = "run-orch") -> str:
     step_run_id = f"{run_id}:step-1"
     grant = _grant(run_id, step_run_id)
     store = WorkflowMeshStore(tmp_path)
-    store.append(new_workflow_event("WorkflowRequested", run_id, payload={"bet_id": "BET-Y1Q2-T1-14"}))
-    store.append(new_workflow_event("WorkflowAdmitted", run_id, payload={"admission": grant, **grant}))
+    store.append(
+        new_workflow_event(
+            "WorkflowRequested", run_id, payload={"bet_id": "BET-Y1Q2-T1-14"}
+        )
+    )
+    store.append(
+        new_workflow_event(
+            "WorkflowAdmitted", run_id, payload={"admission": grant, **grant}
+        )
+    )
     context = {"step_run_id": step_run_id, "admission_id": grant["admission_id"]}
     store.append(new_workflow_event("StepDispatched", run_id, payload=context))
     store.append(new_workflow_event("StepStarted", run_id, payload=context))
@@ -166,7 +200,9 @@ def test_fixture_metadata_is_not_part_of_packet_hash_and_live_transport_is_disab
     packet = _packet()
     adapter = KandevFixtureAdapter(_fixture(packet))
 
-    assert _hash(packet) == _hash({**packet, "adapter_metadata": {"ui_status": "polling"}})
+    assert _hash(packet) == _hash(
+        {**packet, "adapter_metadata": {"ui_status": "polling"}}
+    )
     assert adapter.collect("kandev-task-001")["external_task_id"] == "kandev-task-001"
     with pytest.raises(OrchestrationContractError, match="not_enabled"):
         adapter.dispatch(packet)
@@ -194,10 +230,17 @@ def test_candidate_evidence_then_acceptance_forms_one_identity_chain(tmp_path):
     events = WorkflowMeshStore(tmp_path).events()
     assert evidence["event_type"] == "EvidenceRecorded"
     assert verified["event_type"] == "WorkflowVerified"
-    assert evidence["payload"]["decision_factors"]["artifact_refs_digest"] == compute_packet_hash(
-        json.dumps(["git-object://" + "a" * 40], ensure_ascii=False, separators=(",", ":"))
+    assert evidence["payload"]["decision_factors"][
+        "artifact_refs_digest"
+    ] == compute_packet_hash(
+        json.dumps(
+            ["git-object://" + "a" * 40], ensure_ascii=False, separators=(",", ":")
+        )
     )
-    assert [event["event_type"] for event in events][-2:] == ["EvidenceRecorded", "WorkflowVerified"]
+    assert [event["event_type"] for event in events][-2:] == [
+        "EvidenceRecorded",
+        "WorkflowVerified",
+    ]
     assert verified["payload"] | {"receipt_hash": None, "manifest_digest": None} == {
         "assignment_id": "ASG-ORCH-001",
         "manifest_digest": None,
@@ -218,8 +261,14 @@ def test_candidate_evidence_then_acceptance_forms_one_identity_chain(tmp_path):
 @pytest.mark.parametrize(
     ("manifest", "reason"),
     [
-        (lambda packet: _manifest(packet, packet_hash="sha256:" + "0" * 64), "packet_hash_mismatch"),
-        (lambda packet: _manifest(packet, changed_paths=["../../outside.py"]), "manifest_scope_violation"),
+        (
+            lambda packet: _manifest(packet, packet_hash="sha256:" + "0" * 64),
+            "packet_hash_mismatch",
+        ),
+        (
+            lambda packet: _manifest(packet, changed_paths=["../../outside.py"]),
+            "manifest_scope_violation",
+        ),
     ],
 )
 def test_bad_candidate_never_records_evidence_or_verified(tmp_path, manifest, reason):
@@ -237,7 +286,11 @@ def test_bad_candidate_never_records_evidence_or_verified(tmp_path, manifest, re
         )
 
     assert [event["event_type"] for event in WorkflowMeshStore(tmp_path).events()] == [
-        "WorkflowRequested", "WorkflowAdmitted", "StepDispatched", "StepStarted", "WorkflowSucceeded"
+        "WorkflowRequested",
+        "WorkflowAdmitted",
+        "StepDispatched",
+        "StepStarted",
+        "WorkflowSucceeded",
     ]
 
 
@@ -254,45 +307,83 @@ def test_transport_failure_never_records_succeeded_evidence(tmp_path):
             fixture=_fixture(packet, state="failed"),
         )
 
-    assert all(event["event_type"] != "EvidenceRecorded" for event in WorkflowMeshStore(tmp_path).events())
+    assert all(
+        event["event_type"] != "EvidenceRecorded"
+        for event in WorkflowMeshStore(tmp_path).events()
+    )
 
 
-@pytest.mark.parametrize(("verdict", "reason"), [("revise", "verification_revise"), ("reject", "verification_rejected")])
+@pytest.mark.parametrize(
+    ("verdict", "reason"),
+    [("revise", "verification_revise"), ("reject", "verification_rejected")],
+)
 def test_non_accepting_verdict_never_appends_verified(tmp_path, verdict, reason):
     step_run_id = _seed_succeeded_run(tmp_path)
     packet = _packet()
     coordinator = OrchestrationContractCoordinator(tmp_path)
     coordinator.record_kandev_candidate(
-        workflow_run_id="run-orch", step_run_id=step_run_id, packet=packet, manifest=_manifest(packet), fixture=_fixture(packet)
+        workflow_run_id="run-orch",
+        step_run_id=step_run_id,
+        packet=packet,
+        manifest=_manifest(packet),
+        fixture=_fixture(packet),
     )
 
     with pytest.raises(OrchestrationContractError, match=reason):
         coordinator.accept_verification(
-            workflow_run_id="run-orch", packet=packet, manifest=_manifest(packet), verification_receipt=_receipt(packet, verdict=verdict)
+            workflow_run_id="run-orch",
+            packet=packet,
+            manifest=_manifest(packet),
+            verification_receipt=_receipt(packet, verdict=verdict),
         )
 
     assert WorkflowMeshStore(tmp_path).snapshot("run-orch")["state"] == "succeeded"
 
 
-def test_same_receipt_replay_is_idempotent_but_conflicting_fixture_fails_closed(tmp_path):
+def test_same_receipt_replay_is_idempotent_but_conflicting_fixture_fails_closed(
+    tmp_path,
+):
     step_run_id = _seed_succeeded_run(tmp_path)
     packet = _packet()
     coordinator = OrchestrationContractCoordinator(tmp_path)
-    kwargs = {"workflow_run_id": "run-orch", "step_run_id": step_run_id, "packet": packet, "manifest": _manifest(packet)}
+    kwargs = {
+        "workflow_run_id": "run-orch",
+        "step_run_id": step_run_id,
+        "packet": packet,
+        "manifest": _manifest(packet),
+    }
 
     first = coordinator.record_kandev_candidate(**kwargs, fixture=_fixture(packet))
-    assert coordinator.record_kandev_candidate(**kwargs, fixture=_fixture(packet)) == first
+    assert (
+        coordinator.record_kandev_candidate(**kwargs, fixture=_fixture(packet)) == first
+    )
     with pytest.raises(OrchestrationContractError, match="manifest_conflict"):
-        coordinator.record_kandev_candidate(**kwargs, fixture=_fixture(packet, output_digest=hashlib.sha256(b"changed").hexdigest()))
+        coordinator.record_kandev_candidate(
+            **kwargs,
+            fixture=_fixture(
+                packet, output_digest=hashlib.sha256(b"changed").hexdigest()
+            ),
+        )
 
     receipt = _receipt(packet)
     verified = coordinator.accept_verification(
-        workflow_run_id="run-orch", packet=packet, manifest=_manifest(packet), verification_receipt=receipt
+        workflow_run_id="run-orch",
+        packet=packet,
+        manifest=_manifest(packet),
+        verification_receipt=receipt,
     )
-    assert coordinator.accept_verification(
-        workflow_run_id="run-orch", packet=packet, manifest=_manifest(packet), verification_receipt=receipt
-    ) == verified
-    assert [event["event_type"] for event in WorkflowMeshStore(tmp_path).events()].count("WorkflowVerified") == 1
+    assert (
+        coordinator.accept_verification(
+            workflow_run_id="run-orch",
+            packet=packet,
+            manifest=_manifest(packet),
+            verification_receipt=receipt,
+        )
+        == verified
+    )
+    assert [
+        event["event_type"] for event in WorkflowMeshStore(tmp_path).events()
+    ].count("WorkflowVerified") == 1
 
 
 @pytest.mark.parametrize(
@@ -304,7 +395,9 @@ def test_same_receipt_replay_is_idempotent_but_conflicting_fixture_fails_closed(
         ("assignment_id", "ASG-OTHER"),
     ],
 )
-def test_fixture_identity_must_match_current_workflow_packet_and_assignment(tmp_path, field, wrong_value):
+def test_fixture_identity_must_match_current_workflow_packet_and_assignment(
+    tmp_path, field, wrong_value
+):
     step_run_id = _seed_succeeded_run(tmp_path)
     packet = _packet()
     bad_fixture = _fixture(packet)
@@ -326,55 +419,88 @@ def test_claim_or_check_change_for_same_external_task_is_a_manifest_conflict(tmp
     coordinator = OrchestrationContractCoordinator(tmp_path)
     fixture = _fixture(packet)
     coordinator.record_kandev_candidate(
-        workflow_run_id="run-orch", step_run_id=step_run_id, packet=packet, manifest=_manifest(packet), fixture=fixture
+        workflow_run_id="run-orch",
+        step_run_id=step_run_id,
+        packet=packet,
+        manifest=_manifest(packet),
+        fixture=fixture,
     )
     changed = _manifest(packet)
-    changed["claims"] = [{"acceptance_id": "AC1", "assertion": "altered", "evidence_refs": ["evidence://fixture"]}]
+    changed["claims"] = [
+        {
+            "acceptance_id": "AC1",
+            "assertion": "altered",
+            "evidence_refs": ["evidence://fixture"],
+        }
+    ]
 
     with pytest.raises(OrchestrationContractError, match="manifest_conflict"):
         coordinator.record_kandev_candidate(
-            workflow_run_id="run-orch", step_run_id=step_run_id, packet=packet, manifest=changed, fixture=fixture
+            workflow_run_id="run-orch",
+            step_run_id=step_run_id,
+            packet=packet,
+            manifest=changed,
+            fixture=fixture,
         )
 
 
-def test_accept_requires_evidence_binds_candidate_hash_and_allows_independent_measurement(tmp_path):
+def test_accept_requires_evidence_binds_candidate_hash_and_allows_independent_measurement(
+    tmp_path,
+):
     _seed_succeeded_run(tmp_path)
     packet = _packet()
     coordinator = OrchestrationContractCoordinator(tmp_path)
 
     with pytest.raises(OrchestrationContractError, match="evidence_missing"):
         coordinator.accept_verification(
-            workflow_run_id="run-orch", packet=packet, manifest=_manifest(packet), verification_receipt=_receipt(packet)
+            workflow_run_id="run-orch",
+            packet=packet,
+            manifest=_manifest(packet),
+            verification_receipt=_receipt(packet),
         )
 
     step_run_id = "run-orch:step-1"
     coordinator.record_kandev_candidate(
-        workflow_run_id="run-orch", step_run_id=step_run_id, packet=packet, manifest=_manifest(packet), fixture=_fixture(packet)
+        workflow_run_id="run-orch",
+        step_run_id=step_run_id,
+        packet=packet,
+        manifest=_manifest(packet),
+        fixture=_fixture(packet),
     )
     with pytest.raises(OrchestrationContractError, match="packet_hash_mismatch"):
         coordinator.accept_verification(
             workflow_run_id="run-orch",
             packet=packet,
             manifest=_manifest(packet),
-            verification_receipt=_receipt(packet, candidate_packet_hash="sha256:" + "e" * 64),
+            verification_receipt=_receipt(
+                packet, candidate_packet_hash="sha256:" + "e" * 64
+            ),
         )
     accepted = coordinator.accept_verification(
         workflow_run_id="run-orch",
         packet=packet,
         manifest=_manifest(packet),
-        verification_receipt=_receipt(packet, measured_packet_hash="sha256:" + "f" * 64),
+        verification_receipt=_receipt(
+            packet, measured_packet_hash="sha256:" + "f" * 64
+        ),
     )
     assert accepted["event_type"] == "WorkflowVerified"
 
 
-def test_candidate_must_cover_every_acceptance_id_and_verification_checks_must_pass(tmp_path):
+def test_candidate_must_cover_every_acceptance_id_and_verification_checks_must_pass(
+    tmp_path,
+):
     step_run_id = _seed_succeeded_run(tmp_path)
     packet = _packet()
     packet["acceptance"] = {
         **packet["acceptance"],
         "done_when": [
             *packet["acceptance"]["done_when"],
-            {"id": "AC2", "assertion": "second measurement", "evidence_type": "test_result"},
+            {
+                "id": "AC2",
+                "assertion": "second measurement",
+                "evidence_type": "test_result",
+            },
         ],
     }
     coordinator = OrchestrationContractCoordinator(tmp_path)
@@ -389,18 +515,27 @@ def test_candidate_must_cover_every_acceptance_id_and_verification_checks_must_p
 
     baseline = _packet()
     coordinator.record_kandev_candidate(
-        workflow_run_id="run-orch", step_run_id=step_run_id, packet=baseline, manifest=_manifest(baseline), fixture=_fixture(baseline)
+        workflow_run_id="run-orch",
+        step_run_id=step_run_id,
+        packet=baseline,
+        manifest=_manifest(baseline),
+        fixture=_fixture(baseline),
     )
     receipt = _receipt(baseline)
     receipt.checks[0].returncode = 1
     with pytest.raises(OrchestrationContractError, match="verification_unprovable"):
         coordinator.accept_verification(
-            workflow_run_id="run-orch", packet=baseline, manifest=_manifest(baseline), verification_receipt=receipt
+            workflow_run_id="run-orch",
+            packet=baseline,
+            manifest=_manifest(baseline),
+            verification_receipt=receipt,
         )
 
 
 @pytest.mark.parametrize("case", ["wrong_bet", "unknown_step", "not_succeeded"])
-def test_candidate_must_bind_to_a_succeeded_mesh_run_bet_and_admitted_step(tmp_path, case):
+def test_candidate_must_bind_to_a_succeeded_mesh_run_bet_and_admitted_step(
+    tmp_path, case
+):
     packet = _packet()
     run_id = "run-orch"
     step_run_id = _seed_succeeded_run(tmp_path, run_id)
@@ -412,7 +547,9 @@ def test_candidate_must_bind_to_a_succeeded_mesh_run_bet_and_admitted_step(tmp_p
         run_id = "run-incomplete"
         step_run_id = "run-incomplete:step-1"
         WorkflowMeshStore(tmp_path).append(
-            new_workflow_event("WorkflowRequested", run_id, payload={"bet_id": packet["bet_id"]})
+            new_workflow_event(
+                "WorkflowRequested", run_id, payload={"bet_id": packet["bet_id"]}
+            )
         )
 
     with pytest.raises(OrchestrationContractError, match="verification_unprovable"):
@@ -439,14 +576,22 @@ def test_candidate_must_bind_to_a_succeeded_mesh_run_bet_and_admitted_step(tmp_p
         "prefix_escape",
     ],
 )
-def test_candidate_manifest_requires_passing_checks_claim_evidence_and_budget(tmp_path, case):
+def test_candidate_manifest_requires_passing_checks_claim_evidence_and_budget(
+    tmp_path, case
+):
     step_run_id = _seed_succeeded_run(tmp_path)
     packet = _packet()
     manifest = _manifest(packet)
     if case == "failed_check":
         manifest["checks"] = [build_command_check(["pytest", "-q"], 1, "fixture red")]
     elif case == "empty_evidence":
-        manifest["claims"] = [{"acceptance_id": "AC1", "assertion": "candidate ready", "evidence_refs": []}]
+        manifest["claims"] = [
+            {
+                "acceptance_id": "AC1",
+                "assertion": "candidate ready",
+                "evidence_refs": [],
+            }
+        ]
     elif case == "budget_files":
         manifest["surface_delta"] = {"files": 3, "loc": 20}
     elif case == "count_mismatch":
@@ -463,11 +608,20 @@ def test_candidate_manifest_requires_passing_checks_claim_evidence_and_budget(tm
     elif case == "prefix_escape":
         manifest = _manifest(packet, changed_paths=["projects/omo/src/omox/evil.py"])
     else:
-        packet["scope"] = {**packet["scope"], "write_surfaces": ["README.md", "NOTICE.md", "LICENSE.md"]}
+        packet["scope"] = {
+            **packet["scope"],
+            "write_surfaces": ["README.md", "NOTICE.md", "LICENSE.md"],
+        }
         packet["budgets"] = {**packet["budgets"], "max_changed_files": 2}
-        manifest = _manifest(packet, changed_paths=["README.md", "NOTICE.md", "LICENSE.md"])
+        manifest = _manifest(
+            packet, changed_paths=["README.md", "NOTICE.md", "LICENSE.md"]
+        )
 
-    expected_reason = "manifest_scope_violation" if case == "prefix_escape" else "verification_unprovable"
+    expected_reason = (
+        "manifest_scope_violation"
+        if case == "prefix_escape"
+        else "verification_unprovable"
+    )
     with pytest.raises(OrchestrationContractError, match=expected_reason):
         OrchestrationContractCoordinator(tmp_path).record_kandev_candidate(
             workflow_run_id="run-orch",
@@ -483,14 +637,21 @@ def test_mutated_verification_receipt_with_stale_hash_is_unprovable(tmp_path):
     packet = _packet()
     coordinator = OrchestrationContractCoordinator(tmp_path)
     coordinator.record_kandev_candidate(
-        workflow_run_id="run-orch", step_run_id=step_run_id, packet=packet, manifest=_manifest(packet), fixture=_fixture(packet)
+        workflow_run_id="run-orch",
+        step_run_id=step_run_id,
+        packet=packet,
+        manifest=_manifest(packet),
+        fixture=_fixture(packet),
     )
 
     revised = _receipt(packet, verdict="revise")
     revised.verdict = "accept"
     with pytest.raises(OrchestrationContractError, match="verification_unprovable"):
         coordinator.accept_verification(
-            workflow_run_id="run-orch", packet=packet, manifest=_manifest(packet), verification_receipt=revised
+            workflow_run_id="run-orch",
+            packet=packet,
+            manifest=_manifest(packet),
+            verification_receipt=revised,
         )
 
     failed_check = build_verification_receipt(
@@ -507,11 +668,16 @@ def test_mutated_verification_receipt_with_stale_hash_is_unprovable(tmp_path):
     assert failed_check.receipt_hash == stale_hash
     with pytest.raises(OrchestrationContractError, match="verification_unprovable"):
         coordinator.accept_verification(
-            workflow_run_id="run-orch", packet=packet, manifest=_manifest(packet), verification_receipt=failed_check
+            workflow_run_id="run-orch",
+            packet=packet,
+            manifest=_manifest(packet),
+            verification_receipt=failed_check,
         )
 
 
-def test_verified_run_replays_identical_evidence_but_rejects_changed_candidate(tmp_path):
+def test_verified_run_replays_identical_evidence_but_rejects_changed_candidate(
+    tmp_path,
+):
     step_run_id = _seed_succeeded_run(tmp_path)
     packet = _packet()
     coordinator = OrchestrationContractCoordinator(tmp_path)
@@ -523,14 +689,22 @@ def test_verified_run_replays_identical_evidence_but_rejects_changed_candidate(t
     }
     first = coordinator.record_kandev_candidate(**kwargs, fixture=_fixture(packet))
     coordinator.accept_verification(
-        workflow_run_id="run-orch", packet=packet, manifest=_manifest(packet), verification_receipt=_receipt(packet)
+        workflow_run_id="run-orch",
+        packet=packet,
+        manifest=_manifest(packet),
+        verification_receipt=_receipt(packet),
     )
 
-    assert coordinator.record_kandev_candidate(**kwargs, fixture=_fixture(packet)) == first
+    assert (
+        coordinator.record_kandev_candidate(**kwargs, fixture=_fixture(packet)) == first
+    )
     with pytest.raises(OrchestrationContractError, match="manifest_conflict"):
         coordinator.record_kandev_candidate(
             **kwargs,
-            fixture=_fixture(packet, output_digest=hashlib.sha256(b"changed after verify").hexdigest()),
+            fixture=_fixture(
+                packet,
+                output_digest=hashlib.sha256(b"changed after verify").hexdigest(),
+            ),
         )
 
 
@@ -549,7 +723,10 @@ def test_source_receipt_cannot_cross_run_or_assignment_binding(tmp_path):
         fixture=_fixture(packet, workflow_run_id="run-first", step_run_id=first_step),
     )
     coordinator.accept_verification(
-        workflow_run_id="run-first", packet=packet, manifest=first_manifest, verification_receipt=receipt
+        workflow_run_id="run-first",
+        packet=packet,
+        manifest=first_manifest,
+        verification_receipt=receipt,
     )
 
     second_manifest = {**_manifest(packet), "assignment_id": "ASG-ORCH-002"}
@@ -567,5 +744,8 @@ def test_source_receipt_cannot_cross_run_or_assignment_binding(tmp_path):
     )
     with pytest.raises(OrchestrationContractError, match="manifest_conflict"):
         coordinator.accept_verification(
-            workflow_run_id="run-second", packet=packet, manifest=second_manifest, verification_receipt=receipt
+            workflow_run_id="run-second",
+            packet=packet,
+            manifest=second_manifest,
+            verification_receipt=receipt,
         )
