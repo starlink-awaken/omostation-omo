@@ -12,6 +12,10 @@ def main(argv: list[str] | None = None) -> int:
         stacklevel=2,
     )
     args = list(argv if argv is not None else sys.argv[1:])
+    if args and args[0] == "blueprint":
+        from omo.blueprint_control import main as blueprint_main
+
+        return blueprint_main(args[1:])
     # P48-W2: serve 子命令 (stdin/stdout JSON-RPC, 供 agora subprocess spawn)
     if args and args[0] == "serve":
         from omo.omo_sync_serve import serve as omo_serve

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
@@ -1131,3 +1132,313 @@ class BlueprintControlService:
                 )
             )
         return {"state": "closed", "baseline_digest": restored_digest}
+
+
+class _BlueprintArgumentParser(argparse.ArgumentParser):
+    """Raise a controlled error so every facade failure remains JSON."""
+
+    def error(self, message: str) -> NoReturn:
+        raise BlueprintControlError(f"invalid blueprint command: {message}")
+
+
+def _artifact_path(root: Path, reference: str, *, field_name: str, write: bool = False) -> Path:
+    """Resolve an explicit repository-relative artifact without following it outside root."""
+    relative = _safe_relative_path(reference, field_name)
+    candidate = root / relative
+    try:
+        resolved = candidate.resolve(strict=not write)
+        resolved.relative_to(root)
+    except (OSError, ValueError) as exc:
+        raise BlueprintControlError(f"unsafe {field_name}") from exc
+    if not write and (not resolved.is_file() or resolved.is_symlink()):
+        raise BlueprintControlError(f"{field_name} is unavailable")
+    return resolved
+
+
+def _read_json_artifact(root: Path, reference: str, *, field_name: str) -> dict[str, Any]:
+    path = _artifact_path(root, reference, field_name=field_name)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BlueprintControlError(f"{field_name} is invalid") from exc
+    if not isinstance(payload, dict):
+        raise BlueprintControlError(f"{field_name} must contain a JSON object")
+    return payload
+
+
+def _compiled_from_artifact(root: Path, reference: str) -> CompiledBlueprintPacket:
+    payload = _read_json_artifact(root, reference, field_name="packet file")
+    packet = payload.get("packet")
+    packet_hash = payload.get("packet_hash")
+    if not isinstance(packet, dict) or not isinstance(packet_hash, str):
+        raise BlueprintControlError("packet file has an invalid compiled packet")
+    return CompiledBlueprintPacket(packet=packet, packet_hash=packet_hash)
+
+
+def _candidate_projection_path(root: Path, dispatch_reference: str) -> Path:
+    dispatch_path = _artifact_path(root, dispatch_reference, field_name="dispatch file")
+    if not dispatch_path.name.endswith("-dispatch.yaml"):
+        raise BlueprintControlError("dispatch file name is invalid")
+    return dispatch_path.with_name(
+        dispatch_path.name.removesuffix("-dispatch.yaml") + "-manifest.json"
+    )
+
+
+def _error_code(error: Exception) -> str:
+    message = str(error).lower()
+    if "approval" in message:
+        return "controller_approval_required"
+    if "human_required" in message or "human approval" in message:
+        return "human_required"
+    if "rollback" in message or "baseline" in message or "preimage" in message:
+        return "rollback_unconfirmed"
+    if "receipt" in message or "model output" in message or "transport" in message:
+        return "input_only_ack_rejected"
+    if "invalid blueprint command" in message:
+        return "command_invalid"
+    return "blueprint_command_failed"
+
+
+def _emit(payload: Mapping[str, Any]) -> None:
+    print(json.dumps(dict(payload), ensure_ascii=False, sort_keys=True))
+
+
+def _parser() -> _BlueprintArgumentParser:
+    parser = _BlueprintArgumentParser(prog="omo blueprint")
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    compile_parser = commands.add_parser("compile")
+    compile_parser.add_argument("--root", default=".")
+    compile_parser.add_argument("--bet-id", required=True)
+    compile_parser.add_argument("--task-id", required=True)
+    compile_parser.add_argument("--spec-ref", required=True)
+    compile_parser.add_argument("--spec-version", required=True)
+    compile_parser.add_argument("--expires-at", required=True)
+    compile_parser.add_argument("--packet-file", required=True)
+
+    dispatch_parser = commands.add_parser("dispatch")
+    dispatch_parser.add_argument("--root", default=".")
+    dispatch_parser.add_argument("--packet-file", required=True)
+    dispatch_parser.add_argument("--worker-id", required=True)
+    dispatch_parser.add_argument("--capability-health-file", required=True)
+    dispatch_parser.add_argument("--now")
+    dispatch_parser.add_argument("--transport", default="cli_prompt")
+
+    observe_parser = commands.add_parser("observe")
+    observe_parser.add_argument("--root", default=".")
+    observe_parser.add_argument("--dispatch-file", required=True)
+
+    execute_parser = commands.add_parser("execute")
+    execute_parser.add_argument("--root", default=".")
+    execute_parser.add_argument("--packet-file", required=True)
+    execute_parser.add_argument("--dispatch-file", required=True)
+    execute_parser.add_argument("--candidate-file", required=True)
+    execute_parser.add_argument("--approval-ref", required=True)
+    execute_parser.add_argument("--supervised", action="store_true")
+    execute_parser.add_argument("--timeout-seconds", type=int, default=900)
+
+    collect_parser = commands.add_parser("collect")
+    collect_parser.add_argument("--root", default=".")
+    collect_parser.add_argument("--dispatch-file", required=True)
+    collect_parser.add_argument("--candidate-file", required=True)
+
+    verify_parser = commands.add_parser("verify")
+    verify_parser.add_argument("--root", default=".")
+    verify_parser.add_argument("--packet-file", required=True)
+    verify_parser.add_argument("--dispatch-file", required=True)
+    verify_parser.add_argument("--candidate-file", required=True)
+    verify_parser.add_argument("--timeout-seconds", type=int, default=120)
+
+    rollback_parser = commands.add_parser("rollback")
+    rollback_parser.add_argument("--root", default=".")
+    rollback_parser.add_argument("--dispatch-file", required=True)
+    rollback_parser.add_argument("--candidate-file", required=True)
+    return parser
+
+
+def _root(value: str) -> Path:
+    try:
+        root = Path(value).resolve(strict=True)
+    except OSError as exc:
+        raise BlueprintControlError("authority root is unavailable") from exc
+    if not root.is_dir():
+        raise BlueprintControlError("authority root is not a directory")
+    return root
+
+
+def _dispatch_artifact(root: Path, reference: str) -> dict[str, Any]:
+    path = _artifact_path(root, reference, field_name="dispatch file")
+    try:
+        payload = load_yaml(path)
+    except (OSError, ValueError) as exc:
+        raise BlueprintControlError("dispatch file is invalid") from exc
+    blueprint = payload.get("blueprint")
+    control_state = payload.get("control_state")
+    workflow = payload.get("execution", {}).get("workflow_mesh")
+    admission = workflow.get("admission") if isinstance(workflow, Mapping) else None
+    if (
+        not isinstance(blueprint, Mapping)
+        or not isinstance(control_state, Mapping)
+        or not isinstance(workflow, Mapping)
+        or not isinstance(admission, Mapping)
+        or control_state.get("transport") != "accepted"
+    ):
+        raise BlueprintControlError("dispatch is not transport accepted")
+    required = {
+        "workflow_run_id": workflow.get("workflow_run_id"),
+        "admission_id": admission.get("admission_id"),
+        "packet_id": blueprint.get("packet_id"),
+        "packet_hash": blueprint.get("packet_hash"),
+        "bet_id": blueprint.get("bet_id"),
+        "dispatch_id": payload.get("dispatch_id"),
+    }
+    if any(not isinstance(value, str) or not value for value in required.values()):
+        raise BlueprintControlError("dispatch identity is incomplete")
+    return {
+        "state": "transport_accepted",
+        **required,
+        "dispatch_path": _safe_relative_path(reference, "dispatch file"),
+        "control_state": dict(control_state),
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the supervised facade without duplicating controller business logic."""
+    try:
+        parsed = _parser().parse_args(argv)
+        root = _root(parsed.root)
+        service = BlueprintControlService(root)
+
+        if parsed.command == "compile":
+            compiled = service.compile_packet(
+                bet_id=parsed.bet_id,
+                task_id=parsed.task_id,
+                spec_ref=parsed.spec_ref,
+                spec_version=parsed.spec_version,
+                expires_at=parsed.expires_at,
+            )
+            packet_file = _artifact_path(
+                root, parsed.packet_file, field_name="packet file", write=True
+            )
+            write_text_atomic(
+                packet_file,
+                json.dumps(
+                    {"packet": compiled.packet, "packet_hash": compiled.packet_hash},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    indent=2,
+                )
+                + "\n",
+            )
+            _emit(
+                {
+                    "ok": True,
+                    "state": "compiled",
+                    "packet_id": compiled.packet["packet_id"],
+                    "packet_hash": compiled.packet_hash,
+                    "packet_file": _safe_relative_path(parsed.packet_file, "packet file"),
+                }
+            )
+            return 0
+
+        if parsed.command == "dispatch":
+            compiled = _compiled_from_artifact(root, parsed.packet_file)
+            health = _read_json_artifact(
+                root, parsed.capability_health_file, field_name="capability health file"
+            )
+            result = service.dispatch_packet(
+                compiled,
+                worker_id=parsed.worker_id,
+                capability_health=health,
+                now=parsed.now,
+                transport=parsed.transport,
+            )
+            _emit({"ok": True, **result})
+            return 0
+
+        dispatch = _dispatch_artifact(root, parsed.dispatch_file)
+        if parsed.command == "observe":
+            _emit({"ok": True, **service.observe_dispatch(dispatch)})
+            return 0
+
+        if parsed.command == "collect":
+            projection = _read_json_artifact(
+                root,
+                str(_candidate_projection_path(root, parsed.dispatch_file).relative_to(root)),
+                field_name="candidate projection",
+            )
+            if projection.get("state") != "candidate_collected":
+                raise BlueprintControlError("candidate projection is not collected")
+            candidate_file = _artifact_path(
+                root, parsed.candidate_file, field_name="candidate file", write=True
+            )
+            write_text_atomic(
+                candidate_file,
+                json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+            )
+            _emit(
+                {
+                    "ok": True,
+                    "state": "candidate_collected",
+                    "candidate_file": _safe_relative_path(
+                        parsed.candidate_file, "candidate file"
+                    ),
+                }
+            )
+            return 0
+
+        if parsed.command == "execute":
+            if not parsed.supervised:
+                raise BlueprintControlError("supervised execution flag is required")
+            compiled = _compiled_from_artifact(root, parsed.packet_file)
+            approval_ref = str(compiled.packet.get("authority", {}).get("approval_ref") or "")
+            if parsed.approval_ref != approval_ref:
+                raise BlueprintControlError("controller approval reference mismatch")
+            _artifact_path(root, parsed.approval_ref, field_name="approval reference")
+            projection = service.execute_and_collect(
+                compiled, dispatch, timeout_seconds=parsed.timeout_seconds
+            )
+            candidate_file = _artifact_path(
+                root, parsed.candidate_file, field_name="candidate file", write=True
+            )
+            write_text_atomic(
+                candidate_file,
+                json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+            )
+            _emit(
+                {
+                    "ok": True,
+                    "state": "candidate_collected",
+                    "candidate_file": _safe_relative_path(
+                        parsed.candidate_file, "candidate file"
+                    ),
+                }
+            )
+            return 0
+
+        candidate = _read_json_artifact(
+            root, parsed.candidate_file, field_name="candidate file"
+        )
+        if parsed.command == "verify":
+            compiled = _compiled_from_artifact(root, parsed.packet_file)
+            result = service.verify_candidate(
+                compiled, dispatch, candidate, timeout_seconds=parsed.timeout_seconds
+            )
+            if result.get("state") != "independently_verified":
+                _emit({"ok": False, "error": "verification_rejected", **result})
+                return 4
+            _emit({"ok": True, **result})
+            return 0
+
+        result = service.rollback_candidate(dispatch, candidate)
+        if result.get("state") != "closed":
+            _emit({"ok": False, "error": "rollback_unconfirmed", **result})
+            return 4
+        _emit({"ok": True, **result})
+        return 0
+    except (BlueprintControlError, OSError, ValueError, json.JSONDecodeError) as exc:
+        _emit({"ok": False, "error": _error_code(exc)})
+        return 2
+    except Exception:
+        _emit({"ok": False, "error": "blueprint_command_failed"})
+        return 2

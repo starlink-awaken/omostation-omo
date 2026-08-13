@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 from omo.blueprint_control import BlueprintControlError, BlueprintControlService
+from omo.cli import main as cli_main
 from omo.workflow_dispatch import WorkflowDispatchError
 from omo.workflow_mesh import WorkflowMeshStore
 
@@ -797,3 +798,289 @@ def test_candidate_from_other_run_cannot_compensate_or_close_current_run(
         dispatched_a["workflow_run_id"]
     )["state"] == "succeeded"
     assert candidate_a["transport_receipt"]["dispatch_id"] != candidate_b["transport_receipt"]["dispatch_id"]
+
+
+def _write_cli_packet(tmp_path: Path, compiled) -> str:  # noqa: ANN001
+    packet_ref = ".omo/workers/runs/blueprint-packet.json"
+    path = tmp_path / packet_ref
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {"packet": compiled.packet, "packet_hash": compiled.packet_hash},
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    return packet_ref
+
+
+def test_cli_compile_emits_json_and_persists_only_explicit_packet(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _workspace(tmp_path)
+
+    result = cli_main(
+        [
+            "blueprint",
+            "compile",
+            "--root",
+            str(tmp_path),
+            "--bet-id",
+            BET_ID,
+            "--task-id",
+            TASK_ID,
+            "--spec-ref",
+            SPEC_REF,
+            "--spec-version",
+            SPEC_VERSION,
+            "--expires-at",
+            "2026-08-15T00:00:00+00:00",
+            "--packet-file",
+            ".omo/workers/runs/blueprint-packet.json",
+        ]
+    )
+
+    assert result == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["state"] == "compiled"
+    assert output["packet_id"].startswith("WP-BP-")
+    assert (tmp_path / output["packet_file"]).is_file()
+
+
+def test_cli_dispatch_missing_approval_is_json_error_without_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _workspace(tmp_path)
+    _dispatch_authority(tmp_path)
+    (tmp_path / ".omo" / "workers" / "runs" / "approval.yaml").unlink()
+    (tmp_path / ".omo" / "workers" / "runs" / "health.json").write_text(
+        json.dumps(_health()), encoding="utf-8"
+    )
+    packet_ref = _write_cli_packet(tmp_path, _compile(tmp_path))
+
+    result = cli_main(
+        [
+            "blueprint",
+            "dispatch",
+            "--root",
+            str(tmp_path),
+            "--packet-file",
+            packet_ref,
+            "--worker-id",
+            "worker-a",
+            "--capability-health-file",
+            ".omo/workers/runs/health.json",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    output = json.loads(captured.out)
+    assert result != 0
+    assert output["ok"] is False
+    assert output["error"] == "controller_approval_required"
+    assert "Traceback" not in captured.err
+
+
+def test_cli_rejects_absolute_artifact_reference_as_json_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _workspace(tmp_path)
+
+    result = cli_main(
+        [
+            "blueprint",
+            "compile",
+            "--root",
+            str(tmp_path),
+            "--bet-id",
+            BET_ID,
+            "--task-id",
+            TASK_ID,
+            "--spec-ref",
+            SPEC_REF,
+            "--spec-version",
+            SPEC_VERSION,
+            "--expires-at",
+            "2026-08-15T00:00:00+00:00",
+            "--packet-file",
+            str(tmp_path / "outside.json"),
+        ]
+    )
+
+    assert result != 0
+    assert json.loads(capsys.readouterr().out) == {
+        "error": "blueprint_command_failed",
+        "ok": False,
+    }
+    assert not (tmp_path / "outside.json").exists()
+
+
+def test_cli_observe_and_execute_input_ack_never_claim_model_success(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _workspace(tmp_path)
+    _dispatch_authority(tmp_path)
+    runner = tmp_path / "input-only-runner"
+    runner.write_text(
+        "#!/bin/sh\nprintf '{\"transport\": \"accepted\"}' > \"$2\"\n",
+        encoding="utf-8",
+    )
+    runner.chmod(0o755)
+    registry_path = tmp_path / ".omo" / "_truth" / "registry" / "workers.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    registry["workers"][0]["transports"]["cli_prompt"]["command"] = str(runner)
+    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+    _commit_baseline(tmp_path)
+    compiled = _compile(tmp_path)
+    packet_ref = _write_cli_packet(tmp_path, compiled)
+    dispatched = BlueprintControlService(tmp_path).dispatch_packet(
+        compiled,
+        worker_id="worker-a",
+        capability_health=_health(),
+        now="2026-08-14T10:00:00+00:00",
+    )
+
+    observed = cli_main(
+        [
+            "blueprint",
+            "observe",
+            "--root",
+            str(tmp_path),
+            "--dispatch-file",
+            str(dispatched["dispatch_path"]),
+        ]
+    )
+    observed_output = json.loads(capsys.readouterr().out)
+    assert observed == 0
+    assert observed_output["state"] == "transport_accepted"
+
+    executed = cli_main(
+        [
+            "blueprint",
+            "execute",
+            "--root",
+            str(tmp_path),
+            "--packet-file",
+            packet_ref,
+            "--dispatch-file",
+            str(dispatched["dispatch_path"]),
+            "--candidate-file",
+            ".omo/workers/runs/blueprint-candidate.json",
+            "--approval-ref",
+            ".omo/workers/runs/approval.yaml",
+            "--supervised",
+            "--timeout-seconds",
+            "5",
+        ]
+    )
+    executed_output = json.loads(capsys.readouterr().out)
+    assert executed != 0
+    assert executed_output == {"error": "input_only_ack_rejected", "ok": False}
+    assert "EvidenceRecorded" not in [
+        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
+    ]
+
+
+def test_cli_verifier_reject_and_rollback_mismatch_never_report_success(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    service, compiled, dispatched = _dispatched_repo(tmp_path)
+    packet_ref = _write_cli_packet(tmp_path, compiled)
+
+    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
+        on_process_started()
+        target = workspace_root / "src" / "omo" / "blueprint_control.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("VALUE = 1\n", encoding="utf-8")
+        receipt_path.write_text(
+            json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8"
+        )
+        return {"returncode": 0}
+
+    service.execute_and_collect(compiled, dispatched, runner=runner)
+    dispatch_ref = str(dispatched["dispatch_path"])
+    candidate_ref = ".omo/workers/runs/blueprint-candidate.json"
+    assert (
+        cli_main(
+            [
+                "blueprint",
+                "collect",
+                "--root",
+                str(tmp_path),
+                "--dispatch-file",
+                dispatch_ref,
+                "--candidate-file",
+                candidate_ref,
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    rejected = cli_main(
+        [
+            "blueprint",
+            "verify",
+            "--root",
+            str(tmp_path),
+            "--packet-file",
+            packet_ref,
+            "--dispatch-file",
+            dispatch_ref,
+            "--candidate-file",
+            candidate_ref,
+            "--timeout-seconds",
+            "5",
+        ]
+    )
+    rejected_output = json.loads(capsys.readouterr().out)
+    assert rejected != 0
+    assert rejected_output["ok"] is False
+    assert rejected_output["error"] == "verification_rejected"
+    assert "WorkflowVerified" not in [
+        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
+    ]
+
+    # A fresh candidate with a tampered rollback digest must remain a non-success.
+    mismatch_root = tmp_path / "mismatch"
+    mismatch_root.mkdir()
+    service, compiled, dispatched = _dispatched_repo(mismatch_root)
+    service.execute_and_collect(compiled, dispatched, runner=runner)
+    mismatch_candidate_ref = ".omo/workers/runs/blueprint-candidate.json"
+    assert (
+        cli_main(
+            [
+                "blueprint",
+                "collect",
+                "--root",
+                str(mismatch_root),
+                "--dispatch-file",
+                str(dispatched["dispatch_path"]),
+                "--candidate-file",
+                mismatch_candidate_ref,
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    projection_path = mismatch_root / mismatch_candidate_ref
+    projection = json.loads(projection_path.read_text(encoding="utf-8"))
+    projection["patch_digest"] = "sha256:" + "0" * 64
+    projection_path.write_text(json.dumps(projection), encoding="utf-8")
+
+    mismatch = cli_main(
+        [
+            "blueprint",
+            "rollback",
+            "--root",
+            str(mismatch_root),
+            "--dispatch-file",
+            str(dispatched["dispatch_path"]),
+            "--candidate-file",
+            mismatch_candidate_ref,
+        ]
+    )
+    mismatch_output = json.loads(capsys.readouterr().out)
+    assert mismatch != 0
+    assert mismatch_output["ok"] is False
+    assert mismatch_output["state"] == "rollback_unconfirmed"
