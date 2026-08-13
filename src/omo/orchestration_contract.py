@@ -15,6 +15,8 @@ from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
+import yaml
+
 from ecos.ssot.mof.generated.control.mof_control_models import (
     CompletionManifest as CompletionManifestModel,
 )
@@ -27,6 +29,7 @@ from ecos.ssot.tools.work_packet_compiler import (
 )
 
 from .omo_external_receipt import ExternalReceiptError, record_external_receipt
+from .omo_paths import WORKSPACE_ROOT
 from .workflow_mesh import WorkflowMeshEventError, WorkflowMeshStore, new_workflow_event
 
 
@@ -108,6 +111,132 @@ def _artifact_refs_digest(artifact_refs: list[Any]) -> str:
     return compute_packet_hash(canonical)
 
 
+def _validate_spec_binding(
+    packet: Mapping[str, Any], workspace_root: Path | None
+) -> None:
+    """Revalidate the immutable v2 Specification bytes before promotion."""
+    if packet.get("schema_version") != "work-packet/v2":
+        return
+
+    binding = packet.get("spec_binding")
+    required_fields = {
+        "spec_ref",
+        "spec_version",
+        "content_digest",
+        "decision_ref",
+    }
+    if not isinstance(binding, Mapping) or set(binding) != required_fields:
+        raise OrchestrationContractError(
+            "spec_binding_invalid", "v2 packet requires one complete spec binding"
+        )
+    if workspace_root is None:
+        raise OrchestrationContractError(
+            "spec_binding_invalid", "v2 packet requires an injected workspace root"
+        )
+
+    _required_text(binding.get("spec_version"), "spec_version")
+    decision_ref = _required_text(binding.get("decision_ref"), "decision_ref")
+    if not re.fullmatch(
+        r"decision://accepted/[A-Za-z0-9][A-Za-z0-9._/-]*", decision_ref
+    ):
+        raise OrchestrationContractError(
+            "spec_binding_invalid", "specification decision is not accepted"
+        )
+    decision_id = decision_ref.removeprefix("decision://accepted/")
+    ledger_path = workspace_root / "docs" / "plans" / "3y-bet-ledger.yaml"
+    try:
+        ledger_documents = list(
+            yaml.safe_load_all(ledger_path.read_text(encoding="utf-8"))
+        )
+    except (OSError, yaml.YAMLError) as exc:
+        raise OrchestrationContractError(
+            "spec_binding_invalid", "accepted decision ledger is unavailable"
+        ) from exc
+    matching_decisions = [
+        bet
+        for document in ledger_documents
+        if isinstance(document, Mapping)
+        for bet in document.get("bets", [])
+        if isinstance(bet, Mapping)
+        and bet.get("status") == "done"
+        and str(bet.get("id")) == decision_id
+    ]
+    if len(matching_decisions) != 1:
+        raise OrchestrationContractError(
+            "spec_binding_invalid", "decision_ref is not accepted by Workspace truth"
+        )
+
+    digest = _required_text(binding.get("content_digest"), "content_digest")
+    if not re.fullmatch(r"sha256:[a-f0-9]{64}", digest):
+        raise OrchestrationContractError(
+            "spec_binding_invalid", "specification digest must be canonical sha256"
+        )
+
+    spec_ref = _required_text(binding.get("spec_ref"), "spec_ref")
+    if not spec_ref.startswith("repo://"):
+        raise OrchestrationContractError(
+            "spec_ref_invalid", "spec_ref must use the repo:// file namespace"
+        )
+    relative_text = spec_ref.removeprefix("repo://")
+    relative_path = PurePosixPath(relative_text)
+    if (
+        not relative_text
+        or relative_text.startswith("/")
+        or "\\" in relative_text
+        or relative_path.is_absolute()
+        or ".." in relative_path.parts
+        or relative_path.as_posix() != relative_text
+    ):
+        raise OrchestrationContractError(
+            "spec_ref_invalid", "spec_ref must be a canonical repository-relative path"
+        )
+
+    root = workspace_root.resolve()
+    try:
+        spec_path = (root / Path(*relative_path.parts)).resolve(strict=True)
+        spec_path.relative_to(root)
+    except (OSError, ValueError) as exc:
+        raise OrchestrationContractError(
+            "spec_ref_invalid", "spec_ref does not resolve to a repository file"
+        ) from exc
+    if not spec_path.is_file():
+        raise OrchestrationContractError(
+            "spec_ref_invalid", "spec_ref does not resolve to a regular file"
+        )
+    read_surfaces = packet.get("scope", {}).get("read_surfaces", [])
+    if not isinstance(read_surfaces, list) or not any(
+        _path_is_allowed(relative_text, str(surface)) for surface in read_surfaces
+    ):
+        raise OrchestrationContractError(
+            "spec_ref_invalid", "spec_ref is outside declared packet read surfaces"
+        )
+    try:
+        measured_digest = "sha256:" + hashlib.sha256(spec_path.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise OrchestrationContractError(
+            "spec_ref_invalid", "specification bytes cannot be read"
+        ) from exc
+    if measured_digest != digest:
+        raise OrchestrationContractError(
+            "spec_digest_mismatch", "specification bytes drifted after admission"
+        )
+    expected_decision_binding = {
+        "spec_ref": spec_ref,
+        "spec_version": _required_text(binding.get("spec_version"), "spec_version"),
+        "content_digest": digest,
+    }
+    accepted_bindings = matching_decisions[0].get("accepted_specifications")
+    if not isinstance(accepted_bindings, list) or expected_decision_binding not in [
+        dict(candidate)
+        for candidate in accepted_bindings
+        if isinstance(candidate, Mapping)
+    ]:
+        raise OrchestrationContractError(
+            "spec_binding_invalid",
+            "decision_ref does not bind this specification version and digest",
+        )
+
+
 def _normalise_relative_path(value: Any) -> str:
     path = _required_text(value, "changed_path")
     parsed = PurePosixPath(path)
@@ -131,8 +260,12 @@ def _path_is_allowed(changed_path: str, surface: str) -> bool:
 
 
 def _validate_candidate(
-    packet: Mapping[str, Any], manifest: Mapping[str, Any]
+    packet: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+    *,
+    workspace_root: Path | None,
 ) -> tuple[dict[str, Any], dict[str, Any], str]:
+    _validate_spec_binding(packet, workspace_root)
     try:
         packet_value = WorkPacket.model_validate(packet).model_dump(mode="json")
         manifest_value = CompletionManifestModel.model_validate(manifest).model_dump(
@@ -423,8 +556,18 @@ def _verified_event(
 class OrchestrationContractCoordinator:
     """Validate a candidate and append only legal existing Mesh events."""
 
-    def __init__(self, omo_dir: Path | str) -> None:
+    def __init__(
+        self,
+        omo_dir: Path | str,
+    ) -> None:
         self._omo_dir = Path(omo_dir)
+        authority_root = None if WORKSPACE_ROOT is None else Path(WORKSPACE_ROOT)
+        self._workspace_root = (
+            authority_root
+            if authority_root is not None
+            and self._omo_dir.resolve() == (authority_root / ".omo").resolve()
+            else None
+        )
 
     def record_kandev_candidate(
         self,
@@ -436,7 +579,7 @@ class OrchestrationContractCoordinator:
         fixture: Mapping[str, Any],
     ) -> dict[str, Any]:
         packet_value, manifest_value, packet_hash = _validate_candidate(
-            packet, manifest
+            packet, manifest, workspace_root=self._workspace_root
         )
         store = WorkflowMeshStore(self._omo_dir)
         run_state = _validate_mesh_binding(
@@ -545,7 +688,7 @@ class OrchestrationContractCoordinator:
         verification_receipt: VerificationReceipt,
     ) -> dict[str, Any]:
         packet_value, manifest_value, packet_hash = _validate_candidate(
-            packet, manifest
+            packet, manifest, workspace_root=self._workspace_root
         )
         receipt = _fresh_verification_receipt(packet_value, verification_receipt)
         if (

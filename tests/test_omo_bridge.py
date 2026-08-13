@@ -17,6 +17,9 @@ if str(OMO_SRC) not in sys.path:
 
 
 def _write_spec(path: Path, body: str) -> None:
+    # Legacy fixtures are intentionally upgraded to the explicit bridge contract.
+    if "### 7.1" not in body:
+        body += "\n### 7.1 Test plan\n- smoke import\n### 7.2 Evidence\n- task yaml\n"
     path.write_text(body, encoding="utf-8")
 
 
@@ -80,12 +83,9 @@ def test_infer_phase_wave_from_task_id():
 
 def test_import_bmad_writes_task_with_phase_wave(tmp_path):
     """import 应写 phase/wave 字段, 跟 P40/P41 规范一致."""
-    import hashlib
-
     from omo.omo_bridge import _import_bmad
 
     a_title = "P42-W0-MERGE-STATE: 合并"
-    a_id = f"IMPORTED-{hashlib.md5(a_title.encode()).hexdigest()[:6]}"
 
     spec = tmp_path / "spec.md"
     _write_spec(
@@ -97,7 +97,8 @@ def test_import_bmad_writes_task_with_phase_wave(tmp_path):
     )
     omo = tmp_path / ".omo"
     (omo / "tasks" / "planned").mkdir(parents=True)
-    _import_bmad(spec, omo, sequential=False)
+    report = _import_bmad(spec, omo, sequential=False)
+    a_id = report["task_ids"][0]
 
     merge_file = omo / "tasks" / "planned" / f"{a_id}.yaml"
     assert merge_file.exists(), f"expected {a_id}.yaml"
@@ -119,16 +120,47 @@ def test_import_bmad_writes_task_with_phase_wave(tmp_path):
     assert artifact.exists()
 
 
-def test_import_bmad_resolves_depends_on_to_imported_ids(tmp_path):
-    """关键测试: 修复断链 bug. 第二次 import 看到的依赖是 IMPORTED-xxxxx 不是 P42-W0-..."""
+def test_import_bmad_preflights_all_registry_mappings_before_any_write(tmp_path):
+    """第二个 source_ref 冲突时，第一个任务也不得残留。"""
     import hashlib
 
+    import yaml
+
+    from omo.omo_bridge import _import_bmad, _stable_task_id
+    from omo.omo_ingress import _write_registry
+
+    workspace = tmp_path / "workspace"
+    omo = workspace / ".omo"
+    spec = workspace / "spec.md"
+    workspace.mkdir()
+    _write_spec(spec, "- [ ] first\n- [ ] second\n")
+    digest = hashlib.sha256(spec.read_bytes()).hexdigest()
+    second_id = _stable_task_id(digest, 2)
+    second_ref = f"omo:bridge:bmad:{spec.name}:{digest}:{second_id}"
+    registry = {
+        kind: {"by_id": {}, "by_source_ref": {}}
+        for kind in ("goals", "tasks", "debts", "capabilities")
+    }
+    registry["tasks"]["by_source_ref"][second_ref] = "SOME-OTHER-TASK"
+    _write_registry(omo, registry)
+
+    report = _import_bmad(spec, omo)
+
+    assert report["ok"] is False
+    assert report["created"] == 0
+    assert not list((omo / "tasks" / "planned").glob("*.yaml"))
+    persisted = yaml.safe_load(
+        (workspace / "runtime/omo/_delivery/ingress/registry.yaml").read_text()
+    )
+    assert persisted["tasks"]["by_source_ref"][second_ref] == "SOME-OTHER-TASK"
+
+
+def test_import_bmad_resolves_depends_on_to_imported_ids(tmp_path):
+    """关键测试: 修复断链 bug. 第二次 import 看到的依赖是 IMPORTED-xxxxx 不是 P42-W0-..."""
     from omo.omo_bridge import _import_bmad
 
     a_title = "P42-W0-MERGE-STATE: 合并"
-    a_id = f"IMPORTED-{hashlib.md5(a_title.encode()).hexdigest()[:6]}"
     b_title = "P42-W0-INDEX-REFRESH: 刷新"
-    b_id = f"IMPORTED-{hashlib.md5(b_title.encode()).hexdigest()[:6]}"
 
     spec = tmp_path / "spec.md"
     _write_spec(
@@ -140,7 +172,8 @@ def test_import_bmad_resolves_depends_on_to_imported_ids(tmp_path):
     )
     omo = tmp_path / ".omo"
     (omo / "tasks" / "planned").mkdir(parents=True)
-    _import_bmad(spec, omo, sequential=False)
+    report = _import_bmad(spec, omo, sequential=False)
+    a_id, b_id = report["task_ids"]
 
     import yaml
 
@@ -150,12 +183,9 @@ def test_import_bmad_resolves_depends_on_to_imported_ids(tmp_path):
 
 def test_import_bmad_first_task_has_empty_depends_on(tmp_path):
     """第一个 task 不该有 [''] 污染."""
-    import hashlib
-
     from omo.omo_bridge import _import_bmad
 
     a_title = "P42-W0-MERGE-STATE: 合并"
-    a_id = f"IMPORTED-{hashlib.md5(a_title.encode()).hexdigest()[:6]}"
 
     spec = tmp_path / "spec.md"
     _write_spec(
@@ -166,7 +196,8 @@ def test_import_bmad_first_task_has_empty_depends_on(tmp_path):
     )
     omo = tmp_path / ".omo"
     (omo / "tasks" / "planned").mkdir(parents=True)
-    _import_bmad(spec, omo, sequential=False)
+    report = _import_bmad(spec, omo, sequential=False)
+    a_id = report["task_ids"][0]
 
     import yaml
 
@@ -176,11 +207,7 @@ def test_import_bmad_first_task_has_empty_depends_on(tmp_path):
 
 def test_sequential_mode_uses_imported_id_chain(tmp_path):
     """--sequential 模式下, 后一个 task 的依赖应指向前一个的 IMPORTED-xxxxx."""
-    import hashlib
-
     from omo.omo_bridge import _import_bmad
-
-    a_id = f"IMPORTED-{hashlib.md5('P42-W0-A: 第一个'.encode()).hexdigest()[:6]}"
 
     spec = tmp_path / "spec.md"
     _write_spec(
@@ -193,7 +220,8 @@ def test_sequential_mode_uses_imported_id_chain(tmp_path):
     )
     omo = tmp_path / ".omo"
     (omo / "tasks" / "planned").mkdir(parents=True)
-    _import_bmad(spec, omo, sequential=True)
+    report = _import_bmad(spec, omo, sequential=True)
+    a_id = report["task_ids"][0]
 
     import yaml
 
@@ -204,16 +232,7 @@ def test_sequential_mode_uses_imported_id_chain(tmp_path):
 
 def test_sequential_mode_chain_dynamic(tmp_path):
     """同上, 但用动态 hash 探测 (不写死 hash 值)."""
-    import hashlib
-
     from omo.omo_bridge import _import_bmad
-
-    def hash6(title: str) -> str:
-        return hashlib.md5(title.encode()).hexdigest()[:6]
-
-    a_id = f"IMPORTED-{hash6('P42-W0-A: 第一个')}"
-    b_id = f"IMPORTED-{hash6('P42-W0-B: 第二个')}"
-    c_id = f"IMPORTED-{hash6('P42-W0-C: 第三个')}"
 
     spec = tmp_path / "spec.md"
     _write_spec(
@@ -226,7 +245,8 @@ def test_sequential_mode_chain_dynamic(tmp_path):
     )
     omo = tmp_path / ".omo"
     (omo / "tasks" / "planned").mkdir(parents=True)
-    _import_bmad(spec, omo, sequential=True)
+    report = _import_bmad(spec, omo, sequential=True)
+    a_id, b_id, c_id = report["task_ids"]
 
     import yaml
 
@@ -285,25 +305,24 @@ def test_import_bmad_rejects_todo_lines(tmp_path, capfd):
     )
     omo = tmp_path / ".omo"
     (omo / "tasks" / "planned").mkdir(parents=True)
-    _import_bmad(spec, omo, sequential=False)
+    report = _import_bmad(spec, omo, sequential=False)
 
-    # 只有 A 被导入，B 应该被拦截
+    # 任一未决任务都会拒绝整个批次，防止部分导入。
     files = list((omo / "tasks" / "planned").glob("*.yaml"))
-    assert len(files) == 1
+    assert files == []
+    assert report["ok"] is False
+    assert report["created"] == 0
 
-    out, err = capfd.readouterr()
-    assert "预检拦截 (Pre-check Failed)" in out
-    assert "TODO 这个还没想清楚" in out
+    out, _ = capfd.readouterr()
+    assert "全批次未写入" in out
+    assert "unresolved TODO/TBD" in out
 
 
 def test_import_bmad_adds_context_uri(tmp_path):
     """测试 Mode A 降维时是否附带了 context_uri"""
-    import hashlib
-
     from omo.omo_bridge import _import_bmad
 
     a_title = "P42-W0-A: 测试URI"
-    a_id = f"IMPORTED-{hashlib.md5(a_title.encode()).hexdigest()[:6]}"
 
     spec = tmp_path / "spec.md"
     _write_spec(
@@ -314,13 +333,134 @@ def test_import_bmad_adds_context_uri(tmp_path):
     )
     omo = tmp_path / ".omo"
     (omo / "tasks" / "planned").mkdir(parents=True)
-    _import_bmad(spec, omo, sequential=False)
+    report = _import_bmad(spec, omo, sequential=False)
+    a_id = report["task_ids"][0]
 
     import yaml
 
     data = yaml.safe_load((omo / "tasks" / "planned" / f"{a_id}.yaml").read_text())
     assert "context_uri" in data
     assert data["context_uri"] == f"bos://memory/openspecs/spec.md#{a_id}"
+
+
+def test_import_bmad_requires_explicit_test_and_evidence_sections(tmp_path):
+    from omo.omo_bridge import _import_bmad
+
+    spec = tmp_path / "missing-contract.md"
+    spec.write_text("# Spec\n- [ ] P42-W0-A: task\n", encoding="utf-8")
+    omo = tmp_path / ".omo"
+    (omo / "tasks" / "planned").mkdir(parents=True)
+
+    report = _import_bmad(spec, omo)
+
+    assert report["ok"] is False
+    assert report["created"] == 0
+    assert any("### 7.1" in error for error in report["errors"])
+    assert any("### 7.2" in error for error in report["errors"])
+    assert list((omo / "tasks" / "planned").glob("*.yaml")) == []
+
+
+def test_import_bmad_rejects_zero_task_spec(tmp_path):
+    from omo.omo_bridge import _import_bmad
+
+    spec = tmp_path / "empty.md"
+    _write_spec(spec, "# Spec\nNo task checkbox exists.\n")
+    omo = tmp_path / ".omo"
+    (omo / "tasks" / "planned").mkdir(parents=True)
+
+    report = _import_bmad(spec, omo)
+
+    assert report["ok"] is False
+    assert any("no importable open tasks" in error for error in report["errors"])
+    assert list((omo / "tasks" / "planned").glob("*.yaml")) == []
+
+
+def test_import_bmad_rejects_unsupported_checkbox_shapes_atomically(tmp_path):
+    from omo.omo_bridge import _import_bmad
+
+    for task_line in (
+        "- [x] completed",
+        "1. [ ] numbered",
+        "  - [ ] nested",
+    ):
+        case_dir = tmp_path / task_line.split()[-1]
+        spec = case_dir / "spec.md"
+        spec.parent.mkdir(parents=True)
+        _write_spec(spec, f"# Spec\n{task_line}\n")
+        omo = case_dir / ".omo"
+        (omo / "tasks" / "planned").mkdir(parents=True)
+
+        report = _import_bmad(spec, omo)
+
+        assert report["ok"] is False
+        assert report["created"] == 0
+        assert list((omo / "tasks" / "planned").glob("*.yaml")) == []
+
+
+def test_import_bmad_rejects_duplicate_titles_before_writing(tmp_path):
+    from omo.omo_bridge import _import_bmad
+
+    spec = tmp_path / "duplicate.md"
+    _write_spec(spec, "# Spec\n- [ ] same title\n- [ ] same title\n")
+    omo = tmp_path / ".omo"
+    (omo / "tasks" / "planned").mkdir(parents=True)
+
+    report = _import_bmad(spec, omo)
+
+    assert report["ok"] is False
+    assert any("duplicate task title" in error for error in report["errors"])
+    assert list((omo / "tasks" / "planned").glob("*.yaml")) == []
+
+
+def test_import_bmad_same_content_replays_without_duplicate_tasks(tmp_path):
+    from omo.omo_bridge import _import_bmad
+
+    spec = tmp_path / "replay.md"
+    _write_spec(spec, "# Spec\n- [ ] P42-W0-A: task\n")
+    omo = tmp_path / ".omo"
+    (omo / "tasks" / "planned").mkdir(parents=True)
+
+    first = _import_bmad(spec, omo)
+    second = _import_bmad(spec, omo)
+
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert second["task_ids"] == first["task_ids"]
+    assert len(list((omo / "tasks" / "planned").glob("*.yaml"))) == 1
+
+
+def test_import_bmad_changed_content_reports_drift_without_new_tasks(tmp_path):
+    from omo.omo_bridge import _import_bmad
+
+    spec = tmp_path / "drift.md"
+    _write_spec(spec, "# Spec\n- [ ] P42-W0-A: first\n")
+    omo = tmp_path / ".omo"
+    (omo / "tasks" / "planned").mkdir(parents=True)
+    first = _import_bmad(spec, omo)
+    before = sorted(path.name for path in (omo / "tasks" / "planned").glob("*.yaml"))
+
+    _write_spec(spec, "# Spec\n- [ ] P42-W0-A: changed\n")
+    second = _import_bmad(spec, omo)
+
+    assert first["ok"] is True
+    assert second["ok"] is False
+    assert second["spec_drift"] is True
+    assert second["created"] == 0
+    assert sorted(path.name for path in (omo / "tasks" / "planned").glob("*.yaml")) == before
+
+
+def test_bridge_main_returns_nonzero_when_bmad_contract_is_rejected(
+    tmp_path, monkeypatch
+):
+    from omo import omo_bridge
+
+    spec = tmp_path / "invalid.md"
+    spec.write_text("# Spec\n- [ ] task\n", encoding="utf-8")
+    omo = tmp_path / ".omo"
+    omo.mkdir()
+    monkeypatch.setattr(omo_bridge, "get_omo_dir", lambda _base: omo)
+
+    assert omo_bridge.main([str(spec), "--format", "bmad"]) == 1
 
 
 def test_import_pitch_uses_governed_goal_and_task_ingress(tmp_path, capfd):

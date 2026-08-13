@@ -16,6 +16,11 @@ def _generate_task_id(title: str) -> str:
     return f"IMPORTED-{hash_slug}"
 
 
+def _stable_task_id(content_digest: str, ordinal: int) -> str:
+    """Derive an import identity that cannot collide for duplicate titles."""
+    return f"IMPORTED-{content_digest[:12]}-{ordinal:03d}"
+
+
 def _resolve_depends_on(
     depends_on: list[str], title_to_imported: dict[str, str]
 ) -> list[str]:
@@ -56,6 +61,7 @@ def _import_bmad(file_path: Path, omo_dir: Path, sequential: bool = False):
     print(f"🌉 正在将 BMAD / OpenSpec 规范转换为 OMO Planned Tasks: {file_path}")
     content = file_path.read_text(encoding="utf-8")
     tasks_created = 0
+    content_digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
 
     test_plan_parsed: list[str] = []
     evidence_parsed: list[str] = []
@@ -75,17 +81,43 @@ def _import_bmad(file_path: Path, omo_dir: Path, sequential: bool = False):
         elif in_evid and line.strip().startswith("- "):
             evidence_parsed.append(line.split("- ", 1)[1].strip())
 
+    errors: list[str] = []
+    spec_drift = False
+    # A changed source must not silently create a second generation of tasks.
+    planned_dir = omo_dir / "tasks" / "planned"
+    source_prefix = f"omo:bridge:bmad:{file_path.name}:"
+    if planned_dir.exists():
+        for existing in planned_dir.glob("*.yaml"):
+            try:
+                import yaml
+
+                old = yaml.safe_load(existing.read_text(encoding="utf-8")) or {}
+                old_ref = str(old.get("metadata", {}).get("source_ref", ""))
+            except Exception:
+                continue
+            if old_ref.startswith(source_prefix) and f":{content_digest}:" not in old_ref:
+                spec_drift = True
+                errors.append(
+                    f"spec_drift: {file_path.name} changed since prior import ({existing.name})"
+                )
     if not test_plan_parsed:
-        test_plan_parsed = ["[Fallback] Default test plan"]
+        errors.append("missing required test plan section (### 7.1)")
     if not evidence_parsed:
-        evidence_parsed = ["[Fallback] Default evidence"]
+        errors.append("missing required evidence section (### 7.2)")
 
     title_to_imported: dict[str, str] = {}
     parsed_tasks: list[tuple[str, list[str]]] = []
-    for line in content.split("\n"):
-        if "- [ ]" not in line:
+    for line_no, line in enumerate(content.split("\n"), 1):
+        marker = re.fullmatch(r"- \[([ xX])\] (.+)", line)
+        if re.search(r"\[[ xX]\]", line) and not marker:
+            errors.append(f"line {line_no}: unsupported checkbox/list shape")
             continue
-        raw_title = line.split("- [ ]", 1)[1].strip()
+        if not marker:
+            continue
+        if marker.group(1).lower() == "x":
+            errors.append(f"line {line_no}: completed [x] task is not importable")
+            continue
+        raw_title = marker.group(2).strip()
         depends_on_raw: list[str] = []
         if "(depends_on:" in raw_title:
             parts = raw_title.split("(depends_on:", 1)
@@ -94,9 +126,17 @@ def _import_bmad(file_path: Path, omo_dir: Path, sequential: bool = False):
             depends_on_raw = [d.strip() for d in deps_str.split(",") if d.strip()]
         else:
             task_title = raw_title
-        title_to_imported[task_title] = _generate_task_id(task_title)
+        if task_title in title_to_imported:
+            errors.append(f"line {line_no}: duplicate task title: {task_title}")
+            continue
+        title_to_imported[task_title] = _stable_task_id(
+            content_digest, len(parsed_tasks) + 1
+        )
         parsed_tasks.append((task_title, depends_on_raw))
+    if not parsed_tasks:
+        errors.append("specification contains no importable open tasks")
 
+    task_payloads: list[tuple[dict, str]] = []
     last_task_id: str | None = None
     for task_title, depends_on_raw in parsed_tasks:
         task_id = title_to_imported[task_title]
@@ -142,25 +182,86 @@ def _import_bmad(file_path: Path, omo_dir: Path, sequential: bool = False):
             task_data["wave"] = wave
 
         if "TODO" in task_title or "TBD" in task_title:
-            print(
-                f"  ❌ 预检拦截 (Pre-check Failed): 任务 {task_id} 含有未决议项 ({task_title})，拒绝流入 OMO 稳态区。"
-            )
-            continue
+            errors.append(f"task {task_id}: unresolved TODO/TBD")
 
         if not _validate_planned_task(task_data):
-            continue
+            errors.append(f"task {task_id}: schema validation failed")
+        task_payloads.append(
+            (
+                task_data,
+                f"omo:bridge:bmad:{file_path.name}:{content_digest}:{task_id}",
+            )
+        )
+        last_task_id = task_id
 
+    from omo.omo_ingress import _load_registry
+
+    registry = _load_registry(omo_dir)
+    task_registry = registry["tasks"]
+    for task_data, source_ref in task_payloads:
+        task_path = planned_dir / f"{task_data['id']}.yaml"
+        if task_path.exists():
+            try:
+                import yaml
+
+                existing = yaml.safe_load(task_path.read_text(encoding="utf-8")) or {}
+            except Exception:
+                errors.append(f"task {task_data['id']}: existing task is unreadable")
+            else:
+                metadata = existing.get("metadata", {})
+                if (
+                    not isinstance(metadata, dict)
+                    or metadata.get("source_ref") != source_ref
+                ):
+                    errors.append(
+                        f"task {task_data['id']}: existing task identity conflicts"
+                    )
+        mapped_task_id = task_registry["by_source_ref"].get(source_ref)
+        if mapped_task_id and mapped_task_id != task_data["id"]:
+            errors.append(
+                f"task {task_data['id']}: source_ref maps to {mapped_task_id}"
+            )
+        registered = task_registry["by_id"].get(task_data["id"])
+        if isinstance(registered, dict):
+            registered_ref = registered.get("source_ref")
+            if registered_ref and registered_ref != source_ref:
+                errors.append(
+                    f"task {task_data['id']}: registry identity conflicts"
+                )
+
+    if errors:
+        report = {
+            "ok": False,
+            "spec_drift": spec_drift,
+            "created": 0,
+            "task_ids": [],
+            "errors": errors,
+        }
+        print(f"❌ 导入拒绝（全批次未写入）: {report}")
+        return report
+
+    for task_data, source_ref in task_payloads:
         create_planned_task(
             omo_dir,
             task_data=task_data,
             ingress_plane="projects/omo",
-            source_ref=f"omo:bridge:bmad:{file_path.name}:{task_id}",
+            source_ref=source_ref,
         )
-        print(f"  -> 创建了任务: {task_id} (依赖: {depends_on}) [M2 Validated]")
+        print(
+            f"  -> 创建了任务: {task_data['id']} "
+            f"(依赖: {task_data['depends_on']}) [M2 Validated]"
+        )
         tasks_created += 1
-        last_task_id = task_id
 
+    report = {
+        "ok": True,
+        "spec_drift": False,
+        "created": tasks_created,
+        "task_ids": [payload["id"] for payload, _ in task_payloads],
+        "errors": [],
+    }
     print(f"✅ 完成转换，共生成且经过 M2 强校验了 {tasks_created} 个任务。")
+    return report
 
 
 def _import_fast_track(source_topic: Path, omo_dir: Path):
@@ -310,7 +411,9 @@ def main(argv: list[str]) -> int:
         return 1
 
     if args.format in ["bmad", "openspec"]:
-        _import_bmad(source, omo_dir, args.sequential)
+        report = _import_bmad(source, omo_dir, args.sequential)
+        if not report["ok"]:
+            return 1
     elif args.format == "fast_track":
         _import_fast_track(source, omo_dir)
     elif args.format == "pitch":
