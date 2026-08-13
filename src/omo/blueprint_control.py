@@ -48,6 +48,7 @@ class CompiledBlueprintPacket:
 
 
 Runner = Callable[..., Mapping[str, Any]]
+Supervisor = Callable[..., Mapping[str, Any]]
 
 
 def _sha256(data: bytes) -> str:
@@ -224,17 +225,20 @@ class BlueprintControlService:
             )
         capabilities = _required_string_list(task, "required_capabilities")
         evidence = _required_string_list(task, "evidence_required")
-        done_when = _required_string_list(bet, "done_when")
-        verify = bet.get("verify")
-        if not isinstance(verify, list) or not verify:
-            raise BlueprintControlError("BET verify commands are required")
-        verify_commands = [
-            str(item.get("cmd", "")).strip()
-            for item in verify
-            if isinstance(item, Mapping) and str(item.get("cmd", "")).strip()
+        acceptance_criteria = _required_string_list(task, "acceptance_criteria")
+        verify_commands = _required_string_list(task, "test_plan")
+        if len(acceptance_criteria) != len(verify_commands):
+            raise BlueprintControlError(
+                "Task acceptance_criteria and test_plan must be one-to-one"
+            )
+        done_when = [
+            {
+                "id": f"AC{index}",
+                "assertion": assertion,
+                "evidence_type": "command_receipt",
+            }
+            for index, assertion in enumerate(acceptance_criteria, 1)
         ]
-        if len(verify_commands) != len(verify):
-            raise BlueprintControlError("BET verify commands are invalid")
 
         packet: dict[str, Any] = {
             "packet_id": "WP-BP-SEED",
@@ -528,6 +532,906 @@ class BlueprintControlService:
             raise BlueprintControlError("dispatch does not bind one admitted step")
         return run_id, admission_id, dispatch_id, str(step_ids[0])
 
+    def _execution_projection_path(self, dispatch_result: Mapping[str, Any]) -> Path:
+        dispatch_path = self.root / _safe_relative_path(
+            dispatch_result.get("dispatch_path"), "dispatch path"
+        )
+        return dispatch_path.with_name(
+            dispatch_path.name.removesuffix("-dispatch.yaml") + "-execution.json"
+        )
+
+    def _candidate_projection_path(self, dispatch_result: Mapping[str, Any]) -> Path:
+        dispatch_path = self.root / _safe_relative_path(
+            dispatch_result.get("dispatch_path"), "dispatch path"
+        )
+        return dispatch_path.with_name(
+            dispatch_path.name.removesuffix("-dispatch.yaml") + "-manifest.json"
+        )
+
+    @staticmethod
+    def _projection_digest(projection: Mapping[str, Any]) -> str:
+        projected = {
+            key: value
+            for key, value in projection.items()
+            if key != "projection_digest"
+        }
+        return _sha256(
+            json.dumps(
+                projected,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        )
+
+    def _execution_binding(
+        self,
+        packet: Mapping[str, Any],
+        compiled: CompiledBlueprintPacket,
+        dispatch_result: Mapping[str, Any],
+    ) -> tuple[dict[str, str], dict[str, Any]]:
+        if dispatch_result.get("state") != "transport_accepted":
+            raise BlueprintControlError("dispatch is not transport accepted")
+        if (
+            dispatch_result.get("packet_id") != packet["packet_id"]
+            or dispatch_result.get("packet_hash") != compiled.packet_hash
+            or dispatch_result.get("bet_id") != packet["bet_id"]
+        ):
+            raise BlueprintControlError("dispatch packet binding mismatch")
+        run_id, admission_id, dispatch_id, step_run_id = self._dispatch_context(
+            dispatch_result
+        )
+        task_id = str(packet.get("dependencies", {}).get("task_id") or "").strip()
+        if not task_id:
+            raise BlueprintControlError("packet Task binding is missing")
+        binding = {
+            "workflow_run_id": run_id,
+            "admission_id": admission_id,
+            "step_run_id": step_run_id,
+            "omo_task_id": task_id,
+            "packet_id": str(packet["packet_id"]),
+            "packet_hash": compiled.packet_hash,
+            "bet_id": str(packet["bet_id"]),
+            "omo_dispatch_id": dispatch_id,
+        }
+        prompt_binding = packet.get("spec_binding")
+        if (
+            not isinstance(prompt_binding, Mapping)
+            or not str(prompt_binding.get("spec_ref") or "").strip()
+            or not _is_sha256(prompt_binding.get("content_digest"), prefixed=True)
+        ):
+            raise BlueprintControlError("packet prompt binding is invalid")
+        return binding, dict(prompt_binding)
+
+    @staticmethod
+    def _supervisor_binding(
+        binding: Mapping[str, str], prompt_binding: Mapping[str, Any]
+    ) -> dict[str, str]:
+        return {
+            "workflow_run_id": binding["workflow_run_id"],
+            "omo_task_id": binding["omo_task_id"],
+            "packet_id": binding["packet_id"],
+            "packet_hash": binding["packet_hash"],
+            "omo_dispatch_id": binding["omo_dispatch_id"],
+            "prompt_ref": _safe_relative_path(
+                prompt_binding["prompt_ref"], "prompt reference"
+            ),
+            "prompt_digest": str(prompt_binding["prompt_digest"]),
+        }
+
+    def _default_supervisor(
+        self,
+        *,
+        action: str,
+        timeout_seconds: int,
+        **values: Any,
+    ) -> Mapping[str, Any]:
+        script = self.root / "bin" / "gac" / "orca-codex-supervisor.py"
+        if not script.is_file():
+            raise BlueprintControlError("Orca Codex supervisor is unavailable")
+        command = [
+            str(script),
+            action,
+            "--workflow-run-id",
+            str(values["workflow_run_id"]),
+            "--omo-task-id",
+            str(values["omo_task_id"]),
+            "--packet-id",
+            str(values["packet_id"]),
+            "--packet-hash",
+            str(values["packet_hash"]),
+            "--omo-dispatch-id",
+            str(values["omo_dispatch_id"]),
+            "--workspace-root",
+            str(self.root),
+            "--prompt-ref",
+            str(values["prompt_ref"]),
+            "--prompt-digest",
+            str(values["prompt_digest"]),
+        ]
+        if action == "start":
+            command.extend(
+                [
+                    "--idempotency-key",
+                    str(values["idempotency_key"]),
+                    "--timeout-ms",
+                    str(timeout_seconds * 1000),
+                ]
+            )
+        elif action == "collect":
+            command.extend(
+                [
+                    "--orca-run-id",
+                    str(values["orca_run_id"]),
+                    "--orca-task-id",
+                    str(values["orca_task_id"]),
+                    "--orca-dispatch-id",
+                    str(values["orca_dispatch_id"]),
+                    "--terminal-handle",
+                    str(values["terminal_handle"]),
+                ]
+            )
+        else:
+            raise BlueprintControlError("supervisor action is invalid")
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=self.root,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                check=False,
+                shell=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise BlueprintControlError("Orca Codex supervisor failed") from exc
+        try:
+            receipt = json.loads(completed.stdout)
+        except json.JSONDecodeError as exc:
+            raise BlueprintControlError(
+                "Orca Codex supervisor receipt is invalid"
+            ) from exc
+        if not isinstance(receipt, Mapping):
+            raise BlueprintControlError("Orca Codex supervisor receipt is invalid")
+        if completed.returncode not in {0, 1}:
+            raise BlueprintControlError("Orca Codex supervisor failed")
+        return dict(receipt)
+
+    def _read_execution_projection(
+        self,
+        *,
+        path: Path,
+        binding: Mapping[str, str],
+        prompt_binding: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            projection = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise BlueprintControlError("execution projection is invalid") from exc
+        if not isinstance(projection, dict) or projection.get(
+            "projection_digest"
+        ) != self._projection_digest(projection):
+            raise BlueprintControlError("execution projection digest mismatch")
+        if projection.get("binding") != dict(binding) or projection.get(
+            "prompt_binding"
+        ) != dict(prompt_binding):
+            raise BlueprintControlError("execution binding mismatch")
+        if projection.get("state") == "control_projection_failed":
+            raise BlueprintControlError("execution control projection failed")
+        if projection.get("state") in {"starting", "startup_outcome_unknown"}:
+            raise BlueprintControlError("execution startup outcome is unknown")
+        if projection.get("state") != "awaiting_human_action":
+            raise BlueprintControlError("execution projection state is invalid")
+        return projection
+
+    def _dispatch_prompt_binding(
+        self, dispatch_result: Mapping[str, Any]
+    ) -> tuple[str, str]:
+        dispatch_path = self.root / _safe_relative_path(
+            dispatch_result.get("dispatch_path"), "dispatch path"
+        )
+        dispatch_doc = load_yaml(dispatch_path)
+        inputs = dispatch_doc.get("inputs")
+        prompt_value = (
+            inputs.get("prompt_file") if isinstance(inputs, Mapping) else None
+        )
+        prompt_ref = _safe_relative_path(prompt_value, "prompt reference")
+        candidate = self.root / prompt_ref
+        try:
+            resolved = candidate.resolve(strict=True)
+            resolved.relative_to(self.root)
+        except (OSError, ValueError) as exc:
+            raise BlueprintControlError("dispatch prompt is unavailable") from exc
+        if resolved != candidate or not resolved.is_file() or resolved.is_symlink():
+            raise BlueprintControlError("dispatch prompt is not a canonical file")
+        return prompt_ref, _sha256(resolved.read_bytes())
+
+    def _validate_execution_external_facts(
+        self,
+        *,
+        execution: Mapping[str, Any],
+        packet: Mapping[str, Any],
+        dispatch_result: Mapping[str, Any],
+    ) -> None:
+        dispatch_path = self.root / _safe_relative_path(
+            dispatch_result.get("dispatch_path"), "dispatch path"
+        )
+        dispatch_doc = load_yaml(dispatch_path)
+        expected_surfaces = _required_string_list(packet["scope"], "write_surfaces")
+        baseline_tree = str(execution.get("baseline_tree") or "")
+        object_type = (
+            self._git(["cat-file", "-t", baseline_tree], check=False)
+            .stdout.decode()
+            .strip()
+        )
+        orca = execution.get("orca")
+        if (
+            object_type != "tree"
+            or execution.get("baseline_digest")
+            != self._tree_scope_digest(baseline_tree, expected_surfaces)
+            or execution.get("write_surfaces") != expected_surfaces
+            or execution.get("worker_id") != dispatch_doc.get("worker_id")
+            or not isinstance(orca, Mapping)
+            or set(orca) != {"run_id", "task_id", "dispatch_id", "terminal_handle"}
+            or not all(isinstance(value, str) and value for value in orca.values())
+        ):
+            raise BlueprintControlError("execution external fact mismatch")
+
+    def _validate_candidate_projection(
+        self,
+        *,
+        path: Path,
+        packet: Mapping[str, Any],
+        dispatch_result: Mapping[str, Any],
+        binding: Mapping[str, str],
+        prompt_binding: Mapping[str, Any] | None,
+        interactive: bool = True,
+    ) -> dict[str, Any]:
+        try:
+            projection = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise BlueprintControlError("candidate projection invalid") from exc
+        if not isinstance(projection, dict):
+            raise BlueprintControlError("candidate projection invalid")
+        if projection.get("state") == "candidate_collection_failed":
+            raise BlueprintControlError("candidate collection failed")
+        if projection.get("state") != "candidate_collected" or projection.get(
+            "projection_digest"
+        ) != self._projection_digest(projection):
+            raise BlueprintControlError("candidate projection invalid")
+        dispatch_doc = load_yaml(
+            self.root
+            / _safe_relative_path(dispatch_result.get("dispatch_path"), "dispatch path")
+        )
+        worker_id = str(dispatch_doc.get("worker_id") or "")
+        execution: Mapping[str, Any] | None = None
+        if interactive:
+            if prompt_binding is None:
+                raise BlueprintControlError("candidate projection invalid")
+            execution = self._read_execution_projection(
+                path=self._execution_projection_path(dispatch_result),
+                binding=binding,
+                prompt_binding=prompt_binding,
+            )
+            self._validate_execution_external_facts(
+                execution=execution,
+                packet=packet,
+                dispatch_result=dispatch_result,
+            )
+        run_id = binding["workflow_run_id"]
+        dispatch_id = binding["omo_dispatch_id"]
+        store = WorkflowMeshStore(self.root / self.omo_dir)
+        snapshot = store.snapshot(run_id)
+        manifest = projection.get("manifest")
+        receipt = projection.get("transport_receipt")
+        if not isinstance(manifest, Mapping) or not isinstance(receipt, Mapping):
+            raise BlueprintControlError("candidate projection invalid")
+        baseline_tree = str(projection.get("baseline_tree") or "")
+        post_tree = str(projection.get("post_tree") or "")
+        patch_ref = str(projection.get("patch_ref") or "")
+        patch_oid = patch_ref.removeprefix("git-object://")
+        baseline_type = (
+            self._git(["cat-file", "-t", baseline_tree], check=False)
+            .stdout.decode()
+            .strip()
+        )
+        post_type = (
+            self._git(["cat-file", "-t", post_tree], check=False)
+            .stdout.decode()
+            .strip()
+        )
+        patch_type = (
+            self._git(["cat-file", "-t", patch_oid], check=False)
+            .stdout.decode()
+            .strip()
+        )
+        if baseline_type != "tree" or post_type != "tree" or patch_type != "blob":
+            raise BlueprintControlError("candidate projection invalid")
+        surfaces = _required_string_list(packet["scope"], "write_surfaces")
+        patch = self._git(["diff", "--binary", baseline_tree, post_tree, "--"]).stdout
+        stored_patch = self._git(["cat-file", "blob", patch_oid]).stdout
+        changed_paths = sorted(
+            value.decode()
+            for value in self._git(
+                ["diff", "--name-only", "-z", baseline_tree, post_tree, "--"]
+            ).stdout.split(b"\0")
+            if value
+        )
+        orca = execution["orca"] if execution is not None else None
+        if (
+            (
+                execution is not None
+                and projection.get("baseline_tree") != execution.get("baseline_tree")
+            )
+            or projection.get("baseline_digest")
+            != self._tree_scope_digest(baseline_tree, surfaces)
+            or projection.get("write_surfaces") != surfaces
+            or patch_ref != f"git-object://{patch_oid}"
+            or stored_patch != patch
+            or projection.get("patch_digest") != _sha256(patch)
+            or manifest.get("changed_paths") != changed_paths
+            or receipt.get("changed_paths") != changed_paths
+            or manifest.get("agent_id") != worker_id
+            or receipt.get("worker_id") != worker_id
+            or (
+                orca is not None
+                and (
+                    receipt.get("orca_run_id") != orca["run_id"]
+                    or receipt.get("orca_task_id") != orca["task_id"]
+                    or receipt.get("orca_dispatch_id") != orca["dispatch_id"]
+                    or receipt.get("terminal_handle") != orca["terminal_handle"]
+                )
+            )
+            or snapshot.get("state") not in {"succeeded", "verified"}
+        ):
+            raise BlueprintControlError("candidate projection invalid")
+        if not self._candidate_binds_dispatch(
+            store=store,
+            run_id=run_id,
+            step_run_id=binding["step_run_id"],
+            dispatch_id=dispatch_id,
+            dispatch_result=dispatch_result,
+            collected=projection,
+        ):
+            raise BlueprintControlError("candidate projection invalid")
+        try:
+            evidence = OrchestrationContractCoordinator._for_workspace(
+                self.root / self.omo_dir, self.root
+            ).record_candidate(
+                workflow_run_id=run_id,
+                step_run_id=binding["step_run_id"],
+                packet=packet,
+                manifest=manifest,
+                transport_receipt=receipt,
+            )
+        except Exception as exc:
+            raise BlueprintControlError("candidate projection invalid") from exc
+        if evidence != projection.get("evidence"):
+            raise BlueprintControlError("candidate projection invalid")
+        return projection
+
+    def start_supervised_execution(
+        self,
+        compiled: CompiledBlueprintPacket,
+        dispatch_result: Mapping[str, Any],
+        *,
+        supervisor: Supervisor | None = None,
+        timeout_seconds: int = 60,
+    ) -> dict[str, Any]:
+        """Freeze Git state, then start one Orca-owned interactive Codex worker."""
+        packet = self._validate_compiled_packet(compiled)
+        binding, spec_binding = self._execution_binding(
+            packet, compiled, dispatch_result
+        )
+        prompt_ref, prompt_digest = self._dispatch_prompt_binding(dispatch_result)
+        prompt_binding = {"prompt_ref": prompt_ref, "prompt_digest": prompt_digest}
+        execution_path = self._execution_projection_path(dispatch_result)
+        if execution_path.is_file():
+            return self._read_execution_projection(
+                path=execution_path,
+                binding=binding,
+                prompt_binding=prompt_binding,
+            )
+
+        allowed = _required_string_list(packet["scope"], "write_surfaces")
+        dispatch_doc = load_yaml(
+            self.root
+            / _safe_relative_path(dispatch_result.get("dispatch_path"), "dispatch path")
+        )
+        worker_id = str(dispatch_doc.get("worker_id") or "").strip()
+        if not worker_id:
+            raise BlueprintControlError("dispatch worker identity is missing")
+        with tempfile.TemporaryDirectory(prefix="omo-blueprint-start-") as directory:
+            baseline_tree = self._snapshot_tree(Path(directory) / "baseline.index")
+        baseline_digest = self._tree_scope_digest(baseline_tree, allowed)
+        idempotency_key = (
+            "orca-codex-start:"
+            + hashlib.sha256(
+                json.dumps(
+                    {
+                        **self._supervisor_binding(binding, prompt_binding),
+                        "workspace_root": str(self.root),
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest()
+        )
+        projection: dict[str, Any] = {
+            "schema": "blueprint-supervised-execution/v1",
+            "state": "starting",
+            "binding": binding,
+            "spec_binding": spec_binding,
+            "prompt_binding": prompt_binding,
+            "prompt_ref": prompt_ref,
+            "prompt_digest": prompt_digest,
+            "baseline_tree": baseline_tree,
+            "baseline_digest": baseline_digest,
+            "write_surfaces": allowed,
+            "worker_id": worker_id,
+            "human_action_required": True,
+            "input_accepted": "unproven",
+            "model_completion": "unproven",
+            "execution_projection": str(execution_path.relative_to(self.root)),
+            "idempotency_key": idempotency_key,
+        }
+        projection["projection_digest"] = self._projection_digest(projection)
+        write_text_atomic(
+            execution_path,
+            json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        )
+        try:
+            receipt = (supervisor or self._default_supervisor)(
+                action="start",
+                timeout_seconds=timeout_seconds,
+                **self._supervisor_binding(binding, prompt_binding),
+                workspace_root=str(self.root),
+                idempotency_key=idempotency_key,
+            )
+        except Exception:
+            projection["state"] = "startup_outcome_unknown"
+            projection["candidate_collected"] = False
+            projection["projection_digest"] = self._projection_digest(projection)
+            write_text_atomic(
+                execution_path,
+                json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2)
+                + "\n",
+            )
+            raise
+        orca = receipt.get("orca")
+        residual_resources = receipt.get("residual_resources")
+        if not isinstance(residual_resources, list) or any(
+            not isinstance(value, str) or not value.startswith("orca:")
+            for value in residual_resources
+        ):
+            residual_resources = []
+        if (
+            receipt.get("schema") != "orca-codex-supervisor/v1"
+            or receipt.get("ok") is not True
+            or receipt.get("state") != "awaiting_human_action"
+            or receipt.get("binding")
+            != self._supervisor_binding(binding, prompt_binding)
+            or not isinstance(orca, Mapping)
+            or set(orca) != {"run_id", "task_id", "dispatch_id", "terminal_handle"}
+            or not all(isinstance(value, str) and value for value in orca.values())
+            or receipt.get("human_action_required") is not True
+            or receipt.get("input_accepted") != "unproven"
+            or receipt.get("model_completion") != "unproven"
+        ):
+            projection.update(
+                {
+                    "state": "startup_outcome_unknown",
+                    "candidate_collected": False,
+                    "supervisor_failure": {
+                        "stage": str(receipt.get("stage") or "receipt_validation"),
+                        "reason": str(receipt.get("reason") or "receipt_invalid"),
+                        "residual_resources": residual_resources,
+                        "receipt_digest": compute_packet_hash(canonicalize(receipt)),
+                    },
+                }
+            )
+            projection["projection_digest"] = self._projection_digest(projection)
+            write_text_atomic(
+                execution_path,
+                json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2)
+                + "\n",
+            )
+            raise BlueprintControlError("Orca Codex start receipt is invalid")
+        projection.update(
+            {
+                "state": "awaiting_human_action",
+                "orca": dict(orca),
+                "supervisor_receipt_digest": compute_packet_hash(canonicalize(receipt)),
+            }
+        )
+        projection["projection_digest"] = self._projection_digest(projection)
+        write_text_atomic(
+            execution_path,
+            json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        )
+        try:
+            WorkflowMeshStore(self.root / self.omo_dir).append(
+                new_workflow_event(
+                    "StepStarted",
+                    binding["workflow_run_id"],
+                    producer="omo-blueprint-control",
+                    payload={
+                        "step_run_id": binding["step_run_id"],
+                        "admission_id": binding["admission_id"],
+                        "dispatch_id": binding["omo_dispatch_id"],
+                    },
+                    idempotency_key=(
+                        f"{binding['workflow_run_id']}:step-started:"
+                        f"{binding['omo_dispatch_id']}"
+                    ),
+                )
+            )
+        except Exception:
+            projection["state"] = "control_projection_failed"
+            projection["candidate_collected"] = False
+            projection["projection_digest"] = self._projection_digest(projection)
+            write_text_atomic(
+                execution_path,
+                json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2)
+                + "\n",
+            )
+            raise
+        return projection
+
+    def collect_supervised_execution(
+        self,
+        compiled: CompiledBlueprintPacket,
+        dispatch_result: Mapping[str, Any],
+        *,
+        supervisor: Supervisor | None = None,
+        acceptance_runner: Runner | None = None,
+        timeout_seconds: int = 120,
+    ) -> dict[str, Any]:
+        """Collect a settled Orca worker, then independently measure its Git delta."""
+        packet = self._validate_compiled_packet(compiled)
+        binding, _spec_binding = self._execution_binding(
+            packet, compiled, dispatch_result
+        )
+        prompt_ref, prompt_digest = self._dispatch_prompt_binding(dispatch_result)
+        prompt_binding = {"prompt_ref": prompt_ref, "prompt_digest": prompt_digest}
+        candidate_path = self._candidate_projection_path(dispatch_result)
+        if candidate_path.is_file():
+            return self._validate_candidate_projection(
+                path=candidate_path,
+                packet=packet,
+                dispatch_result=dispatch_result,
+                binding=binding,
+                prompt_binding=prompt_binding,
+            )
+        execution = self._read_execution_projection(
+            path=self._execution_projection_path(dispatch_result),
+            binding=binding,
+            prompt_binding=prompt_binding,
+        )
+        self._validate_execution_external_facts(
+            execution=execution,
+            packet=packet,
+            dispatch_result=dispatch_result,
+        )
+        orca = execution.get("orca")
+        assert isinstance(orca, Mapping)
+        receipt = (supervisor or self._default_supervisor)(
+            action="collect",
+            timeout_seconds=timeout_seconds,
+            **self._supervisor_binding(binding, prompt_binding),
+            workspace_root=str(self.root),
+            orca_run_id=orca["run_id"],
+            orca_task_id=orca["task_id"],
+            orca_dispatch_id=orca["dispatch_id"],
+            terminal_handle=orca["terminal_handle"],
+        )
+        if receipt.get("binding") != self._supervisor_binding(
+            binding, prompt_binding
+        ) or receipt.get("orca") != dict(orca):
+            raise BlueprintControlError("supervisor collect binding mismatch")
+        if receipt.get("ok") is not True:
+            if receipt.get("reason") == "worker_not_settled":
+                return {
+                    **execution,
+                    "candidate_collected": False,
+                }
+            raise BlueprintControlError("Orca Codex collect failed")
+        if (
+            receipt.get("schema") != "orca-codex-supervisor/v1"
+            or receipt.get("state") != "settled"
+            or receipt.get("human_action_required") is not True
+            or receipt.get("model_completion") != "observed"
+            or not _is_sha256(receipt.get("transcript_digest"), prefixed=True)
+        ):
+            raise BlueprintControlError("Orca Codex collect receipt is invalid")
+
+        run_id = binding["workflow_run_id"]
+        dispatch_id = binding["omo_dispatch_id"]
+        store = WorkflowMeshStore(self.root / self.omo_dir)
+
+        def reject_execution(message: str, reason: str) -> NoReturn:
+            if store.snapshot(run_id).get("state") == "running":
+                store.append(
+                    new_workflow_event(
+                        "StepFailed",
+                        run_id,
+                        producer="omo-blueprint-control",
+                        payload={
+                            "step_run_id": binding["step_run_id"],
+                            "admission_id": binding["admission_id"],
+                            "dispatch_id": dispatch_id,
+                            "reason": reason,
+                        },
+                        idempotency_key=f"{run_id}:step-failed:{dispatch_id}",
+                    )
+                )
+            raise BlueprintControlError(message)
+
+        with tempfile.TemporaryDirectory(prefix="omo-blueprint-collect-") as directory:
+            after_index = Path(directory) / "after.index"
+            post_tree = self._snapshot_tree(after_index)
+            post_tree = self._restore_controller_paths(
+                after_index, str(execution["baseline_tree"]), post_tree
+            )
+            patch = self._git(
+                ["diff", "--binary", str(execution["baseline_tree"]), post_tree, "--"],
+                index_file=after_index,
+            ).stdout
+            changed_paths = sorted(
+                value.decode()
+                for value in self._git(
+                    [
+                        "diff",
+                        "--name-only",
+                        "-z",
+                        str(execution["baseline_tree"]),
+                        post_tree,
+                        "--",
+                    ],
+                    index_file=after_index,
+                ).stdout.split(b"\0")
+                if value
+            )
+            allowed = list(execution["write_surfaces"])
+            if any(
+                not any(
+                    changed == surface.rstrip("/")
+                    or (surface.endswith("/") and changed.startswith(surface))
+                    for surface in allowed
+                )
+                for changed in changed_paths
+            ):
+                reject_execution(
+                    "Git delta contains an out-of-scope path", "write_scope_violation"
+                )
+            patch_digest = _sha256(patch)
+            patch_oid = (
+                self._git(["hash-object", "-w", "--stdin"], input_bytes=patch)
+                .stdout.decode()
+                .strip()
+            )
+
+        acceptance_items = packet["acceptance"]["done_when"]
+        verify_commands = packet["acceptance"]["verify_commands"]
+        if (
+            not isinstance(acceptance_items, list)
+            or not isinstance(verify_commands, list)
+            or len(acceptance_items) != len(verify_commands)
+            or not acceptance_items
+        ):
+            reject_execution(
+                "acceptance measurement contract is invalid",
+                "acceptance_contract_invalid",
+            )
+        checks: list[dict[str, Any]] = []
+        claims: list[dict[str, Any]] = []
+        measurements: list[dict[str, Any]] = []
+        measurement_refs: list[str] = []
+        for item, command in zip(acceptance_items, verify_commands, strict=True):
+            if not isinstance(item, Mapping):
+                reject_execution(
+                    "acceptance measurement contract is invalid",
+                    "acceptance_contract_invalid",
+                )
+            acceptance_id = str(item.get("id") or "").strip()
+            assertion = str(item.get("assertion") or "").strip()
+            argv = shlex.split(str(command))
+            if not acceptance_id or not assertion or not argv:
+                reject_execution(
+                    "acceptance measurement contract is invalid",
+                    "acceptance_contract_invalid",
+                )
+            result = (acceptance_runner or self._default_verifier)(
+                argv=argv,
+                workspace_root=self.root,
+                timeout_seconds=timeout_seconds,
+            )
+            returncode = int(result.get("returncode", 1))
+            stdout = result.get("stdout", b"")
+            stdout_bytes = stdout.encode() if isinstance(stdout, str) else bytes(stdout)
+            check = build_command_check(
+                argv, returncode, stdout_bytes.decode(errors="replace")
+            )
+            measurement = {
+                "acceptance_id": acceptance_id,
+                "assertion": assertion,
+                "command": argv,
+                "returncode": returncode,
+                "stdout_hash": check["stdout_hash"],
+                "source": "deterministic-command",
+                "measured": returncode == 0,
+            }
+            measurement_oid = (
+                self._git(
+                    ["hash-object", "-w", "--stdin"],
+                    input_bytes=json.dumps(
+                        measurement,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode(),
+                )
+                .stdout.decode()
+                .strip()
+            )
+            evidence_ref = f"git-object://{measurement_oid}"
+            measurement["evidence_ref"] = evidence_ref
+            if returncode != 0:
+                reject_execution(
+                    f"acceptance measurement failed: {acceptance_id}",
+                    "acceptance_measurement_failed",
+                )
+            checks.append(check)
+            claims.append(
+                {
+                    "acceptance_id": acceptance_id,
+                    "assertion": assertion,
+                    "evidence_refs": [evidence_ref],
+                }
+            )
+            measurements.append(measurement)
+            measurement_refs.append(evidence_ref)
+
+        assignment_id = "ASG-" + hashlib.sha256(dispatch_id.encode()).hexdigest()[:16]
+        manifest = {
+            "packet_id": packet["packet_id"],
+            "packet_hash": compiled.packet_hash,
+            "assignment_id": assignment_id,
+            "agent_id": str(execution["worker_id"]),
+            "status": "candidate",
+            "changed_paths": changed_paths,
+            "claims": claims,
+            "checks": [
+                {
+                    "command": check["command"],
+                    "returncode": check["returncode"],
+                    "stdout_hash": check["stdout_hash"],
+                }
+                for check in checks
+            ],
+            "recommended_next": "verify",
+            "surface_delta": {
+                "files": len(changed_paths),
+                "loc": len(patch.splitlines()),
+            },
+            "artifact_refs": [f"git-object://{patch_oid}", *measurement_refs],
+        }
+        transport_receipt: dict[str, Any] = {
+            "receipt_id": f"orca-codex:{dispatch_id}",
+            "workflow_run_id": run_id,
+            "step_run_id": binding["step_run_id"],
+            "bet_id": packet["bet_id"],
+            "packet_id": packet["packet_id"],
+            "packet_hash": compiled.packet_hash,
+            "assignment_id": assignment_id,
+            "dispatch_id": dispatch_id,
+            "worker_id": str(execution["worker_id"]),
+            "orca_run_id": orca["run_id"],
+            "orca_task_id": orca["task_id"],
+            "orca_dispatch_id": orca["dispatch_id"],
+            "terminal_handle": orca["terminal_handle"],
+            "output_digest": str(receipt["transcript_digest"]).removeprefix("sha256:"),
+            "changed_paths": changed_paths,
+            "observed_at": datetime.now().astimezone().isoformat(),
+            "provenance_ref": f"receipt://orca/{orca['dispatch_id']}",
+        }
+        transport_receipt["receipt_digest"] = compute_packet_hash(
+            canonicalize(transport_receipt)
+        )
+        store.append(
+            new_workflow_event(
+                "WorkflowSucceeded",
+                run_id,
+                producer="omo-blueprint-control",
+                payload={"packet_id": packet["packet_id"]},
+                idempotency_key=f"{run_id}:candidate-succeeded:{dispatch_id}",
+            )
+        )
+        try:
+            evidence = OrchestrationContractCoordinator._for_workspace(
+                self.root / self.omo_dir, self.root
+            ).record_candidate(
+                workflow_run_id=run_id,
+                step_run_id=binding["step_run_id"],
+                packet=packet,
+                manifest=manifest,
+                transport_receipt=transport_receipt,
+            )
+        except Exception:
+            store.append(
+                new_workflow_event(
+                    "CompensationStarted",
+                    run_id,
+                    producer="omo-blueprint-control",
+                    payload={
+                        "step_run_id": binding["step_run_id"],
+                        "admission_id": binding["admission_id"],
+                        "dispatch_id": dispatch_id,
+                        "reason": "candidate_evidence_failed",
+                    },
+                    idempotency_key=f"{run_id}:candidate-compensation:{dispatch_id}",
+                )
+            )
+            store.append(
+                new_workflow_event(
+                    "StepFailed",
+                    run_id,
+                    producer="omo-blueprint-control",
+                    payload={
+                        "step_run_id": binding["step_run_id"],
+                        "admission_id": binding["admission_id"],
+                        "dispatch_id": dispatch_id,
+                        "reason": "candidate_evidence_failed",
+                    },
+                    idempotency_key=f"{run_id}:step-failed:{dispatch_id}",
+                )
+            )
+            failed_projection: dict[str, Any] = {
+                "state": "candidate_collection_failed",
+                "candidate_collected": False,
+                "reason": "candidate_evidence_failed",
+                "binding": dict(binding),
+                "orca": dict(orca),
+                "execution_projection": execution["execution_projection"],
+                "patch_ref": f"git-object://{patch_oid}",
+                "patch_digest": patch_digest,
+            }
+            failed_projection["projection_digest"] = self._projection_digest(
+                failed_projection
+            )
+            write_text_atomic(
+                candidate_path,
+                json.dumps(
+                    failed_projection,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    indent=2,
+                )
+                + "\n",
+            )
+            raise
+        projection = {
+            "state": "candidate_collected",
+            "manifest": manifest,
+            "transport_receipt": transport_receipt,
+            "supervisor_receipt_digest": compute_packet_hash(canonicalize(receipt)),
+            "baseline_tree": execution["baseline_tree"],
+            "baseline_digest": execution["baseline_digest"],
+            "post_tree": post_tree,
+            "write_surfaces": allowed,
+            "patch_ref": f"git-object://{patch_oid}",
+            "patch_digest": patch_digest,
+            "acceptance_measurements": measurements,
+            "evidence": evidence,
+        }
+        projection["projection_digest"] = self._projection_digest(projection)
+        write_text_atomic(
+            candidate_path,
+            json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        )
+        return projection
+
     @staticmethod
     def _default_runner(
         *,
@@ -580,21 +1484,18 @@ class BlueprintControlService:
         dispatch_result: Mapping[str, Any],
         *,
         runner: Runner | None = None,
+        acceptance_runner: Runner | None = None,
         timeout_seconds: int = 900,
     ) -> dict[str, Any]:
         """Execute one supervised worker and compile independently measured evidence."""
         packet = self._validate_compiled_packet(compiled)
-        if dispatch_result.get("state") != "transport_accepted":
-            raise BlueprintControlError("dispatch is not transport accepted")
-        if (
-            dispatch_result.get("packet_id") != packet["packet_id"]
-            or dispatch_result.get("packet_hash") != compiled.packet_hash
-            or dispatch_result.get("bet_id") != packet["bet_id"]
-        ):
-            raise BlueprintControlError("dispatch packet binding mismatch")
-        run_id, admission_id, dispatch_id, step_run_id = self._dispatch_context(
-            dispatch_result
+        execution_binding, _spec_binding = self._execution_binding(
+            packet, compiled, dispatch_result
         )
+        run_id = execution_binding["workflow_run_id"]
+        admission_id = execution_binding["admission_id"]
+        dispatch_id = execution_binding["omo_dispatch_id"]
+        step_run_id = execution_binding["step_run_id"]
         store = WorkflowMeshStore(self.root / self.omo_dir)
         allowed = _required_string_list(packet["scope"], "write_surfaces")
         dispatch_path = self.root / str(dispatch_result["dispatch_path"])
@@ -602,14 +1503,14 @@ class BlueprintControlService:
             dispatch_path.name.removesuffix("-dispatch.yaml") + "-manifest.json"
         )
         if projection_path.is_file():
-            projection = json.loads(projection_path.read_text(encoding="utf-8"))
-            binding = projection.get("manifest", {})
-            if (
-                binding.get("packet_id") == packet["packet_id"]
-                and binding.get("packet_hash") == compiled.packet_hash
-            ):
-                return projection
-            raise BlueprintControlError("manifest_conflict")
+            return self._validate_candidate_projection(
+                path=projection_path,
+                packet=packet,
+                dispatch_result=dispatch_result,
+                binding=execution_binding,
+                prompt_binding=None,
+                interactive=False,
+            )
         step_started = False
         baseline_tree = ""
         baseline_digest = ""
@@ -819,21 +1720,86 @@ class BlueprintControlService:
                 .strip()
             )
 
-        checks = [
-            build_command_check(
-                ["bounded-runner"],
-                0,
-                str(receipt.get("output_sha256") or "model output observed"),
+        acceptance_items = packet["acceptance"]["done_when"]
+        verify_commands = packet["acceptance"]["verify_commands"]
+        if (
+            not isinstance(acceptance_items, list)
+            or not isinstance(verify_commands, list)
+            or len(acceptance_items) != len(verify_commands)
+            or not acceptance_items
+        ):
+            reject_execution(
+                "acceptance measurement contract is invalid",
+                "acceptance_contract_invalid",
             )
-        ]
-        claims = [
-            {
-                "acceptance_id": f"AC{index}",
-                "assertion": str(assertion),
-                "evidence_refs": [f"git-object://{patch_oid}"],
+        checks: list[dict[str, Any]] = []
+        claims: list[dict[str, Any]] = []
+        acceptance_measurements: list[dict[str, Any]] = []
+        measurement_refs: list[str] = []
+        for item, command in zip(acceptance_items, verify_commands, strict=True):
+            if not isinstance(item, Mapping):
+                reject_execution(
+                    "acceptance measurement contract is invalid",
+                    "acceptance_contract_invalid",
+                )
+            acceptance_id = str(item.get("id") or "").strip()
+            assertion = str(item.get("assertion") or "").strip()
+            argv = shlex.split(str(command))
+            if not acceptance_id or not assertion or not argv:
+                reject_execution(
+                    "acceptance measurement contract is invalid",
+                    "acceptance_contract_invalid",
+                )
+            result = (acceptance_runner or self._default_verifier)(
+                argv=argv,
+                workspace_root=self.root,
+                timeout_seconds=timeout_seconds,
+            )
+            returncode = int(result.get("returncode", 1))
+            stdout = result.get("stdout", b"")
+            stdout_bytes = stdout.encode() if isinstance(stdout, str) else bytes(stdout)
+            check = build_command_check(
+                argv, returncode, stdout_bytes.decode(errors="replace")
+            )
+            measurement = {
+                "acceptance_id": acceptance_id,
+                "assertion": assertion,
+                "command": argv,
+                "returncode": returncode,
+                "stdout_hash": check["stdout_hash"],
+                "source": "deterministic-command",
+                "measured": returncode == 0,
             }
-            for index, assertion in enumerate(packet["acceptance"]["done_when"], 1)
-        ]
+            measurement_oid = (
+                self._git(
+                    ["hash-object", "-w", "--stdin"],
+                    input_bytes=json.dumps(
+                        measurement,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode(),
+                )
+                .stdout.decode()
+                .strip()
+            )
+            evidence_ref = f"git-object://{measurement_oid}"
+            measurement["evidence_ref"] = evidence_ref
+            if returncode != 0:
+                reject_execution(
+                    f"acceptance measurement failed: {acceptance_id}",
+                    "acceptance_measurement_failed",
+                )
+            checks.append(check)
+            claims.append(
+                {
+                    "acceptance_id": acceptance_id,
+                    "assertion": assertion,
+                    "evidence_refs": [evidence_ref],
+                }
+            )
+            acceptance_measurements.append(measurement)
+            measurement_refs.append(evidence_ref)
         assignment_id = "ASG-" + hashlib.sha256(dispatch_id.encode()).hexdigest()[:16]
         manifest = {
             "packet_id": packet["packet_id"],
@@ -856,7 +1822,7 @@ class BlueprintControlService:
                 "files": len(changed_paths),
                 "loc": len(patch.splitlines()),
             },
-            "artifact_refs": [f"git-object://{patch_oid}"],
+            "artifact_refs": [f"git-object://{patch_oid}", *measurement_refs],
         }
         transport_receipt: dict[str, Any] = {
             "receipt_id": f"codex:{dispatch_id}",
@@ -907,8 +1873,10 @@ class BlueprintControlService:
             "write_surfaces": allowed,
             "patch_ref": f"git-object://{patch_oid}",
             "patch_digest": patch_digest,
+            "acceptance_measurements": acceptance_measurements,
             "evidence": evidence,
         }
+        projection["projection_digest"] = self._projection_digest(projection)
         write_text_atomic(
             projection_path,
             json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
@@ -1298,8 +2266,10 @@ def _parser() -> _BlueprintArgumentParser:
 
     collect_parser = commands.add_parser("collect")
     collect_parser.add_argument("--root", default=".")
+    collect_parser.add_argument("--packet-file", required=True)
     collect_parser.add_argument("--dispatch-file", required=True)
     collect_parser.add_argument("--candidate-file", required=True)
+    collect_parser.add_argument("--timeout-seconds", type=int, default=120)
 
     verify_parser = commands.add_parser("verify")
     verify_parser.add_argument("--root", default=".")
@@ -1422,37 +2392,6 @@ def main(argv: list[str] | None = None) -> int:
             _emit({"ok": True, **service.observe_dispatch(dispatch)})
             return 0
 
-        if parsed.command == "collect":
-            projection = _read_json_artifact(
-                root,
-                str(
-                    _candidate_projection_path(root, parsed.dispatch_file).relative_to(
-                        root
-                    )
-                ),
-                field_name="candidate projection",
-            )
-            if projection.get("state") != "candidate_collected":
-                raise BlueprintControlError("candidate projection is not collected")
-            candidate_file = _artifact_path(
-                root, parsed.candidate_file, field_name="candidate file", write=True
-            )
-            write_text_atomic(
-                candidate_file,
-                json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2)
-                + "\n",
-            )
-            _emit(
-                {
-                    "ok": True,
-                    "state": "candidate_collected",
-                    "candidate_file": _safe_relative_path(
-                        parsed.candidate_file, "candidate file"
-                    ),
-                }
-            )
-            return 0
-
         if parsed.command == "execute":
             if not parsed.supervised:
                 raise BlueprintControlError("supervised execution flag is required")
@@ -1463,9 +2402,20 @@ def main(argv: list[str] | None = None) -> int:
             if parsed.approval_ref != approval_ref:
                 raise BlueprintControlError("controller approval reference mismatch")
             _artifact_path(root, parsed.approval_ref, field_name="approval reference")
-            projection = service.execute_and_collect(
+            projection = service.start_supervised_execution(
                 compiled, dispatch, timeout_seconds=parsed.timeout_seconds
             )
+            _emit({"ok": True, **projection})
+            return 0
+
+        if parsed.command == "collect":
+            compiled = _compiled_from_artifact(root, parsed.packet_file)
+            projection = service.collect_supervised_execution(
+                compiled, dispatch, timeout_seconds=parsed.timeout_seconds
+            )
+            if projection.get("state") != "candidate_collected":
+                _emit({"ok": False, **projection})
+                return 4
             candidate_file = _artifact_path(
                 root, parsed.candidate_file, field_name="candidate file", write=True
             )

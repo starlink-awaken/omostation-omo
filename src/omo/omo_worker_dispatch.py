@@ -176,6 +176,16 @@ def dispatch_task(
         allowed_write_paths=allowed_write_paths,
         workflow_packet=workflow_packet,
     )
+    supervision = worker.get("supervision")
+    if (
+        launch
+        and isinstance(supervision, dict)
+        and supervision.get("controller_direct_start_required") is True
+    ):
+        raise ValueError(
+            "worker launch denied: controller direct start is required "
+            f"for worker_id={worker_id}"
+        )
 
     dispatch_now = now or _utc_now()
     dispatch_id = f"{task_id.lower()}-{worker_id}-{_timestamp_slug(dispatch_now)}"
