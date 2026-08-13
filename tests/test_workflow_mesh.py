@@ -3,6 +3,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
+
 from omo.workflow_mesh import (
     WorkflowMeshEventError,
     WorkflowMeshStore,
@@ -142,6 +143,30 @@ def test_successful_run_can_be_verified_merged_and_closed(tmp_path):
     assert snapshot["state"] == "closed"
     assert snapshot["last_event_type"] == "WorkflowClosed"
     assert snapshot["event_count"] == 9
+
+
+def test_succeeded_candidate_can_enter_compensation_and_close_cancelled(tmp_path):
+    store = WorkflowMeshStore(tmp_path)
+    run_id = "run-succeeded-compensation"
+    step_run_id = f"{run_id}:step-1"
+    grant = _grant(run_id, [step_run_id])
+    store.append(new_workflow_event("WorkflowRequested", run_id))
+    store.append(_admit(run_id, [step_run_id]))
+    step_context = {
+        "step_run_id": step_run_id,
+        "admission_id": grant["admission_id"],
+    }
+    store.append(new_workflow_event("StepDispatched", run_id, payload=step_context))
+    store.append(new_workflow_event("StepStarted", run_id, payload=step_context))
+    store.append(new_workflow_event("WorkflowSucceeded", run_id))
+    store.append(
+        new_workflow_event("CompensationStarted", run_id, payload=step_context)
+    )
+    store.append(new_workflow_event("WorkflowRecovered", run_id))
+    store.append(new_workflow_event("WorkflowCancelled", run_id))
+    store.append(new_workflow_event("WorkflowClosed", run_id))
+
+    assert store.snapshot(run_id)["state"] == "closed"
 
 
 def test_step_run_checkpoint_and_evidence_are_queryable(tmp_path):

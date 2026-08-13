@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -70,6 +71,7 @@ def _approval_state(
     task_file: Path,
     *,
     accepted_task_refs: set[str] | None = None,
+    now: str | None = None,
 ) -> dict[str, Any]:
     required = (
         task.get("risk_level") in {"L2", "L3"}
@@ -81,7 +83,13 @@ def _approval_state(
         return {"required": False, "status": "not_required", "ref": approval_ref}
     if not approval_ref:
         raise WorkflowDispatchError("human approval is required before dispatch")
-    approval_path = root / str(approval_ref)
+    try:
+        approval_path = (root / str(approval_ref)).resolve(strict=True)
+        approval_path.relative_to(root.resolve())
+    except (OSError, ValueError) as exc:
+        raise WorkflowDispatchError("approval record is missing or invalid") from exc
+    if not approval_path.is_file():
+        raise WorkflowDispatchError("approval record is missing or invalid")
     try:
         approval = load_yaml(approval_path)
     except (FileNotFoundError, OSError, ValueError) as exc:
@@ -90,6 +98,17 @@ def _approval_state(
         raise WorkflowDispatchError("approval record task mismatch")
     if approval.get("approval_status") != "granted":
         raise WorkflowDispatchError("approval is not granted")
+    expires_at = approval.get("expires_at")
+    if expires_at:
+        try:
+            expiry = datetime.fromisoformat(str(expires_at))
+            observed = datetime.fromisoformat(now) if now else datetime.now(UTC)
+            if expiry <= observed:
+                raise WorkflowDispatchError("approval record is expired")
+        except WorkflowDispatchError:
+            raise
+        except (TypeError, ValueError) as exc:
+            raise WorkflowDispatchError("approval expiry is invalid") from exc
     scope = approval.get("approval_scope")
     if scope not in {"workflow.execute", "task.promote_apply"}:
         raise WorkflowDispatchError("approval scope does not authorize execution")
@@ -104,7 +123,33 @@ def _approval_state(
         "ref": str(approval_ref),
         "approval_id": approval.get("approval_id"),
         "scope": scope,
+        "expires_at": expires_at,
     }
+
+
+def _validated_request_identity(
+    request_identity: Mapping[str, Any] | None,
+    *,
+    task_id: str,
+    task_file: Path,
+    root: Path,
+) -> dict[str, str]:
+    if request_identity is None:
+        return {}
+    required = {"bet_id", "packet_id", "packet_hash", "task_ref"}
+    if set(request_identity) != required:
+        raise WorkflowDispatchError("request identity must contain exactly four fields")
+    identity = {key: str(request_identity.get(key) or "").strip() for key in required}
+    if not all(identity.values()):
+        raise WorkflowDispatchError("request identity fields must be non-empty")
+    if not identity["packet_id"].startswith("WP-"):
+        raise WorkflowDispatchError("request identity packet_id is invalid")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", identity["packet_hash"]):
+        raise WorkflowDispatchError("request identity packet_hash is invalid")
+    task_ref = str(task_file.relative_to(root))
+    if identity["task_ref"] != task_ref:
+        raise WorkflowDispatchError("request identity task_ref mismatch")
+    return identity
 
 
 def _requested_event(store: WorkflowMeshStore, workflow_run_id: str) -> dict[str, Any]:
@@ -370,6 +415,7 @@ def admit_requested_workflow(
         task,
         task_file,
         accepted_task_refs={request_task_ref} if request_task_ref else set(),
+        now=now,
     )
     health = _parse_health(capability_health, required)
     trace_id = str(event.get("trace_id") or workflow_run_id)
@@ -439,6 +485,7 @@ def admit_workflow(
     ttl_seconds: int = 900,
     now: str | None = None,
     scene_binding: Mapping[str, Any] | None = None,
+    request_identity: Mapping[str, Any] | None = None,
     omo_dir: str | Path = ".omo",
 ) -> dict[str, Any]:
     """Validate gates, append request/admission events, and return a packet."""
@@ -457,7 +504,13 @@ def admit_workflow(
     if validation_errors:
         raise WorkflowDispatchError("; ".join(validation_errors))
     task = load_yaml(task_file)
-    approval = _approval_state(root, task, task_file)
+    identity = _validated_request_identity(
+        request_identity,
+        task_id=task_id,
+        task_file=task_file,
+        root=root,
+    )
+    approval = _approval_state(root, task, task_file, now=now)
     health = _parse_health(
         capability_health, list(dict.fromkeys(required_capabilities))
     )
@@ -510,6 +563,7 @@ def admit_workflow(
                 "approval": approval,
                 "health": health,
                 "requested_budget": requested_budget,
+                **identity,
             },
             scene_binding=scene_binding,
         )
@@ -534,6 +588,7 @@ def admit_workflow(
         "capability_health": health,
         "scene_binding": dict(scene_binding) if scene_binding is not None else None,
         "dispatch_state": "admitted",
+        "request_identity": identity or None,
     }
 
 

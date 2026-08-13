@@ -31,6 +31,8 @@ from .omo_external_receipt import ExternalReceiptError, record_external_receipt
 from .omo_paths import WORKSPACE_ROOT
 from .workflow_mesh import WorkflowMeshEventError, WorkflowMeshStore, new_workflow_event
 
+EXECUTABLE_BET_STATES = frozenset({"candidate", "in_progress", "review", "done"})
+
 
 class OrchestrationContractError(ValueError):
     """A candidate cannot be promoted through the delivery contract."""
@@ -157,7 +159,7 @@ def _validate_spec_binding(
         if isinstance(document, Mapping)
         for bet in document.get("bets", [])
         if isinstance(bet, Mapping)
-        and bet.get("status") == "done"
+        and bet.get("status") in EXECUTABLE_BET_STATES
         and str(bet.get("id")) == decision_id
     ]
     if len(matching_decisions) != 1:
@@ -443,6 +445,83 @@ def _external_evidence_payload(
     }
 
 
+def _validate_transport_receipt(
+    transport_receipt: Mapping[str, Any],
+    *,
+    workflow_run_id: str,
+    step_run_id: str,
+    packet: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+    packet_hash: str,
+) -> dict[str, Any]:
+    """Validate the immutable transport receipt before it becomes evidence."""
+    receipt = dict(transport_receipt)
+    required_fields = {
+        "receipt_id",
+        "workflow_run_id",
+        "step_run_id",
+        "bet_id",
+        "packet_id",
+        "packet_hash",
+        "assignment_id",
+        "dispatch_id",
+        "worker_id",
+        "output_digest",
+        "changed_paths",
+        "observed_at",
+        "provenance_ref",
+        "receipt_digest",
+    }
+    missing = sorted(required_fields - receipt.keys())
+    if missing:
+        raise OrchestrationContractError(
+            "verification_unprovable", f"transport receipt missing fields: {missing}"
+        )
+    expected_identity = {
+        "workflow_run_id": _required_text(workflow_run_id, "workflow_run_id"),
+        "step_run_id": _required_text(step_run_id, "step_run_id"),
+        "bet_id": packet["bet_id"],
+        "packet_id": packet["packet_id"],
+        "packet_hash": packet_hash,
+        "assignment_id": manifest["assignment_id"],
+    }
+    for key, expected in expected_identity.items():
+        if receipt.get(key) != expected:
+            raise OrchestrationContractError(
+                "verification_unprovable",
+                f"transport receipt {key} does not bind current candidate",
+            )
+    _required_text(receipt["receipt_id"], "receipt_id")
+    _required_text(receipt["dispatch_id"], "dispatch_id")
+    _required_text(receipt["worker_id"], "worker_id")
+    _required_text(receipt["observed_at"], "observed_at")
+    _required_text(receipt["provenance_ref"], "provenance_ref")
+    output_digest = _required_text(receipt["output_digest"], "output_digest").lower()
+    if len(output_digest) != 64 or any(
+        char not in "0123456789abcdef" for char in output_digest
+    ):
+        raise OrchestrationContractError(
+            "transport_failed", "transport receipt output_digest is invalid"
+        )
+    changed_paths = receipt["changed_paths"]
+    if not isinstance(changed_paths, list) or [
+        _normalise_relative_path(path) for path in changed_paths
+    ] != list(manifest["changed_paths"]):
+        raise OrchestrationContractError(
+            "verification_unprovable",
+            "transport receipt changed_paths do not bind manifest",
+        )
+    receipt_digest = _required_text(receipt["receipt_digest"], "receipt_digest")
+    canonical_receipt = {
+        key: value for key, value in receipt.items() if key != "receipt_digest"
+    }
+    if receipt_digest != compute_packet_hash(canonicalize(canonical_receipt)):
+        raise OrchestrationContractError(
+            "verification_unprovable", "transport receipt digest is invalid"
+        )
+    return receipt
+
+
 def _fresh_verification_receipt(
     packet: Mapping[str, Any], supplied: VerificationReceipt
 ) -> VerificationReceipt:
@@ -568,14 +647,29 @@ class OrchestrationContractCoordinator:
             else None
         )
 
-    def record_kandev_candidate(
+    @classmethod
+    def _for_workspace(
+        cls, omo_dir: Path | str, workspace_root: Path
+    ) -> OrchestrationContractCoordinator:
+        """Internal authority bridge for the governed Blueprint controller."""
+        coordinator = cls(omo_dir)
+        resolved_root = workspace_root.resolve()
+        if Path(omo_dir).resolve() != (resolved_root / ".omo").resolve():
+            raise OrchestrationContractError(
+                "spec_binding_invalid", "OMO authority root does not match workspace"
+            )
+        coordinator._workspace_root = resolved_root
+        return coordinator
+
+    def _record_candidate(
         self,
         *,
         workflow_run_id: str,
         step_run_id: str,
         packet: Mapping[str, Any],
         manifest: Mapping[str, Any],
-        fixture: Mapping[str, Any],
+        transport_receipt: Mapping[str, Any],
+        allow_missing_mesh_dispatch: bool,
     ) -> dict[str, Any]:
         packet_value, manifest_value, packet_hash = _validate_candidate(
             packet, manifest, workspace_root=self._workspace_root
@@ -587,53 +681,45 @@ class OrchestrationContractCoordinator:
             step_run_id=step_run_id,
             bet_id=packet_value["bet_id"],
         )
-        adapter = KandevFixtureAdapter(fixture)
-        task_id = _required_text(fixture.get("external_task_id"), "external_task_id")
-        collected = adapter.collect(task_id)
-        expected_identity = {
-            "workflow_run_id": _required_text(workflow_run_id, "workflow_run_id"),
-            "packet_id": packet_value["packet_id"],
-            "packet_hash": packet_hash,
-            "assignment_id": manifest_value["assignment_id"],
-            "bet_id": packet_value["bet_id"],
-            "step_run_id": step_run_id,
-        }
-        for key, expected in expected_identity.items():
-            if collected.get(key) != expected:
-                raise OrchestrationContractError(
-                    "verification_unprovable",
-                    f"fixture {key} does not bind current candidate",
-                )
-        if str(collected.get("state") or "").lower() != "succeeded":
+        collected = _validate_transport_receipt(
+            transport_receipt,
+            workflow_run_id=workflow_run_id,
+            step_run_id=step_run_id,
+            packet=packet_value,
+            manifest=manifest_value,
+            packet_hash=packet_hash,
+        )
+        worker_context = store.snapshot(workflow_run_id).get("worker")
+        if isinstance(worker_context, Mapping):
+            for key in ("dispatch_id", "worker_id", "step_run_id"):
+                if worker_context.get(key) != collected[key]:
+                    raise OrchestrationContractError(
+                        "verification_unprovable",
+                        f"transport receipt {key} does not bind Mesh dispatch",
+                    )
+        elif not allow_missing_mesh_dispatch:
             raise OrchestrationContractError(
-                "transport_failed", "fixture did not succeed"
+                "verification_unprovable",
+                "transport receipt requires a Mesh dispatch binding",
             )
-        output_digest = _required_text(collected.get("output_digest"), "output_digest")
-        if len(output_digest) != 64 or any(
-            char not in "0123456789abcdef" for char in output_digest.lower()
-        ):
-            raise OrchestrationContractError(
-                "transport_failed", "fixture output_digest is invalid"
-            )
-
         receipt = {
-            "receipt_id": f"kandev:{task_id}",
+            "receipt_id": collected["receipt_id"],
             "trace_id": _required_text(workflow_run_id, "workflow_run_id"),
-            "resource_id": task_id,
+            "resource_id": collected["worker_id"],
             "operation": "collect",
             "result_state": "succeeded",
-            "observed_at": _required_text(collected.get("observed_at"), "observed_at"),
-            "provenance_ref": _required_text(
-                collected.get("provenance_ref"), "provenance_ref"
-            ),
+            "observed_at": collected["observed_at"],
+            "provenance_ref": collected["provenance_ref"],
             "policy_digest": "orchestration-contract/v1",
-            "output_digest": output_digest.lower(),
+            "output_digest": collected["output_digest"].lower(),
             "decision_factors": {
                 "packet_id": packet_value["packet_id"],
                 "packet_hash": packet_hash,
                 "assignment_id": manifest_value["assignment_id"],
-                "external_task_id": task_id,
                 "bet_id": packet_value["bet_id"],
+                "dispatch_id": collected["dispatch_id"],
+                "worker_id": collected["worker_id"],
+                "receipt_digest": collected["receipt_digest"],
                 "manifest_digest": _manifest_digest(manifest_value),
                 "artifact_refs_digest": _artifact_refs_digest(
                     manifest_value["artifact_refs"] or []
@@ -677,6 +763,69 @@ class OrchestrationContractCoordinator:
             raise OrchestrationContractError(
                 "verification_unprovable", "external receipt is invalid"
             ) from exc
+
+    def record_candidate(
+        self,
+        *,
+        workflow_run_id: str,
+        step_run_id: str,
+        packet: Mapping[str, Any],
+        manifest: Mapping[str, Any],
+        transport_receipt: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Record a generic candidate only when its Mesh dispatch is bound."""
+        return self._record_candidate(
+            workflow_run_id=workflow_run_id,
+            step_run_id=step_run_id,
+            packet=packet,
+            manifest=manifest,
+            transport_receipt=transport_receipt,
+            allow_missing_mesh_dispatch=False,
+        )
+
+    def record_kandev_candidate(
+        self,
+        *,
+        workflow_run_id: str,
+        step_run_id: str,
+        packet: Mapping[str, Any],
+        manifest: Mapping[str, Any],
+        fixture: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Compatibility wrapper for the disabled Kandev fixture adapter."""
+        adapter = KandevFixtureAdapter(fixture)
+        task_id = _required_text(fixture.get("external_task_id"), "external_task_id")
+        collected = adapter.collect(task_id)
+        if str(collected.get("state") or "").lower() != "succeeded":
+            raise OrchestrationContractError(
+                "transport_failed", "fixture did not succeed"
+            )
+        transport_receipt: dict[str, Any] = {
+            "receipt_id": f"kandev:{task_id}",
+            "workflow_run_id": collected.get("workflow_run_id"),
+            "step_run_id": collected.get("step_run_id"),
+            "bet_id": collected.get("bet_id"),
+            "packet_id": collected.get("packet_id"),
+            "packet_hash": collected.get("packet_hash"),
+            "assignment_id": collected.get("assignment_id"),
+            "dispatch_id": f"kandev:{task_id}",
+            "worker_id": "kandev-fixture-agent",
+            "output_digest": collected.get("output_digest"),
+            "changed_paths": manifest.get("changed_paths"),
+            "observed_at": collected.get("observed_at"),
+            "provenance_ref": collected.get("provenance_ref"),
+        }
+        transport_receipt["receipt_digest"] = compute_packet_hash(
+            canonicalize(transport_receipt)
+        )
+        return self._record_candidate(
+            workflow_run_id=workflow_run_id,
+            step_run_id=step_run_id,
+            packet=packet,
+            manifest=manifest,
+            transport_receipt=transport_receipt,
+            allow_missing_mesh_dispatch=True,
+        )
 
     def accept_verification(
         self,
