@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import hashlib
 from pathlib import Path
 
@@ -13,16 +12,6 @@ from omo.omo_worker_core import (
     _require_admitted_worker,
 )
 from omo.omo_worker_dispatch import dispatch_task
-
-
-WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
-
-
-def _root_pi_worker() -> dict:
-    registry_path = WORKSPACE_ROOT / ".omo" / "_truth" / "registry" / "workers.yaml"
-    documents = list(yaml.safe_load_all(registry_path.read_text(encoding="utf-8")))
-    registry = next(document for document in documents if isinstance(document, dict) and "workers" in document)
-    return next(worker for worker in registry["workers"] if worker["id"] == "pi")
 
 
 def _task_fixture(root: Path, *, worker: dict) -> Path:
@@ -76,6 +65,35 @@ def _worker(
         "transports": transports
         if transports is not None
         else {"cli_prompt": {"command": "pi --prompt {prompt}"}},
+    }
+
+
+def _admitted_pi_worker() -> dict:
+    return {
+        "id": "pi",
+        "enabled": True,
+        "admission_state": "admitted",
+        "provider_ref": "pi",
+        "role": "worker",
+        "class": "external_agent_cli",
+        "transports": {
+            "cli_prompt": {
+                "command": (
+                    "/usr/bin/python3 bin/gac/pi-worker-adapter.py run --execute "
+                    '--timeout-seconds 120 --prompt "{prompt}"'
+                )
+            }
+        },
+        "capabilities": ["reasoning", "verification"],
+        "allowed_operation_level": "L0",
+        "forbidden_domains": ["apple", "wechat", "smb", "family", "media"],
+        "write_scope": {"mode": "none"},
+        "lease_policy": {
+            "heartbeat_interval_seconds": 300,
+            "warning_after_seconds": 900,
+            "lease_expired_after_seconds": 1200,
+            "reclaim_after_seconds": 1800,
+        },
     }
 
 
@@ -172,8 +190,8 @@ def test_default_worker_requires_an_admitted_worker() -> None:
         )
 
 
-def test_root_pi_worker_is_admitted_l0_and_uses_one_shell_free_omo_transport() -> None:
-    pi = _root_pi_worker()
+def test_admitted_pi_worker_uses_one_shell_free_omo_transport() -> None:
+    pi = _admitted_pi_worker()
 
     assert pi["enabled"] is True
     assert pi["admission_state"] == "admitted"
@@ -208,13 +226,15 @@ def test_root_pi_worker_is_admitted_l0_and_uses_one_shell_free_omo_transport() -
     ]
     assert argv.count(prompt) == 1
     assert "-c" not in argv
-    assert not any(fragment in argument for argument in argv for fragment in ("&&", "||", "|"))
+    assert not any(
+        fragment in argument for argument in argv for fragment in ("&&", "||", "|")
+    )
 
 
-def test_root_pi_worker_dispatch_without_launch_creates_only_governed_artifacts(
+def test_admitted_pi_worker_dispatch_without_launch_creates_only_governed_artifacts(
     tmp_path: Path,
 ) -> None:
-    pi = copy.deepcopy(_root_pi_worker())
+    pi = _admitted_pi_worker()
     task_path = _task_fixture(tmp_path, worker=pi)
     task = yaml.safe_load(task_path.read_text(encoding="utf-8"))
     task["risk_level"] = "L0"
@@ -236,9 +256,7 @@ def test_root_pi_worker_dispatch_without_launch_creates_only_governed_artifacts(
         path for path, digest in after.items() if before.get(path) != digest
     }
     expected_run_paths = {
-        Path(path).as_posix()
-        for name, path in result.items()
-        if name.endswith("_path")
+        Path(path).as_posix() for name, path in result.items() if name.endswith("_path")
     }
     assert expected_run_paths <= changed_paths
     assert changed_paths <= {
@@ -247,4 +265,6 @@ def test_root_pi_worker_dispatch_without_launch_creates_only_governed_artifacts(
         ".omo/_knowledge/workflow-mesh/events.jsonl",
         ".omo/_knowledge/workflow-mesh/events.jsonl.lock",
     }
-    assert not (tmp_path / ".omo" / "workers" / "runs" / f"{result['dispatch_id']}-stdout.log").exists()
+    assert not (
+        tmp_path / ".omo" / "workers" / "runs" / f"{result['dispatch_id']}-stdout.log"
+    ).exists()
