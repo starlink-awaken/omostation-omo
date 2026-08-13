@@ -262,6 +262,7 @@ def test_sequential_mode_chain_dynamic(tmp_path):
 def test_import_fast_track_generates_valid_yaml(tmp_path):
     """测试 Fast-Track 降维是否产生包含 context_uri 且无 TODO 阻挡的合法任务"""
     import yaml
+
     from omo.omo_bridge import _import_fast_track
 
     spec = tmp_path / "fix-typo.md"
@@ -446,7 +447,10 @@ def test_import_bmad_changed_content_reports_drift_without_new_tasks(tmp_path):
     assert second["ok"] is False
     assert second["spec_drift"] is True
     assert second["created"] == 0
-    assert sorted(path.name for path in (omo / "tasks" / "planned").glob("*.yaml")) == before
+    assert (
+        sorted(path.name for path in (omo / "tasks" / "planned").glob("*.yaml"))
+        == before
+    )
 
 
 def test_bridge_main_returns_nonzero_when_bmad_contract_is_rejected(
@@ -467,6 +471,7 @@ def test_import_pitch_uses_governed_goal_and_task_ingress(tmp_path, capfd):
     import hashlib
 
     import yaml
+
     from omo.omo_bridge import _import_pitch
 
     pitch = tmp_path / "pitch.md"

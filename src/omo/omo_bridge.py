@@ -95,7 +95,10 @@ def _import_bmad(file_path: Path, omo_dir: Path, sequential: bool = False):
                 old_ref = str(old.get("metadata", {}).get("source_ref", ""))
             except Exception:
                 continue
-            if old_ref.startswith(source_prefix) and f":{content_digest}:" not in old_ref:
+            if (
+                old_ref.startswith(source_prefix)
+                and f":{content_digest}:" not in old_ref
+            ):
                 spec_drift = True
                 errors.append(
                     f"spec_drift: {file_path.name} changed since prior import ({existing.name})"
@@ -225,9 +228,7 @@ def _import_bmad(file_path: Path, omo_dir: Path, sequential: bool = False):
         if isinstance(registered, dict):
             registered_ref = registered.get("source_ref")
             if registered_ref and registered_ref != source_ref:
-                errors.append(
-                    f"task {task_data['id']}: registry identity conflicts"
-                )
+                errors.append(f"task {task_data['id']}: registry identity conflicts")
 
     if errors:
         report = {

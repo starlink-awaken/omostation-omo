@@ -16,7 +16,6 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
 import yaml
-
 from ecos.ssot.mof.generated.control.mof_control_models import (
     CompletionManifest as CompletionManifestModel,
 )
