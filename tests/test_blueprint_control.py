@@ -18,6 +18,7 @@ from omo.workflow_mesh import WorkflowMeshStore
 
 BET_ID = "BET-Y1Q2-T1-18"
 TASK_ID = "TASK-BLUEPRINT-1"
+CLONE_AGENT_ID = "clone-agent-a"
 SPEC_PATH = "docs/specs/blueprint.md"
 SPEC_REF = f"repo://{SPEC_PATH}"
 SPEC_VERSION = "1.0.0"
@@ -178,6 +179,19 @@ def _commit_baseline(tmp_path: Path) -> None:
     (tmp_path / ".gitignore").write_text(".omo/\n", encoding="utf-8")
     _git(tmp_path, "add", "-A")
     _git(tmp_path, "commit", "-qm", "baseline")
+    branch = _git(tmp_path, "branch", "--show-current").stdout.decode().strip()
+    (tmp_path / ".git" / "agent-clone-identity.json").write_text(
+        json.dumps(
+            {
+                "schema": "agent-clone-identity/v1",
+                "agent_id": CLONE_AGENT_ID,
+                "canonical_root": str(tmp_path.resolve()),
+                "working_branch": branch,
+                "ready": True,
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def _adapter_receipt(
@@ -240,6 +254,15 @@ def _supervisor_start_receipt(
     prompt_digest = (
         "sha256:" + hashlib.sha256((tmp_path / prompt_ref).read_bytes()).hexdigest()
     )
+    canonical_root_digest = (
+        "sha256:" + hashlib.sha256(str(tmp_path.resolve()).encode()).hexdigest()
+    )
+    placement = {
+        "clone_agent_id": CLONE_AGENT_ID,
+        "canonical_root_digest": canonical_root_digest,
+        "guard_receipt_digest": "sha256:" + "6" * 64,
+        "orca_worktree_id": f"repo-001::{tmp_path.resolve()}",
+    }
     return {
         "schema": "orca-codex-supervisor/v1",
         "ok": True,
@@ -252,6 +275,7 @@ def _supervisor_start_receipt(
             "omo_dispatch_id": dispatched["dispatch_id"],
             "prompt_ref": prompt_ref,
             "prompt_digest": prompt_digest,
+            **placement,
         },
         "orca": {
             "run_id": "orca-run-001",
@@ -544,6 +568,7 @@ def test_supervised_start_freezes_baseline_then_pauses_for_human(
     started = service.start_supervised_execution(
         compiled,
         dispatched,
+        clone_agent_id=CLONE_AGENT_ID,
         supervisor=supervisor,
         timeout_seconds=5,
     )
@@ -564,6 +589,7 @@ def test_supervised_start_freezes_baseline_then_pauses_for_human(
     assert calls[0]["action"] == "start"
     assert calls[0]["packet_id"] == compiled.packet["packet_id"]
     assert calls[0]["packet_hash"] == compiled.packet_hash
+    assert calls[0]["agent_id"] == CLONE_AGENT_ID
     assert calls[0]["workspace_root"] == str(tmp_path.resolve())
     assert "argv" not in calls[0]
     assert "launch_command" not in calls[0]
@@ -579,6 +605,10 @@ def test_supervised_start_freezes_baseline_then_pauses_for_human(
     assert execution_path.is_file()
     persisted = json.loads(execution_path.read_text(encoding="utf-8"))
     assert persisted["projection_digest"].startswith("sha256:")
+    assert persisted["clone_agent_id"] == CLONE_AGENT_ID
+    assert persisted["canonical_root_digest"] == started["canonical_root_digest"]
+    assert persisted["guard_receipt_digest"] == started["guard_receipt_digest"]
+    assert persisted["orca_worktree_id"] == started["orca_worktree_id"]
     event_types = [
         event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
     ]
@@ -600,6 +630,7 @@ def test_supervised_start_marks_projection_failed_when_mesh_start_is_not_durable
         service.start_supervised_execution(
             compiled,
             dispatched,
+            clone_agent_id=CLONE_AGENT_ID,
             supervisor=lambda **_kwargs: _supervisor_start_receipt(
                 tmp_path, compiled, dispatched
             ),
@@ -613,6 +644,7 @@ def test_supervised_start_marks_projection_failed_when_mesh_start_is_not_durable
         service.start_supervised_execution(
             compiled,
             dispatched,
+            clone_agent_id=CLONE_AGENT_ID,
             supervisor=lambda **_kwargs: pytest.fail("must not start another worker"),
         )
 
@@ -636,6 +668,7 @@ def test_supervised_start_crash_leaves_stable_startup_unknown_and_never_relaunch
         service.start_supervised_execution(
             compiled,
             dispatched,
+            clone_agent_id=CLONE_AGENT_ID,
             supervisor=crash_after_external_start,
         )
 
@@ -647,6 +680,29 @@ def test_supervised_start_crash_leaves_stable_startup_unknown_and_never_relaunch
         service.start_supervised_execution(
             compiled,
             dispatched,
+            clone_agent_id=CLONE_AGENT_ID,
+            supervisor=lambda **_kwargs: pytest.fail("must not launch twice"),
+        )
+
+
+def test_supervised_start_replay_rejects_cross_clone_agent_identity(
+    tmp_path: Path,
+) -> None:
+    service, compiled, dispatched = _dispatched_repo(tmp_path)
+    service.start_supervised_execution(
+        compiled,
+        dispatched,
+        clone_agent_id=CLONE_AGENT_ID,
+        supervisor=lambda **_kwargs: _supervisor_start_receipt(
+            tmp_path, compiled, dispatched
+        ),
+    )
+
+    with pytest.raises(BlueprintControlError, match="clone agent identity mismatch"):
+        service.start_supervised_execution(
+            compiled,
+            dispatched,
+            clone_agent_id="cross-clone-agent",
             supervisor=lambda **_kwargs: pytest.fail("must not launch twice"),
         )
 
@@ -660,6 +716,7 @@ def test_supervised_start_invalid_receipt_preserves_safe_recovery_facts(
         service.start_supervised_execution(
             compiled,
             dispatched,
+            clone_agent_id=CLONE_AGENT_ID,
             supervisor=lambda **_kwargs: {
                 "schema": "orca-codex-supervisor/v1",
                 "ok": False,
@@ -685,6 +742,7 @@ def test_supervised_start_invalid_receipt_preserves_safe_recovery_facts(
         service.start_supervised_execution(
             compiled,
             dispatched,
+            clone_agent_id=CLONE_AGENT_ID,
             supervisor=lambda **_kwargs: pytest.fail("must not launch twice"),
         )
 
@@ -696,6 +754,7 @@ def test_supervised_collect_keeps_active_worker_paused_without_candidate(
     service.start_supervised_execution(
         compiled,
         dispatched,
+        clone_agent_id=CLONE_AGENT_ID,
         supervisor=lambda **_kwargs: _supervisor_start_receipt(
             tmp_path, compiled, dispatched
         ),
@@ -727,6 +786,109 @@ def test_supervised_collect_keeps_active_worker_paused_without_candidate(
     assert "StepFailed" not in event_types
 
 
+def test_supervised_collect_passes_frozen_clone_attestation_back_to_supervisor(
+    tmp_path: Path,
+) -> None:
+    service, compiled, dispatched = _dispatched_repo(tmp_path)
+    started = service.start_supervised_execution(
+        compiled,
+        dispatched,
+        clone_agent_id=CLONE_AGENT_ID,
+        supervisor=lambda **_kwargs: _supervisor_start_receipt(
+            tmp_path, compiled, dispatched
+        ),
+    )
+    seen: list[dict] = []
+
+    def active_supervisor(**kwargs):  # noqa: ANN003, ANN202
+        seen.append(kwargs)
+        return {
+            **_supervisor_start_receipt(tmp_path, compiled, dispatched),
+            "ok": False,
+            "stage": "worker_show",
+            "reason": "worker_not_settled",
+            "residual_resources": ["terminal-001"],
+        }
+
+    active = service.collect_supervised_execution(
+        compiled, dispatched, supervisor=active_supervisor
+    )
+
+    assert active["candidate_collected"] is False
+    assert seen == [
+        {
+            "action": "collect",
+            "timeout_seconds": 120,
+            "workflow_run_id": dispatched["workflow_run_id"],
+            "omo_task_id": TASK_ID,
+            "packet_id": compiled.packet["packet_id"],
+            "packet_hash": compiled.packet_hash,
+            "omo_dispatch_id": dispatched["dispatch_id"],
+            "prompt_ref": dispatched["prompt_path"],
+            "prompt_digest": started["prompt_digest"],
+            "workspace_root": str(tmp_path.resolve()),
+            "agent_id": CLONE_AGENT_ID,
+            "clone_agent_id": started["clone_agent_id"],
+            "canonical_root_digest": started["canonical_root_digest"],
+            "guard_receipt_digest": started["guard_receipt_digest"],
+            "orca_worktree_id": started["orca_worktree_id"],
+            "orca_run_id": "orca-run-001",
+            "orca_task_id": "orca-task-001",
+            "orca_dispatch_id": "orca-dispatch-001",
+            "terminal_handle": "terminal-001",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("field", "drifted"),
+    [
+        ("clone_agent_id", "other-clone"),
+        ("canonical_root_digest", "sha256:" + "0" * 64),
+        ("guard_receipt_digest", "sha256:" + "1" * 64),
+        ("orca_worktree_id", "repo-other::/tmp/cross-clone"),
+        ("terminal_handle", "terminal-other"),
+    ],
+)
+def test_supervised_collect_rejects_clone_or_terminal_reattestation_drift(
+    tmp_path: Path, field: str, drifted: str
+) -> None:
+    service, compiled, dispatched = _dispatched_repo(tmp_path)
+    target = tmp_path / "src" / "omo" / "blueprint_control.py"
+
+    def start_supervisor(**_kwargs):  # noqa: ANN003, ANN202
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("VALUE = 20\n", encoding="utf-8")
+        return _supervisor_start_receipt(tmp_path, compiled, dispatched)
+
+    service.start_supervised_execution(
+        compiled,
+        dispatched,
+        clone_agent_id=CLONE_AGENT_ID,
+        supervisor=start_supervisor,
+    )
+    receipt = _supervisor_collect_receipt(tmp_path, compiled, dispatched)
+    if field == "terminal_handle":
+        receipt["orca"] = {**receipt["orca"], field: drifted}
+    else:
+        receipt["binding"] = {**receipt["binding"], field: drifted}
+
+    with pytest.raises(BlueprintControlError, match="collect binding mismatch"):
+        service.collect_supervised_execution(
+            compiled,
+            dispatched,
+            supervisor=lambda **_kwargs: receipt,
+        )
+
+    assert not service._candidate_projection_path(dispatched).exists()  # noqa: SLF001
+    event_types = [
+        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
+    ]
+    assert "WorkflowSucceeded" not in event_types
+    assert "EvidenceRecorded" not in event_types
+    assert "StepFailed" not in event_types
+
+
 def test_supervised_collect_settled_worker_builds_independent_candidate(
     tmp_path: Path,
 ) -> None:
@@ -739,7 +901,10 @@ def test_supervised_collect_settled_worker_builds_independent_candidate(
         return _supervisor_start_receipt(tmp_path, compiled, dispatched)
 
     service.start_supervised_execution(
-        compiled, dispatched, supervisor=start_supervisor
+        compiled,
+        dispatched,
+        clone_agent_id=CLONE_AGENT_ID,
+        supervisor=start_supervisor,
     )
     measured: list[list[str]] = []
 
@@ -789,7 +954,10 @@ def test_supervised_collect_evidence_failure_transitions_to_auditable_failure(
         return _supervisor_start_receipt(tmp_path, compiled, dispatched)
 
     service.start_supervised_execution(
-        compiled, dispatched, supervisor=start_supervisor
+        compiled,
+        dispatched,
+        clone_agent_id=CLONE_AGENT_ID,
+        supervisor=start_supervisor,
     )
 
     def fail_evidence(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
@@ -841,6 +1009,7 @@ def test_supervised_collect_rejects_execution_projection_not_backed_by_external_
     started = service.start_supervised_execution(
         compiled,
         dispatched,
+        clone_agent_id=CLONE_AGENT_ID,
         supervisor=lambda **_kwargs: _supervisor_start_receipt(
             tmp_path, compiled, dispatched
         ),
@@ -880,7 +1049,10 @@ def test_supervised_candidate_replay_rejects_forged_projection_and_cross_dispatc
         return _supervisor_start_receipt(tmp_path, compiled, dispatched)
 
     service.start_supervised_execution(
-        compiled, dispatched, supervisor=start_supervisor
+        compiled,
+        dispatched,
+        clone_agent_id=CLONE_AGENT_ID,
+        supervisor=start_supervisor,
     )
     collected = service.collect_supervised_execution(
         compiled,
@@ -922,6 +1094,149 @@ def test_supervised_candidate_replay_rejects_forged_projection_and_cross_dispatc
         )
 
 
+def test_supervised_collect_rejects_live_clone_branch_identity_drift_before_orca(
+    tmp_path: Path,
+) -> None:
+    service, compiled, dispatched = _dispatched_repo(tmp_path)
+    service.start_supervised_execution(
+        compiled,
+        dispatched,
+        clone_agent_id=CLONE_AGENT_ID,
+        supervisor=lambda **_kwargs: _supervisor_start_receipt(
+            tmp_path, compiled, dispatched
+        ),
+    )
+    identity_path = tmp_path / ".git" / "agent-clone-identity.json"
+    identity = json.loads(identity_path.read_text(encoding="utf-8"))
+    identity["working_branch"] = "agent/other-clone"
+    identity_path.write_text(json.dumps(identity), encoding="utf-8")
+
+    with pytest.raises(BlueprintControlError, match="execution external fact mismatch"):
+        service.collect_supervised_execution(
+            compiled,
+            dispatched,
+            supervisor=lambda **_kwargs: pytest.fail("must fail before Orca collect"),
+        )
+
+    assert not service._candidate_projection_path(dispatched).exists()  # noqa: SLF001
+    event_types = [
+        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
+    ]
+    assert "WorkflowSucceeded" not in event_types
+    assert "EvidenceRecorded" not in event_types
+    assert "StepFailed" not in event_types
+
+
+@pytest.mark.parametrize(
+    ("field", "drifted"),
+    [
+        ("canonical_root_digest", "sha256:" + "2" * 64),
+        ("guard_receipt_digest", "sha256:" + "3" * 64),
+        ("orca_worktree_id", "repo-cross::/tmp/cross-clone"),
+    ],
+)
+def test_supervised_candidate_replay_rejects_rehashed_clone_attestation_tamper(
+    tmp_path: Path, field: str, drifted: str
+) -> None:
+    service, compiled, dispatched = _dispatched_repo(tmp_path)
+    target = tmp_path / "src" / "omo" / "blueprint_control.py"
+
+    def start_supervisor(**_kwargs):  # noqa: ANN003, ANN202
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("VALUE = 21\n", encoding="utf-8")
+        return _supervisor_start_receipt(tmp_path, compiled, dispatched)
+
+    service.start_supervised_execution(
+        compiled,
+        dispatched,
+        clone_agent_id=CLONE_AGENT_ID,
+        supervisor=start_supervisor,
+    )
+    service.collect_supervised_execution(
+        compiled,
+        dispatched,
+        supervisor=lambda **_kwargs: _supervisor_collect_receipt(
+            tmp_path, compiled, dispatched
+        ),
+    )
+    execution_path = service._execution_projection_path(dispatched)  # noqa: SLF001
+    execution = json.loads(execution_path.read_text(encoding="utf-8"))
+    execution[field] = drifted
+    execution["projection_digest"] = BlueprintControlService._projection_digest(  # noqa: SLF001
+        execution
+    )
+    execution_path.write_text(json.dumps(execution), encoding="utf-8")
+
+    with pytest.raises(
+        BlueprintControlError, match="mismatch|candidate projection invalid"
+    ):
+        service.collect_supervised_execution(
+            compiled,
+            dispatched,
+            supervisor=lambda **_kwargs: pytest.fail("replay must not recollect"),
+        )
+
+
+def test_supervised_candidate_replay_rejects_fully_rehashed_cross_clone_forgery(
+    tmp_path: Path,
+) -> None:
+    service, compiled, dispatched = _dispatched_repo(tmp_path)
+    target = tmp_path / "src" / "omo" / "blueprint_control.py"
+
+    def start_supervisor(**_kwargs):  # noqa: ANN003, ANN202
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("VALUE = 22\n", encoding="utf-8")
+        return _supervisor_start_receipt(tmp_path, compiled, dispatched)
+
+    service.start_supervised_execution(
+        compiled,
+        dispatched,
+        clone_agent_id=CLONE_AGENT_ID,
+        supervisor=start_supervisor,
+    )
+    service.collect_supervised_execution(
+        compiled,
+        dispatched,
+        supervisor=lambda **_kwargs: _supervisor_collect_receipt(
+            tmp_path, compiled, dispatched
+        ),
+    )
+    forged = {
+        "clone_agent_id": "cross-clone-agent",
+        "canonical_root_digest": "sha256:" + "4" * 64,
+        "guard_receipt_digest": "sha256:" + "5" * 64,
+        "orca_worktree_id": "repo-cross::/tmp/cross-clone",
+    }
+    execution_path = service._execution_projection_path(dispatched)  # noqa: SLF001
+    execution = json.loads(execution_path.read_text(encoding="utf-8"))
+    execution.update(forged)
+    execution["projection_digest"] = BlueprintControlService._projection_digest(  # noqa: SLF001
+        execution
+    )
+    execution_path.write_text(json.dumps(execution), encoding="utf-8")
+    candidate_path = service._candidate_projection_path(dispatched)  # noqa: SLF001
+    candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+    candidate.update(forged)
+    candidate["transport_receipt"].update(forged)
+    receipt = candidate["transport_receipt"]
+    receipt["receipt_digest"] = compute_packet_hash(
+        canonicalize(
+            {key: value for key, value in receipt.items() if key != "receipt_digest"}
+        )
+    )
+    candidate["projection_digest"] = BlueprintControlService._projection_digest(  # noqa: SLF001
+        candidate
+    )
+    candidate_path.write_text(json.dumps(candidate), encoding="utf-8")
+
+    with pytest.raises(BlueprintControlError, match="external fact mismatch"):
+        service.collect_supervised_execution(
+            compiled,
+            dispatched,
+            supervisor=lambda **_kwargs: pytest.fail("replay must not recollect"),
+        )
+
+
 def test_supervised_collect_rejects_rehashed_binding_tamper_before_orca_call(
     tmp_path: Path,
 ) -> None:
@@ -929,6 +1244,7 @@ def test_supervised_collect_rejects_rehashed_binding_tamper_before_orca_call(
     started = service.start_supervised_execution(
         compiled,
         dispatched,
+        clone_agent_id=CLONE_AGENT_ID,
         supervisor=lambda **_kwargs: _supervisor_start_receipt(
             tmp_path, compiled, dispatched
         ),
@@ -1435,6 +1751,7 @@ def test_default_supervisor_forwards_deterministic_start_idempotency_key(
         omo_dispatch_id="dispatch-001",
         prompt_ref="prompts/task.md",
         prompt_digest="sha256:" + "b" * 64,
+        agent_id=CLONE_AGENT_ID,
         idempotency_key="orca-codex-start:stable",
     )
 
@@ -1444,6 +1761,58 @@ def test_default_supervisor_forwards_deterministic_start_idempotency_key(
         "--timeout-ms",
         "12000",
     ]
+    assert observed[0][observed[0].index("--agent-id") + 1] == CLONE_AGENT_ID
+
+
+def test_default_supervisor_forwards_collect_clone_attestation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = tmp_path / "bin" / "gac" / "orca-codex-supervisor.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    observed: list[list[str]] = []
+
+    def run(command, **_kwargs):  # noqa: ANN001, ANN003, ANN202
+        observed.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            1,
+            stdout=json.dumps({"ok": False, "reason": "worker_not_settled"}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(subprocess, "run", run)
+    values = {
+        "workflow_run_id": "wf-001",
+        "omo_task_id": TASK_ID,
+        "packet_id": "packet-001",
+        "packet_hash": "sha256:" + "a" * 64,
+        "omo_dispatch_id": "dispatch-001",
+        "prompt_ref": "prompts/task.md",
+        "prompt_digest": "sha256:" + "b" * 64,
+        "agent_id": CLONE_AGENT_ID,
+        "clone_agent_id": CLONE_AGENT_ID,
+        "canonical_root_digest": "sha256:" + "c" * 64,
+        "guard_receipt_digest": "sha256:" + "d" * 64,
+        "orca_worktree_id": "repo-001::/tmp/clone",
+        "orca_run_id": "run-001",
+        "orca_task_id": "task-001",
+        "orca_dispatch_id": "orca-dispatch-001",
+        "terminal_handle": "terminal-001",
+    }
+
+    BlueprintControlService(tmp_path)._default_supervisor(
+        action="collect", timeout_seconds=12, **values
+    )
+
+    command = observed[0]
+    for field, option in (
+        ("agent_id", "--agent-id"),
+        ("canonical_root_digest", "--canonical-root-digest"),
+        ("guard_receipt_digest", "--guard-receipt-digest"),
+        ("orca_worktree_id", "--orca-worktree-id"),
+    ):
+        assert command[command.index(option) + 1] == values[field]
 
 
 def test_cli_compile_emits_json_and_persists_only_explicit_packet(
@@ -1617,6 +1986,8 @@ def test_cli_observe_and_execute_input_ack_never_claim_model_success(
             ".omo/workers/runs/blueprint-candidate.json",
             "--approval-ref",
             ".omo/workers/runs/approval.yaml",
+            "--clone-agent-id",
+            CLONE_AGENT_ID,
             "--supervised",
             "--timeout-seconds",
             "5",
