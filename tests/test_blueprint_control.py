@@ -209,7 +209,9 @@ def _adapter_receipt(
     return receipt
 
 
-def _dispatched_repo(tmp_path: Path):  # noqa: ANN202
+def _dispatched_repo(
+    tmp_path: Path, *, now: str = "2026-08-14T10:00:00+00:00"
+):  # noqa: ANN202
     _workspace(tmp_path)
     _dispatch_authority(tmp_path)
     _commit_baseline(tmp_path)
@@ -219,7 +221,7 @@ def _dispatched_repo(tmp_path: Path):  # noqa: ANN202
         compiled,
         worker_id="worker-a",
         capability_health=_health(),
-        now="2026-08-14T10:00:00+00:00",
+        now=now,
     )
     return service, compiled, dispatched
 
@@ -491,6 +493,32 @@ def test_execute_collect_and_independent_verify_use_real_git_delta(tmp_path: Pat
     assert verified["state"] == "independently_verified"
 
 
+def test_baseline_is_frozen_before_runner_can_modify_workspace(tmp_path: Path) -> None:
+    service, compiled, dispatched = _dispatched_repo(tmp_path)
+
+    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
+        target = workspace_root / "src" / "omo" / "blueprint_control.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("PRE_CALLBACK = True\n", encoding="utf-8")
+        on_process_started()
+        target.write_text("FINAL = True\n", encoding="utf-8")
+        receipt_path.write_text(
+            json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8"
+        )
+        return {"returncode": 0}
+
+    collected = service.execute_and_collect(compiled, dispatched, runner=runner)
+    patch = _git(
+        tmp_path,
+        "cat-file",
+        "blob",
+        collected["patch_ref"].removeprefix("git-object://"),
+    ).stdout
+
+    assert b"new file mode" in patch
+    assert b"FINAL = True" in patch
+
+
 def test_collect_replay_returns_persisted_candidate_without_rerunning(tmp_path: Path) -> None:
     service, compiled, dispatched = _dispatched_repo(tmp_path)
     calls = 0
@@ -523,7 +551,6 @@ def test_collect_replay_returns_persisted_candidate_without_rerunning(tmp_path: 
         ("digest", "receipt digest"),
         ("readiness", "model output"),
         ("path", "changed paths"),
-        ("provider", "human approval"),
     ],
 )
 def test_collect_rejects_untrusted_adapter_receipt_without_evidence(
@@ -532,8 +559,7 @@ def test_collect_rejects_untrusted_adapter_receipt_without_evidence(
     service, compiled, dispatched = _dispatched_repo(tmp_path)
 
     def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
-        if mutation != "provider":
-            on_process_started()
+        on_process_started()
         target = workspace_root / "src" / "omo" / "blueprint_control.py"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 1\n", encoding="utf-8")
@@ -556,14 +582,6 @@ def test_collect_rejects_untrusted_adapter_receipt_without_evidence(
                 separators=(",", ":"),
             )
             receipt["receipt_sha256"] = hashlib.sha256(canonical.encode()).hexdigest()
-        else:
-            receipt["supervision"]["provider_review"] = "human_required"
-            canonical = json.dumps(
-                {k: v for k, v in receipt.items() if k != "receipt_sha256"},
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            receipt["receipt_sha256"] = hashlib.sha256(canonical.encode()).hexdigest()
         receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
         return {"returncode": 0}
 
@@ -573,10 +591,28 @@ def test_collect_rejects_untrusted_adapter_receipt_without_evidence(
     event_types = [
         event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
     ]
-    if mutation == "provider":
-        assert "StepStarted" not in event_types
     assert "EvidenceRecorded" not in event_types
     assert "WorkflowVerified" not in event_types
+
+
+def test_runner_prelaunch_rejection_has_no_step_started_or_candidate(
+    tmp_path: Path,
+) -> None:
+    service, compiled, dispatched = _dispatched_repo(tmp_path)
+
+    def runner(**_kwargs):  # noqa: ANN003, ANN202
+        raise BlueprintControlError("runner prelaunch rejection")
+
+    with pytest.raises(BlueprintControlError, match="prelaunch rejection"):
+        service.execute_and_collect(compiled, dispatched, runner=runner)
+
+    event_types = [
+        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
+    ]
+    assert "StepStarted" not in event_types
+    assert "StepFailed" not in event_types
+    assert "WorkflowSucceeded" not in event_types
+    assert "EvidenceRecorded" not in event_types
 
 
 def test_started_provider_human_review_fails_step_without_candidate(tmp_path: Path) -> None:
@@ -713,3 +749,51 @@ def test_tampered_patch_leaves_rejected_run_unclosed(tmp_path: Path) -> None:
     assert WorkflowMeshStore(tmp_path / ".omo").snapshot(
         dispatched["workflow_run_id"]
     )["state"] == "compensating"
+
+
+def test_candidate_from_other_run_cannot_compensate_or_close_current_run(
+    tmp_path: Path,
+) -> None:
+    root_a = tmp_path / "a"
+    root_b = tmp_path / "b"
+    root_a.mkdir()
+    root_b.mkdir()
+    service_a, compiled_a, dispatched_a = _dispatched_repo(root_a)
+    service_b, compiled_b, dispatched_b = _dispatched_repo(
+        root_b, now="2026-08-14T10:01:00+00:00"
+    )
+
+    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
+        on_process_started()
+        target = workspace_root / "src" / "omo" / "blueprint_control.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(f"VALUE = {workspace_root.name!r}\n", encoding="utf-8")
+        receipt_path.write_text(
+            json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8"
+        )
+        return {"returncode": 0}
+
+    candidate_a = service_a.execute_and_collect(compiled_a, dispatched_a, runner=runner)
+    candidate_b = service_b.execute_and_collect(compiled_b, dispatched_b, runner=runner)
+    blob_b = _git(
+        root_b,
+        "cat-file",
+        "blob",
+        candidate_b["patch_ref"].removeprefix("git-object://"),
+    ).stdout
+    imported_oid = _git(root_a, "hash-object", "-w", "--stdin", input_bytes=blob_b).stdout.decode().strip()
+    candidate_b["patch_ref"] = f"git-object://{imported_oid}"
+    candidate_b["manifest"]["artifact_refs"] = [f"git-object://{imported_oid}"]
+    before = WorkflowMeshStore(root_a / ".omo").events()
+
+    result = service_a.rollback_candidate(dispatched_a, candidate_b)
+
+    assert result == {"state": "rollback_unconfirmed", "reason": "candidate_binding_mismatch"}
+    after = WorkflowMeshStore(root_a / ".omo").events()
+    assert after == before
+    assert "CompensationStarted" not in [event["event_type"] for event in after]
+    assert "WorkflowClosed" not in [event["event_type"] for event in after]
+    assert WorkflowMeshStore(root_a / ".omo").snapshot(
+        dispatched_a["workflow_run_id"]
+    )["state"] == "succeeded"
+    assert candidate_a["transport_receipt"]["dispatch_id"] != candidate_b["transport_receipt"]["dispatch_id"]

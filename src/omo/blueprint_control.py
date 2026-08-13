@@ -472,6 +472,26 @@ class BlueprintControlService:
         listing = self._git(["ls-tree", "-r", tree, "--", *paths]).stdout
         return _sha256(listing)
 
+    def _restore_controller_paths(
+        self, index_file: Path, baseline_tree: str, post_tree: str
+    ) -> str:
+        controller_paths = [
+            (self.omo_dir / "_knowledge" / "workflow-mesh" / "events.jsonl").as_posix()
+        ]
+        present = [
+            path
+            for path in controller_paths
+            if self._git(["ls-tree", baseline_tree, "--", path]).stdout
+            or self._git(["ls-tree", post_tree, "--", path]).stdout
+        ]
+        if present:
+            self._git(
+                ["reset", "-q", baseline_tree, "--", *present],
+                index_file=index_file,
+            )
+            return self._git(["write-tree"], index_file=index_file).stdout.decode().strip()
+        return post_tree
+
     def _dispatch_context(
         self, dispatch_result: Mapping[str, Any]
     ) -> tuple[str, str, str, str]:
@@ -572,7 +592,7 @@ class BlueprintControlService:
         baseline_digest = ""
 
         def on_process_started() -> None:
-            nonlocal baseline_digest, baseline_tree, step_started
+            nonlocal step_started
             if step_started:
                 return
             store.append(
@@ -589,8 +609,6 @@ class BlueprintControlService:
                 )
             )
             step_started = True
-            baseline_tree = self._snapshot_tree(before_index)
-            baseline_digest = self._tree_scope_digest(baseline_tree, allowed)
 
         def reject_execution(message: str, reason: str) -> NoReturn:
             if step_started and store.snapshot(run_id).get("state") == "running":
@@ -625,6 +643,8 @@ class BlueprintControlService:
             argv = shlex.split(launch_command)
             if runner is None and not argv:
                 raise BlueprintControlError("dispatch has no bounded launch command")
+            baseline_tree = self._snapshot_tree(before_index)
+            baseline_digest = self._tree_scope_digest(baseline_tree, allowed)
             try:
                 result = (runner or self._default_runner)(
                     argv=argv,
@@ -722,6 +742,9 @@ class BlueprintControlService:
                 raise BlueprintControlError("provider process start was not observed")
 
             post_tree = self._snapshot_tree(after_index)
+            post_tree = self._restore_controller_paths(
+                after_index, baseline_tree, post_tree
+            )
             patch = self._git(
                 ["diff", "--binary", baseline_tree, post_tree, "--"],
                 index_file=after_index,
@@ -927,6 +950,100 @@ class BlueprintControlService:
             "receipt_hash": receipt.receipt_hash,
         }
 
+    def _candidate_binds_dispatch(
+        self,
+        *,
+        store: WorkflowMeshStore,
+        run_id: str,
+        step_run_id: str,
+        dispatch_id: str,
+        dispatch_result: Mapping[str, Any],
+        collected: Mapping[str, Any],
+    ) -> bool:
+        manifest = collected.get("manifest")
+        receipt = collected.get("transport_receipt")
+        source_event = collected.get("evidence")
+        if not all(
+            isinstance(value, Mapping)
+            for value in (manifest, receipt, source_event)
+        ):
+            return False
+        assert isinstance(manifest, Mapping)
+        assert isinstance(receipt, Mapping)
+        assert isinstance(source_event, Mapping)
+        packet_id = dispatch_result.get("packet_id")
+        packet_hash = dispatch_result.get("packet_hash")
+        bet_id = dispatch_result.get("bet_id")
+        assignment_id = manifest.get("assignment_id")
+        patch_ref = collected.get("patch_ref")
+        artifact_refs = manifest.get("artifact_refs")
+        surfaces = collected.get("write_surfaces")
+        if (
+            not isinstance(patch_ref, str)
+            or not patch_ref.startswith("git-object://")
+            or not isinstance(artifact_refs, list)
+            or patch_ref not in artifact_refs
+            or not isinstance(surfaces, list)
+            or not surfaces
+            or not all(isinstance(surface, str) for surface in surfaces)
+            or not _is_sha256(collected.get("patch_digest"), prefixed=True)
+            or not _is_sha256(collected.get("baseline_digest"), prefixed=True)
+        ):
+            return False
+        expected_receipt = {
+            "workflow_run_id": run_id,
+            "step_run_id": step_run_id,
+            "dispatch_id": dispatch_id,
+            "packet_id": packet_id,
+            "packet_hash": packet_hash,
+            "bet_id": bet_id,
+            "assignment_id": assignment_id,
+        }
+        if any(receipt.get(key) != value for key, value in expected_receipt.items()):
+            return False
+        if (
+            manifest.get("packet_id") != packet_id
+            or manifest.get("packet_hash") != packet_hash
+            or not isinstance(assignment_id, str)
+            or not assignment_id
+        ):
+            return False
+        receipt_digest = receipt.get("receipt_digest")
+        canonical_receipt = {
+            key: value for key, value in receipt.items() if key != "receipt_digest"
+        }
+        if receipt_digest != compute_packet_hash(canonicalize(canonical_receipt)):
+            return False
+        payload = source_event.get("payload")
+        factors = payload.get("decision_factors") if isinstance(payload, Mapping) else None
+        if (
+            source_event.get("workflow_run_id") != run_id
+            or source_event.get("event_type") != "EvidenceRecorded"
+            or not isinstance(factors, Mapping)
+            or factors.get("packet_id") != packet_id
+            or factors.get("packet_hash") != packet_hash
+            or factors.get("bet_id") != bet_id
+            or factors.get("assignment_id") != assignment_id
+            or factors.get("dispatch_id") != dispatch_id
+            or factors.get("receipt_digest") != receipt_digest
+            or factors.get("artifact_refs_digest")
+            != compute_packet_hash(
+                json.dumps(
+                    sorted(str(ref) for ref in artifact_refs),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            )
+            or payload.get("step_run_id") != step_run_id
+        ):
+            return False
+        return any(
+            event.get("event_id") == source_event.get("event_id")
+            and event.get("payload") == payload
+            and event.get("workflow_run_id") == run_id
+            for event in store.events()
+        )
+
     def rollback_candidate(
         self,
         dispatch_result: Mapping[str, Any],
@@ -937,6 +1054,18 @@ class BlueprintControlService:
             dispatch_result
         )
         store = WorkflowMeshStore(self.root / self.omo_dir)
+        if not self._candidate_binds_dispatch(
+            store=store,
+            run_id=run_id,
+            step_run_id=step_run_id,
+            dispatch_id=dispatch_id,
+            dispatch_result=dispatch_result,
+            collected=collected,
+        ):
+            return {
+                "state": "rollback_unconfirmed",
+                "reason": "candidate_binding_mismatch",
+            }
         if store.snapshot(run_id).get("state") == "closed":
             return {"state": "closed", "baseline_tree": collected.get("baseline_tree")}
         started = new_workflow_event(
@@ -957,6 +1086,7 @@ class BlueprintControlService:
         ]
         if "CompensationStarted" not in existing_types:
             store.append(started)
+        surfaces = list(collected["write_surfaces"])
         patch_ref = str(collected.get("patch_ref") or "")
         oid = patch_ref.removeprefix("git-object://")
         if not patch_ref.startswith("git-object://") or len(oid) != 40:
@@ -983,11 +1113,6 @@ class BlueprintControlService:
             return {"state": "rollback_unconfirmed", "reason": "reverse_apply_failed"}
         with tempfile.TemporaryDirectory(prefix="omo-rollback-") as directory:
             restored_tree = self._snapshot_tree(Path(directory) / "restored.index")
-        surfaces = collected.get("write_surfaces")
-        if not isinstance(surfaces, list) or not all(
-            isinstance(surface, str) for surface in surfaces
-        ):
-            return {"state": "rollback_unconfirmed", "reason": "scope_missing"}
         restored_digest = self._tree_scope_digest(restored_tree, surfaces)
         if restored_digest != collected.get("baseline_digest"):
             return {"state": "rollback_unconfirmed", "reason": "baseline_mismatch"}
