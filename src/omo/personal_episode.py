@@ -355,13 +355,16 @@ class PersonalEpisodeService:
         This is deliberately a thin, single-user ingress: validation is
         complete before the first append; raw file content and paths never
         enter the Event Ledger; and replay is deterministic by
-        ``source_id + item_id + content_sha256``.  It does not attempt a
-        cross-event transaction or concurrent exactly-once protocol.
+        ``principal_id + source_id + item_id + content_sha256``.  It does not
+        attempt a cross-event transaction or concurrent exactly-once protocol.
         """
         self._validate_local_signal(signal)
         occurred_at = self._clock_ts()
         source_key = _short_hash(
-            signal.source_id, signal.item_id, signal.content_sha256
+            signal.principal_id,
+            signal.source_id,
+            signal.item_id,
+            signal.content_sha256,
         )
         event_id = _deterministic("evt_", "local-signal", source_key)
         signal_id = _deterministic("signal_", "local-signal", source_key)
@@ -654,12 +657,16 @@ class PersonalEpisodeService:
         context: PersonalExecutionContext,
         verdict: str,
         *,
+        feedback_id: str | None = None,
         review_duration_seconds: float | None = None,
         estimated_time_saved_seconds: float | None = None,
     ) -> int:
         """Record one human feedback outcome using the closed vocabulary.
 
         ``verdict`` is limited to accept/edit/reject/defer/ignore.
+        ``feedback_id`` identifies one caller request so its replay is
+        idempotent while later feedback may append, even with the same verdict.
+        Omitting it preserves the legacy verdict-based idempotency contract.
         ``review_duration_seconds`` and ``estimated_time_saved_seconds``
         are optional explicit non-negative finite values; omitted stays
         null.
@@ -671,9 +678,17 @@ class PersonalEpisodeService:
             )
         _validate_burden("review_duration_seconds", review_duration_seconds)
         _validate_burden("estimated_time_saved_seconds", estimated_time_saved_seconds)
-        existing = self._find_event(
-            context.episode_id, EVT_OUTCOME_HUMAN, "verdict", verdict
-        )
+        if feedback_id is None:
+            identity_key = verdict
+            existing = self._find_event(
+                context.episode_id, EVT_OUTCOME_HUMAN, "verdict", verdict
+            )
+        else:
+            self._required("feedback_id", feedback_id)
+            identity_key = f"feedback|{_short_hash(feedback_id)}"
+            existing = self._find_event(
+                context.episode_id, EVT_OUTCOME_HUMAN, "feedback_id", feedback_id
+            )
         if existing is not None:
             return int(existing["sequence"])
         return self._broker.append(
@@ -682,12 +697,13 @@ class PersonalEpisodeService:
             principal_id=context.principal_id,
             space_id=PERSONAL_EPISODE_SPACE_ID,
             correlation_id=f"personal-episode|{context.episode_id}",
-            idempotency_key=f"outcome|{context.episode_id}|{verdict}",
+            idempotency_key=f"outcome|{context.episode_id}|{identity_key}",
             episode_id=context.episode_id,
             role_context_id=context.role_context_id,
             responsibility_id=context.responsibility_id,
             mandate_id=context.mandate_id,
             payload={
+                "feedback_id": feedback_id,
                 "verdict": verdict,
                 "action_id": context.action_id,
                 "review_duration_seconds": review_duration_seconds,

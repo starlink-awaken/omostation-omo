@@ -350,6 +350,34 @@ def test_ingest_local_signal_replays_original_pair_after_role_changes(broker, se
     assert broker.verify_chain()["ok"] is True
 
 
+def test_ingest_local_signal_identity_is_scoped_to_principal(broker, service):
+    _assign(broker)
+    SovereigntyService(broker).assign(
+        "principal:bob",
+        "role:bob-personal-steward",
+        role_name="Bob Personal Steward",
+        scope="personal",
+        responsibilities=["follow-up"],
+    )
+
+    alice = service.ingest_local_signal(_local_signal())
+    bob_signal = _local_signal(
+        principal_id="principal:bob",
+        role_id="role:bob-personal-steward",
+        executor_id="agent:bob-personal-steward",
+    )
+    bob = service.ingest_local_signal(bob_signal)
+    bob_replay = service.ingest_local_signal(bob_signal)
+
+    assert bob.signal_event_id != alice.signal_event_id
+    assert bob.signal_id != alice.signal_id
+    assert bob.episode.episode_id != alice.episode.episode_id
+    assert bob_replay.reused is True
+    assert bob_replay.signal_event_id == bob.signal_event_id
+    assert len(broker.read(event_type=EVT_SIGNAL_OBSERVED)) == 2
+    assert len(broker.read(event_type=EVT_EPISODE_DECISION)) == 2
+
+
 def test_ingest_local_signal_changed_digest_creates_a_new_causal_pair(broker, service):
     _assign(broker)
     first = service.ingest_local_signal(_local_signal())
@@ -688,6 +716,65 @@ def test_record_outcome_accepts_zero_burden(broker, service):
     payload = json.loads(rows[0]["payload_json"])
     assert payload["review_duration_seconds"] == 0
     assert payload["estimated_time_saved_seconds"] == 0
+
+
+def test_record_outcome_identical_feedback_request_is_idempotent(broker, service):
+    _assign(broker)
+    ctx = _confirmed_context(service)
+
+    first = service.record_outcome(
+        ctx,
+        "accept",
+        feedback_id="feedback:001",
+        review_duration_seconds=30,
+        estimated_time_saved_seconds=300,
+    )
+    replay = service.record_outcome(
+        ctx,
+        "accept",
+        feedback_id="feedback:001",
+        review_duration_seconds=30,
+        estimated_time_saved_seconds=300,
+    )
+
+    assert replay == first
+    rows = broker.read(episode_id=ctx.episode_id, event_type=EVT_OUTCOME_HUMAN)
+    assert len(rows) == 1
+
+
+def test_record_outcome_later_repeated_verdict_becomes_effective(broker, service):
+    _assign(broker)
+    ctx = _confirmed_context(service)
+
+    service.record_outcome(ctx, "accept", feedback_id="feedback:001")
+    service.record_outcome(ctx, "reject", feedback_id="feedback:002")
+    service.record_outcome(ctx, "accept", feedback_id="feedback:003")
+
+    rows = broker.read(episode_id=ctx.episode_id, event_type=EVT_OUTCOME_HUMAN)
+    observation = service.observe_principal("principal:alice")
+    assert len(rows) == 3
+    assert observation.verdict_distribution == {"accept": 1}
+
+
+def test_record_outcome_later_feedback_can_supplement_burden(broker, service):
+    _assign(broker)
+    ctx = _confirmed_context(service)
+
+    service.record_outcome(ctx, "accept", feedback_id="feedback:001")
+    service.record_outcome(
+        ctx,
+        "accept",
+        feedback_id="feedback:002",
+        review_duration_seconds=30,
+        estimated_time_saved_seconds=300,
+    )
+
+    rows = broker.read(episode_id=ctx.episode_id, event_type=EVT_OUTCOME_HUMAN)
+    observation = service.observe_principal("principal:alice")
+    assert len(rows) == 2
+    assert observation.weekly_samples[0].complete_burden_episodes == 1
+    assert observation.weekly_samples[0].summed_review_seconds == 30
+    assert observation.weekly_samples[0].summed_saved_seconds == 300
 
 
 # ---- observe_principal ----
