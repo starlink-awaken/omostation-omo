@@ -645,7 +645,7 @@ class OrchestrationContractCoordinator:
             else None
         )
 
-    def record_candidate(
+    def _record_candidate(
         self,
         *,
         workflow_run_id: str,
@@ -653,6 +653,7 @@ class OrchestrationContractCoordinator:
         packet: Mapping[str, Any],
         manifest: Mapping[str, Any],
         transport_receipt: Mapping[str, Any],
+        allow_missing_mesh_dispatch: bool,
     ) -> dict[str, Any]:
         packet_value, manifest_value, packet_hash = _validate_candidate(
             packet, manifest, workspace_root=self._workspace_root
@@ -680,7 +681,7 @@ class OrchestrationContractCoordinator:
                         "verification_unprovable",
                         f"transport receipt {key} does not bind Mesh dispatch",
                     )
-        elif collected["worker_id"] != "kandev-fixture-agent":
+        elif not allow_missing_mesh_dispatch:
             raise OrchestrationContractError(
                 "verification_unprovable",
                 "transport receipt requires a Mesh dispatch binding",
@@ -747,6 +748,25 @@ class OrchestrationContractCoordinator:
                 "verification_unprovable", "external receipt is invalid"
             ) from exc
 
+    def record_candidate(
+        self,
+        *,
+        workflow_run_id: str,
+        step_run_id: str,
+        packet: Mapping[str, Any],
+        manifest: Mapping[str, Any],
+        transport_receipt: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Record a generic candidate only when its Mesh dispatch is bound."""
+        return self._record_candidate(
+            workflow_run_id=workflow_run_id,
+            step_run_id=step_run_id,
+            packet=packet,
+            manifest=manifest,
+            transport_receipt=transport_receipt,
+            allow_missing_mesh_dispatch=False,
+        )
+
     def record_kandev_candidate(
         self,
         *,
@@ -782,12 +802,13 @@ class OrchestrationContractCoordinator:
         transport_receipt["receipt_digest"] = compute_packet_hash(
             canonicalize(transport_receipt)
         )
-        return self.record_candidate(
+        return self._record_candidate(
             workflow_run_id=workflow_run_id,
             step_run_id=step_run_id,
             packet=packet,
             manifest=manifest,
             transport_receipt=transport_receipt,
+            allow_missing_mesh_dispatch=True,
         )
 
     def accept_verification(

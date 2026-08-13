@@ -485,6 +485,34 @@ def test_generic_candidate_receipt_binds_dispatch_and_manifest(tmp_path):
         )
 
 
+def test_generic_candidate_without_mesh_dispatch_rejects_forged_fixture_worker(
+    tmp_path,
+):
+    step_run_id = _seed_succeeded_run(tmp_path)
+    packet = _packet()
+    manifest = _manifest(packet)
+    receipt = _transport_receipt(
+        packet,
+        manifest,
+        step_run_id=step_run_id,
+        dispatch_id="kandev:kandev-task-001",
+        worker_id="kandev-fixture-agent",
+    )
+
+    with pytest.raises(OrchestrationContractError, match="verification_unprovable"):
+        OrchestrationContractCoordinator(tmp_path).record_candidate(
+            workflow_run_id="run-orch",
+            step_run_id=step_run_id,
+            packet=packet,
+            manifest=manifest,
+            transport_receipt=receipt,
+        )
+
+    assert "EvidenceRecorded" not in [
+        event["event_type"] for event in WorkflowMeshStore(tmp_path).events()
+    ]
+
+
 @pytest.mark.parametrize(
     ("case", "reason"),
     [
