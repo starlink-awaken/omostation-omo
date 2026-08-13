@@ -645,6 +645,20 @@ class OrchestrationContractCoordinator:
             else None
         )
 
+    @classmethod
+    def _for_workspace(
+        cls, omo_dir: Path | str, workspace_root: Path
+    ) -> OrchestrationContractCoordinator:
+        """Internal authority bridge for the governed Blueprint controller."""
+        coordinator = cls(omo_dir)
+        resolved_root = workspace_root.resolve()
+        if Path(omo_dir).resolve() != (resolved_root / ".omo").resolve():
+            raise OrchestrationContractError(
+                "spec_binding_invalid", "OMO authority root does not match workspace"
+            )
+        coordinator._workspace_root = resolved_root
+        return coordinator
+
     def _record_candidate(
         self,
         *,

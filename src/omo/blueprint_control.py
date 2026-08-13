@@ -3,22 +3,34 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
+import shlex
+import signal
+import subprocess
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Callable, NoReturn
 
 import yaml
 from ecos.ssot.mof.generated.control.mof_control_models import WorkPacket
 from ecos.ssot.tools.work_packet_compiler import canonicalize, compute_packet_hash
+from ecos.ssot.tools.work_packet_compiler import (
+    build_command_check,
+    build_verification_receipt,
+)
 
+from .orchestration_contract import OrchestrationContractCoordinator
+from .omo_io import write_text_atomic
 from .omo_shared import load_yaml
 from .omo_task_schema import validate_task_file
 from .omo_worker_core import _require_admitted_worker, _require_worker_policy
 from .omo_worker_dispatch import dispatch_task
 from .workflow_dispatch import admit_workflow
-from .workflow_mesh import WorkflowMeshStore
+from .workflow_mesh import WorkflowMeshStore, new_workflow_event
 
 
 EXECUTABLE_BET_STATES = frozenset({"candidate", "in_progress", "review", "done"})
@@ -32,6 +44,30 @@ class BlueprintControlError(ValueError):
 class CompiledBlueprintPacket:
     packet: dict[str, Any]
     packet_hash: str
+
+
+Runner = Callable[..., Mapping[str, Any]]
+
+
+def _sha256(data: bytes) -> str:
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def _canonical_receipt_digest(receipt: Mapping[str, Any]) -> str:
+    projected = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    canonical = json.dumps(
+        projected, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _is_sha256(value: Any, *, prefixed: bool) -> bool:
+    text = str(value or "")
+    if prefixed:
+        if not text.startswith("sha256:"):
+            return False
+        text = text.removeprefix("sha256:")
+    return len(text) == 64 and all(character in "0123456789abcdef" for character in text)
 
 
 def _safe_relative_path(value: Any, field_name: str) -> str:
@@ -221,7 +257,10 @@ class BlueprintControlService:
                 "verify_commands": verify_commands,
                 "evidence_requirements": evidence,
             },
-            "budgets": {"expires_at": expires_at},
+            "budgets": {
+                "expires_at": expires_at,
+                "max_changed_files": len(write_surfaces),
+            },
             "rollback": {
                 "strategy": "inverse_patch",
                 "required": True,
@@ -392,3 +431,578 @@ class BlueprintControlService:
             "receipt_observed": receipt_path is not None,
             "manifest_observed": manifest_path is not None,
         }
+
+    def _git(
+        self,
+        args: list[str],
+        *,
+        input_bytes: bytes | None = None,
+        index_file: Path | None = None,
+        timeout: int = 30,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[bytes]:
+        env = os.environ.copy()
+        if index_file is not None:
+            env["GIT_INDEX_FILE"] = str(index_file)
+        try:
+            result = subprocess.run(
+                ["git", *args],
+                cwd=self.root,
+                env=env,
+                input=input_bytes,
+                capture_output=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise BlueprintControlError("git measurement timed out") from exc
+        if check and result.returncode != 0:
+            raise BlueprintControlError("git measurement failed")
+        return result
+
+    def _snapshot_tree(self, index_file: Path) -> str:
+        if index_file.exists():
+            index_file.unlink()
+        self._git(["read-tree", "HEAD"], index_file=index_file)
+        self._git(["add", "-A"], index_file=index_file)
+        return self._git(["write-tree"], index_file=index_file).stdout.decode().strip()
+
+    def _tree_scope_digest(self, tree: str, surfaces: list[str]) -> str:
+        paths = [surface.rstrip("/") for surface in surfaces]
+        listing = self._git(["ls-tree", "-r", tree, "--", *paths]).stdout
+        return _sha256(listing)
+
+    def _dispatch_context(
+        self, dispatch_result: Mapping[str, Any]
+    ) -> tuple[str, str, str, str]:
+        run_id = str(dispatch_result.get("workflow_run_id") or "").strip()
+        admission_id = str(dispatch_result.get("admission_id") or "").strip()
+        dispatch_id = str(dispatch_result.get("dispatch_id") or "").strip()
+        if not all((run_id, admission_id, dispatch_id)):
+            raise BlueprintControlError("dispatch identity is incomplete")
+        snapshot = WorkflowMeshStore(self.root / self.omo_dir).snapshot(run_id)
+        admission = snapshot.get("admission")
+        step_ids = admission.get("step_run_ids") if isinstance(admission, Mapping) else None
+        if not isinstance(step_ids, list) or len(step_ids) != 1:
+            raise BlueprintControlError("dispatch does not bind one admitted step")
+        return run_id, admission_id, dispatch_id, str(step_ids[0])
+
+    @staticmethod
+    def _default_runner(
+        *,
+        argv: list[str],
+        workspace_root: Path,
+        receipt_path: Path,
+        timeout_seconds: int,
+        on_process_started: Callable[[], None],
+    ) -> Mapping[str, Any]:
+        command = [*argv, "--receipt", str(receipt_path)]
+        process = subprocess.Popen(
+            command,
+            cwd=workspace_root,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        on_process_started()
+        try:
+            stdout, stderr = process.communicate(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as exc:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.communicate(timeout=5)
+                except subprocess.TimeoutExpired as cleanup_exc:
+                    raise BlueprintControlError(
+                        "bounded runner cleanup_unconfirmed"
+                    ) from cleanup_exc
+            if process.poll() is None:
+                raise BlueprintControlError("bounded runner cleanup_unconfirmed") from exc
+            raise BlueprintControlError("bounded runner timed out") from exc
+        return {"returncode": process.returncode, "stdout": stdout, "stderr": stderr}
+
+    def execute_and_collect(
+        self,
+        compiled: CompiledBlueprintPacket,
+        dispatch_result: Mapping[str, Any],
+        *,
+        runner: Runner | None = None,
+        timeout_seconds: int = 900,
+    ) -> dict[str, Any]:
+        """Execute one supervised worker and compile independently measured evidence."""
+        packet = self._validate_compiled_packet(compiled)
+        if dispatch_result.get("state") != "transport_accepted":
+            raise BlueprintControlError("dispatch is not transport accepted")
+        if (
+            dispatch_result.get("packet_id") != packet["packet_id"]
+            or dispatch_result.get("packet_hash") != compiled.packet_hash
+            or dispatch_result.get("bet_id") != packet["bet_id"]
+        ):
+            raise BlueprintControlError("dispatch packet binding mismatch")
+        run_id, admission_id, dispatch_id, step_run_id = self._dispatch_context(
+            dispatch_result
+        )
+        store = WorkflowMeshStore(self.root / self.omo_dir)
+        allowed = _required_string_list(packet["scope"], "write_surfaces")
+        dispatch_path = self.root / str(dispatch_result["dispatch_path"])
+        projection_path = dispatch_path.with_name(
+            dispatch_path.name.removesuffix("-dispatch.yaml") + "-manifest.json"
+        )
+        if projection_path.is_file():
+            projection = json.loads(projection_path.read_text(encoding="utf-8"))
+            binding = projection.get("manifest", {})
+            if (
+                binding.get("packet_id") == packet["packet_id"]
+                and binding.get("packet_hash") == compiled.packet_hash
+            ):
+                return projection
+            raise BlueprintControlError("manifest_conflict")
+        step_started = False
+        baseline_tree = ""
+        baseline_digest = ""
+
+        def on_process_started() -> None:
+            nonlocal baseline_digest, baseline_tree, step_started
+            if step_started:
+                return
+            store.append(
+                new_workflow_event(
+                    "StepStarted",
+                    run_id,
+                    producer="omo-blueprint-control",
+                    payload={
+                        "step_run_id": step_run_id,
+                        "admission_id": admission_id,
+                        "dispatch_id": dispatch_id,
+                    },
+                    idempotency_key=f"{run_id}:step-started:{dispatch_id}",
+                )
+            )
+            step_started = True
+            baseline_tree = self._snapshot_tree(before_index)
+            baseline_digest = self._tree_scope_digest(baseline_tree, allowed)
+
+        def reject_execution(message: str, reason: str) -> NoReturn:
+            if step_started and store.snapshot(run_id).get("state") == "running":
+                store.append(
+                    new_workflow_event(
+                        "StepFailed",
+                        run_id,
+                        producer="omo-blueprint-control",
+                        payload={
+                            "step_run_id": step_run_id,
+                            "admission_id": admission_id,
+                            "dispatch_id": dispatch_id,
+                            "reason": reason,
+                        },
+                        idempotency_key=f"{run_id}:step-failed:{dispatch_id}",
+                    )
+                )
+            raise BlueprintControlError(message)
+
+        with tempfile.TemporaryDirectory(prefix="omo-blueprint-") as directory:
+            temp = Path(directory)
+            before_index = temp / "before.index"
+            after_index = temp / "after.index"
+            receipt_path = temp / "adapter-receipt.json"
+            dispatch_doc = load_yaml(dispatch_path)
+            worker_id = str(dispatch_doc.get("worker_id") or "").strip()
+            if not worker_id:
+                raise BlueprintControlError("dispatch worker identity is missing")
+            launch_command = str(
+                dispatch_doc.get("execution", {}).get("launch_command") or ""
+            )
+            argv = shlex.split(launch_command)
+            if runner is None and not argv:
+                raise BlueprintControlError("dispatch has no bounded launch command")
+            try:
+                result = (runner or self._default_runner)(
+                    argv=argv,
+                    workspace_root=self.root,
+                    receipt_path=receipt_path,
+                    timeout_seconds=timeout_seconds,
+                    on_process_started=on_process_started,
+                )
+            except Exception:
+                if step_started:
+                    store.append(
+                        new_workflow_event(
+                            "StepFailed",
+                            run_id,
+                            producer="omo-blueprint-control",
+                            payload={
+                                "step_run_id": step_run_id,
+                                "admission_id": admission_id,
+                                "dispatch_id": dispatch_id,
+                                "reason": "bounded_runner_failed",
+                            },
+                            idempotency_key=f"{run_id}:step-failed:{dispatch_id}",
+                        )
+                    )
+                raise
+            if not receipt_path.is_file():
+                reject_execution("model output receipt is missing", "receipt_missing")
+            try:
+                receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                reject_execution("model output receipt is invalid", "receipt_invalid")
+            if receipt.get("receipt_sha256") != _canonical_receipt_digest(receipt):
+                reject_execution("adapter receipt digest mismatch", "receipt_digest_mismatch")
+            supervision = receipt.get("supervision")
+            provider_review = (
+                supervision.get("provider_review")
+                if isinstance(supervision, Mapping)
+                else None
+            )
+            if (
+                not isinstance(supervision, Mapping)
+                or supervision.get("controller_approval") != "granted"
+            ):
+                reject_execution("controller approval receipt is invalid", "approval_mismatch")
+            if provider_review == "human_required":
+                if step_started:
+                    store.append(
+                        new_workflow_event(
+                            "StepFailed",
+                            run_id,
+                            producer="omo-blueprint-control",
+                            payload={
+                                "step_run_id": step_run_id,
+                                "admission_id": admission_id,
+                                "dispatch_id": dispatch_id,
+                                "reason": "human_approval_required",
+                            },
+                            idempotency_key=f"{run_id}:step-failed:{dispatch_id}",
+                        )
+                    )
+                raise BlueprintControlError("provider human approval is unresolved")
+            if provider_review != "completed_without_observed_escalation":
+                reject_execution("provider review is unresolved", "provider_review_unresolved")
+            if receipt.get("worker") != "codex":
+                reject_execution("adapter worker identity mismatch", "worker_mismatch")
+            if not all(
+                (
+                    _is_sha256(receipt.get("baseline_digest"), prefixed=True),
+                    _is_sha256(receipt.get("post_digest"), prefixed=True),
+                    _is_sha256(receipt.get("patch_digest"), prefixed=True),
+                    _is_sha256(receipt.get("output_sha256"), prefixed=False),
+                )
+            ):
+                reject_execution("adapter digest fields are invalid", "adapter_digest_invalid")
+            if receipt.get("readiness") != "model_output_observed":
+                reject_execution("valid model output was not observed", "model_output_missing")
+            if receipt.get("status") != "succeeded" or int(result.get("returncode", 1)) != 0:
+                if step_started:
+                    store.append(
+                        new_workflow_event(
+                            "StepFailed",
+                            run_id,
+                            producer="omo-blueprint-control",
+                            payload={
+                                "step_run_id": step_run_id,
+                                "admission_id": admission_id,
+                                "dispatch_id": dispatch_id,
+                                "reason": "worker_nonzero",
+                            },
+                            idempotency_key=f"{run_id}:step-failed:{dispatch_id}",
+                        )
+                    )
+                raise BlueprintControlError("bounded runner failed")
+            if not step_started:
+                raise BlueprintControlError("provider process start was not observed")
+
+            post_tree = self._snapshot_tree(after_index)
+            patch = self._git(
+                ["diff", "--binary", baseline_tree, post_tree, "--"],
+                index_file=after_index,
+            ).stdout
+            changed_paths = sorted(
+                value.decode()
+                for value in self._git(
+                    ["diff", "--name-only", "-z", baseline_tree, post_tree, "--"],
+                    index_file=after_index,
+                ).stdout.split(b"\0")
+                if value
+            )
+            if receipt.get("changed_paths") != changed_paths:
+                reject_execution("adapter changed paths do not match Git", "changed_paths_mismatch")
+            patch_digest = _sha256(patch)
+            if receipt.get("patch_digest") != patch_digest:
+                reject_execution("adapter patch digest does not match Git", "patch_digest_mismatch")
+            if any(
+                not any(
+                    changed == surface.rstrip("/")
+                    or (surface.endswith("/") and changed.startswith(surface))
+                    for surface in allowed
+                )
+                for changed in changed_paths
+            ):
+                reject_execution("Git delta contains an out-of-scope path", "write_scope_violation")
+            patch_oid = self._git(["hash-object", "-w", "--stdin"], input_bytes=patch).stdout.decode().strip()
+
+        checks = [
+            build_command_check(
+                ["bounded-runner"],
+                0,
+                str(receipt.get("output_sha256") or "model output observed"),
+            )
+        ]
+        claims = [
+            {
+                "acceptance_id": f"AC{index}",
+                "assertion": str(assertion),
+                "evidence_refs": [f"git-object://{patch_oid}"],
+            }
+            for index, assertion in enumerate(packet["acceptance"]["done_when"], 1)
+        ]
+        assignment_id = "ASG-" + hashlib.sha256(dispatch_id.encode()).hexdigest()[:16]
+        manifest = {
+            "packet_id": packet["packet_id"],
+            "packet_hash": compiled.packet_hash,
+            "assignment_id": assignment_id,
+            "agent_id": worker_id,
+            "status": "candidate",
+            "changed_paths": changed_paths,
+            "claims": claims,
+            "checks": [
+                {
+                    "command": check["command"],
+                    "returncode": check["returncode"],
+                    "stdout_hash": check["stdout_hash"],
+                }
+                for check in checks
+            ],
+            "recommended_next": "verify",
+            "surface_delta": {"files": len(changed_paths), "loc": len(patch.splitlines())},
+            "artifact_refs": [f"git-object://{patch_oid}"],
+        }
+        transport_receipt: dict[str, Any] = {
+            "receipt_id": f"codex:{dispatch_id}",
+            "workflow_run_id": run_id,
+            "step_run_id": step_run_id,
+            "bet_id": packet["bet_id"],
+            "packet_id": packet["packet_id"],
+            "packet_hash": compiled.packet_hash,
+            "assignment_id": assignment_id,
+            "dispatch_id": dispatch_id,
+            "worker_id": worker_id,
+            "output_digest": str(receipt["output_sha256"]),
+            "changed_paths": changed_paths,
+            "observed_at": str(receipt.get("completed_at") or datetime.now().astimezone().isoformat()),
+            "provenance_ref": f"receipt://codex/{dispatch_id}",
+        }
+        transport_receipt["receipt_digest"] = compute_packet_hash(
+            canonicalize(transport_receipt)
+        )
+        store.append(
+            new_workflow_event(
+                "WorkflowSucceeded",
+                run_id,
+                producer="omo-blueprint-control",
+                payload={"packet_id": packet["packet_id"]},
+                idempotency_key=f"{run_id}:candidate-succeeded:{dispatch_id}",
+            )
+        )
+        evidence = OrchestrationContractCoordinator._for_workspace(
+            self.root / self.omo_dir, self.root
+        ).record_candidate(
+            workflow_run_id=run_id,
+            step_run_id=step_run_id,
+            packet=packet,
+            manifest=manifest,
+            transport_receipt=transport_receipt,
+        )
+        projection = {
+            "state": "candidate_collected",
+            "manifest": manifest,
+            "transport_receipt": transport_receipt,
+            "adapter_receipt_digest": receipt["receipt_sha256"],
+            "baseline_tree": baseline_tree,
+            "baseline_digest": baseline_digest,
+            "post_tree": post_tree,
+            "write_surfaces": allowed,
+            "patch_ref": f"git-object://{patch_oid}",
+            "patch_digest": patch_digest,
+            "evidence": evidence,
+        }
+        write_text_atomic(
+            projection_path,
+            json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        )
+        return projection
+
+    @staticmethod
+    def _default_verifier(
+        *, argv: list[str], workspace_root: Path, timeout_seconds: int
+    ) -> Mapping[str, Any]:
+        try:
+            result = subprocess.run(
+                argv,
+                cwd=workspace_root,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=timeout_seconds,
+                check=False,
+                shell=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise BlueprintControlError("verification command timed out") from exc
+        return {
+            "returncode": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+        }
+
+    def verify_candidate(
+        self,
+        compiled: CompiledBlueprintPacket,
+        dispatch_result: Mapping[str, Any],
+        collected: Mapping[str, Any],
+        *,
+        verifier: Runner | None = None,
+        timeout_seconds: int = 120,
+    ) -> dict[str, Any]:
+        """Directly replay packet checks; accept is the only verification path."""
+        packet = self._validate_compiled_packet(compiled)
+        manifest = collected.get("manifest")
+        if not isinstance(manifest, Mapping):
+            raise BlueprintControlError("candidate manifest is missing")
+        checks = []
+        all_green = True
+        for command in _required_string_list(packet["acceptance"], "verify_commands"):
+            argv = shlex.split(command)
+            if not argv:
+                raise BlueprintControlError("verification command is empty")
+            result = (verifier or self._default_verifier)(
+                argv=argv,
+                workspace_root=self.root,
+                timeout_seconds=timeout_seconds,
+            )
+            returncode = int(result.get("returncode", 1))
+            stdout = result.get("stdout", b"")
+            stdout_bytes = stdout.encode() if isinstance(stdout, str) else bytes(stdout)
+            checks.append(build_command_check(argv, returncode, stdout_bytes.decode(errors="replace")))
+            all_green = all_green and returncode == 0
+        receipt = build_verification_receipt(
+            packet=packet,
+            candidate_packet_hash=compiled.packet_hash,
+            measured_packet_hash=compute_packet_hash(canonicalize(packet)),
+            executor_model_family="codex",
+            verifier_model_family="deterministic-runner",
+            verdict="accept" if all_green else "reject",
+            read_only=True,
+            direct_measurement=True,
+            checks=[
+                {
+                    "command": check["command"],
+                    "returncode": check["returncode"],
+                    "stdout_hash": check["stdout_hash"],
+                }
+                for check in checks
+            ],
+        )
+        if not all_green:
+            return self.rollback_candidate(dispatch_result, collected)
+        event = OrchestrationContractCoordinator._for_workspace(
+            self.root / self.omo_dir, self.root
+        ).accept_verification(
+            workflow_run_id=str(dispatch_result["workflow_run_id"]),
+            packet=packet,
+            manifest=manifest,
+            verification_receipt=receipt,
+        )
+        return {
+            "state": "independently_verified",
+            "verification": event,
+            "receipt_hash": receipt.receipt_hash,
+        }
+
+    def rollback_candidate(
+        self,
+        dispatch_result: Mapping[str, Any],
+        collected: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Reverse only the controller-owned Git blob and prove baseline identity."""
+        run_id, admission_id, dispatch_id, step_run_id = self._dispatch_context(
+            dispatch_result
+        )
+        store = WorkflowMeshStore(self.root / self.omo_dir)
+        if store.snapshot(run_id).get("state") == "closed":
+            return {"state": "closed", "baseline_tree": collected.get("baseline_tree")}
+        started = new_workflow_event(
+            "CompensationStarted",
+            run_id,
+            producer="omo-blueprint-control",
+            payload={
+                "step_run_id": step_run_id,
+                "admission_id": admission_id,
+                "dispatch_id": dispatch_id,
+            },
+            idempotency_key=f"{run_id}:compensation:{dispatch_id}",
+        )
+        existing_types = [
+            event["event_type"]
+            for event in store.events()
+            if event.get("workflow_run_id") == run_id
+        ]
+        if "CompensationStarted" not in existing_types:
+            store.append(started)
+        patch_ref = str(collected.get("patch_ref") or "")
+        oid = patch_ref.removeprefix("git-object://")
+        if not patch_ref.startswith("git-object://") or len(oid) != 40:
+            return {"state": "rollback_unconfirmed", "reason": "patch_ref_invalid"}
+        patch_result = self._git(["cat-file", "blob", oid], check=False)
+        if patch_result.returncode != 0:
+            return {"state": "rollback_unconfirmed", "reason": "patch_missing"}
+        patch = patch_result.stdout
+        if collected.get("patch_digest") != _sha256(patch):
+            return {"state": "rollback_unconfirmed", "reason": "patch_tampered"}
+        check = self._git(
+            ["apply", "--reverse", "--check", "--whitespace=nowarn", "-"],
+            input_bytes=patch,
+            check=False,
+        )
+        if check.returncode != 0:
+            return {"state": "rollback_unconfirmed", "reason": "preimage_mismatch"}
+        applied = self._git(
+            ["apply", "--reverse", "--whitespace=nowarn", "-"],
+            input_bytes=patch,
+            check=False,
+        )
+        if applied.returncode != 0:
+            return {"state": "rollback_unconfirmed", "reason": "reverse_apply_failed"}
+        with tempfile.TemporaryDirectory(prefix="omo-rollback-") as directory:
+            restored_tree = self._snapshot_tree(Path(directory) / "restored.index")
+        surfaces = collected.get("write_surfaces")
+        if not isinstance(surfaces, list) or not all(
+            isinstance(surface, str) for surface in surfaces
+        ):
+            return {"state": "rollback_unconfirmed", "reason": "scope_missing"}
+        restored_digest = self._tree_scope_digest(restored_tree, surfaces)
+        if restored_digest != collected.get("baseline_digest"):
+            return {"state": "rollback_unconfirmed", "reason": "baseline_mismatch"}
+        for event_type in (
+            "WorkflowRecovered",
+            "WorkflowCancelled",
+            "WorkflowClosed",
+        ):
+            store.append(
+                new_workflow_event(
+                    event_type,
+                    run_id,
+                    producer="omo-blueprint-control",
+                    payload={"rollback_digest": _sha256(patch)},
+                    idempotency_key=f"{run_id}:{event_type}:{dispatch_id}",
+                )
+            )
+        return {"state": "closed", "baseline_digest": restored_digest}

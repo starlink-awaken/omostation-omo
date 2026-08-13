@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import subprocess
 from copy import deepcopy
 from pathlib import Path
 
@@ -150,6 +152,76 @@ def _compile(tmp_path: Path):  # noqa: ANN202
         spec_version=SPEC_VERSION,
         expires_at="2026-08-15T00:00:00+00:00",
     )
+
+
+def _git(tmp_path: Path, *args: str, input_bytes: bytes | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", *args],
+        cwd=tmp_path,
+        input=input_bytes,
+        capture_output=True,
+        check=True,
+    )
+
+
+def _commit_baseline(tmp_path: Path) -> None:
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.name", "Blueprint Test")
+    _git(tmp_path, "config", "user.email", "blueprint@example.invalid")
+    (tmp_path / ".gitignore").write_text(".omo/\n", encoding="utf-8")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "baseline")
+
+
+def _adapter_receipt(
+    tmp_path: Path,
+    *,
+    readiness: str = "model_output_observed",
+    paths: list[str] | None = None,
+) -> dict:
+    targets = paths or ["src/omo/blueprint_control.py"]
+    _git(tmp_path, "add", "-N", "--", *targets)
+    patch = _git(tmp_path, "diff", "--binary", "HEAD", "--", *targets).stdout
+    changed = (
+        _git(tmp_path, "diff", "--name-only", "HEAD", "--", *targets)
+        .stdout.decode()
+        .splitlines()
+    )
+    _git(tmp_path, "reset", "-q", "--", *targets)
+    receipt = {
+        "baseline_digest": "sha256:" + "1" * 64,
+        "changed_paths": changed,
+        "exit_code": 0,
+        "output_sha256": hashlib.sha256(b"final model output").hexdigest(),
+        "patch_digest": "sha256:" + hashlib.sha256(patch).hexdigest(),
+        "post_digest": "sha256:" + "2" * 64,
+        "readiness": readiness,
+        "schema": "codex-worker-receipt/v1",
+        "status": "succeeded",
+        "supervision": {
+            "controller_approval": "granted",
+            "provider_review": "completed_without_observed_escalation",
+        },
+        "worker": "codex",
+    }
+    canonical = json.dumps(receipt, sort_keys=True, separators=(",", ":"))
+    receipt["receipt_sha256"] = hashlib.sha256(canonical.encode()).hexdigest()
+    return receipt
+
+
+def _dispatched_repo(tmp_path: Path):  # noqa: ANN202
+    _workspace(tmp_path)
+    _dispatch_authority(tmp_path)
+    _commit_baseline(tmp_path)
+    service = BlueprintControlService(tmp_path)
+    compiled = _compile(tmp_path)
+    dispatched = service.dispatch_packet(
+        compiled,
+        worker_id="worker-a",
+        capability_health=_health(),
+        now="2026-08-14T10:00:00+00:00",
+    )
+    return service, compiled, dispatched
 
 
 def test_compile_is_deterministic_and_contains_governed_contract(tmp_path: Path) -> None:
@@ -378,3 +450,266 @@ def test_observe_does_not_promote_exit_zero_to_readiness(tmp_path: Path) -> None
     assert observation["state"] == "transport_accepted"
     assert observation["control_state"]["readiness"] == "unproven"
     assert observation["receipt_observed"] is True
+
+
+def test_execute_collect_and_independent_verify_use_real_git_delta(tmp_path: Path) -> None:
+    service, compiled, dispatched = _dispatched_repo(tmp_path)
+
+    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
+        on_process_started()
+        target = workspace_root / "src" / "omo" / "blueprint_control.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("VALUE = 1\n", encoding="utf-8")
+        receipt_path.write_text(json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8")
+        return {"returncode": 0}
+
+    collected = service.execute_and_collect(
+        compiled, dispatched, runner=runner, timeout_seconds=5
+    )
+    verified = service.verify_candidate(
+        compiled,
+        dispatched,
+        collected,
+        verifier=lambda **_kwargs: {"returncode": 0, "stdout": b"green"},
+        timeout_seconds=5,
+    )
+
+    events = WorkflowMeshStore(tmp_path / ".omo").events()
+    assert [event["event_type"] for event in events] == [
+        "WorkflowRequested",
+        "WorkflowAdmitted",
+        "StepDispatched",
+        "StepStarted",
+        "WorkflowSucceeded",
+        "EvidenceRecorded",
+        "WorkflowVerified",
+    ]
+    assert collected["manifest"]["changed_paths"] == [
+        "src/omo/blueprint_control.py"
+    ]
+    assert collected["patch_ref"].startswith("git-object://")
+    assert verified["state"] == "independently_verified"
+
+
+def test_collect_replay_returns_persisted_candidate_without_rerunning(tmp_path: Path) -> None:
+    service, compiled, dispatched = _dispatched_repo(tmp_path)
+    calls = 0
+
+    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
+        nonlocal calls
+        calls += 1
+        on_process_started()
+        target = workspace_root / "src" / "omo" / "blueprint_control.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("VALUE = 1\n", encoding="utf-8")
+        receipt_path.write_text(
+            json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8"
+        )
+        return {"returncode": 0}
+
+    first = service.execute_and_collect(compiled, dispatched, runner=runner)
+    replay = service.execute_and_collect(compiled, dispatched, runner=runner)
+
+    assert replay == first
+    assert calls == 1
+    assert [
+        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
+    ].count("EvidenceRecorded") == 1
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("digest", "receipt digest"),
+        ("readiness", "model output"),
+        ("path", "changed paths"),
+        ("provider", "human approval"),
+    ],
+)
+def test_collect_rejects_untrusted_adapter_receipt_without_evidence(
+    tmp_path: Path, mutation: str, message: str
+) -> None:
+    service, compiled, dispatched = _dispatched_repo(tmp_path)
+
+    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
+        if mutation != "provider":
+            on_process_started()
+        target = workspace_root / "src" / "omo" / "blueprint_control.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("VALUE = 1\n", encoding="utf-8")
+        receipt = _adapter_receipt(workspace_root)
+        if mutation == "digest":
+            receipt["receipt_sha256"] = "0" * 64
+        elif mutation == "readiness":
+            receipt["readiness"] = "transport_accepted"
+            canonical = json.dumps(
+                {k: v for k, v in receipt.items() if k != "receipt_sha256"},
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            receipt["receipt_sha256"] = hashlib.sha256(canonical.encode()).hexdigest()
+        elif mutation == "path":
+            receipt["changed_paths"] = []
+            canonical = json.dumps(
+                {k: v for k, v in receipt.items() if k != "receipt_sha256"},
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            receipt["receipt_sha256"] = hashlib.sha256(canonical.encode()).hexdigest()
+        else:
+            receipt["supervision"]["provider_review"] = "human_required"
+            canonical = json.dumps(
+                {k: v for k, v in receipt.items() if k != "receipt_sha256"},
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            receipt["receipt_sha256"] = hashlib.sha256(canonical.encode()).hexdigest()
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+        return {"returncode": 0}
+
+    with pytest.raises(BlueprintControlError, match=message):
+        service.execute_and_collect(compiled, dispatched, runner=runner)
+
+    event_types = [
+        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
+    ]
+    if mutation == "provider":
+        assert "StepStarted" not in event_types
+    assert "EvidenceRecorded" not in event_types
+    assert "WorkflowVerified" not in event_types
+
+
+def test_started_provider_human_review_fails_step_without_candidate(tmp_path: Path) -> None:
+    service, compiled, dispatched = _dispatched_repo(tmp_path)
+
+    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
+        on_process_started()
+        target = workspace_root / "src" / "omo" / "blueprint_control.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("VALUE = 1\n", encoding="utf-8")
+        receipt = _adapter_receipt(workspace_root)
+        receipt["supervision"]["provider_review"] = "human_required"
+        canonical = json.dumps(
+            {key: value for key, value in receipt.items() if key != "receipt_sha256"},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        receipt["receipt_sha256"] = hashlib.sha256(canonical.encode()).hexdigest()
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+        return {"returncode": 0}
+
+    with pytest.raises(BlueprintControlError, match="human approval"):
+        service.execute_and_collect(compiled, dispatched, runner=runner)
+
+    event_types = [
+        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
+    ]
+    assert event_types[-2:] == ["StepStarted", "StepFailed"]
+    assert "WorkflowSucceeded" not in event_types
+    assert "EvidenceRecorded" not in event_types
+
+
+def test_transport_ack_without_receipt_fails_started_step_without_evidence(
+    tmp_path: Path,
+) -> None:
+    service, compiled, dispatched = _dispatched_repo(tmp_path)
+
+    def runner(*, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
+        on_process_started()
+        return {"returncode": 0, "transport": "accepted"}
+
+    with pytest.raises(BlueprintControlError, match="receipt is missing"):
+        service.execute_and_collect(compiled, dispatched, runner=runner)
+
+    event_types = [
+        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
+    ]
+    assert event_types[-2:] == ["StepStarted", "StepFailed"]
+    assert "EvidenceRecorded" not in event_types
+
+
+def test_out_of_scope_git_delta_is_measured_and_rejected(tmp_path: Path) -> None:
+    service, compiled, dispatched = _dispatched_repo(tmp_path)
+
+    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
+        on_process_started()
+        allowed = workspace_root / "src" / "omo" / "blueprint_control.py"
+        allowed.parent.mkdir(parents=True, exist_ok=True)
+        allowed.write_text("VALUE = 1\n", encoding="utf-8")
+        outside = workspace_root / "outside.txt"
+        outside.write_text("escaped\n", encoding="utf-8")
+        receipt_path.write_text(
+            json.dumps(
+                _adapter_receipt(
+                    workspace_root,
+                    paths=["src/omo/blueprint_control.py", "outside.txt"],
+                )
+            ),
+            encoding="utf-8",
+        )
+        return {"returncode": 0}
+
+    with pytest.raises(BlueprintControlError, match="out-of-scope"):
+        service.execute_and_collect(compiled, dispatched, runner=runner)
+
+    event_types = [
+        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
+    ]
+    assert event_types[-1] == "StepFailed"
+    assert "EvidenceRecorded" not in event_types
+
+
+def test_failed_verifier_compensates_and_restores_exact_baseline(tmp_path: Path) -> None:
+    service, compiled, dispatched = _dispatched_repo(tmp_path)
+    baseline = _git(tmp_path, "status", "--porcelain=v1", "-z").stdout
+
+    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
+        on_process_started()
+        target = workspace_root / "src" / "omo" / "blueprint_control.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("VALUE = 1\n", encoding="utf-8")
+        receipt_path.write_text(json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8")
+        return {"returncode": 0}
+
+    collected = service.execute_and_collect(compiled, dispatched, runner=runner)
+    result = service.verify_candidate(
+        compiled,
+        dispatched,
+        collected,
+        verifier=lambda **_kwargs: {"returncode": 1, "stdout": b"red"},
+    )
+
+    assert result["state"] == "closed"
+    assert result["baseline_digest"] == collected["baseline_digest"]
+    assert _git(tmp_path, "status", "--porcelain=v1", "-z").stdout == baseline
+    event_types = [
+        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
+    ]
+    assert "WorkflowVerified" not in event_types
+    assert event_types[-4:] == [
+        "CompensationStarted",
+        "WorkflowRecovered",
+        "WorkflowCancelled",
+        "WorkflowClosed",
+    ]
+
+
+def test_tampered_patch_leaves_rejected_run_unclosed(tmp_path: Path) -> None:
+    service, compiled, dispatched = _dispatched_repo(tmp_path)
+
+    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
+        on_process_started()
+        target = workspace_root / "src" / "omo" / "blueprint_control.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("VALUE = 1\n", encoding="utf-8")
+        receipt_path.write_text(json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8")
+        return {"returncode": 0}
+
+    collected = service.execute_and_collect(compiled, dispatched, runner=runner)
+    collected["patch_digest"] = "sha256:" + "0" * 64
+    result = service.rollback_candidate(dispatched, collected)
+
+    assert result["state"] == "rollback_unconfirmed"
+    assert WorkflowMeshStore(tmp_path / ".omo").snapshot(
+        dispatched["workflow_run_id"]
+    )["state"] == "compensating"
