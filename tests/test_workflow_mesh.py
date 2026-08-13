@@ -3,6 +3,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
+
 from omo.workflow_mesh import (
     WorkflowMeshEventError,
     WorkflowMeshStore,

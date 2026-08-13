@@ -14,7 +14,6 @@ from omo.cli import main as cli_main
 from omo.workflow_dispatch import WorkflowDispatchError
 from omo.workflow_mesh import WorkflowMeshStore
 
-
 BET_ID = "BET-Y1Q2-T1-18"
 TASK_ID = "TASK-BLUEPRINT-1"
 SPEC_PATH = "docs/specs/blueprint.md"
@@ -50,7 +49,9 @@ def _workspace(tmp_path: Path) -> tuple[dict, dict]:
     }
     ledger = tmp_path / "docs" / "plans" / "3y-bet-ledger.yaml"
     ledger.parent.mkdir(parents=True)
-    ledger.write_text(yaml.safe_dump({"bets": [bet]}, sort_keys=False), encoding="utf-8")
+    ledger.write_text(
+        yaml.safe_dump({"bets": [bet]}, sort_keys=False), encoding="utf-8"
+    )
 
     approval_ref = ".omo/workers/runs/approval.yaml"
     task = {
@@ -155,7 +156,9 @@ def _compile(tmp_path: Path):  # noqa: ANN202
     )
 
 
-def _git(tmp_path: Path, *args: str, input_bytes: bytes | None = None) -> subprocess.CompletedProcess:
+def _git(
+    tmp_path: Path, *args: str, input_bytes: bytes | None = None
+) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", *args],
         cwd=tmp_path,
@@ -210,9 +213,7 @@ def _adapter_receipt(
     return receipt
 
 
-def _dispatched_repo(
-    tmp_path: Path, *, now: str = "2026-08-14T10:00:00+00:00"
-):  # noqa: ANN202
+def _dispatched_repo(tmp_path: Path, *, now: str = "2026-08-14T10:00:00+00:00"):  # noqa: ANN202
     _workspace(tmp_path)
     _dispatch_authority(tmp_path)
     _commit_baseline(tmp_path)
@@ -227,7 +228,9 @@ def _dispatched_repo(
     return service, compiled, dispatched
 
 
-def test_compile_is_deterministic_and_contains_governed_contract(tmp_path: Path) -> None:
+def test_compile_is_deterministic_and_contains_governed_contract(
+    tmp_path: Path,
+) -> None:
     bet, task = _workspace(tmp_path)
 
     first = _compile(tmp_path)
@@ -240,9 +243,14 @@ def test_compile_is_deterministic_and_contains_governed_contract(tmp_path: Path)
     assert first.packet["authority"]["human_gate"] is True
     assert first.packet["scope"]["read_surfaces"] == task["read_surfaces"]
     assert first.packet["scope"]["write_surfaces"] == task["write_surfaces"]
-    assert first.packet["assignment"]["required_capabilities"] == task["required_capabilities"]
+    assert (
+        first.packet["assignment"]["required_capabilities"]
+        == task["required_capabilities"]
+    )
     assert first.packet["scope"]["non_goals"] == bet["non_goals"]
-    assert first.packet["acceptance"]["evidence_requirements"] == task["evidence_required"]
+    assert (
+        first.packet["acceptance"]["evidence_requirements"] == task["evidence_required"]
+    )
     assert first.packet["acceptance"]["done_when"] == bet["done_when"]
     assert first.packet["acceptance"]["verify_commands"] == ["pytest -q"]
 
@@ -303,7 +311,9 @@ def test_compile_rejects_unsafe_output_path_without_mesh_writes(tmp_path: Path) 
     assert WorkflowMeshStore(tmp_path / ".omo").events() == before == []
 
 
-def test_dispatch_records_exact_mesh_order_and_transport_only_state(tmp_path: Path) -> None:
+def test_dispatch_records_exact_mesh_order_and_transport_only_state(
+    tmp_path: Path,
+) -> None:
     _workspace(tmp_path)
     _dispatch_authority(tmp_path)
     service = BlueprintControlService(tmp_path)
@@ -455,7 +465,9 @@ def test_observe_does_not_promote_exit_zero_to_readiness(tmp_path: Path) -> None
     assert observation["receipt_observed"] is True
 
 
-def test_execute_collect_and_independent_verify_use_real_git_delta(tmp_path: Path) -> None:
+def test_execute_collect_and_independent_verify_use_real_git_delta(
+    tmp_path: Path,
+) -> None:
     service, compiled, dispatched = _dispatched_repo(tmp_path)
 
     def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
@@ -463,7 +475,9 @@ def test_execute_collect_and_independent_verify_use_real_git_delta(tmp_path: Pat
         target = workspace_root / "src" / "omo" / "blueprint_control.py"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 1\n", encoding="utf-8")
-        receipt_path.write_text(json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8")
+        receipt_path.write_text(
+            json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8"
+        )
         return {"returncode": 0}
 
     collected = service.execute_and_collect(
@@ -487,9 +501,7 @@ def test_execute_collect_and_independent_verify_use_real_git_delta(tmp_path: Pat
         "EvidenceRecorded",
         "WorkflowVerified",
     ]
-    assert collected["manifest"]["changed_paths"] == [
-        "src/omo/blueprint_control.py"
-    ]
+    assert collected["manifest"]["changed_paths"] == ["src/omo/blueprint_control.py"]
     assert collected["patch_ref"].startswith("git-object://")
     assert verified["state"] == "independently_verified"
 
@@ -520,7 +532,9 @@ def test_baseline_is_frozen_before_runner_can_modify_workspace(tmp_path: Path) -
     assert b"FINAL = True" in patch
 
 
-def test_collect_replay_returns_persisted_candidate_without_rerunning(tmp_path: Path) -> None:
+def test_collect_replay_returns_persisted_candidate_without_rerunning(
+    tmp_path: Path,
+) -> None:
     service, compiled, dispatched = _dispatched_repo(tmp_path)
     calls = 0
 
@@ -616,7 +630,9 @@ def test_runner_prelaunch_rejection_has_no_step_started_or_candidate(
     assert "EvidenceRecorded" not in event_types
 
 
-def test_started_provider_human_review_fails_step_without_candidate(tmp_path: Path) -> None:
+def test_started_provider_human_review_fails_step_without_candidate(
+    tmp_path: Path,
+) -> None:
     service, compiled, dispatched = _dispatched_repo(tmp_path)
 
     def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
@@ -696,7 +712,9 @@ def test_out_of_scope_git_delta_is_measured_and_rejected(tmp_path: Path) -> None
     assert "EvidenceRecorded" not in event_types
 
 
-def test_failed_verifier_compensates_and_restores_exact_baseline(tmp_path: Path) -> None:
+def test_failed_verifier_compensates_and_restores_exact_baseline(
+    tmp_path: Path,
+) -> None:
     service, compiled, dispatched = _dispatched_repo(tmp_path)
     baseline = _git(tmp_path, "status", "--porcelain=v1", "-z").stdout
 
@@ -705,7 +723,9 @@ def test_failed_verifier_compensates_and_restores_exact_baseline(tmp_path: Path)
         target = workspace_root / "src" / "omo" / "blueprint_control.py"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 1\n", encoding="utf-8")
-        receipt_path.write_text(json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8")
+        receipt_path.write_text(
+            json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8"
+        )
         return {"returncode": 0}
 
     collected = service.execute_and_collect(compiled, dispatched, runner=runner)
@@ -739,7 +759,9 @@ def test_tampered_patch_leaves_rejected_run_unclosed(tmp_path: Path) -> None:
         target = workspace_root / "src" / "omo" / "blueprint_control.py"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 1\n", encoding="utf-8")
-        receipt_path.write_text(json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8")
+        receipt_path.write_text(
+            json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8"
+        )
         return {"returncode": 0}
 
     collected = service.execute_and_collect(compiled, dispatched, runner=runner)
@@ -747,9 +769,12 @@ def test_tampered_patch_leaves_rejected_run_unclosed(tmp_path: Path) -> None:
     result = service.rollback_candidate(dispatched, collected)
 
     assert result["state"] == "rollback_unconfirmed"
-    assert WorkflowMeshStore(tmp_path / ".omo").snapshot(
-        dispatched["workflow_run_id"]
-    )["state"] == "compensating"
+    assert (
+        WorkflowMeshStore(tmp_path / ".omo").snapshot(dispatched["workflow_run_id"])[
+            "state"
+        ]
+        == "compensating"
+    )
 
 
 def test_candidate_from_other_run_cannot_compensate_or_close_current_run(
@@ -782,22 +807,35 @@ def test_candidate_from_other_run_cannot_compensate_or_close_current_run(
         "blob",
         candidate_b["patch_ref"].removeprefix("git-object://"),
     ).stdout
-    imported_oid = _git(root_a, "hash-object", "-w", "--stdin", input_bytes=blob_b).stdout.decode().strip()
+    imported_oid = (
+        _git(root_a, "hash-object", "-w", "--stdin", input_bytes=blob_b)
+        .stdout.decode()
+        .strip()
+    )
     candidate_b["patch_ref"] = f"git-object://{imported_oid}"
     candidate_b["manifest"]["artifact_refs"] = [f"git-object://{imported_oid}"]
     before = WorkflowMeshStore(root_a / ".omo").events()
 
     result = service_a.rollback_candidate(dispatched_a, candidate_b)
 
-    assert result == {"state": "rollback_unconfirmed", "reason": "candidate_binding_mismatch"}
+    assert result == {
+        "state": "rollback_unconfirmed",
+        "reason": "candidate_binding_mismatch",
+    }
     after = WorkflowMeshStore(root_a / ".omo").events()
     assert after == before
     assert "CompensationStarted" not in [event["event_type"] for event in after]
     assert "WorkflowClosed" not in [event["event_type"] for event in after]
-    assert WorkflowMeshStore(root_a / ".omo").snapshot(
-        dispatched_a["workflow_run_id"]
-    )["state"] == "succeeded"
-    assert candidate_a["transport_receipt"]["dispatch_id"] != candidate_b["transport_receipt"]["dispatch_id"]
+    assert (
+        WorkflowMeshStore(root_a / ".omo").snapshot(dispatched_a["workflow_run_id"])[
+            "state"
+        ]
+        == "succeeded"
+    )
+    assert (
+        candidate_a["transport_receipt"]["dispatch_id"]
+        != candidate_b["transport_receipt"]["dispatch_id"]
+    )
 
 
 def _write_cli_packet(tmp_path: Path, compiled) -> str:  # noqa: ANN001
@@ -922,14 +960,16 @@ def test_cli_observe_and_execute_input_ack_never_claim_model_success(
     _dispatch_authority(tmp_path)
     runner = tmp_path / "input-only-runner"
     runner.write_text(
-        "#!/bin/sh\nprintf '{\"transport\": \"accepted\"}' > \"$2\"\n",
+        '#!/bin/sh\nprintf \'{"transport": "accepted"}\' > "$2"\n',
         encoding="utf-8",
     )
     runner.chmod(0o755)
     registry_path = tmp_path / ".omo" / "_truth" / "registry" / "workers.yaml"
     registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
     registry["workers"][0]["transports"]["cli_prompt"]["command"] = str(runner)
-    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+    registry_path.write_text(
+        yaml.safe_dump(registry, sort_keys=False), encoding="utf-8"
+    )
     _commit_baseline(tmp_path)
     compiled = _compile(tmp_path)
     packet_ref = _write_cli_packet(tmp_path, compiled)
