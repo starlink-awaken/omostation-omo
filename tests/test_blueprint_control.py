@@ -260,6 +260,12 @@ def _supervisor_start_receipt(
             "terminal_handle": "terminal-001",
         },
         "human_action_required": True,
+        "approval": {
+            "mode": "manual_click",
+            "policy": "on-request",
+            "sandbox": "read-only",
+            "write_requires_human_click": True,
+        },
         "input_accepted": "unproven",
         "model_completion": "unproven",
     }
@@ -544,6 +550,12 @@ def test_supervised_start_freezes_baseline_then_pauses_for_human(
 
     assert started["state"] == "awaiting_human_action"
     assert started["human_action_required"] is True
+    assert started["approval"] == {
+        "mode": "manual_click",
+        "policy": "on-request",
+        "sandbox": "read-only",
+        "write_requires_human_click": True,
+    }
     assert started["input_accepted"] == "unproven"
     assert started["model_completion"] == "unproven"
     assert started["spec_binding"] == compiled.packet["spec_binding"]
