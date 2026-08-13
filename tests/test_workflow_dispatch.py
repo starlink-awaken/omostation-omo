@@ -10,11 +10,12 @@ import yaml
 
 from omo.workflow_dispatch import (
     WorkflowDispatchError,
+    admit_requested_workflow,
     admit_workflow,
     consume_pending_workflow_requests,
     dispatch_admitted_workflow,
 )
-from omo.workflow_mesh import WorkflowMeshStore
+from omo.workflow_mesh import WorkflowMeshStore, new_workflow_event
 
 
 def _task(tmp_path: Path, *, approval_ref: str | None = None) -> None:
@@ -141,6 +142,60 @@ def test_admit_workflow_rejects_invalid_blueprint_identity_before_mesh_write(
             },
         )
     assert WorkflowMeshStore(tmp_path / ".omo").events() == []
+
+
+def test_admit_requested_workflow_uses_explicit_now_for_approval_expiry(
+    tmp_path: Path,
+) -> None:
+    approval_ref = ".omo/workers/runs/request-approval.yaml"
+    _task(tmp_path, approval_ref=approval_ref)
+    task_path = tmp_path / ".omo" / "tasks" / "active" / "TASK-MESH-1.yaml"
+    task = yaml.safe_load(task_path.read_text(encoding="utf-8"))
+    task["human_approval_required"] = True
+    task_path.write_text(yaml.safe_dump(task, sort_keys=False), encoding="utf-8")
+    approval_path = tmp_path / approval_ref
+    approval_path.parent.mkdir(parents=True, exist_ok=True)
+    approval_path.write_text(
+        yaml.safe_dump(
+            {
+                "approval_id": "approval-request-1",
+                "task_id": "TASK-MESH-1",
+                "approval_status": "granted",
+                "approval_scope": "workflow.execute",
+                "expires_at": "2099-01-01T00:00:00+00:00",
+                "refs": {
+                    "task_ref": ".omo/tasks/active/TASK-MESH-1.yaml",
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    store.append(
+        new_workflow_event(
+            "WorkflowRequested",
+            "run-expired-request",
+            producer="test",
+            idempotency_key="run-expired-request:requested",
+            payload={
+                "task_id": "TASK-MESH-1",
+                "task_ref": ".omo/tasks/active/TASK-MESH-1.yaml",
+            },
+        )
+    )
+
+    with pytest.raises(WorkflowDispatchError, match="expired"):
+        admit_requested_workflow(
+            tmp_path,
+            workflow_run_id="run-expired-request",
+            backend="runtime",
+            required_capabilities=["runtime"],
+            capability_health=_health(),
+            now="2100-01-01T00:00:00+00:00",
+        )
+
+    assert [event["event_type"] for event in store.events()] == ["WorkflowRequested"]
 
 
 def test_admit_workflow_fails_closed_for_unhealthy_capability(tmp_path: Path) -> None:

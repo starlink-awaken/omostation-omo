@@ -211,6 +211,30 @@ def dispatch_task(
     reclaim_path = omo_ref / "workers" / "runs" / f"{dispatch_id}-reclaim.md"
     review_path = omo_ref / "workers" / "runs" / f"{dispatch_id}-review.md"
     stdout_path = omo_ref / "workers" / "runs" / f"{dispatch_id}-stdout.log"
+    request_identity = (
+        workflow_packet.get("request_identity")
+        if isinstance(workflow_packet, dict)
+        else None
+    )
+    blueprint = (
+        {
+            "packet_id": request_identity["packet_id"],
+            "packet_hash": request_identity["packet_hash"],
+            "bet_id": request_identity["bet_id"],
+        }
+        if isinstance(request_identity, dict)
+        else None
+    )
+    control_state = (
+        {
+            "controller_approval": "granted",
+            "transport": "accepted",
+            "readiness": "unproven",
+            "provider_review": "unknown",
+        }
+        if blueprint is not None
+        else None
+    )
     persisted_launch_argv = _build_launch_argv(
         registry,
         worker_id,
@@ -219,6 +243,19 @@ def dispatch_task(
         workspace_root=root,
         redact_workspace_root=True,
     )
+    # A supervised blueprint must not project dispatch artifacts or mutate the
+    # Task until StepDispatched is durable.  If this append fails, every file
+    # remains exactly at its pre-dispatch state and the exception propagates.
+    if blueprint is not None:
+        _bridge_dispatch_to_mesh(
+            root,
+            omo,
+            dispatch_id=dispatch_id,
+            task_id=task_id,
+            worker_id=worker_id,
+            workflow_packet=workflow_packet,
+            now=dispatch_now,
+        )
     run_dir.mkdir(parents=True, exist_ok=True)
 
     source_docs = task.get("source_docs", [])
@@ -377,30 +414,6 @@ def dispatch_task(
     launch_command = " ".join(
         shlex.quote(argument) for argument in persisted_launch_argv
     )
-    request_identity = (
-        workflow_packet.get("request_identity")
-        if isinstance(workflow_packet, dict)
-        else None
-    )
-    blueprint = (
-        {
-            "packet_id": request_identity["packet_id"],
-            "packet_hash": request_identity["packet_hash"],
-            "bet_id": request_identity["bet_id"],
-        }
-        if isinstance(request_identity, dict)
-        else None
-    )
-    control_state = (
-        {
-            "controller_approval": "granted",
-            "transport": "pending",
-            "readiness": "unproven",
-            "provider_review": "unknown",
-        }
-        if blueprint is not None
-        else None
-    )
     dispatch = {
         "version": 1,
         "dispatch_id": dispatch_id,
@@ -464,20 +477,16 @@ def dispatch_task(
     )
     _write_yaml(task_file, task)
 
-    _bridge_dispatch_to_mesh(
-        root,
-        omo,
-        dispatch_id=dispatch_id,
-        task_id=task_id,
-        worker_id=worker_id,
-        workflow_packet=workflow_packet,
-        now=dispatch_now,
-    )
-
-    if control_state is not None:
-        control_state["transport"] = "accepted"
-        dispatch["control_state"] = control_state
-        _write_yaml(root / dispatch_path, dispatch)
+    if blueprint is None:
+        _bridge_dispatch_to_mesh(
+            root,
+            omo,
+            dispatch_id=dispatch_id,
+            task_id=task_id,
+            worker_id=worker_id,
+            workflow_packet=workflow_packet,
+            now=dispatch_now,
+        )
 
     if launch:
         prompt_text = (root / prompt_path).read_text(encoding="utf-8")

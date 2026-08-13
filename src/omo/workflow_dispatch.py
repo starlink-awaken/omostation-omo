@@ -415,6 +415,7 @@ def admit_requested_workflow(
         task,
         task_file,
         accepted_task_refs={request_task_ref} if request_task_ref else set(),
+        now=now,
     )
     health = _parse_health(capability_health, required)
     trace_id = str(event.get("trace_id") or workflow_run_id)

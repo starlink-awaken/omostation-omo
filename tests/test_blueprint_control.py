@@ -332,6 +332,10 @@ def test_mesh_append_failure_propagates_without_transport_acceptance(
     monkeypatch.setattr(WorkflowMeshStore, "append", fail_step_append)
     service = BlueprintControlService(tmp_path)
     compiled = _compile(tmp_path)
+    task_path = tmp_path / ".omo" / "tasks" / "active" / f"{TASK_ID}.yaml"
+    task_before = yaml.safe_load(task_path.read_text(encoding="utf-8"))
+    run_dir = tmp_path / ".omo" / "workers" / "runs"
+    artifacts_before = {path.name for path in run_dir.iterdir()}
 
     with pytest.raises(RuntimeError, match="mesh unavailable"):
         service.dispatch_packet(
@@ -341,10 +345,13 @@ def test_mesh_append_failure_propagates_without_transport_acceptance(
             now="2026-08-14T10:00:00+00:00",
         )
 
-    dispatches = list((tmp_path / ".omo" / "workers" / "runs").glob("*-dispatch.yaml"))
-    assert len(dispatches) == 1
-    dispatch = yaml.safe_load(dispatches[0].read_text(encoding="utf-8"))
-    assert dispatch["control_state"]["transport"] != "accepted"
+    assert yaml.safe_load(task_path.read_text(encoding="utf-8")) == task_before
+    assert {path.name for path in run_dir.iterdir()} == artifacts_before
+    events = WorkflowMeshStore(tmp_path / ".omo").events()
+    assert [event["event_type"] for event in events] == [
+        "WorkflowRequested",
+        "WorkflowAdmitted",
+    ]
 
 
 def test_observe_does_not_promote_exit_zero_to_readiness(tmp_path: Path) -> None:
