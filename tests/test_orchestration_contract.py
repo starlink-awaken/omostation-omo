@@ -79,6 +79,7 @@ def _v2_packet(
     spec_ref: str = "repo://specs/orchestration-contract.md",
     decision_ref: str = "decision://accepted/BET-Y1Q2-T1-14",
     content: bytes = b"# Accepted orchestration contract\n",
+    bet_status: str = "done",
 ) -> dict[str, object]:
     spec_path = workspace_root / "specs" / "orchestration-contract.md"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
@@ -89,7 +90,7 @@ def _v2_packet(
     ledger_path.write_text(
         "---\nmeta: {}\n---\nbets:\n"
         "- id: BET-Y1Q2-T1-14\n"
-        "  status: done\n"
+        f"  status: {bet_status}\n"
         "  accepted_specifications:\n"
         f"  - spec_ref: {spec_ref}\n"
         "    spec_version: 1.0.0\n"
@@ -199,7 +200,13 @@ def _grant(run_id: str, step_run_id: str) -> dict[str, object]:
     return grant
 
 
-def _seed_succeeded_run(tmp_path, run_id: str = "run-orch") -> str:
+def _seed_succeeded_run(
+    tmp_path,
+    run_id: str = "run-orch",
+    *,
+    dispatch_id: str | None = None,
+    worker_id: str | None = None,
+) -> str:
     step_run_id = f"{run_id}:step-1"
     grant = _grant(run_id, step_run_id)
     store = WorkflowMeshStore(tmp_path)
@@ -214,10 +221,42 @@ def _seed_succeeded_run(tmp_path, run_id: str = "run-orch") -> str:
         )
     )
     context = {"step_run_id": step_run_id, "admission_id": grant["admission_id"]}
+    if dispatch_id is not None:
+        context["dispatch_id"] = dispatch_id
+    if worker_id is not None:
+        context["worker_id"] = worker_id
     store.append(new_workflow_event("StepDispatched", run_id, payload=context))
     store.append(new_workflow_event("StepStarted", run_id, payload=context))
     store.append(new_workflow_event("WorkflowSucceeded", run_id))
     return step_run_id
+
+
+def _transport_receipt(
+    packet: dict[str, object],
+    manifest: dict[str, object],
+    *,
+    workflow_run_id: str = "run-orch",
+    step_run_id: str = "run-orch:step-1",
+    dispatch_id: str = "dispatch-orch-001",
+    worker_id: str = "codex-supervised",
+) -> dict[str, object]:
+    receipt: dict[str, object] = {
+        "receipt_id": "receipt-orch-001",
+        "workflow_run_id": workflow_run_id,
+        "step_run_id": step_run_id,
+        "bet_id": packet["bet_id"],
+        "packet_id": packet["packet_id"],
+        "packet_hash": _hash(packet),
+        "assignment_id": manifest["assignment_id"],
+        "dispatch_id": dispatch_id,
+        "worker_id": worker_id,
+        "output_digest": hashlib.sha256(b"supervised output").hexdigest(),
+        "changed_paths": manifest["changed_paths"],
+        "observed_at": NOW,
+        "provenance_ref": "receipt://codex/dispatch-orch-001",
+    }
+    receipt["receipt_digest"] = compute_packet_hash(canonicalize(receipt))
+    return receipt
 
 
 def _receipt(
@@ -327,6 +366,123 @@ def test_v2_spec_binding_is_revalidated_before_candidate_and_acceptance(
 
     assert evidence["event_type"] == "EvidenceRecorded"
     assert verified["event_type"] == "WorkflowVerified"
+
+
+def test_candidate_bet_with_exact_accepted_spec_is_executable(tmp_path, monkeypatch):
+    workspace_root = tmp_path / "workspace"
+    omo_dir = workspace_root / ".omo"
+    step_run_id = _seed_succeeded_run(omo_dir)
+    packet = _v2_packet(workspace_root, bet_status="candidate")
+    monkeypatch.setattr("omo.orchestration_contract.WORKSPACE_ROOT", workspace_root)
+
+    evidence = OrchestrationContractCoordinator(omo_dir).record_kandev_candidate(
+        workflow_run_id="run-orch",
+        step_run_id=step_run_id,
+        packet=packet,
+        manifest=_manifest(packet),
+        fixture=_fixture(packet),
+    )
+
+    assert evidence["event_type"] == "EvidenceRecorded"
+
+
+def test_candidate_bet_without_exact_binding_is_rejected_without_events(
+    tmp_path, monkeypatch
+):
+    workspace_root = tmp_path / "workspace"
+    omo_dir = workspace_root / ".omo"
+    step_run_id = _seed_succeeded_run(omo_dir)
+    packet = _v2_packet(workspace_root, bet_status="candidate")
+    ledger_path = workspace_root / "docs" / "plans" / "3y-bet-ledger.yaml"
+    ledger_path.write_text(
+        ledger_path.read_text(encoding="utf-8").replace(
+            packet["spec_binding"]["content_digest"], "sha256:" + "f" * 64
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("omo.orchestration_contract.WORKSPACE_ROOT", workspace_root)
+
+    with pytest.raises(OrchestrationContractError, match="spec_binding_invalid"):
+        OrchestrationContractCoordinator(omo_dir).record_kandev_candidate(
+            workflow_run_id="run-orch",
+            step_run_id=step_run_id,
+            packet=packet,
+            manifest=_manifest(packet),
+            fixture=_fixture(packet),
+        )
+
+    assert "EvidenceRecorded" not in [
+        event["event_type"] for event in WorkflowMeshStore(omo_dir).events()
+    ]
+
+
+def test_generic_candidate_receipt_binds_dispatch_and_manifest(tmp_path):
+    dispatch_id = "dispatch-orch-001"
+    worker_id = "codex-supervised"
+    step_run_id = _seed_succeeded_run(
+        tmp_path, dispatch_id=dispatch_id, worker_id=worker_id
+    )
+    packet = _packet()
+    manifest = _manifest(packet)
+    receipt = _transport_receipt(
+        packet,
+        manifest,
+        step_run_id=step_run_id,
+        dispatch_id=dispatch_id,
+        worker_id=worker_id,
+    )
+
+    evidence = OrchestrationContractCoordinator(tmp_path).record_candidate(
+        workflow_run_id="run-orch",
+        step_run_id=step_run_id,
+        packet=packet,
+        manifest=manifest,
+        transport_receipt=receipt,
+    )
+
+    decision_factors = evidence["payload"]["decision_factors"]
+    assert {
+        key: decision_factors[key]
+        for key in (
+            "packet_id",
+            "packet_hash",
+            "assignment_id",
+            "bet_id",
+            "dispatch_id",
+            "worker_id",
+        )
+    } == {
+        "packet_id": packet["packet_id"],
+        "packet_hash": _hash(packet),
+        "assignment_id": manifest["assignment_id"],
+        "bet_id": packet["bet_id"],
+        "dispatch_id": dispatch_id,
+        "worker_id": worker_id,
+    }
+    assert decision_factors["receipt_digest"] == receipt["receipt_digest"]
+
+    mismatched_receipt = {
+        **receipt,
+        "receipt_id": "receipt-orch-other",
+        "dispatch_id": "dispatch-other",
+    }
+    mismatched_receipt["receipt_digest"] = compute_packet_hash(
+        canonicalize(
+            {
+                key: value
+                for key, value in mismatched_receipt.items()
+                if key != "receipt_digest"
+            }
+        )
+    )
+    with pytest.raises(OrchestrationContractError, match="verification_unprovable"):
+        OrchestrationContractCoordinator(tmp_path).record_candidate(
+            workflow_run_id="run-orch",
+            step_run_id=step_run_id,
+            packet=packet,
+            manifest=manifest,
+            transport_receipt=mismatched_receipt,
+        )
 
 
 @pytest.mark.parametrize(
