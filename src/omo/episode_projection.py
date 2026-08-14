@@ -293,9 +293,7 @@ def _inbox_card(
     }
 
 
-def _blocked_entry(
-    row: Mapping[str, Any], reason: str, detail: str
-) -> dict[str, Any]:
+def _blocked_entry(row: Mapping[str, Any], reason: str, detail: str) -> dict[str, Any]:
     return {
         "event_id": row.get("event_id"),
         "event_type": row.get("event_type"),
