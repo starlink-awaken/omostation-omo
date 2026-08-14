@@ -198,6 +198,43 @@ def test_admit_requested_workflow_uses_explicit_now_for_approval_expiry(
     assert [event["event_type"] for event in store.events()] == ["WorkflowRequested"]
 
 
+def test_admit_workflow_accepts_same_task_promotion_approval_ref(
+    tmp_path: Path,
+) -> None:
+    approval_ref = ".omo/workers/runs/promotion-approval.yaml"
+    _task(tmp_path, approval_ref=approval_ref)
+    task_path = tmp_path / ".omo" / "tasks" / "active" / "TASK-MESH-1.yaml"
+    task = yaml.safe_load(task_path.read_text(encoding="utf-8"))
+    task["human_approval_required"] = True
+    task_path.write_text(yaml.safe_dump(task, sort_keys=False), encoding="utf-8")
+    approval_path = tmp_path / approval_ref
+    approval_path.parent.mkdir(parents=True, exist_ok=True)
+    approval_path.write_text(
+        yaml.safe_dump(
+            {
+                "approval_id": "promotion-approval-1",
+                "task_id": "TASK-MESH-1",
+                "approval_status": "granted",
+                "approval_scope": "task.promote_apply",
+                "refs": {"task_ref": ".omo/tasks/planned/TASK-MESH-1.yaml"},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    admitted = admit_workflow(
+        tmp_path,
+        task_id="TASK-MESH-1",
+        backend="runtime",
+        required_capabilities=["runtime"],
+        capability_health=_health(),
+    )
+
+    assert admitted["approval"]["status"] == "granted"
+    assert admitted["approval"]["scope"] == "task.promote_apply"
+
+
 def test_admit_workflow_fails_closed_for_unhealthy_capability(tmp_path: Path) -> None:
     _task(tmp_path)
     health = _health()
