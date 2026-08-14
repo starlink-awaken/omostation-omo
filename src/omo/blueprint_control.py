@@ -1263,12 +1263,26 @@ class BlueprintControlService:
                     "candidate_collected": False,
                 }
             raise BlueprintControlError("Orca Codex collect failed")
+        model_output_source = receipt.get("model_output_source")
+        model_output_digest = receipt.get("model_output_digest")
+        structured_output_valid = (
+            model_output_source == "structured_transcript"
+            and receipt.get("transcript_digest") == model_output_digest
+        )
+        terminal_fallback_valid = (
+            model_output_source == "bounded_terminal_fallback"
+            and receipt.get("fallback_reason") == "session_not_reported"
+            and _is_sha256(receipt.get("completion_receipt_digest"), prefixed=True)
+            and _is_sha256(receipt.get("source_identity_digest"), prefixed=True)
+            and "transcript_digest" not in receipt
+        )
         if (
             receipt.get("schema") != "orca-codex-supervisor/v1"
             or receipt.get("state") != "settled"
             or receipt.get("human_action_required") is not True
             or receipt.get("model_completion") != "observed"
-            or not _is_sha256(receipt.get("transcript_digest"), prefixed=True)
+            or not _is_sha256(model_output_digest, prefixed=True)
+            or not (structured_output_valid or terminal_fallback_valid)
         ):
             raise BlueprintControlError("Orca Codex collect receipt is invalid")
 
@@ -1458,11 +1472,14 @@ class BlueprintControlService:
             "orca_dispatch_id": orca["dispatch_id"],
             "terminal_handle": orca["terminal_handle"],
             **placement,
-            "output_digest": str(receipt["transcript_digest"]).removeprefix("sha256:"),
+            "output_digest": str(model_output_digest).removeprefix("sha256:"),
+            "model_output_source": str(model_output_source),
             "changed_paths": changed_paths,
             "observed_at": datetime.now().astimezone().isoformat(),
             "provenance_ref": f"receipt://orca/{orca['dispatch_id']}",
         }
+        if terminal_fallback_valid:
+            transport_receipt["fallback_reason"] = str(receipt["fallback_reason"])
         transport_receipt["receipt_digest"] = compute_packet_hash(
             canonicalize(transport_receipt)
         )

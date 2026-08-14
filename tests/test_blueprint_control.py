@@ -305,7 +305,27 @@ def _supervisor_collect_receipt(
         **receipt,
         "state": "settled",
         "model_completion": "observed",
+        "model_output_source": "structured_transcript",
+        "model_output_digest": "sha256:" + "7" * 64,
         "transcript_digest": "sha256:" + "7" * 64,
+    }
+
+
+def _supervisor_terminal_collect_receipt(
+    tmp_path: Path,
+    compiled,
+    dispatched,  # noqa: ANN001
+):  # noqa: ANN202
+    receipt = _supervisor_start_receipt(tmp_path, compiled, dispatched)
+    return {
+        **receipt,
+        "state": "settled",
+        "model_completion": "observed",
+        "model_output_source": "bounded_terminal_fallback",
+        "fallback_reason": "session_not_reported",
+        "model_output_digest": "sha256:" + "8" * 64,
+        "completion_receipt_digest": "sha256:" + "9" * 64,
+        "source_identity_digest": "sha256:" + "a" * 64,
     }
 
 
@@ -940,6 +960,41 @@ def test_supervised_collect_settled_worker_builds_independent_candidate(
         supervisor=lambda **_kwargs: pytest.fail("valid replay must not recollect"),
     )
     assert replay == collected
+
+
+def test_supervised_collect_accepts_explicit_bounded_terminal_fallback(
+    tmp_path: Path,
+) -> None:
+    service, compiled, dispatched = _dispatched_repo(tmp_path)
+    target = tmp_path / "src" / "omo" / "blueprint_control.py"
+
+    def start_supervisor(**_kwargs):  # noqa: ANN003, ANN202
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("VALUE = 2\n", encoding="utf-8")
+        return _supervisor_start_receipt(tmp_path, compiled, dispatched)
+
+    service.start_supervised_execution(
+        compiled,
+        dispatched,
+        clone_agent_id=CLONE_AGENT_ID,
+        supervisor=start_supervisor,
+    )
+
+    collected = service.collect_supervised_execution(
+        compiled,
+        dispatched,
+        supervisor=lambda **_kwargs: _supervisor_terminal_collect_receipt(
+            tmp_path, compiled, dispatched
+        ),
+        acceptance_runner=lambda **_kwargs: {"returncode": 0, "stdout": b"measured"},
+    )
+
+    assert collected["state"] == "candidate_collected"
+    assert collected["transport_receipt"]["output_digest"] == "8" * 64
+    assert collected["transport_receipt"]["model_output_source"] == (
+        "bounded_terminal_fallback"
+    )
+    assert collected["transport_receipt"]["fallback_reason"] == ("session_not_reported")
 
 
 def test_supervised_collect_evidence_failure_transitions_to_auditable_failure(
