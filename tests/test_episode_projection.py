@@ -319,6 +319,54 @@ def test_non_card_members_aggregate_into_episode_only(broker: LedgerBroker) -> N
     assert snap["controls"]["events_blocked"] == 0
 
 
+def test_mandate_grant_resolves_pending_confirmation(broker: LedgerBroker) -> None:
+    _episode(
+        broker,
+        "Episode.Decision.v1",
+        "episode_confirmed",
+        {
+            "episode_id": "episode_confirmed",
+            "summary": "review local follow-up",
+            "status": "pending_confirmation",
+        },
+        correlation_id="confirm-card",
+        idempotency_key="confirm-card",
+    )
+    _episode(
+        broker,
+        "Mandate.Granted.v1",
+        "episode_confirmed",
+        {
+            "episode_id": "episode_confirmed",
+            "mandate_id": "mandate:confirmed",
+            "status": "active",
+        },
+        correlation_id="confirm-mandate",
+        idempotency_key="confirm-mandate",
+    )
+    _episode(
+        broker,
+        "Episode.Decision.v1",
+        "episode_still_pending",
+        {
+            "episode_id": "episode_still_pending",
+            "summary": "await a separate confirmation",
+            "status": "pending_confirmation",
+        },
+        correlation_id="pending-card",
+        idempotency_key="pending-card",
+    )
+
+    snap = build_episode_projection_snapshot(broker, principal_id="principal:alice")
+
+    assert len(snap["inbox"]) == 2
+    assert snap["inbox"][0]["episode"] == "episode_confirmed"
+    assert snap["inbox"][0]["status"] == "confirmed"
+    assert snap["inbox"][1]["episode"] == "episode_still_pending"
+    assert snap["inbox"][1]["status"] == "pending_confirmation"
+    assert snap["controls"]["ledger_unchanged"] is True
+
+
 # ---------------------------------------------------------------------------
 # 6. malformed / missing / invalid rows -> stable blocked reasons (FakeBroker)
 #    The projection must be defensive against bad rows without touching the
