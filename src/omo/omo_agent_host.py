@@ -484,6 +484,7 @@ class JourneyRunnerAgent:
         workspace = _Path(
             os.environ.get("WORKSPACE_ROOT", str(_Path.home() / "Workspace"))
         )
+        code_root = _Path(os.environ.get("WORKSPACE_CODE_ROOT", str(workspace)))
         states_dir = (
             workspace / ".omo" / "_knowledge" / "workflow-mesh" / "journey-states"
         )
@@ -521,7 +522,7 @@ class JourneyRunnerAgent:
 
             resumed: list[dict[str, Any]] = []
             for r in resumable:
-                runner = workspace / "bin" / "ssot" / "journey-runner.py"
+                runner = code_root / "bin" / "ssot" / "journey-runner.py"
                 if not runner.exists():
                     continue
                 try:

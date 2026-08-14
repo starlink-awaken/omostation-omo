@@ -14,9 +14,10 @@ test_plan:
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
-from omo.omo_agent_host import AgentHost, HealthMonitorAgent
+from omo.omo_agent_host import AgentHost, HealthMonitorAgent, JourneyRunnerAgent
 
 
 def _write_health(tmp_path: Path, services: dict) -> Path:
@@ -147,3 +148,64 @@ def test_agent_host_error_isolation() -> None:
     assert boom_result["ok"] is False
     assert "炸了" in boom_result["error"]
     assert ok_result["ok"] is True
+
+
+def test_journey_runner_executes_code_root_and_reads_runtime_root(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Runtime state may live elsewhere, but executable code must come from code root."""
+    runtime_root = tmp_path / "runtime"
+    code_root = tmp_path / "code"
+    state_dir = (
+        runtime_root
+        / ".omo"
+        / "_knowledge"
+        / "workflow-mesh"
+        / "journey-states"
+        / "journey-1"
+    )
+    state_dir.mkdir(parents=True)
+    (state_dir / "run-1.jsonl").write_text(
+        json.dumps(
+            {
+                "status": "awaiting_human",
+                "context": {"human_approved": True},
+                "journey_id": "journey-1",
+                "state": "review",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    runtime_runner = runtime_root / "bin" / "ssot" / "journey-runner.py"
+    code_runner = code_root / "bin" / "ssot" / "journey-runner.py"
+    runtime_runner.parent.mkdir(parents=True)
+    code_runner.parent.mkdir(parents=True)
+    runtime_runner.write_text("runtime sentinel", encoding="utf-8")
+    code_runner.write_text("code sentinel", encoding="utf-8")
+
+    calls: list[list[str]] = []
+
+    def _run(argv: list[str], **_kwargs) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setenv("WORKSPACE_ROOT", str(runtime_root))
+    monkeypatch.setenv("WORKSPACE_CODE_ROOT", str(code_root))
+    monkeypatch.setattr(subprocess, "run", _run)
+
+    result = JourneyRunnerAgent().tick()
+
+    assert result["action"] == "auto_resumed"
+    assert calls == [
+        [
+            "python3",
+            str(code_runner),
+            "resume",
+            "--journey-id",
+            "journey-1",
+            "--run-id",
+            "run-1",
+        ]
+    ]
+    assert str(runtime_runner) not in calls[0]
