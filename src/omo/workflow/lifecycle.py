@@ -59,6 +59,10 @@ from .core import (
     workflow_by_id,
 )
 
+_LOCK_FILENAME_MAX_LEN = 255
+_RUN_UPDATE_LOCK_NAME_MAX_LEN = _LOCK_FILENAME_MAX_LEN - len("run_.update.lock")
+_PATH_LOCK_NAME_MAX_LEN = _LOCK_FILENAME_MAX_LEN - len(".lock.yaml")
+
 
 def workflow_plan(workflow: dict[str, Any], context: dict[str, str]) -> dict[str, Any]:
     resolved = substitute(workflow, context)
@@ -150,15 +154,15 @@ def sanitize_lock_name(scope: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", scope).strip("_") or "workspace"
 
 
-def _bounded_lock_name(scope: str, max_len: int = 120) -> str:
-    """锁文件名上限保护: 超长时截断 + 内容 hash 后缀保唯一.
+def _bounded_lock_name(scope: str, max_len: int) -> str:
+    """锁文件名上限保护: 超长时截断 + 内容 hash 后缀降低碰撞风险.
 
     macOS filename 上限 255 bytes; `verify` 不带 run_id 时 lifecycle 会把
     argv 串拼进 run_id → 锁名可达数千字节 → Errno 63 崩溃 (T1-05A 修复轮实测).
     """
     import hashlib
 
-    name = re.sub(r"[^A-Za-z0-9_.-]+", "_", scope).strip("_") or "workspace"
+    name = sanitize_lock_name(scope)
     if len(name) <= max_len:
         return name
     digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:12]
@@ -169,7 +173,8 @@ def _bounded_lock_name(scope: str, max_len: int = 120) -> str:
 def run_update_lock(registry: dict[str, Any], run_id: str):
     lock_dir = lock_state_dir(registry)
     lock_dir.mkdir(parents=True, exist_ok=True)
-    lock_path = lock_dir / f"run_{_bounded_lock_name(run_id)}.update.lock"
+    lock_name = _bounded_lock_name(run_id, _RUN_UPDATE_LOCK_NAME_MAX_LEN)
+    lock_path = lock_dir / f"run_{lock_name}.update.lock"
     deadline = time.monotonic() + RUN_UPDATE_LOCK_TIMEOUT_SECONDS
     acquired = False
     while not acquired:
@@ -433,7 +438,8 @@ def acquire_locks(
     expires_at = (datetime.now(UTC) + timedelta(hours=ttl_hours)).replace(microsecond=0)
     try:
         for scope in scopes:
-            lock_path = lock_dir / f"{_bounded_lock_name(scope)}.lock.yaml"
+            lock_name = _bounded_lock_name(scope, _PATH_LOCK_NAME_MAX_LEN)
+            lock_path = lock_dir / f"{lock_name}.lock.yaml"
             now_ts = utc_now()
             payload = {
                 "run_id": run_id,

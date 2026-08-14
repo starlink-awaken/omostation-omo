@@ -24,6 +24,8 @@ from omo.workflow.lifecycle import (
     heartbeat_lock,
     heartbeat_run,
     prune_stale_locks,
+    release_locks,
+    run_update_lock,
     sanitize_lock_name,
     scan_locks,
 )
@@ -57,6 +59,56 @@ def test_acquire_adds_heartbeat(registry: dict) -> None:
     data = yaml.safe_load(lock_file.read_text())
     assert "last_heartbeat" in data
     assert data["run_id"] == "run-1"
+
+
+def test_run_update_lock_preserves_legacy_legal_filename(registry: dict) -> None:
+    run_id = "r" * 239
+    lock_file = _lock_dir(registry) / f"run_{run_id}.update.lock"
+
+    with run_update_lock(registry, run_id):
+        assert lock_file.exists()
+        assert len(lock_file.name.encode("utf-8")) == 255
+
+    assert not lock_file.exists()
+
+
+def test_acquire_lock_preserves_legacy_legal_filename(registry: dict) -> None:
+    scope = "s" * 245
+    lock_file = _lock_dir(registry) / f"{scope}.lock.yaml"
+
+    acquire_locks(registry, [scope], "run-legacy", "agent-a", False)
+
+    assert lock_file.exists()
+    assert len(lock_file.name.encode("utf-8")) == 255
+
+
+def test_overlong_run_update_lock_is_bounded_and_released(registry: dict) -> None:
+    run_id = "run-" + ("argv-segment-" * 40)
+
+    with run_update_lock(registry, run_id):
+        lock_files = list(_lock_dir(registry).glob("*.update.lock"))
+        assert len(lock_files) == 1
+        assert len(lock_files[0].name.encode("utf-8")) == 255
+
+    assert not list(_lock_dir(registry).glob("*.update.lock"))
+
+
+def test_overlong_lock_names_are_bounded_unique_and_releasable(registry: dict) -> None:
+    run_id = "run-overlong"
+    common_prefix = "path:" + ("component/" * 40)
+    scopes = [f"{common_prefix}alpha", f"{common_prefix}beta"]
+
+    acquire_locks(registry, scopes, run_id, "agent-a", False)
+    lock_files = sorted(_lock_dir(registry).glob("*.lock.yaml"))
+
+    assert len(lock_files) == 2
+    assert len({lock_file.name for lock_file in lock_files}) == 2
+    assert all(len(lock_file.name.encode("utf-8")) == 255 for lock_file in lock_files)
+    for lock_file in lock_files:
+        heartbeat_lock(lock_file)
+
+    assert len(release_locks(registry, run_id)) == 2
+    assert not list(_lock_dir(registry).glob("*.lock.yaml"))
 
 
 def test_classify_live_lock(registry: dict) -> None:
