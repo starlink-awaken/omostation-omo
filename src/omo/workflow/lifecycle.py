@@ -150,11 +150,26 @@ def sanitize_lock_name(scope: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", scope).strip("_") or "workspace"
 
 
+def _bounded_lock_name(scope: str, max_len: int = 120) -> str:
+    """锁文件名上限保护: 超长时截断 + 内容 hash 后缀保唯一.
+
+    macOS filename 上限 255 bytes; `verify` 不带 run_id 时 lifecycle 会把
+    argv 串拼进 run_id → 锁名可达数千字节 → Errno 63 崩溃 (T1-05A 修复轮实测).
+    """
+    import hashlib
+
+    name = re.sub(r"[^A-Za-z0-9_.-]+", "_", scope).strip("_") or "workspace"
+    if len(name) <= max_len:
+        return name
+    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:12]
+    return f"{name[: max_len - len(digest) - 1]}-{digest}"
+
+
 @contextmanager
 def run_update_lock(registry: dict[str, Any], run_id: str):
     lock_dir = lock_state_dir(registry)
     lock_dir.mkdir(parents=True, exist_ok=True)
-    lock_path = lock_dir / f"run_{sanitize_lock_name(run_id)}.update.lock"
+    lock_path = lock_dir / f"run_{_bounded_lock_name(run_id)}.update.lock"
     deadline = time.monotonic() + RUN_UPDATE_LOCK_TIMEOUT_SECONDS
     acquired = False
     while not acquired:
@@ -418,7 +433,7 @@ def acquire_locks(
     expires_at = (datetime.now(UTC) + timedelta(hours=ttl_hours)).replace(microsecond=0)
     try:
         for scope in scopes:
-            lock_path = lock_dir / f"{sanitize_lock_name(scope)}.lock.yaml"
+            lock_path = lock_dir / f"{_bounded_lock_name(scope)}.lock.yaml"
             now_ts = utc_now()
             payload = {
                 "run_id": run_id,
