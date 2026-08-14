@@ -510,7 +510,16 @@ def admit_workflow(
         task_file=task_file,
         root=root,
     )
-    approval = _approval_state(root, task, task_file, now=now)
+    planned_task_ref = str(
+        (task_file.parent.parent / "planned" / task_file.name).relative_to(root)
+    )
+    approval = _approval_state(
+        root,
+        task,
+        task_file,
+        accepted_task_refs={planned_task_ref},
+        now=now,
+    )
     health = _parse_health(
         capability_health, list(dict.fromkeys(required_capabilities))
     )
