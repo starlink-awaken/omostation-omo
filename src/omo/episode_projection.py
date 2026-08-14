@@ -45,6 +45,8 @@ EPISODE_CARD_EVENTS = frozenset(
     {"Episode.FYI.v1", "Episode.Approval.v1", "Episode.Decision.v1"}
 )
 
+EPISODE_CONFIRMATION_EVENT = "Mandate.Granted.v1"
+
 #: Stable blocked reasons (enum-like, never exception text).
 REASON_MALFORMED_PAYLOAD = "malformed_payload"
 REASON_MISSING_EPISODE_ID = "missing_episode_id"
@@ -78,6 +80,7 @@ def build_episode_projection_snapshot(
     episode_order: list[str] = []
     episode_counts: dict[str, int] = {}
     inbox: list[dict[str, Any]] = []
+    confirmed_episode_ids: set[str] = set()
 
     for row in rows:
         if row.get("principal_id") != principal_id:
@@ -153,8 +156,17 @@ def build_episode_projection_snapshot(
             episodes_dump[episode_id]["contains_event_refs"].append(envelope_dump)
 
         episode_counts[episode_id] = episode_counts.get(episode_id, 0) + 1
+        if event_type == EPISODE_CONFIRMATION_EVENT:
+            confirmed_episode_ids.add(episode_id)
         if is_card:
             inbox.append(_inbox_card(event_type, row, payload, episode_id))
+
+    for card in inbox:
+        if (
+            card["episode"] in confirmed_episode_ids
+            and card["status"] == "pending_confirmation"
+        ):
+            card["status"] = "confirmed"
 
     episodes = [episodes_dump[episode_id] for episode_id in episode_order]
     role_portfolio = _role_portfolio(broker, principal_id, episode_counts, blocked)
@@ -281,9 +293,7 @@ def _inbox_card(
     }
 
 
-def _blocked_entry(
-    row: Mapping[str, Any], reason: str, detail: str
-) -> dict[str, Any]:
+def _blocked_entry(row: Mapping[str, Any], reason: str, detail: str) -> dict[str, Any]:
     return {
         "event_id": row.get("event_id"),
         "event_type": row.get("event_type"),

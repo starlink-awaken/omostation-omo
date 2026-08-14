@@ -31,7 +31,6 @@ from omo.episode_projection import (
 from omo.event_ledger import LedgerBroker
 from omo.sovereignty import SovereigntyService
 
-
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
@@ -44,7 +43,9 @@ def broker(tmp_path) -> LedgerBroker:
     b.close()
 
 
-def _assign(svc: SovereigntyService, principal_id: str, role_id: str, role_name: str) -> str:
+def _assign(
+    svc: SovereigntyService, principal_id: str, role_id: str, role_name: str
+) -> str:
     resp = svc.assign(
         principal_id=principal_id,
         role_id=role_id,
@@ -111,11 +112,16 @@ def test_role_portfolio_is_isolated_per_principal(broker: LedgerBroker) -> None:
     svc = SovereigntyService(broker)
     _assign(svc, "principal:alice", "role:reviewer", "Reviewer")
 
-    snap_alice = build_episode_projection_snapshot(broker, principal_id="principal:alice")
+    snap_alice = build_episode_projection_snapshot(
+        broker, principal_id="principal:alice"
+    )
     snap_bob = build_episode_projection_snapshot(broker, principal_id="principal:bob")
 
     assert len(snap_alice["role_portfolio"]["active_assignments"]) == 1
-    assert snap_alice["role_portfolio"]["active_assignments"][0]["role_id"] == "role:reviewer"
+    assert (
+        snap_alice["role_portfolio"]["active_assignments"][0]["role_id"]
+        == "role:reviewer"
+    )
     assert snap_bob["role_portfolio"]["active_assignments"] == []
     assert snap_bob["role_portfolio"]["responsibilities"] == []
     assert snap_bob["role_portfolio"]["episode_counts"] == {}
@@ -175,10 +181,21 @@ def test_episodes_and_inbox_cards(broker: LedgerBroker) -> None:
     assert len(eps[0]["contains_event_refs"]) == 2
     assert len(eps[1]["contains_event_refs"]) == 2
     for e in eps:
-        assert set(e) >= {"episode_id", "schema_version", "contains_event_refs", "opened_at"}
+        assert set(e) >= {
+            "episode_id",
+            "schema_version",
+            "contains_event_refs",
+            "opened_at",
+        }
     # envelopes are the full EventEnvelope M2 dump
     first_env = eps[0]["contains_event_refs"][0]
-    assert set(first_env) >= {"event_id", "schema_version", "source_ref", "emitted_at", "payload"}
+    assert set(first_env) >= {
+        "event_id",
+        "schema_version",
+        "source_ref",
+        "emitted_at",
+        "payload",
+    }
     assert first_env["schema_version"] == "event-envelope/v1"
     assert first_env["payload"]["summary"] == "approve rollout"
 
@@ -319,6 +336,54 @@ def test_non_card_members_aggregate_into_episode_only(broker: LedgerBroker) -> N
     assert snap["controls"]["events_blocked"] == 0
 
 
+def test_mandate_grant_resolves_pending_confirmation(broker: LedgerBroker) -> None:
+    _episode(
+        broker,
+        "Episode.Decision.v1",
+        "episode_confirmed",
+        {
+            "episode_id": "episode_confirmed",
+            "summary": "review local follow-up",
+            "status": "pending_confirmation",
+        },
+        correlation_id="confirm-card",
+        idempotency_key="confirm-card",
+    )
+    _episode(
+        broker,
+        "Mandate.Granted.v1",
+        "episode_confirmed",
+        {
+            "episode_id": "episode_confirmed",
+            "mandate_id": "mandate:confirmed",
+            "status": "active",
+        },
+        correlation_id="confirm-mandate",
+        idempotency_key="confirm-mandate",
+    )
+    _episode(
+        broker,
+        "Episode.Decision.v1",
+        "episode_still_pending",
+        {
+            "episode_id": "episode_still_pending",
+            "summary": "await a separate confirmation",
+            "status": "pending_confirmation",
+        },
+        correlation_id="pending-card",
+        idempotency_key="pending-card",
+    )
+
+    snap = build_episode_projection_snapshot(broker, principal_id="principal:alice")
+
+    assert len(snap["inbox"]) == 2
+    assert snap["inbox"][0]["episode"] == "episode_confirmed"
+    assert snap["inbox"][0]["status"] == "confirmed"
+    assert snap["inbox"][1]["episode"] == "episode_still_pending"
+    assert snap["inbox"][1]["status"] == "pending_confirmation"
+    assert snap["controls"]["ledger_unchanged"] is True
+
+
 # ---------------------------------------------------------------------------
 # 6. malformed / missing / invalid rows -> stable blocked reasons (FakeBroker)
 #    The projection must be defensive against bad rows without touching the
@@ -332,7 +397,9 @@ class _FakeBroker:
     def __init__(self, rows: list[dict[str, Any]]) -> None:
         self._rows = rows
 
-    def read(self, from_sequence: int = 1, *, producer: str | None = None, **_: Any) -> list[dict[str, Any]]:
+    def read(
+        self, from_sequence: int = 1, *, producer: str | None = None, **_: Any
+    ) -> list[dict[str, Any]]:
         rows = [r for r in self._rows if r["sequence"] >= from_sequence]
         if producer is not None:
             rows = [r for r in rows if r.get("producer") == producer]
@@ -345,7 +412,12 @@ class _FakeBroker:
         return len(self._rows)
 
     def verify_chain(self, from_sequence: int = 1, **_: Any) -> dict[str, Any]:
-        return {"ok": True, "total": len(self._rows), "first_bad_sequence": None, "error": None}
+        return {
+            "ok": True,
+            "total": len(self._rows),
+            "first_bad_sequence": None,
+            "error": None,
+        }
 
     def close(self) -> None:
         pass
@@ -454,8 +526,12 @@ def test_from_path_equivalence(broker: LedgerBroker, tmp_path) -> None:
     )
     db_path = tmp_path / "ledger.db"
 
-    from_broker = build_episode_projection_snapshot(broker, principal_id="principal:alice")
-    from_path = build_episode_projection_snapshot_from_path(db_path, principal_id="principal:alice")
+    from_broker = build_episode_projection_snapshot(
+        broker, principal_id="principal:alice"
+    )
+    from_path = build_episode_projection_snapshot_from_path(
+        db_path, principal_id="principal:alice"
+    )
     assert from_broker == from_path
 
     assert from_path["schema_version"] == "episode-projection/v1"
