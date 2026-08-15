@@ -438,6 +438,11 @@ def test_heartbeat_wired_into_claim(
         return original(reg, rid)
 
     monkeypatch.setattr(lifecycle_mod, "heartbeat_run", spy)
+    monkeypatch.setattr(
+        lifecycle_mod,
+        "validate_affected_graph_receipt",
+        lambda *_args, **_kwargs: {"receipt_hash": "a" * 64},
+    )
 
     claim_run(
         registry,
@@ -446,7 +451,7 @@ def test_heartbeat_wired_into_claim(
         paths=["path:new.py"],
         surfaces=[],
         force_lock=False,
-        affected_hash="dummy",
+        affected_receipt="receipt.json",
     )
     assert "run-claim" in heartbeat_called
 
