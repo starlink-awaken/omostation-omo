@@ -62,7 +62,12 @@ def _affected_projects(
 def _claimed_projects(paths: list[str], known_projects: set[str]) -> set[str]:
     claimed: set[str] = set()
     for raw_path in paths:
-        parts = Path(raw_path).as_posix().lstrip("./").split("/")
+        normalized_path = Path(raw_path).as_posix().lstrip("./").rstrip("/")
+        if normalized_path == "projects":
+            raise WorkflowError(
+                "ambiguous projects path cannot be bound to one affected project"
+            )
+        parts = normalized_path.split("/")
         if len(parts) >= 2 and parts[0] == "projects":
             project = parts[1]
             if project not in known_projects:
@@ -79,18 +84,43 @@ def validate_affected_graph_receipt(
     receipt_reference: str | Path,
     claimed_paths: list[str],
     workspace_root: str | Path,
+    claimed_surfaces: list[str] | None = None,
 ) -> dict[str, Any]:
     workspace = Path(workspace_root).resolve()
-    receipt_path = Path(receipt_reference)
-    if not receipt_path.is_absolute():
-        receipt_path = workspace / receipt_path
-    if not receipt_path.is_file():
+    receipt_ref = str(receipt_reference)
+    relative_path = Path(receipt_ref)
+    if (
+        not receipt_ref
+        or relative_path.is_absolute()
+        or "//" in receipt_ref
+        or any(part in {"", ".", ".."} for part in relative_path.parts)
+        or relative_path.as_posix() != receipt_ref
+    ):
+        raise WorkflowError(
+            "affected graph receipt reference must be canonical workspace-relative"
+        )
+    receipt_path = workspace / relative_path
+    try:
+        resolved_receipt = receipt_path.resolve(strict=True)
+    except OSError as exc:
         raise WorkflowError(
             f"affected graph receipt file does not exist: {receipt_path}"
+        ) from exc
+    if resolved_receipt != receipt_path.absolute():
+        raise WorkflowError(
+            "affected graph receipt reference must not traverse symlinks"
         )
+    try:
+        resolved_receipt.relative_to(workspace)
+    except ValueError as exc:
+        raise WorkflowError(
+            "affected graph receipt reference must stay inside workspace"
+        ) from exc
+    if not resolved_receipt.is_file():
+        raise WorkflowError(f"affected graph receipt is not a file: {receipt_ref}")
 
     try:
-        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        receipt = json.loads(resolved_receipt.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise WorkflowError(f"invalid affected graph receipt: {exc}") from exc
     if not isinstance(receipt, dict) or receipt.get("schema") != SCHEMA:
@@ -148,10 +178,12 @@ def validate_affected_graph_receipt(
         )
 
     claimed_projects = _claimed_projects(claimed_paths, known_projects)
+    if claimed_surfaces:
+        claimed_projects.add(WORKSPACE_ROOT_PROJECT)
     missing = claimed_projects - set(affected)
     if missing:
         raise WorkflowError(
             "claimed projects missing from affected graph receipt: "
             + ", ".join(sorted(missing))
         )
-    return {**receipt, "receipt_path": str(receipt_path)}
+    return {**receipt, "receipt_ref": receipt_ref}

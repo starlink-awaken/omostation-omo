@@ -699,18 +699,15 @@ def claim_run(
     if not paths and not surfaces:
         raise WorkflowError("claim requires at least one --path or --surface")
     normalized_paths = sorted({normalize_repo_path(item) for item in paths})
+    normalized_surfaces = sorted({item.strip() for item in surfaces if item.strip()})
     affected_graph = validate_affected_graph_receipt(
-        affected_receipt, normalized_paths, WORKSPACE
+        affected_receipt, normalized_paths, WORKSPACE, normalized_surfaces
     )
     heartbeat_run(registry, run_id)  # SR-01: renew only after receipt validation
     with run_update_lock(registry, run_id):
         path, payload = read_run(registry, run_id)
         if payload.get("status") != "active":
             raise WorkflowError(f"cannot claim against non-active run: {run_id}")
-        normalized_surfaces = sorted(
-            {item.strip() for item in surfaces if item.strip()}
-        )
-
         # Phase 3 A2A Path Locks (Logical Isolation)
         # Check for path hierarchy overlap with other active runs
         run_dir = run_state_dir(registry)
