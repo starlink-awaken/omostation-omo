@@ -51,11 +51,13 @@ def test_valid_receipt_binds_projects_omo_claim(tmp_path: Path) -> None:
     receipt = _receipt(tmp_path, ["omo"], ["cockpit", "omo"])
 
     result = validate_affected_graph_receipt(
-        receipt, ["projects/omo/src/omo/workflow/cli.py"], tmp_path
+        receipt.name, ["projects/omo/src/omo/workflow/cli.py"], tmp_path
     )
 
     assert result["receipt_hash"]
     assert result["affected_projects"] == ["cockpit", "omo"]
+    assert result["receipt_ref"] == "receipt.json"
+    assert "receipt_path" not in result
 
 
 @pytest.mark.parametrize("reference", ["dummy", "f" * 64, "missing.json"])
@@ -76,7 +78,7 @@ def test_tampered_receipt_fails_closed(tmp_path: Path) -> None:
     receipt.write_text(json.dumps(payload), encoding="utf-8")
 
     with pytest.raises(WorkflowError, match="receipt_hash mismatch"):
-        validate_affected_graph_receipt(receipt, ["projects/omo"], tmp_path)
+        validate_affected_graph_receipt(receipt.name, ["projects/omo"], tmp_path)
 
 
 def test_layer_contract_drift_fails_closed(tmp_path: Path) -> None:
@@ -85,7 +87,7 @@ def test_layer_contract_drift_fails_closed(tmp_path: Path) -> None:
     contract.write_text(contract.read_text() + "\n# drift\n", encoding="utf-8")
 
     with pytest.raises(WorkflowError, match="layer contract digest mismatch"):
-        validate_affected_graph_receipt(receipt, ["projects/omo"], tmp_path)
+        validate_affected_graph_receipt(receipt.name, ["projects/omo"], tmp_path)
 
 
 def test_missing_claimed_project_fails_closed(tmp_path: Path) -> None:
@@ -94,7 +96,7 @@ def test_missing_claimed_project_fails_closed(tmp_path: Path) -> None:
 
     with pytest.raises(WorkflowError, match="claimed projects missing"):
         validate_affected_graph_receipt(
-            receipt, ["projects/gbrain/src/gbrain/api.py"], tmp_path
+            receipt.name, ["projects/gbrain/src/gbrain/api.py"], tmp_path
         )
 
 
@@ -103,4 +105,63 @@ def test_root_path_requires_explicit_workspace_root_project(tmp_path: Path) -> N
     receipt = _receipt(tmp_path, ["omo"], ["omo"])
 
     with pytest.raises(WorkflowError, match="workspace-root"):
-        validate_affected_graph_receipt(receipt, ["docs/README.md"], tmp_path)
+        validate_affected_graph_receipt(receipt.name, ["docs/README.md"], tmp_path)
+
+
+def test_ambiguous_projects_prefix_is_not_a_workspace_root_claim(
+    tmp_path: Path,
+) -> None:
+    _write_contract(tmp_path, {"L2": ["omo"]})
+    receipt = _receipt(tmp_path, ["workspace-root"], ["workspace-root"])
+
+    with pytest.raises(WorkflowError, match="ambiguous projects path"):
+        validate_affected_graph_receipt(receipt.name, ["projects"], tmp_path)
+
+
+@pytest.mark.parametrize("reference", ["../receipt.json", "nested//receipt.json"])
+def test_noncanonical_receipt_reference_fails_closed(
+    tmp_path: Path, reference: str
+) -> None:
+    _write_contract(tmp_path, {"L2": ["omo"]})
+
+    with pytest.raises(WorkflowError, match="canonical workspace-relative"):
+        validate_affected_graph_receipt(reference, ["projects/omo"], tmp_path)
+
+
+def test_absolute_receipt_reference_fails_closed(tmp_path: Path) -> None:
+    _write_contract(tmp_path, {"L2": ["omo"]})
+    receipt = _receipt(tmp_path, ["omo"], ["omo"])
+
+    with pytest.raises(WorkflowError, match="workspace-relative"):
+        validate_affected_graph_receipt(receipt, ["projects/omo"], tmp_path)
+
+
+def test_symlink_receipt_reference_fails_closed(tmp_path: Path) -> None:
+    _write_contract(tmp_path, {"L2": ["omo"]})
+    receipt = _receipt(tmp_path, ["omo"], ["omo"])
+    symlink = tmp_path / "receipt-link.json"
+    symlink.symlink_to(receipt)
+
+    with pytest.raises(WorkflowError, match="must not traverse symlinks"):
+        validate_affected_graph_receipt(symlink.name, ["projects/omo"], tmp_path)
+
+
+def test_surface_only_claim_requires_workspace_root_coverage(tmp_path: Path) -> None:
+    _write_contract(tmp_path, {"L2": ["omo"]})
+    receipt = _receipt(tmp_path, ["omo"], ["omo"])
+
+    with pytest.raises(WorkflowError, match="workspace-root"):
+        validate_affected_graph_receipt(
+            receipt.name, [], tmp_path, claimed_surfaces=["doc-ssot"]
+        )
+
+
+def test_surface_only_claim_accepts_workspace_root_receipt(tmp_path: Path) -> None:
+    _write_contract(tmp_path, {"L2": ["omo"]})
+    receipt = _receipt(tmp_path, ["workspace-root"], ["workspace-root"])
+
+    result = validate_affected_graph_receipt(
+        receipt.name, [], tmp_path, claimed_surfaces=["doc-ssot"]
+    )
+
+    assert result["affected_projects"] == ["workspace-root"]
