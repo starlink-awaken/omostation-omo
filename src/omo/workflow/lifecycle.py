@@ -1174,6 +1174,8 @@ def diff_baseline_report(
     registry: dict[str, Any],
     run_id: str | None,
     changed_files: list[str],
+    *,
+    scope_to_changed: bool = False,
 ) -> dict[str, Any]:
     """T9-01 ①: claim 基线 vs 当前 diff 漂移检查.
 
@@ -1181,6 +1183,11 @@ def diff_baseline_report(
     squash merge 丢变更。本检查在 verify 时跑:
       drifted = (claim 后相对基线变更的文件) - (claim 覆盖的文件) - (本轮 diff 已含文件)
     drifted 非空 → FAIL (有变更绕过 claim, 可能丢失)。
+
+    ``scope_to_changed=True`` (verify --file, not --from-diff): only the
+    files in this invocation are in the universe. A temp-registry or
+    scoped check must not treat the rest of a feature-branch / dirty
+    worktree as unclaimed drift.
 
     无 claim / 无 baseline_commit / git 失败 → 不阻塞 (向后兼容旧 claim)。
     """
@@ -1198,10 +1205,20 @@ def diff_baseline_report(
     if not baseline:
         return {"ok": True, "checked": False, "reason": "no baseline_commit (legacy claim)"}
     try:
+        git_cmd = [
+            "git",
+            "diff",
+            "--name-only",
+            "--ignore-submodules",
+            baseline,
+        ]
+        # Honor --file: do not ask git about the whole worktree.
+        if scope_to_changed and changed_files:
+            git_cmd.extend(["--", *changed_files])
         out = _sp.run(
             # --ignore-submodules: 子模块指针脏 ≠ 本仓漂移 (子模块内部有自己的治理);
             # 否则任何 worktree 的子模块未提交状态都会误判 drift
-            ["git", "diff", "--name-only", "--ignore-submodules", baseline],
+            git_cmd,
             cwd=str(WORKSPACE), capture_output=True, text=True, check=False,
         )
         if out.returncode != 0:
@@ -1223,6 +1240,9 @@ def diff_baseline_report(
     signal_changes = [
         item for item in since_baseline if not item.startswith(noise_prefixes)
     ]
+    if scope_to_changed and changed_files:
+        allowed = set(changed_files)
+        signal_changes = [item for item in signal_changes if item in allowed]
     if not signal_changes:
         return {"ok": True, "checked": False, "reason": "only runtime-plane noise since baseline"}
     claimed: list[str] = []

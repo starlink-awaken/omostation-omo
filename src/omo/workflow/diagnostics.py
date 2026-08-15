@@ -144,7 +144,12 @@ def build_verify_report(
         results.append(result)
     claim_coverage = claim_coverage_report(registry, run_id, normalized_files)
     # T9-01 ①: claim 基线漂移检查 (模式 1 防线)
-    diff_baseline = diff_baseline_report(registry, run_id, normalized_files)
+    diff_baseline = diff_baseline_report(
+        registry,
+        run_id,
+        normalized_files,
+        scope_to_changed=not from_diff,
+    )
     ok = (
         all(result.get("ok", False) for result in results)
         and bool(claim_coverage["ok"])
