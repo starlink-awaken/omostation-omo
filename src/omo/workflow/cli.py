@@ -91,7 +91,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_claim.add_argument("--surface", action="append", default=[])
     p_claim.add_argument("--actor", default=os.environ.get("USER", "agent"))
     p_claim.add_argument(
-        "--affected-hash", default=None, help="Hash from affected-graph.py"
+        "--affected-receipt",
+        "--affected-hash",
+        dest="affected_receipt",
+        default=None,
+        help=(
+            "Path to affected-graph-receipt/v1 JSON; --affected-hash is a "
+            "deprecated path alias and no longer accepts an arbitrary hash"
+        ),
     )
     p_claim.add_argument("--force-lock", action="store_true")
     p_claim.add_argument("--json", action="store_true")
@@ -328,7 +335,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.path,
                 args.surface,
                 args.force_lock,
-                args.affected_hash,
+                args.affected_receipt,
             )
             if args.json:
                 print(json.dumps(claim, ensure_ascii=False, indent=2))

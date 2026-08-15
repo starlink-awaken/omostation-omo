@@ -41,6 +41,7 @@ except ImportError:
 
 
 from ..omo_io import write_yaml_atomic
+from .affected_graph_receipt import validate_affected_graph_receipt
 from .core import (
     CLAIM_POLICY_MODES,
     RUN_UPDATE_LOCK_TIMEOUT_SECONDS,
@@ -689,20 +690,23 @@ def claim_run(
     paths: list[str],
     surfaces: list[str],
     force_lock: bool,
-    affected_hash: str | None = None,
+    affected_receipt: str | None = None,
 ) -> dict[str, Any]:
-    heartbeat_run(registry, run_id)  # SR-01: renew before claim
-    if not affected_hash:
+    if not affected_receipt:
         raise WorkflowError(
-            "Missing or invalid affected-hash. You must run affected-graph.py first."
+            "Missing affected graph receipt. You must run affected-graph.py first."
         )
     if not paths and not surfaces:
         raise WorkflowError("claim requires at least one --path or --surface")
+    normalized_paths = sorted({normalize_repo_path(item) for item in paths})
+    affected_graph = validate_affected_graph_receipt(
+        affected_receipt, normalized_paths, WORKSPACE
+    )
+    heartbeat_run(registry, run_id)  # SR-01: renew only after receipt validation
     with run_update_lock(registry, run_id):
         path, payload = read_run(registry, run_id)
         if payload.get("status") != "active":
             raise WorkflowError(f"cannot claim against non-active run: {run_id}")
-        normalized_paths = sorted({normalize_repo_path(item) for item in paths})
         normalized_surfaces = sorted(
             {item.strip() for item in surfaces if item.strip()}
         )
@@ -778,6 +782,7 @@ def claim_run(
                 "surfaces": normalized_surfaces,
                 "scopes": scopes,
                 "locks": lock_paths,
+                "affected_graph": affected_graph,
             }
             payload.setdefault("claims", []).append(claim)
             write_run(path, payload)
@@ -797,6 +802,7 @@ def claim_run(
                 "paths": normalized_paths,
                 "surfaces": normalized_surfaces,
                 "locks": lock_paths,
+                "affected_graph": affected_graph,
             },
         )
         return {**claim, "run_id": run_id}
