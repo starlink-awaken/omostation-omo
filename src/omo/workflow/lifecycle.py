@@ -1204,7 +1204,7 @@ def diff_baseline_report(
         )
         if out.returncode != 0:
             return {"ok": True, "checked": False, "reason": f"git diff failed: {out.stderr.strip()[:80]}"}
-        since_baseline = [l.strip() for l in out.stdout.splitlines() if l.strip()]
+        since_baseline = [ln.strip() for ln in out.stdout.splitlines() if ln.strip()]
     except Exception as exc:
         return {"ok": True, "checked": False, "reason": f"git error: {exc}"}
     if not since_baseline:
