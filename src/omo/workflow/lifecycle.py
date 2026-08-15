@@ -772,6 +772,15 @@ def claim_run(
             for lock_path in lock_paths:
                 if lock_path not in payload["locks"]:
                     payload["locks"].append(lock_path)
+            # T9-01 ①: 记录 claim 时基线 — verify 对比 diff 基线, 拦「claim 后新变更未认领」漂移
+            # (模式1 教训: worktree A 改 status / worktree B 提交, PR #1518)
+            try:
+                baseline_commit = subprocess.run(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=str(WORKSPACE), capture_output=True, text=True, check=False,
+                ).stdout.strip() or None
+            except Exception:
+                baseline_commit = None
             claim = {
                 "claimed_at": utc_now(),
                 "actor": actor,
@@ -780,6 +789,7 @@ def claim_run(
                 "scopes": scopes,
                 "locks": lock_paths,
                 "affected_graph": affected_graph,
+                "baseline_commit": baseline_commit,
             }
             payload.setdefault("claims", []).append(claim)
             write_run(path, payload)
@@ -1158,6 +1168,64 @@ def is_read_only_workflow(registry: dict[str, Any], workflow_id: str) -> bool:
     # Explicit empty write list => read-only. Missing write key is NOT exempt
     # (legacy workflows may omit surfaces entirely).
     return isinstance(write, list) and len(write) == 0
+
+
+def diff_baseline_report(
+    registry: dict[str, Any],
+    run_id: str | None,
+    changed_files: list[str],
+) -> dict[str, Any]:
+    """T9-01 ①: claim 基线 vs 当前 diff 漂移检查.
+
+    模式 1 教训 (PR #1518): status 变更在 worktree A 做, PR 从 worktree B 提交,
+    squash merge 丢变更。本检查在 verify 时跑:
+      drifted = (claim 后相对基线变更的文件) - (claim 覆盖的文件) - (本轮 diff 已含文件)
+    drifted 非空 → FAIL (有变更绕过 claim, 可能丢失)。
+
+    无 claim / 无 baseline_commit / git 失败 → 不阻塞 (向后兼容旧 claim)。
+    """
+    import subprocess as _sp
+
+    if not run_id:
+        return {"ok": True, "checked": False, "reason": "no run_id"}
+    _, payload = read_run(registry, run_id)
+    claims = payload.get("claims") or []
+    baseline = None
+    for c in claims:
+        if isinstance(c, dict) and c.get("baseline_commit"):
+            baseline = c["baseline_commit"]
+            break
+    if not baseline:
+        return {"ok": True, "checked": False, "reason": "no baseline_commit (legacy claim)"}
+    try:
+        out = _sp.run(
+            ["git", "diff", "--name-only", baseline],
+            cwd=str(WORKSPACE), capture_output=True, text=True, check=False,
+        )
+        if out.returncode != 0:
+            return {"ok": True, "checked": False, "reason": f"git diff failed: {out.stderr.strip()[:80]}"}
+        since_baseline = [l.strip() for l in out.stdout.splitlines() if l.strip()]
+    except Exception as exc:
+        return {"ok": True, "checked": False, "reason": f"git error: {exc}"}
+    if not since_baseline:
+        return {"ok": True, "checked": False, "reason": "no changes since baseline"}
+    claimed: list[str] = []
+    for c in claims:
+        if isinstance(c, dict):
+            claimed.extend(c.get("paths", []))
+    drift = [
+        item for item in since_baseline
+        if item not in changed_files
+        and not any(claim_covers_path(cp, item) for cp in claimed)
+    ]
+    return {
+        "ok": not drift,
+        "checked": True,
+        "baseline_commit": baseline,
+        "changed_since_baseline": since_baseline,
+        "drifted_files": drift,
+        "warnings": [f"drifted beyond claim since baseline: {item}" for item in drift],
+    }
 
 
 def claim_coverage_report(

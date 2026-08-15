@@ -35,6 +35,7 @@ from .lifecycle import (
     recommended_next,
     scan_locks,
     staged_lane_report,
+    diff_baseline_report,
 )
 from .lint import agcp_drift_check, diff_check_rows
 
@@ -142,8 +143,12 @@ def build_verify_report(
             }
         results.append(result)
     claim_coverage = claim_coverage_report(registry, run_id, normalized_files)
-    ok = all(result.get("ok", False) for result in results) and bool(
-        claim_coverage["ok"]
+    # T9-01 ①: claim 基线漂移检查 (模式 1 防线)
+    diff_baseline = diff_baseline_report(registry, run_id, normalized_files)
+    ok = (
+        all(result.get("ok", False) for result in results)
+        and bool(claim_coverage["ok"])
+        and bool(diff_baseline.get("ok", True))
     )
     report = {
         "ok": ok,
@@ -153,6 +158,7 @@ def build_verify_report(
         "execute": execute,
         "changed_files": normalized_files,
         "claim_coverage": claim_coverage,
+        "diff_baseline": diff_baseline,
         "check_count": len(results),
         "checks": results,
     }
@@ -197,6 +203,10 @@ def print_verify_report(report: dict[str, Any], as_json: bool) -> None:
     if isinstance(claim_coverage, dict):
         for warning in claim_coverage.get("warnings") or []:
             print(f"[WARN] claim_policy: {warning}")
+    diff_baseline = report.get("diff_baseline")
+    if isinstance(diff_baseline, dict):
+        for warning in diff_baseline.get("warnings") or []:
+            print(f"[WARN] diff_baseline: {warning}")
     for result in report["checks"]:
         status = (
             "PASS"
@@ -976,6 +986,10 @@ def print_status_report(report: dict[str, Any], as_json: bool) -> None:
     if isinstance(claim_coverage, dict):
         for warning in claim_coverage.get("warnings") or []:
             print(f"[WARN] claim_policy: {warning}")
+    diff_baseline = report.get("diff_baseline")
+    if isinstance(diff_baseline, dict):
+        for warning in diff_baseline.get("warnings") or []:
+            print(f"[WARN] diff_baseline: {warning}")
     print(f"compliance={report['compliance']['decision']}")
     req = report.get("requirement_iteration") or {}
     if req:
