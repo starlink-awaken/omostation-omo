@@ -1199,7 +1199,9 @@ def diff_baseline_report(
         return {"ok": True, "checked": False, "reason": "no baseline_commit (legacy claim)"}
     try:
         out = _sp.run(
-            ["git", "diff", "--name-only", baseline],
+            # --ignore-submodules: 子模块指针脏 ≠ 本仓漂移 (子模块内部有自己的治理);
+            # 否则任何 worktree 的子模块未提交状态都会误判 drift
+            ["git", "diff", "--name-only", "--ignore-submodules", baseline],
             cwd=str(WORKSPACE), capture_output=True, text=True, check=False,
         )
         if out.returncode != 0:
@@ -1209,12 +1211,24 @@ def diff_baseline_report(
         return {"ok": True, "checked": False, "reason": f"git error: {exc}"}
     if not since_baseline:
         return {"ok": True, "checked": False, "reason": "no changes since baseline"}
+    # 运行时写面不算漂移: daemon/检查器常驻写 (as_of 时间戳/agent-tick state/审计jsonl),
+    # 不是交付物变更 — 不排除会把 CI 环境噪音误判为 drift (T9-01 实测)
+    noise_prefixes = (
+        ".omo/state/",
+        ".omo/_delivery/",
+        ".subtrees/",
+    )
+    signal_changes = [
+        item for item in since_baseline if not item.startswith(noise_prefixes)
+    ]
+    if not signal_changes:
+        return {"ok": True, "checked": False, "reason": "only runtime-plane noise since baseline"}
     claimed: list[str] = []
     for c in claims:
         if isinstance(c, dict):
             claimed.extend(c.get("paths", []))
     drift = [
-        item for item in since_baseline
+        item for item in signal_changes
         if item not in changed_files
         and not any(claim_covers_path(cp, item) for cp in claimed)
     ]
