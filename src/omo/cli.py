@@ -348,6 +348,8 @@ def main(argv: list[str] | None = None) -> int:
 
         # The facade parser still owns the worker/task namespace. Preserve the
         # public `omo worker <command>` shape while routing through that parser.
+        if len(args) > 1 and args[1] == "task":
+            return worker_main(["task", *args[2:]])
         return worker_main(["worker", *args[1:]])
 
     if args and args[0] == "workspace":

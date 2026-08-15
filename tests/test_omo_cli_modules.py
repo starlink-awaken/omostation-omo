@@ -51,6 +51,16 @@ from omo.omo_task import (
     cmd_task_refresh_evidence,
 )
 
+
+def test_root_cli_routes_worker_task_namespace_to_task_facade() -> None:
+    from omo.cli import main as cli_main
+
+    with patch("omo.omo_worker.main", return_value=0) as worker_main:
+        assert cli_main(["worker", "task", "promote-eval", "TASK-EXAMPLE"]) == 0
+
+    worker_main.assert_called_once_with(["task", "promote-eval", "TASK-EXAMPLE"])
+
+
 # -- omo_goal --
 
 
