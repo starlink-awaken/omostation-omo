@@ -1217,6 +1217,8 @@ def diff_baseline_report(
         ".omo/state/",
         ".omo/_delivery/",
         ".subtrees/",
+        # daemon 治理投影写面: memory-os as_of 等运行时投影 (SR-06 实测误判漂移补)
+        ".omo/_truth/registry/memory-os.yaml",
     )
     signal_changes = [
         item for item in since_baseline if not item.startswith(noise_prefixes)
