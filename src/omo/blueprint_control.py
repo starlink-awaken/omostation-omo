@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, NoReturn
 
@@ -25,6 +25,11 @@ from ecos.ssot.tools.work_packet_compiler import (
     compute_packet_hash,
 )
 
+from .approval_lifecycle import (
+    expire_approval_timeout,
+    grant_approval,
+    request_approval,
+)
 from .omo_io import write_text_atomic
 from .omo_shared import load_yaml
 from .omo_task_schema import validate_task_file
@@ -35,6 +40,7 @@ from .workflow_dispatch import admit_workflow
 from .workflow_mesh import WorkflowMeshStore, new_workflow_event
 
 EXECUTABLE_BET_STATES = frozenset({"candidate", "in_progress", "review", "done"})
+PROVIDER_APPROVAL_TIMEOUT_SECONDS = 604_800
 
 
 class BlueprintControlError(ValueError):
@@ -53,6 +59,19 @@ Supervisor = Callable[..., Mapping[str, Any]]
 
 def _sha256(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def _utc(value: str | None = None) -> datetime:
+    if value is None:
+        return datetime.now(UTC)
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _stamp(value: str | None = None) -> str:
+    return _utc(value).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _canonical_receipt_digest(receipt: Mapping[str, Any]) -> str:
@@ -603,6 +622,132 @@ class BlueprintControlService:
             raise BlueprintControlError("packet prompt binding is invalid")
         return binding, dict(prompt_binding)
 
+    def _require_live_admission(self, binding: Mapping[str, str], *, now: str) -> None:
+        snapshot = WorkflowMeshStore(self.root / self.omo_dir).snapshot(
+            binding["workflow_run_id"]
+        )
+        admission = snapshot.get("admission")
+        if (
+            snapshot.get("state") != "dispatched"
+            or not isinstance(admission, Mapping)
+            or admission.get("admission_id") != binding["admission_id"]
+        ):
+            raise BlueprintControlError("dispatch admission is not launchable")
+        expires_at = str(admission.get("expires_at") or "")
+        try:
+            expired = not expires_at or _utc(now) >= _utc(expires_at)
+        except ValueError as exc:
+            raise BlueprintControlError("dispatch admission expiry is invalid") from exc
+        if expired:
+            raise BlueprintControlError("dispatch admission expired before launch")
+
+    @staticmethod
+    def _approval_wait_binding(execution: Mapping[str, Any]) -> dict[str, str]:
+        approval_wait = execution.get("approval_wait")
+        if not isinstance(approval_wait, Mapping) or set(approval_wait) != {
+            "approval_id",
+            "requested_at",
+            "timeout_at",
+        }:
+            raise BlueprintControlError("provider approval wait binding missing")
+        projected = {
+            key: str(approval_wait.get(key) or "").strip()
+            for key in ("approval_id", "requested_at", "timeout_at")
+        }
+        try:
+            invalid = not all(projected.values()) or _utc(
+                projected["timeout_at"]
+            ) <= _utc(projected["requested_at"])
+        except ValueError as exc:
+            raise BlueprintControlError(
+                "provider approval wait binding invalid"
+            ) from exc
+        if invalid:
+            raise BlueprintControlError("provider approval wait binding invalid")
+        return projected
+
+    def _approval_snapshot(
+        self,
+        execution: Mapping[str, Any],
+        binding: Mapping[str, str],
+    ) -> dict[str, Any]:
+        approval_wait = self._approval_wait_binding(execution)
+        snapshot = WorkflowMeshStore(self.root / self.omo_dir).snapshot(
+            binding["workflow_run_id"]
+        )
+        approval = snapshot.get("approvals", {}).get(approval_wait["approval_id"])
+        if (
+            not isinstance(approval, Mapping)
+            or approval.get("approval_id") != approval_wait["approval_id"]
+            or approval.get("requested_at") != approval_wait["requested_at"]
+            or approval.get("timeout_at") != approval_wait["timeout_at"]
+            or approval.get("state") not in {"requested", "granted", "timed_out"}
+        ):
+            raise BlueprintControlError("provider approval wait binding mismatch")
+        return dict(approval)
+
+    def _recover_approval_wait(
+        self,
+        *,
+        path: Path,
+        projection: dict[str, Any],
+        binding: Mapping[str, str],
+        now: str | None,
+    ) -> dict[str, Any]:
+        if projection.get("schema") != "blueprint-supervised-execution/v2":
+            raise BlueprintControlError("execution approval protocol unavailable")
+        if "approval_wait" in projection:
+            self._approval_wait_binding(projection)
+            return projection
+
+        approval_id = f"provider:{binding['omo_dispatch_id']}"
+        store = WorkflowMeshStore(self.root / self.omo_dir)
+        snapshot = store.snapshot(binding["workflow_run_id"])
+        approval = snapshot.get("approvals", {}).get(approval_id)
+        if not isinstance(approval, Mapping):
+            step_started = any(
+                event.get("event_type") == "StepStarted"
+                and event.get("workflow_run_id") == binding["workflow_run_id"]
+                and event.get("payload")
+                == {
+                    "step_run_id": binding["step_run_id"],
+                    "admission_id": binding["admission_id"],
+                    "dispatch_id": binding["omo_dispatch_id"],
+                }
+                for event in store.events()
+            )
+            if snapshot.get("state") != "running" or not step_started:
+                raise BlueprintControlError("provider approval wait binding missing")
+            event = request_approval(
+                self.root / self.omo_dir,
+                workflow_run_id=binding["workflow_run_id"],
+                trace_id=self._workflow_trace_id(binding["workflow_run_id"]),
+                approval_id=approval_id,
+                timeout_seconds=PROVIDER_APPROVAL_TIMEOUT_SECONDS,
+                now=_stamp(now),
+            )
+            approval = event["payload"]
+        projection["state"] = "awaiting_human_action"
+        projection["approval_wait"] = {
+            key: approval[key] for key in ("approval_id", "requested_at", "timeout_at")
+        }
+        projection["projection_digest"] = self._projection_digest(projection)
+        write_text_atomic(
+            path,
+            json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        )
+        return projection
+
+    def _workflow_trace_id(self, workflow_run_id: str) -> str:
+        trace_id = (
+            WorkflowMeshStore(self.root / self.omo_dir)
+            .snapshot(workflow_run_id)
+            .get("trace_id")
+        )
+        if not isinstance(trace_id, str) or not trace_id.strip():
+            raise BlueprintControlError("workflow trace identity is missing")
+        return trace_id
+
     @staticmethod
     def _supervisor_binding(
         binding: Mapping[str, str], prompt_binding: Mapping[str, Any]
@@ -754,10 +899,19 @@ class BlueprintControlService:
             raise BlueprintControlError("execution binding mismatch")
         if projection.get("state") == "control_projection_failed":
             raise BlueprintControlError("execution control projection failed")
+        if projection.get("state") == "approval_timed_out":
+            raise BlueprintControlError("provider approval wait timed out")
         if projection.get("state") in {"starting", "startup_outcome_unknown"}:
             raise BlueprintControlError("execution startup outcome is unknown")
-        if projection.get("state") != "awaiting_human_action":
+        if projection.get("state") not in {
+            "awaiting_human_action",
+            "approval_request_pending",
+        }:
             raise BlueprintControlError("execution projection state is invalid")
+        if projection.get("schema") != "blueprint-supervised-execution/v2":
+            raise BlueprintControlError("execution approval protocol unavailable")
+        if "approval_wait" in projection:
+            self._approval_wait_binding(projection)
         return projection
 
     def _dispatch_prompt_binding(
@@ -788,6 +942,7 @@ class BlueprintControlService:
         execution: Mapping[str, Any],
         packet: Mapping[str, Any],
         dispatch_result: Mapping[str, Any],
+        require_approval_wait: bool = True,
     ) -> None:
         dispatch_path = self.root / _safe_relative_path(
             dispatch_result.get("dispatch_path"), "dispatch path"
@@ -837,6 +992,91 @@ class BlueprintControlService:
             or not all(isinstance(value, str) and value for value in orca.values())
         ):
             raise BlueprintControlError("execution external fact mismatch")
+        if require_approval_wait:
+            self._approval_snapshot(execution, execution["binding"])
+
+    def _load_recoverable_execution(
+        self,
+        *,
+        path: Path,
+        binding: Mapping[str, str],
+        prompt_binding: Mapping[str, Any],
+        packet: Mapping[str, Any],
+        dispatch_result: Mapping[str, Any],
+        now: str | None,
+        recovery_supervisor: Supervisor | None,
+        timeout_seconds: int,
+    ) -> dict[str, Any]:
+        execution = self._read_execution_projection(
+            path=path,
+            binding=binding,
+            prompt_binding=prompt_binding,
+        )
+        self._validate_execution_external_facts(
+            execution=execution,
+            packet=packet,
+            dispatch_result=dispatch_result,
+            require_approval_wait=False,
+        )
+        if "approval_wait" not in execution:
+            if recovery_supervisor is None:
+                raise BlueprintControlError(
+                    "provider approval recovery attestation unavailable"
+                )
+            orca = execution.get("orca")
+            placement = self._clone_attestation(execution)
+            assert isinstance(orca, Mapping)
+            assert placement is not None
+            receipt = recovery_supervisor(
+                action="collect",
+                timeout_seconds=timeout_seconds,
+                **self._supervisor_binding(binding, prompt_binding),
+                workspace_root=str(self.root),
+                agent_id=str(execution["clone_agent_id"]),
+                **placement,
+                orca_run_id=orca["run_id"],
+                orca_task_id=orca["task_id"],
+                orca_dispatch_id=orca["dispatch_id"],
+                terminal_handle=orca["terminal_handle"],
+            )
+            receipt_binding = receipt.get("binding")
+            receipt_placement = self._clone_attestation(
+                receipt_binding if isinstance(receipt_binding, Mapping) else {},
+                expected_agent_id=str(execution["clone_agent_id"]),
+            )
+            if (
+                receipt.get("schema") != "orca-codex-supervisor/v1"
+                or receipt_binding
+                != {**self._supervisor_binding(binding, prompt_binding), **placement}
+                or receipt.get("orca") != dict(orca)
+                or receipt_placement != placement
+                or not (
+                    (
+                        receipt.get("ok") is False
+                        and receipt.get("reason") == "worker_not_settled"
+                    )
+                    or (
+                        receipt.get("ok") is True
+                        and receipt.get("state") == "settled"
+                        and receipt.get("model_completion") == "observed"
+                    )
+                )
+            ):
+                raise BlueprintControlError(
+                    "provider approval recovery attestation mismatch"
+                )
+        execution = self._recover_approval_wait(
+            path=path,
+            projection=execution,
+            binding=binding,
+            now=now,
+        )
+        self._validate_execution_external_facts(
+            execution=execution,
+            packet=packet,
+            dispatch_result=dispatch_result,
+        )
+        return execution
 
     def _validate_candidate_projection(
         self,
@@ -869,15 +1109,15 @@ class BlueprintControlService:
         if interactive:
             if prompt_binding is None:
                 raise BlueprintControlError("candidate projection invalid")
-            execution = self._read_execution_projection(
+            execution = self._load_recoverable_execution(
                 path=self._execution_projection_path(dispatch_result),
                 binding=binding,
                 prompt_binding=prompt_binding,
-            )
-            self._validate_execution_external_facts(
-                execution=execution,
                 packet=packet,
                 dispatch_result=dispatch_result,
+                now=None,
+                recovery_supervisor=None,
+                timeout_seconds=0,
             )
         run_id = binding["workflow_run_id"]
         dispatch_id = binding["omo_dispatch_id"]
@@ -999,6 +1239,7 @@ class BlueprintControlService:
         clone_agent_id: str,
         supervisor: Supervisor | None = None,
         timeout_seconds: int = 60,
+        now: str | None = None,
     ) -> dict[str, Any]:
         """Freeze Git state, then start one Orca-owned interactive Codex worker."""
         packet = self._validate_compiled_packet(compiled)
@@ -1009,19 +1250,22 @@ class BlueprintControlService:
         prompt_binding = {"prompt_ref": prompt_ref, "prompt_digest": prompt_digest}
         execution_path = self._execution_projection_path(dispatch_result)
         if execution_path.is_file():
-            execution = self._read_execution_projection(
+            execution = self._load_recoverable_execution(
                 path=execution_path,
                 binding=binding,
                 prompt_binding=prompt_binding,
+                packet=packet,
+                dispatch_result=dispatch_result,
+                now=now,
+                recovery_supervisor=supervisor or self._default_supervisor,
+                timeout_seconds=timeout_seconds,
             )
             if execution.get("clone_agent_id") != clone_agent_id:
                 raise BlueprintControlError("clone agent identity mismatch")
-            self._validate_execution_external_facts(
-                execution=execution,
-                packet=packet,
-                dispatch_result=dispatch_result,
-            )
             return execution
+
+        observed_at = _stamp(now)
+        self._require_live_admission(binding, now=observed_at)
 
         allowed = _required_string_list(packet["scope"], "write_surfaces")
         dispatch_doc = load_yaml(
@@ -1055,7 +1299,7 @@ class BlueprintControlService:
             ).hexdigest()
         )
         projection: dict[str, Any] = {
-            "schema": "blueprint-supervised-execution/v1",
+            "schema": "blueprint-supervised-execution/v2",
             "state": "starting",
             "binding": binding,
             "spec_binding": spec_binding,
@@ -1164,8 +1408,9 @@ class BlueprintControlService:
             execution_path,
             json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
         )
+        store = WorkflowMeshStore(self.root / self.omo_dir)
         try:
-            WorkflowMeshStore(self.root / self.omo_dir).append(
+            store.append(
                 new_workflow_event(
                     "StepStarted",
                     binding["workflow_run_id"],
@@ -1191,6 +1436,65 @@ class BlueprintControlService:
                 + "\n",
             )
             raise
+        approval_id = f"provider:{binding['omo_dispatch_id']}"
+        try:
+            approval_event = request_approval(
+                self.root / self.omo_dir,
+                workflow_run_id=binding["workflow_run_id"],
+                trace_id=self._workflow_trace_id(binding["workflow_run_id"]),
+                approval_id=approval_id,
+                timeout_seconds=PROVIDER_APPROVAL_TIMEOUT_SECONDS,
+                now=observed_at,
+            )
+        except Exception:
+            step_failure_recorded = False
+            try:
+                store.append(
+                    new_workflow_event(
+                        "StepFailed",
+                        binding["workflow_run_id"],
+                        producer="omo-blueprint-control",
+                        payload={
+                            "step_run_id": binding["step_run_id"],
+                            "admission_id": binding["admission_id"],
+                            "dispatch_id": binding["omo_dispatch_id"],
+                            "reason": "approval_request_failed",
+                        },
+                        idempotency_key=(
+                            f"{binding['workflow_run_id']}:step-failed:"
+                            f"{binding['omo_dispatch_id']}:approval-request"
+                        ),
+                    )
+                )
+                step_failure_recorded = True
+            except Exception:
+                pass
+            projection["state"] = (
+                "control_projection_failed"
+                if step_failure_recorded
+                else "approval_request_pending"
+            )
+            projection["candidate_collected"] = False
+            projection["control_failure"] = {
+                "reason": "approval_request_failed",
+                "step_failure_recorded": step_failure_recorded,
+            }
+            projection["projection_digest"] = self._projection_digest(projection)
+            write_text_atomic(
+                execution_path,
+                json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2)
+                + "\n",
+            )
+            raise
+        projection["approval_wait"] = {
+            key: approval_event["payload"][key]
+            for key in ("approval_id", "requested_at", "timeout_at")
+        }
+        projection["projection_digest"] = self._projection_digest(projection)
+        write_text_atomic(
+            execution_path,
+            json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        )
         return projection
 
     def collect_supervised_execution(
@@ -1201,6 +1505,7 @@ class BlueprintControlService:
         supervisor: Supervisor | None = None,
         acceptance_runner: Runner | None = None,
         timeout_seconds: int = 120,
+        now: str | None = None,
     ) -> dict[str, Any]:
         """Collect a settled Orca worker, then independently measure its Git delta."""
         packet = self._validate_compiled_packet(compiled)
@@ -1218,16 +1523,40 @@ class BlueprintControlService:
                 binding=binding,
                 prompt_binding=prompt_binding,
             )
-        execution = self._read_execution_projection(
+        execution = self._load_recoverable_execution(
             path=self._execution_projection_path(dispatch_result),
             binding=binding,
             prompt_binding=prompt_binding,
-        )
-        self._validate_execution_external_facts(
-            execution=execution,
             packet=packet,
             dispatch_result=dispatch_result,
+            now=now,
+            recovery_supervisor=supervisor or self._default_supervisor,
+            timeout_seconds=timeout_seconds,
         )
+        observed_at = _stamp(now)
+        approval = self._approval_snapshot(execution, binding)
+        if approval["state"] == "timed_out" or (
+            approval["state"] == "requested"
+            and _utc(observed_at) >= _utc(str(approval["timeout_at"]))
+        ):
+            if approval["state"] == "requested":
+                expire_approval_timeout(
+                    self.root / self.omo_dir,
+                    workflow_run_id=binding["workflow_run_id"],
+                    trace_id=self._workflow_trace_id(binding["workflow_run_id"]),
+                    approval_id=str(approval["approval_id"]),
+                    now=observed_at,
+                    reason="provider_approval_timeout",
+                )
+            execution["state"] = "approval_timed_out"
+            execution["candidate_collected"] = False
+            execution["projection_digest"] = self._projection_digest(execution)
+            write_text_atomic(
+                self._execution_projection_path(dispatch_result),
+                json.dumps(execution, ensure_ascii=False, sort_keys=True, indent=2)
+                + "\n",
+            )
+            raise BlueprintControlError("provider approval wait timed out")
         orca = execution.get("orca")
         assert isinstance(orca, Mapping)
         placement = self._clone_attestation(execution)
@@ -1285,6 +1614,15 @@ class BlueprintControlService:
             or not (structured_output_valid or terminal_fallback_valid)
         ):
             raise BlueprintControlError("Orca Codex collect receipt is invalid")
+
+        if approval["state"] == "requested":
+            grant_approval(
+                self.root / self.omo_dir,
+                workflow_run_id=binding["workflow_run_id"],
+                trace_id=self._workflow_trace_id(binding["workflow_run_id"]),
+                approval_id=str(approval["approval_id"]),
+                now=observed_at,
+            )
 
         run_id = binding["workflow_run_id"]
         dispatch_id = binding["omo_dispatch_id"]

@@ -4,12 +4,14 @@ import hashlib
 import json
 import subprocess
 from copy import deepcopy
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 import yaml
 from ecos.ssot.tools.work_packet_compiler import canonicalize, compute_packet_hash
 
+from omo.approval_lifecycle import request_approval as durable_request_approval
 from omo.blueprint_control import BlueprintControlError, BlueprintControlService
 from omo.cli import main as cli_main
 from omo.orchestration_contract import OrchestrationContractCoordinator
@@ -92,7 +94,7 @@ def _dispatch_authority(
     tmp_path: Path,
     *,
     approval_task_id: str = TASK_ID,
-    expires_at: str = "2026-08-16T00:00:00+00:00",
+    expires_at: str = "2099-01-01T00:00:00+00:00",
     worker_capabilities: list[str] | None = None,
 ) -> None:
     registry = tmp_path / ".omo" / "_truth" / "registry" / "workers.yaml"
@@ -230,7 +232,7 @@ def _adapter_receipt(
     return receipt
 
 
-def _dispatched_repo(tmp_path: Path, *, now: str = "2026-08-14T10:00:00+00:00"):  # noqa: ANN202
+def _dispatched_repo(tmp_path: Path, *, now: str | None = None):  # noqa: ANN202
     _workspace(tmp_path)
     _dispatch_authority(tmp_path)
     _commit_baseline(tmp_path)
@@ -240,7 +242,7 @@ def _dispatched_repo(tmp_path: Path, *, now: str = "2026-08-14T10:00:00+00:00"):
         compiled,
         worker_id="worker-a",
         capability_health=_health(),
-        now=now,
+        now=now or datetime.now(UTC).isoformat(),
     )
     return service, compiled, dispatched
 
@@ -632,9 +634,407 @@ def test_supervised_start_freezes_baseline_then_pauses_for_human(
     event_types = [
         event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
     ]
-    assert event_types[-1:] == ["StepStarted"]
+    assert event_types[-2:] == ["StepStarted", "ApprovalRequested"]
     assert "WorkflowSucceeded" not in event_types
     assert "EvidenceRecorded" not in event_types
+
+
+def test_supervised_start_rejects_expired_admission_before_supervisor(
+    tmp_path: Path,
+) -> None:
+    service, compiled, dispatched = _dispatched_repo(
+        tmp_path, now="2026-08-14T10:00:00+00:00"
+    )
+
+    with pytest.raises(BlueprintControlError, match="admission expired"):
+        service.start_supervised_execution(
+            compiled,
+            dispatched,
+            clone_agent_id=CLONE_AGENT_ID,
+            supervisor=lambda **_kwargs: pytest.fail("must not start supervisor"),
+            now="2026-08-14T10:16:00+00:00",
+        )
+
+    event_types = [
+        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
+    ]
+    assert event_types == ["WorkflowRequested", "WorkflowAdmitted", "StepDispatched"]
+    assert not service._execution_projection_path(dispatched).exists()  # noqa: SLF001
+
+
+def test_supervised_start_records_durable_provider_approval_wait(
+    tmp_path: Path,
+) -> None:
+    service, compiled, dispatched = _dispatched_repo(
+        tmp_path, now="2026-08-14T09:50:00+00:00"
+    )
+
+    started = service.start_supervised_execution(
+        compiled,
+        dispatched,
+        clone_agent_id=CLONE_AGENT_ID,
+        supervisor=lambda **_kwargs: _supervisor_start_receipt(
+            tmp_path, compiled, dispatched
+        ),
+        now="2026-08-14T10:00:00+00:00",
+    )
+
+    assert started["approval_wait"] == {
+        "approval_id": f"provider:{dispatched['dispatch_id']}",
+        "requested_at": "2026-08-14T10:00:00Z",
+        "timeout_at": "2026-08-21T10:00:00Z",
+    }
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    assert [event["event_type"] for event in store.events()][-2:] == [
+        "StepStarted",
+        "ApprovalRequested",
+    ]
+    snapshot = store.snapshot(dispatched["workflow_run_id"])
+    assert snapshot["state"] == "waiting_approval"
+    assert snapshot["approvals"][started["approval_wait"]["approval_id"]]["state"] == (
+        "requested"
+    )
+
+
+def test_supervised_collect_expires_wait_without_calling_supervisor(
+    tmp_path: Path,
+) -> None:
+    service, compiled, dispatched = _dispatched_repo(
+        tmp_path, now="2026-08-14T09:50:00+00:00"
+    )
+    service.start_supervised_execution(
+        compiled,
+        dispatched,
+        clone_agent_id=CLONE_AGENT_ID,
+        supervisor=lambda **_kwargs: _supervisor_start_receipt(
+            tmp_path, compiled, dispatched
+        ),
+        now="2026-08-14T10:00:00+00:00",
+    )
+
+    with pytest.raises(BlueprintControlError, match="approval wait timed out"):
+        service.collect_supervised_execution(
+            compiled,
+            dispatched,
+            supervisor=lambda **_kwargs: pytest.fail("must not collect expired wait"),
+            now="2026-08-21T10:00:01+00:00",
+        )
+
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    snapshot = store.snapshot(dispatched["workflow_run_id"])
+    assert snapshot["state"] == "failed"
+    assert next(iter(snapshot["approvals"].values()))["state"] == "timed_out"
+    execution = json.loads(
+        service._execution_projection_path(dispatched).read_text(encoding="utf-8")  # noqa: SLF001
+    )
+    assert execution["state"] == "approval_timed_out"
+    assert not service._candidate_projection_path(dispatched).exists()  # noqa: SLF001
+
+
+def test_supervised_collect_rejects_legacy_projection_without_approval_wait(
+    tmp_path: Path,
+) -> None:
+    service, compiled, dispatched = _dispatched_repo(tmp_path)
+    service.start_supervised_execution(
+        compiled,
+        dispatched,
+        clone_agent_id=CLONE_AGENT_ID,
+        supervisor=lambda **_kwargs: _supervisor_start_receipt(
+            tmp_path, compiled, dispatched
+        ),
+    )
+    execution_path = service._execution_projection_path(dispatched)  # noqa: SLF001
+    execution = json.loads(execution_path.read_text(encoding="utf-8"))
+    execution["schema"] = "blueprint-supervised-execution/v1"
+    execution.pop("approval_wait", None)
+    execution["projection_digest"] = service._projection_digest(execution)  # noqa: SLF001
+    execution_path.write_text(
+        json.dumps(execution, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(BlueprintControlError, match="approval protocol unavailable"):
+        service.collect_supervised_execution(
+            compiled,
+            dispatched,
+            supervisor=lambda **_kwargs: pytest.fail("must not collect legacy wait"),
+        )
+
+
+def test_supervised_start_recovers_wait_projection_from_durable_mesh(
+    tmp_path: Path,
+) -> None:
+    service, compiled, dispatched = _dispatched_repo(
+        tmp_path, now="2026-08-14T09:50:00+00:00"
+    )
+    started = service.start_supervised_execution(
+        compiled,
+        dispatched,
+        clone_agent_id=CLONE_AGENT_ID,
+        supervisor=lambda **_kwargs: _supervisor_start_receipt(
+            tmp_path, compiled, dispatched
+        ),
+        now="2026-08-14T10:00:00+00:00",
+    )
+    execution_path = service._execution_projection_path(dispatched)  # noqa: SLF001
+    execution = json.loads(execution_path.read_text(encoding="utf-8"))
+    execution.pop("approval_wait")
+    execution["projection_digest"] = service._projection_digest(execution)  # noqa: SLF001
+    execution_path.write_text(
+        json.dumps(execution, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    replay = service.start_supervised_execution(
+        compiled,
+        dispatched,
+        clone_agent_id=CLONE_AGENT_ID,
+        supervisor=lambda **_kwargs: {
+            **_supervisor_start_receipt(tmp_path, compiled, dispatched),
+            "ok": False,
+            "reason": "worker_not_settled",
+        },
+        now="2026-08-14T10:05:00+00:00",
+    )
+
+    assert replay["approval_wait"] == started["approval_wait"]
+    assert [
+        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
+    ].count("ApprovalRequested") == 1
+
+
+def test_supervised_start_recovers_request_after_step_started_crash(
+    tmp_path: Path,
+) -> None:
+    service, compiled, dispatched = _dispatched_repo(
+        tmp_path, now="2026-08-14T09:50:00+00:00"
+    )
+    service.start_supervised_execution(
+        compiled,
+        dispatched,
+        clone_agent_id=CLONE_AGENT_ID,
+        supervisor=lambda **_kwargs: _supervisor_start_receipt(
+            tmp_path, compiled, dispatched
+        ),
+        now="2026-08-14T10:00:00+00:00",
+    )
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    events = store.events()
+    assert events[-1]["event_type"] == "ApprovalRequested"
+    store.log_path.write_text(
+        "".join(
+            json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n"
+            for event in events[:-1]
+        ),
+        encoding="utf-8",
+    )
+    execution_path = service._execution_projection_path(dispatched)  # noqa: SLF001
+    execution = json.loads(execution_path.read_text(encoding="utf-8"))
+    execution.pop("approval_wait")
+    execution["projection_digest"] = service._projection_digest(execution)  # noqa: SLF001
+    execution_path.write_text(
+        json.dumps(execution, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    replay = service.start_supervised_execution(
+        compiled,
+        dispatched,
+        clone_agent_id=CLONE_AGENT_ID,
+        supervisor=lambda **_kwargs: {
+            **_supervisor_start_receipt(tmp_path, compiled, dispatched),
+            "ok": False,
+            "reason": "worker_not_settled",
+        },
+        now="2026-08-14T10:05:00+00:00",
+    )
+
+    assert replay["approval_wait"]["requested_at"] == "2026-08-14T10:05:00Z"
+    assert replay["approval_wait"]["timeout_at"] == "2026-08-21T10:05:00Z"
+    assert (
+        WorkflowMeshStore(tmp_path / ".omo").snapshot(dispatched["workflow_run_id"])[
+            "state"
+        ]
+        == "waiting_approval"
+    )
+
+
+def test_supervised_start_approval_request_failure_records_step_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, compiled, dispatched = _dispatched_repo(tmp_path)
+
+    def fail_request(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+        raise RuntimeError("approval store unavailable")
+
+    monkeypatch.setattr("omo.blueprint_control.request_approval", fail_request)
+    with pytest.raises(RuntimeError, match="approval store unavailable"):
+        service.start_supervised_execution(
+            compiled,
+            dispatched,
+            clone_agent_id=CLONE_AGENT_ID,
+            supervisor=lambda **_kwargs: _supervisor_start_receipt(
+                tmp_path, compiled, dispatched
+            ),
+        )
+
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    assert [event["event_type"] for event in store.events()][-2:] == [
+        "StepStarted",
+        "StepFailed",
+    ]
+    assert store.snapshot(dispatched["workflow_run_id"])["state"] == "failed"
+    execution = json.loads(
+        service._execution_projection_path(dispatched).read_text(encoding="utf-8")  # noqa: SLF001
+    )
+    assert execution["state"] == "control_projection_failed"
+    assert execution["control_failure"] == {
+        "reason": "approval_request_failed",
+        "step_failure_recorded": True,
+    }
+
+
+def test_supervised_start_recovers_when_request_and_step_failure_writes_fail_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, compiled, dispatched = _dispatched_repo(tmp_path)
+    original_append = WorkflowMeshStore.append
+    attempts = 0
+
+    def fail_request_once(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("approval store unavailable")
+        return durable_request_approval(*args, **kwargs)
+
+    def fail_step_failure(self, event):  # noqa: ANN001, ANN202
+        if event.get("event_type") == "StepFailed":
+            raise RuntimeError("mesh terminal write unavailable")
+        return original_append(self, event)
+
+    monkeypatch.setattr("omo.blueprint_control.request_approval", fail_request_once)
+    monkeypatch.setattr(WorkflowMeshStore, "append", fail_step_failure)
+    with pytest.raises(RuntimeError, match="approval store unavailable"):
+        service.start_supervised_execution(
+            compiled,
+            dispatched,
+            clone_agent_id=CLONE_AGENT_ID,
+            supervisor=lambda **_kwargs: _supervisor_start_receipt(
+                tmp_path, compiled, dispatched
+            ),
+        )
+
+    execution_path = service._execution_projection_path(dispatched)  # noqa: SLF001
+    pending = json.loads(execution_path.read_text(encoding="utf-8"))
+    assert pending["state"] == "approval_request_pending"
+    assert pending["control_failure"]["step_failure_recorded"] is False
+    assert (
+        WorkflowMeshStore(tmp_path / ".omo").snapshot(dispatched["workflow_run_id"])[
+            "state"
+        ]
+        == "running"
+    )
+
+    replay = service.start_supervised_execution(
+        compiled,
+        dispatched,
+        clone_agent_id=CLONE_AGENT_ID,
+        supervisor=lambda **_kwargs: {
+            **_supervisor_start_receipt(tmp_path, compiled, dispatched),
+            "ok": False,
+            "reason": "worker_not_settled",
+        },
+    )
+
+    assert replay["state"] == "awaiting_human_action"
+    assert replay["approval_wait"]["approval_id"] == (
+        f"provider:{dispatched['dispatch_id']}"
+    )
+    assert (
+        WorkflowMeshStore(tmp_path / ".omo").snapshot(dispatched["workflow_run_id"])[
+            "state"
+        ]
+        == "waiting_approval"
+    )
+
+
+def test_supervised_collect_rejects_forged_approval_wait_binding(
+    tmp_path: Path,
+) -> None:
+    service, compiled, dispatched = _dispatched_repo(tmp_path)
+    service.start_supervised_execution(
+        compiled,
+        dispatched,
+        clone_agent_id=CLONE_AGENT_ID,
+        supervisor=lambda **_kwargs: _supervisor_start_receipt(
+            tmp_path, compiled, dispatched
+        ),
+    )
+    execution_path = service._execution_projection_path(dispatched)  # noqa: SLF001
+    execution = json.loads(execution_path.read_text(encoding="utf-8"))
+    execution["approval_wait"]["approval_id"] = "provider:forged"
+    execution["projection_digest"] = service._projection_digest(execution)  # noqa: SLF001
+    execution_path.write_text(
+        json.dumps(execution, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(BlueprintControlError, match="approval wait binding mismatch"):
+        service.collect_supervised_execution(
+            compiled,
+            dispatched,
+            supervisor=lambda **_kwargs: pytest.fail("must not collect forged wait"),
+        )
+
+
+def test_supervised_recovery_rejects_forged_external_facts_without_mesh_write(
+    tmp_path: Path,
+) -> None:
+    service, compiled, dispatched = _dispatched_repo(tmp_path)
+    service.start_supervised_execution(
+        compiled,
+        dispatched,
+        clone_agent_id=CLONE_AGENT_ID,
+        supervisor=lambda **_kwargs: _supervisor_start_receipt(
+            tmp_path, compiled, dispatched
+        ),
+    )
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    events = store.events()
+    store.log_path.write_text(
+        "".join(
+            json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n"
+            for event in events
+            if event["event_type"] != "ApprovalRequested"
+        ),
+        encoding="utf-8",
+    )
+    execution_path = service._execution_projection_path(dispatched)  # noqa: SLF001
+    execution = json.loads(execution_path.read_text(encoding="utf-8"))
+    execution.pop("approval_wait")
+    execution["orca"]["terminal_handle"] = "terminal-forged"
+    execution["projection_digest"] = service._projection_digest(execution)  # noqa: SLF001
+    execution_path.write_text(
+        json.dumps(execution, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    before = store.log_path.read_bytes()
+
+    with pytest.raises(BlueprintControlError, match="recovery attestation mismatch"):
+        service.start_supervised_execution(
+            compiled,
+            dispatched,
+            clone_agent_id=CLONE_AGENT_ID,
+            supervisor=lambda **_kwargs: {
+                **_supervisor_start_receipt(tmp_path, compiled, dispatched),
+                "ok": False,
+                "reason": "worker_not_settled",
+            },
+        )
+
+    assert store.log_path.read_bytes() == before
+    assert "ApprovalRequested" not in [event["event_type"] for event in store.events()]
 
 
 def test_supervised_start_marks_projection_failed_when_mesh_start_is_not_durable(
@@ -804,6 +1204,11 @@ def test_supervised_collect_keeps_active_worker_paused_without_candidate(
     assert "WorkflowSucceeded" not in event_types
     assert "EvidenceRecorded" not in event_types
     assert "StepFailed" not in event_types
+    snapshot = WorkflowMeshStore(tmp_path / ".omo").snapshot(
+        dispatched["workflow_run_id"]
+    )
+    assert snapshot["state"] == "waiting_approval"
+    assert next(iter(snapshot["approvals"].values()))["state"] == "requested"
 
 
 def test_supervised_collect_passes_frozen_clone_attestation_back_to_supervisor(
@@ -954,6 +1359,8 @@ def test_supervised_collect_settled_worker_builds_independent_candidate(
     ]
     assert "WorkflowSucceeded" in event_types
     assert "EvidenceRecorded" in event_types
+    assert "ApprovalGranted" in event_types
+    assert event_types.index("ApprovalGranted") < event_types.index("WorkflowSucceeded")
     replay = service.collect_supervised_execution(
         compiled,
         dispatched,
@@ -1997,7 +2404,7 @@ def test_cli_observe_and_execute_input_ack_never_claim_model_success(
         compiled,
         worker_id="worker-a",
         capability_health=_health(),
-        now="2026-08-14T10:00:00+00:00",
+        now=datetime.now(UTC).isoformat(),
     )
 
     observed = cli_main(
