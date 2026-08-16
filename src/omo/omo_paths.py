@@ -22,7 +22,7 @@ HOME_DIR = _MODULE_DIR.parents[4]  # /Users/xiamingxing
 
 # 关键路径
 OMO_ROOT = WORKSPACE_ROOT / ".omo"
-KAIRON_DIR = PROJECTS_DIR / "kairon"
+KAIRON_DIR = PROJECTS_DIR / "knowledge" / "kairon"  # T6-01 内包后路径
 KAIRON_PACKAGES = KAIRON_DIR / "packages"
 
 # 运行时镜像根 (高 churn 的 self-healing/ingress/evolution 产物写这里, 不入仓)
