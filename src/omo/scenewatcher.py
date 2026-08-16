@@ -225,9 +225,9 @@ class SceneWatcher:
         for tf in telos_dir.glob("*.md"):
             try:
                 lines = [
-                    l.strip()
-                    for l in tf.read_text(encoding="utf-8").split("\n")
-                    if l.strip() and not l.startswith("#") and not l.startswith("---")
+                    line.strip()
+                    for line in tf.read_text(encoding="utf-8").split("\n")
+                    if line.strip() and not l.startswith("#") and not l.startswith("---")
                 ][:3]
                 self._telos_cache[tf.stem.lower()] = " | ".join(lines)[:200]
             except Exception:

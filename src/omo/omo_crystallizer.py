@@ -109,7 +109,7 @@ class SkillCrystallizer:
         skill_file = skill_dir / "SKILL.md"
 
         belief_ids = {b["id"] for b in beliefs}
-        topic_lessons = [l for l in lessons if l.get("belief_id") in belief_ids]
+        topic_lessons = [ls for ls in lessons if ls.get("belief_id") in belief_ids]
         topic_contexts = [c for c in contexts if c.get("belief_id") in belief_ids]
 
         if skill_file.exists():
