@@ -54,6 +54,21 @@ from .lifecycle import (
 from .lint import lint_registry, print_lint
 
 
+def _load_chain_bind():
+    """Shared bind predicate from workspace root. Missing file = standalone omo."""
+    from .core import WORKSPACE as workspace
+
+    plan = workspace / "bin" / "plan"
+    if not (plan / "chain_bind.py").is_file():
+        return None
+    path = str(plan)
+    if path not in sys.path:
+        sys.path.insert(0, path)
+    import chain_bind
+
+    return chain_bind
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run executable project governance workflows"
@@ -402,14 +417,24 @@ def main(argv: list[str] | None = None) -> int:
             return run_stage(workflow, args.stage, context, args.execute, args.json)
         if args.command == "start":
             workflow = workflow_by_id(registry, args.workflow_id)
+            bet_id = getattr(args, "bet", "") or ""
+            chain_bind = _load_chain_bind()
+            if chain_bind is not None:
+                verdict = chain_bind.start_requires_bet(args.workflow_id, bet_id)
+                if not verdict.ok:
+                    print(
+                        "agent-workflow: requirement-iteration start requires "
+                        f"--bet <BET-ID> ({', '.join(verdict.reasons)})",
+                        file=sys.stderr,
+                    )
+                    return 1
             objective = args.objective
-            if getattr(args, "bet", None):
-                bet_id = args.bet
+            if bet_id:
                 import yaml
 
-                from ..omo_paths import WORKSPACE_ROOT
+                from .core import WORKSPACE as workspace_root
 
-                ledger_file = WORKSPACE_ROOT / "docs/plans/3y-bet-ledger.yaml"
+                ledger_file = workspace_root / "docs/plans/3y-bet-ledger.yaml"
                 if ledger_file.exists():
                     data = {}
                     for d in yaml.safe_load_all(
@@ -421,15 +446,20 @@ def main(argv: list[str] | None = None) -> int:
                         if isinstance(item, dict) and item.get("id") == bet_id:
                             objective = f"[{bet_id}] {item.get('title', '')} (Appetite: {item.get('appetite', '')})"
                             break
+            context = context_from_args(args)
+            if bet_id:
+                context["bet_id"] = bet_id
             record = start_run(
                 registry,
                 workflow,
-                context_from_args(args),
+                context,
                 objective,
                 args.dry_run,
                 args.force_lock,
                 parent_run_id=getattr(args, "parent_run", "") or "",
             )
+            if bet_id and chain_bind is not None:
+                chain_bind.persist_bind_on_run(record, bet_id)
             if args.json:
                 print(json.dumps(record, ensure_ascii=False, indent=2))
             else:

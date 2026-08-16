@@ -577,6 +577,10 @@ def start_run(
         record["parent_run_id"] = parent_run_id
     if parent_agent:
         record["parent_agent"] = parent_agent
+    bet_id = str((context or {}).get("bet_id") or "").strip()
+    if bet_id:
+        record["bet_id"] = bet_id
+        record["north_star_ref"] = "docs/STRATEGY-3YEAR-PLAN-2026H2-2029.md"
     if dry_run:
         return record
     record["locks"] = acquire_locks(
