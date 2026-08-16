@@ -129,7 +129,7 @@ def _validate_capability(record: dict[str, Any]) -> list[str]:
 
 def _project_capabilities(root: Path) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
-    packages_root = root / "projects" / "kairon" / "packages"
+    packages_root = root / "projects" / "knowledge" / "kairon" / "packages"
     if packages_root.exists():
         for package in sorted(
             path for path in packages_root.iterdir() if path.is_dir()
@@ -239,9 +239,9 @@ def _sharedwork_sample() -> list[dict[str, Any]]:
 
 def _system_packages(root: Path) -> list[dict[str, Any]]:
     package_files = [
-        root / "projects" / "kairon" / "pyproject.toml",
+        root / "projects" / "knowledge" / "kairon" / "pyproject.toml",
         root / "projects" / "agentmesh" / "package.json",
-        root / "projects" / "gbrain" / "package.json",
+        root / "projects" / "knowledge" / "gbrain" / "package.json",
         root / "projects" / "SharedBrain" / "pyproject.toml",
     ]
     records: list[dict[str, Any]] = []
@@ -265,8 +265,8 @@ def _agent_clis(root: Path) -> list[dict[str, str]]:
         root / "scripts" / "omo",
         root / "scripts" / "sync-omo-state.sh",
         root / "kos-infra" / "kos",
-        root / "projects" / "kairon" / "packages" / "kos" / "kos-cli.py",
-        root / "projects" / "kairon" / "packages" / "kos" / "kairon-cli.py",
+        root / "projects" / "knowledge" / "kairon" / "packages" / "kos" / "kos-cli.py",
+        root / "projects" / "knowledge" / "kairon" / "packages" / "kos" / "kairon-cli.py",
     ]
     clis: list[dict[str, str]] = []
     for cli in candidates:

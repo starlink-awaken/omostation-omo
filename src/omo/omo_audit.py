@@ -153,7 +153,7 @@ def summary(audit_file: str | Path | None = None) -> dict:
 # =============================================================================
 
 # 模块级路径(允许测试覆盖)
-_KAIRON_DIR: Path = Path(__file__).resolve().parents[4] / "projects" / "kairon"
+_KAIRON_DIR: Path = Path(__file__).resolve().parents[4] / "projects" / "knowledge" / "kairon"
 _OMO_ROOT: Path = WORKSPACE_ROOT / ".omo"
 _WORKSPACE_ROOT: Path = WORKSPACE_ROOT
 
@@ -846,7 +846,7 @@ def run_governance_audit(workspace: Path | None = None) -> GovernanceReport:
     global _OMO_ROOT, _KAIRON_DIR, _WORKSPACE_ROOT
     if workspace is not None:
         _OMO_ROOT = workspace / ".omo"
-        _KAIRON_DIR = workspace / "projects" / "kairon"
+        _KAIRON_DIR = workspace / "projects" / "knowledge" / "kairon"
         _WORKSPACE_ROOT = workspace
 
     checks = [

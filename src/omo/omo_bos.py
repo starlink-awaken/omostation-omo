@@ -42,6 +42,7 @@ from typing import Any, Literal
 _KAIRON_PACKAGES_SRC = (
     Path(os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace")))
     / "projects"
+    / "knowledge"
     / "kairon"
     / "packages"
     / "kos"
