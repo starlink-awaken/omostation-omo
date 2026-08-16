@@ -593,15 +593,21 @@ def _check_goals_runtime_entry(omo_dir: Path) -> tuple[dict[str, Any], list[str]
 def _read_c2g_governance_refs(workspace_root: Path) -> tuple[list[str], list[str]]:
     issues: list[str] = []
     refs: list[str] = []
+    # ADR-0412 (2026-08-16): c2g 内包 omo/_vendored/c2g — 原子模块路径不存在
     c2g_src = workspace_root / "projects" / "c2g" / "src"
+    c2g_pkg = "c2g"
     if not c2g_src.exists():
-        issues.append("projects/c2g/src missing")
+        c2g_src = (
+            workspace_root / "projects" / "omo" / "src" / "omo" / "_vendored" / "c2g"
+        )
+        c2g_pkg = "omo._vendored.c2g"
+    if not c2g_src.exists():
+        issues.append("c2g src missing (legacy projects/c2g and _vendored/c2g)")
         return refs, issues
-    sys.path.insert(0, str(c2g_src))
+    sys.path.insert(0, str(c2g_src.parent.parent.parent.parent if c2g_pkg.startswith("omo.") else c2g_src))
     try:
-        from c2g.task_builder import build_ecos_task  # type: ignore
-
-        task = build_ecos_task(
+        mod = __import__(f"{c2g_pkg}.task_builder", fromlist=["build_ecos_task"])
+        task = mod.build_ecos_task(
             "SURFACE-CHECK",
             "surface check",
             source_docs=["governance"],
@@ -612,7 +618,8 @@ def _read_c2g_governance_refs(workspace_root: Path) -> tuple[list[str], list[str
         if not refs:
             issues.append("c2g task builder returned empty governance_refs")
         metadata = task.get("metadata", {})
-        if metadata.get("ingress_plane") != "projects/c2g":
+        expected_plane = "projects/c2g" if c2g_pkg == "c2g" else "omo/_vendored/c2g"
+        if metadata.get("ingress_plane") != expected_plane:
             issues.append("c2g task builder ingress_plane metadata mismatch")
     except Exception as exc:  # pragma: no cover - defensive
         issues.append(f"failed to load c2g governance refs: {exc}")

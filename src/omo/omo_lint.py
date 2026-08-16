@@ -489,6 +489,7 @@ GOD_MODULE_ALLOWLIST: set[str] = {
     "projects/omlxc/src/omlxc/storage/database.py",    # 1944L
     "projects/cockpit/src/cockpit/adapters/governance_context.py",  # 1754L
     "projects/omlxc/src/omlxc/daemon/composition.py",  # 1514L
+    "projects/omlxc/src/omlxc/cli.py",               # 1559L (omlxc v3.1.0 升级带入, 2026-08-16 登记)
 }
 
 # 不扫的目录 (测试/数据迁移脚本可超)
