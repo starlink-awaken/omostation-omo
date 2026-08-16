@@ -6,9 +6,9 @@ from omo._vendored.omo_debt_engine.legacy.migration import calculate_migration_p
 from omo._vendored.omo_debt_engine.legacy.resistance import calculate_refactoring_resistance_score
 
 __all__ = [
-    "calculate_age_score",
-    "calculate_refactoring_resistance_score",
-    "calculate_migration_path_score",
-    "calculate_legacy_score",
     "adjust_score_with_legacy",
+    "calculate_age_score",
+    "calculate_legacy_score",
+    "calculate_migration_path_score",
+    "calculate_refactoring_resistance_score",
 ]

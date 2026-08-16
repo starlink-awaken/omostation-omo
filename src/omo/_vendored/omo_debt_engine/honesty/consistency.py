@@ -23,16 +23,16 @@ class ConsistencyResult:
 
     # Metadata
     self_rating: float
-    peer_avg: Optional[float]
+    peer_avg: float | None
     score_volatility: float
     cross_project_diff: float
 
 
 def calculate_consistency(
     self_rating: float,
-    peer_avg: Optional[float] = None,
-    historical_scores: Optional[list[float]] = None,
-    similar_project_scores: Optional[list[float]] = None,
+    peer_avg: float | None = None,
+    historical_scores: list[float] | None = None,
+    similar_project_scores: list[float] | None = None,
 ) -> ConsistencyResult:
     """Calculate consistency score for debt assessment.
 

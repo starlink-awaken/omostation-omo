@@ -32,9 +32,9 @@ def calculate_verifiability(
     has_impact_evidence: bool = False,
     has_frequency_evidence: bool = False,
     has_cost_evidence: bool = False,
-    evidence_commits: Optional[list[str]] = None,
-    evidence_issues: Optional[list[str]] = None,
-    evidence_refs: Optional[list[str]] = None,
+    evidence_commits: list[str] | None = None,
+    evidence_issues: list[str] | None = None,
+    evidence_refs: list[str] | None = None,
     total_claims: int = 1,
 ) -> VerifiabilityResult:
     """Calculate verifiability score for debt assessment.

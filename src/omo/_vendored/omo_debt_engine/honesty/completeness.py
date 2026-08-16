@@ -38,8 +38,8 @@ class CompletenessResult:
 
 def calculate_completeness(
     project_path: str = ".",
-    debt_files: Optional[list[str]] = None,
-    disclosed_issues: Optional[list[str]] = None,
+    debt_files: list[str] | None = None,
+    disclosed_issues: list[str] | None = None,
 ) -> CompletenessResult:
     """Calculate completeness score for technical debt disclosure.
 
@@ -205,7 +205,7 @@ def _get_high_churn_files(repo: "Repo", threshold_percentile: int = 80) -> set[s
 
             # Count changed files
             try:
-                for item in commit.stats.files.keys():
+                for item in commit.stats.files:
                     churn_count[item] += 1
             except Exception:  # noqa: BLE001
                 continue

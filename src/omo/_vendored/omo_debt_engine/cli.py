@@ -50,7 +50,6 @@ def cli():
 
     基于项目生命周期阶段的技术债务评分与优先级管理工具。
     """
-    pass
 
 
 @cli.command()
@@ -124,8 +123,8 @@ def score(
     impact: float,
     frequency: float,
     cost: float,
-    stage: Optional[str],
-    project_path: Optional[str],
+    stage: str | None,
+    project_path: str | None,
     enable_honesty: bool,
     debt_files: tuple[str, ...],
 ):

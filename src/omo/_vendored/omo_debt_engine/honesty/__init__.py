@@ -17,6 +17,6 @@ from omo._vendored.omo_debt_engine.honesty.verifiability import calculate_verifi
 __all__ = [
     "calculate_completeness",
     "calculate_consistency",
-    "calculate_verifiability",
     "calculate_honesty_score",
+    "calculate_verifiability",
 ]

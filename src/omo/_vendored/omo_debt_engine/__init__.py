@@ -17,14 +17,14 @@ from omo._vendored.omo_debt_engine.__version__ import (
 )
 
 __all__ = [
-    "__version__",
-    "__version_info__",
-    "__title__",
-    "__description__",
+    "PATTERN_DESCRIPTION",
+    "PATTERN_NAME",
+    "PATTERN_VERSION",
     "__author__",
+    "__description__",
     "__milestone__",
     "__status__",
-    "PATTERN_VERSION",
-    "PATTERN_NAME",
-    "PATTERN_DESCRIPTION",
+    "__title__",
+    "__version__",
+    "__version_info__",
 ]

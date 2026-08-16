@@ -83,12 +83,12 @@ def assess_honesty(
     project_path: str,
     debt_files: tuple[str, ...],
     disclosed_issues: tuple[str, ...],
-    description: Optional[str],
+    description: str | None,
     evidence_commits: tuple[str, ...],
     evidence_issues: tuple[str, ...],
     evidence_refs: tuple[str, ...],
-    peer_avg: Optional[float],
-    historical_scores: Optional[str],
+    peer_avg: float | None,
+    historical_scores: str | None,
     output: str,
 ):
     """Assess honesty dimension of technical debt disclosure.
