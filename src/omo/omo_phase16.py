@@ -112,15 +112,15 @@ def baseline_payload() -> dict[str, Any]:
             "gbrain": {
                 "role": "capture, search, retrieval",
                 "evidence_refs": [
-                    "projects/gbrain/README.md",
-                    "projects/gbrain/package.json",
+                    "projects/knowledge/gbrain/README.md",
+                    "projects/knowledge/gbrain/package.json",
                 ],
             },
             "kairon": {
                 "role": "capability binding and governance trace",
                 "evidence_refs": [
-                    "projects/kairon/README.md",
-                    "projects/kairon/pyproject.toml",
+                    "projects/knowledge/kairon/README.md",
+                    "projects/knowledge/kairon/pyproject.toml",
                 ],
             },
             "agentmesh": {
@@ -276,8 +276,8 @@ def walkthrough_payload() -> dict[str, Any]:
             ".omo/_truth/scenarios/knowledge-capture-search.yaml",
             ".omo/_delivery/evidence/phase16/scenario-shell.yaml",
             ".omo/_delivery/evidence/phase16/knowledge-capture-run-record.yaml",
-            "projects/gbrain/README.md",
-            "projects/kairon/docs/knowledge_capture_run_record_fixture_2026-06-05.yaml",
+            "projects/knowledge/gbrain/README.md",
+            "projects/knowledge/kairon/docs/knowledge_capture_run_record_fixture_2026-06-05.yaml",
         ],
     }
 
@@ -331,22 +331,22 @@ def run_record_payload() -> dict[str, Any]:
             {
                 "surface": "kairon-binding-probe",
                 "observed_value": "evt_1780639951_0f3a52",
-                "source_ref": "projects/kairon/docs/knowledge_capture_run_record_fixture_2026-06-05.yaml",
+                "source_ref": "projects/knowledge/kairon/docs/knowledge_capture_run_record_fixture_2026-06-05.yaml",
             },
             {
                 "surface": "kairon-router-route-event",
                 "observed_value": "evt_1780640262_26e4a9",
-                "source_ref": "projects/kairon/docs/knowledge_capture_run_record_fixture_2026-06-05.yaml",
+                "source_ref": "projects/knowledge/kairon/docs/knowledge_capture_run_record_fixture_2026-06-05.yaml",
             },
             {
                 "surface": "gbrain-capture-receipt",
                 "observed_value": "inbox/knowledge-capture-run-record",
-                "source_ref": "projects/kairon/docs/knowledge_capture_run_record_fixture_2026-06-05.yaml",
+                "source_ref": "projects/knowledge/kairon/docs/knowledge_capture_run_record_fixture_2026-06-05.yaml",
             },
             {
                 "surface": "gbrain-query-eval",
                 "observed_value": "eval_candidate:1",
-                "source_ref": "projects/kairon/docs/knowledge_capture_run_record_fixture_2026-06-05.yaml",
+                "source_ref": "projects/knowledge/kairon/docs/knowledge_capture_run_record_fixture_2026-06-05.yaml",
             },
         ],
         "limits": [

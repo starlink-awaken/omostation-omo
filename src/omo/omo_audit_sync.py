@@ -6,7 +6,7 @@
   - .omo/_delivery/*.md (交付物计数)
   - .omo/debt/items/*.yaml (debt 状态)
   - .omo/_delivery/phase*-governance-audit-*.md (健康分)
-  - projects/kairon/packages/ (包数)
+  - projects/knowledge/kairon/packages/ (包数)
 
 写目标:
   - .omo/state/system.yaml 的特定字段(白名单)

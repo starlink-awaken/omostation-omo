@@ -812,7 +812,7 @@ def build_recommendations(checks: list[CheckResult]) -> list[str]:
             continue
         if c.category == "lint":
             recs.append(
-                "修复 ruff 错误, 参考 `cd projects/kairon && uv run ruff check packages/ --fix`"
+                "修复 ruff 错误, 参考 `cd projects/knowledge/kairon && uv run ruff check packages/ --fix`"
             )
         elif c.category == "tests":
             sample = ", ".join(d.split(":")[0] for d in c.details[:3])

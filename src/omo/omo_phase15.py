@@ -76,8 +76,8 @@ def _project_health() -> dict[str, dict[str, Any]]:
             "status": "runnable-governed",
             "role": "reasoning, KOS, package baseline",
             "evidence_refs": [
-                "projects/kairon/README.md",
-                "projects/kairon/pyproject.toml",
+                "projects/knowledge/kairon/README.md",
+                "projects/knowledge/kairon/pyproject.toml",
             ],
             "current_limit": "Phase 15 records health from manifests and tests; it does not mutate package code.",
         },
@@ -85,8 +85,8 @@ def _project_health() -> dict[str, dict[str, Any]]:
             "status": "runnable-governed",
             "role": "knowledge brain, recipes, skills, retrieval surface",
             "evidence_refs": [
-                "projects/gbrain/README.md",
-                "projects/gbrain/package.json",
+                "projects/knowledge/gbrain/README.md",
+                "projects/knowledge/gbrain/package.json",
             ],
             "current_limit": "Knowledge UX scenarios are governed through user-value evidence before live expansion.",
         },
@@ -119,7 +119,7 @@ def _user_value_scenarios() -> list[dict[str, Any]]:
             "projects_used": ["SharedBrain", "gbrain", "kairon"],
             "evidence_refs": [
                 ".omo/_delivery/evidence/phase12/research-pipeline-trace.yaml",
-                "projects/gbrain/README.md",
+                "projects/knowledge/gbrain/README.md",
                 _sharedbrain_ref(),
             ],
             "current_limit": "Search and evidence traces are local/governed; no broad user-facing product shell is enabled by Phase 15.",
@@ -242,8 +242,8 @@ def ledger_payload() -> dict[str, Any]:
             "id": "p15-project-health-entry",
             "type": "project-health",
             "evidence_refs": [
-                "projects/kairon/README.md",
-                "projects/gbrain/README.md",
+                "projects/knowledge/kairon/README.md",
+                "projects/knowledge/gbrain/README.md",
                 _agentmesh_ref("README.md", fallback="src/index.ts"),
                 _sharedbrain_ref(),
             ],

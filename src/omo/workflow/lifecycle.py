@@ -950,12 +950,12 @@ def closeout_run(
             )
             # 3. KOS Knowledge Ingress Sync (Incremental + Ontology Rebuild)
             # Refreshes L2 Knowledge Engine dynamically during closeout
-            kos_cli_path = WORKSPACE / "projects/kairon/packages/kos/kos-cli.py"
+            kos_cli_path = WORKSPACE / "projects/knowledge/kairon/packages/kos/kos-cli.py"
             if kos_cli_path.is_file():
                 env_kos = os.environ.copy()
                 env_kos["KOS_HOME"] = str(WORKSPACE / "kos")
                 env_kos["PYTHONPATH"] = str(
-                    WORKSPACE / "projects/kairon/packages/kos/src"
+                    WORKSPACE / "projects/knowledge/kairon/packages/kos/src"
                 )
                 subprocess.run(
                     [
