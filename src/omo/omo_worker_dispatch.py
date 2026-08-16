@@ -294,6 +294,10 @@ def dispatch_task(
         else [
             *(f"- Required deliverable: `{path}`" for path in deliverables),
             "- Updating only the review note is not sufficient when required deliverables are listed.",
+            # SR-06 gap-2 (2026-08-16): 空 filesModified 导致 collect 误拒 — 契约层强制
+            "- Completion report MUST be a JSON object with a non-empty `filesModified` array",
+            "  listing every file you changed (repo-relative); an empty/missing list is treated",
+            "  as unproven and the candidate will not be collected.",
         ]
     )
     deliverables_heading = (

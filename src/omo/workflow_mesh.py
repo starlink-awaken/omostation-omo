@@ -54,6 +54,8 @@ EVENT_STATE = {
     "WorkerAcknowledged": "dispatched",
     "WorkerLeaseRenewed": "running",
     "WorkerLeaseExpired": "unavailable",
+    # SR-06 gap-1 (2026-08-16): admission TTL 到期但 worker 在途时, 控制器可续期而非死锁
+    "AdmissionRenewed": "dispatched",
     "WorkerReclaimed": "running",
 }
 TOOL_OUTCOMES = frozenset({"succeeded", "failed", "unavailable"})
@@ -71,7 +73,7 @@ _ALLOWED_TRANSITIONS = {
         "cancelled",
     },
     "admitted": {"dispatched", "running", "failed", "unavailable", "cancelled"},
-    "dispatched": {"dispatched", "running", "failed", "unavailable", "cancelled"},
+    "dispatched": {"dispatched", "running", "failed", "unavailable", "cancelled"},  # + AdmissionRenewed 自环
     "running": {
         "running",
         "waiting_approval",
@@ -110,6 +112,7 @@ _ALLOWED_EVENTS = {
     },
     "dispatched": {
         "StepDispatched",
+        "AdmissionRenewed",
         "StepStarted",
         "WorkerAcknowledged",
         "WorkerLeaseRenewed",

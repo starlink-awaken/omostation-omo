@@ -1671,6 +1671,17 @@ class BlueprintControlService:
                 ).stdout.split(b"\0")
                 if value
             )
+            # SR-06 gap-3 (2026-08-16): gitignore 区/未跟踪文件对 tree diff 不可见 —
+            # 补工作树 untracked 扫描, 越界新增文件不再逃过 scope 检查
+            untracked = sorted(
+                line
+                for line in self._git(
+                    ["ls-files", "--others", "--exclude-standard"],
+                    index_file=after_index,
+                ).stdout.decode().splitlines()
+                if line and not line.startswith(".omo/workers/runs/")
+            )
+            changed_paths = sorted(set(changed_paths) | set(untracked))
             allowed = list(execution["write_surfaces"])
             if any(
                 not any(

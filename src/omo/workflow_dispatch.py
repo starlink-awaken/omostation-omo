@@ -271,6 +271,57 @@ def _build_admission_grant(
     return grant
 
 
+def renew_admission(
+    root: Path,
+    *,
+    workflow_run_id: str,
+    admission_id: str,
+    ttl_seconds: int = 900,
+    now: str | None = None,
+    omo_dir: str | Path = ".omo",
+) -> dict[str, Any]:
+    """SR-06 gap-1: renew an expired-but-in-flight admission instead of deadlocking.
+
+    事故 (2026-08-16 SR-06 演练): execute 失败重试时 dispatch 被 mesh 幂等拦截,
+    admission 又已过 TTL — 两者互锁无路可走。本函数在 dispatched 态原位续期:
+    追加 AdmissionRenewed 事件 (自环), 新 expires_at 写入事件 payload。
+    终态 (failed/verified/closed...) 拒绝续期 — 防已结案复燃。
+    """
+    store = WorkflowMeshStore(root / Path(omo_dir))
+    snapshot = store.snapshot(workflow_run_id)
+    if snapshot.get("state") != "dispatched":
+        raise WorkflowDispatchError(
+            f"admission renewal requires dispatched state, got {snapshot.get('state')}"
+        )
+    admission = snapshot.get("admission") or {}
+    if admission.get("admission_id") != admission_id:
+        raise WorkflowDispatchError("admission identity mismatch on renewal")
+    issued_at = now or datetime.now(UTC).replace(microsecond=0).isoformat()
+    if ttl_seconds <= 0:
+        raise WorkflowDispatchError("renewal ttl must be positive")
+    expires_at = (
+        datetime.fromisoformat(issued_at) + timedelta(seconds=ttl_seconds)
+    ).isoformat()
+    event = new_workflow_event(
+        "AdmissionRenewed",
+        workflow_run_id,
+        producer="omo-workflow-dispatch",
+        payload={
+            "admission_id": admission_id,
+            "previous_expires_at": admission.get("expires_at"),
+            "expires_at": expires_at,
+            "renewed_at": issued_at,
+        },
+        idempotency_key=f"{workflow_run_id}:admission-renewed:{issued_at}",
+    )
+    store.append(event)
+    return {
+        "renewed": True,
+        "admission_id": admission_id,
+        "expires_at": expires_at,
+    }
+
+
 def preview_requested_workflow(
     root: Path,
     *,
