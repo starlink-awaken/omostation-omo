@@ -58,7 +58,10 @@ def _load_yaml(path):  # type: ignore[no-redef]
 def _check_c2g_omo_boundary(
     workspace_root: Path,
 ) -> tuple[dict[str, Any], list[str]]:
+    # ADR-0412 (2026-08-16): c2g 内包 omo/_vendored/c2g, 原子模块路径不存在
     c2g_src = workspace_root / "projects" / "c2g" / "src" / "c2g"
+    if not c2g_src.exists():
+        c2g_src = workspace_root / "projects" / "omo" / "src" / "omo" / "_vendored" / "c2g"
     facade_path = c2g_src / "omo_client.py"
     summary: dict[str, Any] = {
         "exists": c2g_src.exists(),
@@ -84,10 +87,14 @@ def _check_c2g_omo_boundary(
                 f"failed to parse {py_file.relative_to(workspace_root)}: {exc}"
             )
             continue
+        def _is_vendored_internal(module: str) -> bool:
+            # ADR-0412: 内包后 _vendored 包内互引非越界 — 只拦散弹式内核直连
+            return module.startswith("omo._vendored")
+
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    if alias.name == "omo" or alias.name.startswith("omo."):
+                    if (alias.name == "omo" or alias.name.startswith("omo.")) and not _is_vendored_internal(alias.name):
                         violating_files.append(str(py_file.relative_to(workspace_root)))
                         violations.append(
                             f"c2g direct omo import forbidden outside facade: "
@@ -95,7 +102,7 @@ def _check_c2g_omo_boundary(
                         )
             elif isinstance(node, ast.ImportFrom):
                 module = node.module or ""
-                if module == "omo" or module.startswith("omo."):
+                if (module == "omo" or module.startswith("omo.")) and not _is_vendored_internal(module):
                     violating_files.append(str(py_file.relative_to(workspace_root)))
                     violations.append(
                         f"c2g direct omo import forbidden outside facade: "
