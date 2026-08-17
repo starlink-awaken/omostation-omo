@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import sys
 import warnings
 
@@ -215,9 +216,7 @@ def main(argv: list[str] | None = None) -> int:
     if args and args[0] == "project":
         import argparse
 
-        p_parser = argparse.ArgumentParser(
-            prog="omo project", description="17 项目全景 4D 体检与诊断"
-        )
+        p_parser = argparse.ArgumentParser(prog="omo project", description="17 项目全景 4D 体检与诊断")
         p_sub = p_parser.add_subparsers(dest="subcmd")
         p_inspect = p_sub.add_parser("inspect", help="体检指定项目")
         p_inspect.add_argument("project_name", nargs="?", default="", help="项目名称")
@@ -240,9 +239,7 @@ def main(argv: list[str] | None = None) -> int:
                 if p_args.json:
                     print(json.dumps(data, indent=2, ensure_ascii=False))
                 else:
-                    print(
-                        f"═══ 17 项目全景体检概览 (平均健康度: {data['overall_avg_health']}/100) ═══"
-                    )
+                    print(f"═══ 17 项目全景体检概览 (平均健康度: {data['overall_avg_health']}/100) ═══")
                     for proj_k, proj_v in data["projects"].items():
                         print(
                             f"  • [{proj_v.get('layer', 'N/A')}] {proj_k:<18} 健康度: {proj_v.get('health_score', 0):>3}/100 | {proj_v.get('scale', {}).get('files', 0):>3} 文件 | {proj_v.get('scale', {}).get('loc', 0):>6} LOC"
@@ -269,9 +266,7 @@ def main(argv: list[str] | None = None) -> int:
     if args and args[0] in ("panorama", "full-spectrum"):
         import argparse
 
-        pan_parser = argparse.ArgumentParser(
-            prog="omo panorama", description="7 维全景终极可观测仪表盘"
-        )
+        pan_parser = argparse.ArgumentParser(prog="omo panorama", description="7 维全景终极可观测仪表盘")
         pan_parser.add_argument("--json", action="store_true", help="JSON 输出")
         pan_args = pan_parser.parse_args(args[1:])
         from omo.omo_panorama import OMOPanoramaEngine, format_panorama_report
@@ -359,9 +354,7 @@ def main(argv: list[str] | None = None) -> int:
         return workspace_main(args[1:])
 
     if args and args[0] == "strategy":
-        print(
-            "⚠️ DEPRECATED: 'omo strategy' 已迁移，建议改用 'workspace compass radar' 或 'workspace compass gc'。"
-        )
+        print("⚠️ DEPRECATED: 'omo strategy' 已迁移，建议改用 'workspace compass radar' 或 'workspace compass gc'。")
         from omo.omo_strategy import main as strategy_main
 
         return strategy_main(args[1:])
@@ -382,9 +375,7 @@ def main(argv: list[str] | None = None) -> int:
     if args and args[0] == "doctor":
         import argparse
 
-        parser = argparse.ArgumentParser(
-            prog="omo doctor", description="统一健康检查入口"
-        )
+        parser = argparse.ArgumentParser(prog="omo doctor", description="统一健康检查入口")
         parser.add_argument("--json", action="store_true", help="JSON 输出")
         parsed = parser.parse_args(args[1:])
         from omo.omo_doctor import cmd_doctor
@@ -404,9 +395,7 @@ def main(argv: list[str] | None = None) -> int:
     if args and args[0] == "docs":
         import argparse
 
-        parser = argparse.ArgumentParser(
-            prog="omo docs", description="CLI 文档自动生成"
-        )
+        parser = argparse.ArgumentParser(prog="omo docs", description="CLI 文档自动生成")
         parser.add_argument("--output", "-o", type=str, help="输出文件路径")
         parsed = parser.parse_args(args[1:])
         from omo.omo_docs import cmd_docs
@@ -428,12 +417,8 @@ def main(argv: list[str] | None = None) -> int:
         import argparse
 
         parser = argparse.ArgumentParser(prog="omo watch", description="实时监控模式")
-        parser.add_argument(
-            "--interval", "-i", type=int, default=60, help="检查间隔 (秒)"
-        )
-        parser.add_argument(
-            "--count", "-n", type=int, default=None, help="最大检查次数"
-        )
+        parser.add_argument("--interval", "-i", type=int, default=60, help="检查间隔 (秒)")
+        parser.add_argument("--count", "-n", type=int, default=None, help="最大检查次数")
         parsed = parser.parse_args(args[1:])
         from omo.omo_watch import cmd_watch
 
@@ -463,9 +448,7 @@ def _refresh_dashboard_safely(trigger: str = "") -> None:
         omo_dir = ws / ".omo"
         if not omo_dir.is_dir():
             return
-        now = (
-            datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-        )
+        now = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         refresh_outputs(omo_dir, now)
     except Exception as e:
         print(f"⚠️  [dashboard refresh skipped via {trigger}]: {e}", file=sys.stderr)
@@ -505,9 +488,7 @@ def _cmd_audit(args: list[str]) -> int:
         parsed = parser.parse_args(rest)
         from omo.omo_audit_cards import cmd_cards
 
-        return cmd_cards(
-            db_path=parsed.db, json_output=parsed.json, output=parsed.output
-        )
+        return cmd_cards(db_path=parsed.db, json_output=parsed.json, output=parsed.output)
 
     if sub == "vault":
         import argparse
@@ -537,17 +518,13 @@ def _cmd_audit(args: list[str]) -> int:
             prog="omo audit freshness",
             description="X2 freshness audit — 执行 3 条 P43 巡检规则",
         )
-        parser.add_argument(
-            "--dry-run", action="store_true", help="仅输出，不写审计日志"
-        )
+        parser.add_argument("--dry-run", action="store_true", help="仅输出，不写审计日志")
         parser.add_argument("--only", type=str, help="仅运行指定规则")
         parser.add_argument("--json", action="store_true", help="JSON 输出")
         parsed = parser.parse_args(rest)
         from omo.omo_audit_freshness import cmd_freshness
 
-        return cmd_freshness(
-            dry_run=parsed.dry_run, only=parsed.only, json_output=parsed.json
-        )
+        return cmd_freshness(dry_run=parsed.dry_run, only=parsed.only, json_output=parsed.json)
 
     print(f"Unknown audit subcommand: {sub}")
     return 1
@@ -630,21 +607,15 @@ def _cmd_predict(args: list[str]) -> int:
     """预测性治理 - 事前预警"""
     import argparse
 
-    parser = argparse.ArgumentParser(
-        prog="omo predict", description="预测性治理 - 事前预警"
-    )
+    parser = argparse.ArgumentParser(prog="omo predict", description="预测性治理 - 事前预警")
     subparsers = parser.add_subparsers(dest="predict_sub", required=True)
 
     parser_risks = subparsers.add_parser("risks", help="预测未来治理风险")
-    parser_risks.add_argument(
-        "--days", type=int, default=7, help="预测未来天数 (默认: 7)"
-    )
+    parser_risks.add_argument("--days", type=int, default=7, help="预测未来天数 (默认: 7)")
     parser_risks.add_argument("--json", action="store_true", help="JSON 输出")
 
     parser_debt = subparsers.add_parser("debt", help="预测债务恶化风险")
-    parser_debt.add_argument(
-        "--days", type=int, default=30, help="预测未来天数 (默认: 30)"
-    )
+    parser_debt.add_argument("--days", type=int, default=30, help="预测未来天数 (默认: 30)")
     parser_debt.add_argument("--json", action="store_true", help="JSON 输出")
 
     subparsers.add_parser("actions", help="推荐预防性治理动作")
@@ -723,9 +694,7 @@ def _cmd_predict(args: list[str]) -> int:
             for action in actions:
                 print(f"  优先级 {action.priority}: {action.action}")
                 print(f"    理由: {action.rationale}")
-                print(
-                    f"    工作量: {action.effort_estimate}, 影响: {action.estimated_impact}"
-                )
+                print(f"    工作量: {action.effort_estimate}, 影响: {action.estimated_impact}")
 
     elif parsed.predict_sub == "alerts":
         alerts = engine.generate_early_warning_alerts()
@@ -785,9 +754,7 @@ def _cmd_belief(args: list[str]) -> int:
 
     from omo.omo_belief import MOSBeliefManager
 
-    parser = argparse.ArgumentParser(
-        prog="omo belief", description="MOS Agent Belief 经验可观测性管理"
-    )
+    parser = argparse.ArgumentParser(prog="omo belief", description="MOS Agent Belief 经验可观测性管理")
     subparsers = parser.add_subparsers(dest="sub", required=True)
 
     p_list = subparsers.add_parser("list", help="列出所有活跃的 Agent 信念与教训")
@@ -825,18 +792,12 @@ def _cmd_adjudication(args: list[str]) -> int:
 
     from omo.omo_adjudication import AdjudicationStore
 
-    parser = argparse.ArgumentParser(
-        prog="omo adjudication", description="裁决记录管理 (AdjudicationRecorded)"
-    )
+    parser = argparse.ArgumentParser(prog="omo adjudication", description="裁决记录管理 (AdjudicationRecorded)")
     subparsers = parser.add_subparsers(dest="sub", required=True)
 
     p_record = subparsers.add_parser("record", help="记录一条裁决")
-    p_record.add_argument(
-        "--decision-id", required=True, help="关联 decision_outcome ID"
-    )
-    p_record.add_argument(
-        "--verdict", required=True, choices=["accepted", "modified", "rejected"]
-    )
+    p_record.add_argument("--decision-id", required=True, help="关联 decision_outcome ID")
+    p_record.add_argument("--verdict", required=True, choices=["accepted", "modified", "rejected"])
     p_record.add_argument("--edit-diff", default="", help="修改 diff")
     p_record.add_argument("--time-spent", type=float, default=0.0, help="审阅耗时(秒)")
     p_record.add_argument("--adjudicator", default="", help="裁决人")
@@ -876,16 +837,10 @@ def _cmd_adjudication(args: list[str]) -> int:
         else:
             print(f"裁决记录 ({len(results)} 条):")
             for r in results:
-                print(
-                    f"  [{r['id']}] {r['verdict']} <- {r['decision_id']} "
-                    f"({r.get('adjudicator', 'N/A')})"
-                )
+                print(f"  [{r['id']}] {r['verdict']} <- {r['decision_id']} ({r.get('adjudicator', 'N/A')})")
     elif parsed.sub == "stats":
         s = store.stats()
-        print(
-            f"裁决统计: 总 {s['total']} | "
-            f"accepted={s['accepted']} modified={s['modified']} rejected={s['rejected']}"
-        )
+        print(f"裁决统计: 总 {s['total']} | accepted={s['accepted']} modified={s['modified']} rejected={s['rejected']}")
     return 0
 
 
@@ -902,9 +857,7 @@ def _cmd_feedback(args: list[str]) -> int:
         prog="omo feedback",
         description="MOS 闭环: 提交裁决 → 自动修正信念置信度 (T1-03)",
     )
-    parser.add_argument(
-        "--decision-id", required=True, help="关联 decision_outcome ID (do-NNNN)"
-    )
+    parser.add_argument("--decision-id", required=True, help="关联 decision_outcome ID (do-NNNN)")
     parser.add_argument(
         "--verdict",
         required=True,
@@ -922,9 +875,7 @@ def _cmd_feedback(args: list[str]) -> int:
     )
 
     parsed = parser.parse_args(args)
-    mos = MOSBeliefManager(
-        registry_file=RUNTIME_TRUTH_DIR / "registry" / "memory-os.yaml"
-    )
+    mos = MOSBeliefManager(registry_file=RUNTIME_TRUTH_DIR / "registry" / "memory-os.yaml")
 
     if parsed.dry_run:
         outcome = mos.get_decision_outcome(parsed.decision_id)
@@ -947,12 +898,8 @@ def _cmd_feedback(args: list[str]) -> int:
 
     store = AdjudicationStore(
         mos_manager=mos,
-        calibration_summary_path=(
-            RUNTIME_DELIVERY_DIR / "outcomes" / "capability_calibration_summary.yaml"
-        ),
-        autonomy_ladder=AutonomyLadder(
-            registry_path=RUNTIME_TRUTH_DIR / "registry" / "autonomy-levels.yaml"
-        ),
+        calibration_summary_path=(RUNTIME_DELIVERY_DIR / "outcomes" / "capability_calibration_summary.yaml"),
+        autonomy_ladder=AutonomyLadder(registry_path=RUNTIME_TRUTH_DIR / "registry" / "autonomy-levels.yaml"),
     )
     adj_id = store.record(
         decision_id=parsed.decision_id,
@@ -964,9 +911,7 @@ def _cmd_feedback(args: list[str]) -> int:
     )
 
     outcome = mos.get_decision_outcome(parsed.decision_id)
-    belief = (
-        mos.find_belief_by_topic(outcome.get("decision_type", "")) if outcome else None
-    )
+    belief = mos.find_belief_by_topic(outcome.get("decision_type", "")) if outcome else None
     delta = VERDICT_CONFIDENCE_DELTA[parsed.verdict]
 
     print(f"Recorded: {adj_id}")
@@ -974,10 +919,7 @@ def _cmd_feedback(args: list[str]) -> int:
         state = mos._load_state()
         for b in state["beliefs"]:
             if b["id"] == belief["id"]:
-                print(
-                    f"Belief updated: {b['id']} confidence={b.get('confidence', 1.0):.2f} "
-                    f"(delta={delta:+.2f})"
-                )
+                print(f"Belief updated: {b['id']} confidence={b.get('confidence', 1.0):.2f} (delta={delta:+.2f})")
                 break
     else:
         print("(no matching belief — confidence unchanged)")
@@ -1013,10 +955,7 @@ def _cmd_reputation(args: list[str]) -> int:
         print(f"Agent 信誉画像: {d['agent_id']}")
         print(f"  决策总数: {d['total_decisions']}")
         print(f"  已裁决: {d['total_adjudicated']}")
-        print(
-            f"  accepted={d['accepted']} modified={d['modified']} "
-            f"rejected={d['rejected']}"
-        )
+        print(f"  accepted={d['accepted']} modified={d['modified']} rejected={d['rejected']}")
         print(f"  可靠性: {d['reliability']:.1%}")
         print(f"  准确率: {d['accuracy']:.1%}")
         print(f"  拒绝率: {d['rejection_rate']:.1%}")

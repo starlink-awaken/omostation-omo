@@ -44,17 +44,11 @@ def _validate_human_approval_ref(task_path: Path, payload: dict[str, Any]) -> li
         return []
     approval_ref = payload.get("approval_ref")
     if not isinstance(approval_ref, str) or not approval_ref:
-        return [
-            f"{task_path.name}: approval_ref must point to task-specific promotion approval yaml"
-        ]
+        return [f"{task_path.name}: approval_ref must point to task-specific promotion approval yaml"]
     if not approval_ref.endswith(".yaml"):
-        return [
-            f"{task_path.name}: approval_ref must be a yaml artifact, got {approval_ref!r}"
-        ]
+        return [f"{task_path.name}: approval_ref must be a yaml artifact, got {approval_ref!r}"]
     if not approval_ref.startswith(".omo/workers/runs/"):
-        return [
-            f"{task_path.name}: approval_ref must live under .omo/workers/runs/, got {approval_ref!r}"
-        ]
+        return [f"{task_path.name}: approval_ref must live under .omo/workers/runs/, got {approval_ref!r}"]
     approval_path = task_path.parents[3] / approval_ref
     # Workers 运行时 artifacts (.omo/workers/runs/) CI 无, 容忍缺失
     if not approval_path.exists():
@@ -62,9 +56,7 @@ def _validate_human_approval_ref(task_path: Path, payload: dict[str, Any]) -> li
     return []
 
 
-def _validate_active_execution_links(
-    task_path: Path, payload: dict[str, Any]
-) -> list[str]:
+def _validate_active_execution_links(task_path: Path, payload: dict[str, Any]) -> list[str]:
     status = payload.get("status")
     required_fields_by_status = {
         "in_progress": ("assigned_to", "dispatch_id", "run_ref", "started_at"),
@@ -76,15 +68,11 @@ def _validate_active_execution_links(
     issues: list[str] = []
     for field_name in required_fields:
         if not payload.get(field_name):
-            issues.append(
-                f"{task_path.name}: {field_name} must be set when status={status}"
-            )
+            issues.append(f"{task_path.name}: {field_name} must be set when status={status}")
     return issues
 
 
-def _validate_modern_done_completion_marker(
-    task_path: Path, payload: dict[str, Any]
-) -> list[str]:
+def _validate_modern_done_completion_marker(task_path: Path, payload: dict[str, Any]) -> list[str]:
     if payload.get("status") != "done":
         return []
     modern_fields = (
@@ -95,21 +83,15 @@ def _validate_modern_done_completion_marker(
         "test_plan",
         "allowed_operation_level",
     )
-    is_modern_packet = all(
-        payload.get(field) not in (None, [], "") for field in modern_fields
-    )
+    is_modern_packet = all(payload.get(field) not in (None, [], "") for field in modern_fields)
     if not is_modern_packet:
         return []
     if payload.get("completed_at") or payload.get("completed"):
         return []
-    return [
-        f"{task_path.name}: modern done packet must carry completed_at or completed marker"
-    ]
+    return [f"{task_path.name}: modern done packet must carry completed_at or completed marker"]
 
 
-def _validate_remediation_review_note(
-    task_path: Path, payload: dict[str, Any]
-) -> list[str]:
+def _validate_remediation_review_note(task_path: Path, payload: dict[str, Any]) -> list[str]:
     if payload.get("status") != "review":
         return []
     review_note = payload.get("review_note")
@@ -125,9 +107,7 @@ def _validate_remediation_review_note(
     return []
 
 
-def _validate_modern_done_evidence_paths(
-    task_path: Path, payload: dict[str, Any]
-) -> list[str]:
+def _validate_modern_done_evidence_paths(task_path: Path, payload: dict[str, Any]) -> list[str]:
     if payload.get("status") != "done":
         return []
     modern_fields = (
@@ -138,9 +118,7 @@ def _validate_modern_done_evidence_paths(
         "test_plan",
         "allowed_operation_level",
     )
-    is_modern_packet = all(
-        payload.get(field) not in (None, [], "") for field in modern_fields
-    )
+    is_modern_packet = all(payload.get(field) not in (None, [], "") for field in modern_fields)
     if not is_modern_packet:
         return []
     evidence_paths = payload.get("evidence_paths")
@@ -152,9 +130,7 @@ def _validate_modern_done_evidence_paths(
     workspace_root = task_path.parents[3]
     for ref in evidence_paths:
         if not isinstance(ref, str) or not ref:
-            issues.append(
-                f"{task_path.name}: evidence_paths contains invalid ref {ref!r}"
-            )
+            issues.append(f"{task_path.name}: evidence_paths contains invalid ref {ref!r}")
             continue
         target = Path(ref)
         if not target.is_absolute():
@@ -312,20 +288,10 @@ def check_task_policy(workspace_root: Path, policy: TaskPolicy) -> list[str]:
             for field_name, expected in policy.required_fields.items():
                 if payload.get(field_name) != expected:
                     issues.append(f"{path.name}: {field_name} must be {expected!r}")
-            if (
-                policy.required_status is not None
-                and payload.get("status") != policy.required_status
-            ):
-                issues.append(
-                    f"{path.name}: status must remain {policy.required_status}"
-                )
-            if (
-                policy.allowed_statuses
-                and payload.get("status") not in policy.allowed_statuses
-            ):
-                issues.append(
-                    f"{path.name}: status must be one of {policy.allowed_statuses}"
-                )
+            if policy.required_status is not None and payload.get("status") != policy.required_status:
+                issues.append(f"{path.name}: status must remain {policy.required_status}")
+            if policy.allowed_statuses and payload.get("status") not in policy.allowed_statuses:
+                issues.append(f"{path.name}: status must be one of {policy.allowed_statuses}")
             if policy.custom_validator is not None:
                 issues.extend(policy.custom_validator(path, payload))
 

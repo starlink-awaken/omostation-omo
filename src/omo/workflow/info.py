@@ -110,9 +110,7 @@ def handoff_markdown(payload: dict[str, Any]) -> str:
         ]
     )
     for item in plan.get("phases", {}).get("verification", []):
-        lines.append(
-            f"- `{item.get('mode')}` {item.get('id')}: `{command_display(item.get('command', []))}`"
-        )
+        lines.append(f"- `{item.get('mode')}` {item.get('id')}: `{command_display(item.get('command', []))}`")
     lines.extend(["", "## Evidence"])
     evidence = payload.get("evidence") or []
     if evidence:
@@ -128,19 +126,9 @@ def bootstrap_report(
     include_agcp_drift: bool = True,
 ) -> dict[str, Any]:
     errors, warnings = lint_registry(registry, include_agcp_drift)
-    doctor_report = (
-        build_doctor_report(registry, include_agcp_drift) if include_health else None
-    )
-    integrations = (
-        doctor_report["integrations"]
-        if isinstance(doctor_report, dict)
-        else integration_rows(registry)
-    )
-    adapters = (
-        doctor_report["adapters"]
-        if isinstance(doctor_report, dict)
-        else adapter_rows(registry)
-    )
+    doctor_report = build_doctor_report(registry, include_agcp_drift) if include_health else None
+    integrations = doctor_report["integrations"] if isinstance(doctor_report, dict) else integration_rows(registry)
+    adapters = doctor_report["adapters"] if isinstance(doctor_report, dict) else adapter_rows(registry)
     ok = not errors and (doctor_report is None or bool(doctor_report["ok"]))
     report = {
         "ok": ok,
@@ -151,14 +139,8 @@ def bootstrap_report(
         "lint": {"ok": not errors, "errors": errors, "warnings": warnings},
         "workflows": workflow_rows(registry),
         "agent_profiles": agent_rows(registry),
-        "integrations": [
-            {key: value for key, value in row.items() if key != "health"}
-            for row in integrations
-        ],
-        "adapters": [
-            {key: value for key, value in row.items() if key != "health"}
-            for row in adapters
-        ],
+        "integrations": [{key: value for key, value in row.items() if key != "health"} for row in integrations],
+        "adapters": [{key: value for key, value in row.items() if key != "health"} for row in adapters],
         "health": None
         if doctor_report is None
         else {
@@ -180,8 +162,8 @@ def bootstrap_report(
         },
     }
     try:
-        from ..omo_paths import WORKSPACE_ROOT
         from ..omo_belief import MOSBeliefManager
+        from ..omo_paths import WORKSPACE_ROOT
 
         beliefs = MOSBeliefManager(root=WORKSPACE_ROOT).query_beliefs()
     except Exception:
@@ -206,9 +188,7 @@ def print_bootstrap_report(report: dict[str, Any], as_json: bool) -> None:
         print(f"  {row['id']:<28} {row['title']}")
     print("\nagent profiles:")
     for row in report["agent_profiles"]:
-        print(
-            f"  {row['id']:<20} workflows={len(row['allowed_workflows'])} lanes={','.join(row['can_write_lanes'])}"
-        )
+        print(f"  {row['id']:<20} workflows={len(row['allowed_workflows'])} lanes={','.join(row['can_write_lanes'])}")
     print("\ninternal integrations:")
     for row in report["integrations"]:
         print(f"  {row['name']:<14} {row['authority']:<16} owner={row['owner']}")
@@ -216,9 +196,7 @@ def print_bootstrap_report(report: dict[str, Any], as_json: bool) -> None:
     for row in report["adapters"]:
         availability = "available" if row["available"] else "missing"
         command = row["command"] or row["skill"] or "-"
-        print(
-            f"  {row['name']:<14} {row['authority']:<16} {availability} command={command}"
-        )
+        print(f"  {row['name']:<14} {row['authority']:<16} {availability} command={command}")
     beliefs = report.get("agent_beliefs") or []
     if beliefs:
         print(f"\nMOS agent beliefs ({len(beliefs)} active):")
@@ -249,11 +227,7 @@ def suggest_workflows(
         write_patterns = surfaces.get("write") if isinstance(surfaces, dict) else None
         if not isinstance(write_patterns, list) or not write_patterns:
             continue
-        matched = [
-            file
-            for file in normalized
-            if path_matches([str(p) for p in write_patterns], file)
-        ]
+        matched = [file for file in normalized if path_matches([str(p) for p in write_patterns], file)]
         if not matched:
             continue
         score = round(len(matched) / len(normalized), 3)
@@ -275,9 +249,7 @@ def suggest_workflows(
                 "profile_hint": _profile_hint(profile, roles),  # type: ignore[reportArgumentType]
             }
         )
-    suggestions.sort(
-        key=lambda item: (item["score"], item["workflow_id"]), reverse=True
-    )
+    suggestions.sort(key=lambda item: (item["score"], item["workflow_id"]), reverse=True)
     return suggestions
 
 
@@ -289,13 +261,9 @@ def _profile_hint(profile: str, roles: list[object]) -> str:
     return "allowed_via_governance_agent"
 
 
-def suggest_command(
-    registry: dict[str, Any], files: list[str], profile: str, as_json: bool
-) -> int:
+def suggest_command(registry: dict[str, Any], files: list[str], profile: str, as_json: bool) -> int:
     suggestions = suggest_workflows(registry, files, profile)
-    matched_files = {
-        matched for suggestion in suggestions for matched in suggestion["matched_files"]
-    }
+    matched_files = {matched for suggestion in suggestions for matched in suggestion["matched_files"]}
     uncovered = [file for file in files if file not in matched_files]
     if as_json:
         json.dump(
@@ -314,33 +282,21 @@ def suggest_command(
         sys.stdout.write("\n")
         return 0
     if not suggestions:
-        print(
-            f"[INFO] no workflow matches {len(files)} file(s); use --workflow-id to override"
-        )
+        print(f"[INFO] no workflow matches {len(files)} file(s); use --workflow-id to override")
         if uncovered:
-            print(
-                f"[WARN] {len(uncovered)} file(s) uncovered by any workflow.surfaces.write:"
-            )
+            print(f"[WARN] {len(uncovered)} file(s) uncovered by any workflow.surfaces.write:")
             for file in uncovered:
                 print(f"  - {file}")
-            print(
-                "[HINT] consider extending an existing workflow's surfaces or registering a new one."
-            )
+            print("[HINT] consider extending an existing workflow's surfaces or registering a new one.")
         return 0
-    print(
-        f"[advisory] {len(suggestions)} workflow candidate(s) for {len(files)} file(s):"
-    )
+    print(f"[advisory] {len(suggestions)} workflow candidate(s) for {len(files)} file(s):")
     for item in suggestions:
         marker = " <-- profile matches" if item["profile_hint"] == "exact" else ""
-        print(
-            f"  - {item['workflow_id']} (score={item['score']}, agents={','.join(item['agents']) or '-'}){marker}"
-        )
+        print(f"  - {item['workflow_id']} (score={item['score']}, agents={','.join(item['agents']) or '-'}){marker}")
         for matched in item["matched_files"]:
             print(f"      matched: {matched}")
     if uncovered:
-        print(
-            f"[WARN] {len(uncovered)} file(s) uncovered by any workflow.surfaces.write:"
-        )
+        print(f"[WARN] {len(uncovered)} file(s) uncovered by any workflow.surfaces.write:")
         for file in uncovered:
             print(f"  - {file}")
     return 0

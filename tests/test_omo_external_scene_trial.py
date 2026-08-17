@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+
 from omo.omo_external_scene_trial import (
     ExternalSceneTrialError,
     read_external_scene_trials,

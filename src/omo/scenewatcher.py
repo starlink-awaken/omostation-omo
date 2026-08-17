@@ -39,9 +39,7 @@ class DecisionResult:
     action: str  # pass | escalate | human_veto
     confidence: float
     reason: str
-    model_used: str = (
-        "local-triage"  # local-triage | api | hybrid | aetherforge-triage:*
-    )
+    model_used: str = "local-triage"  # local-triage | api | hybrid | aetherforge-triage:*
     cost_estimate: float = 0.0  # 守 F11: 决策成本 (aetherforge tracker 记账, 可审计)
 
 
@@ -100,9 +98,7 @@ class SceneWatcher:
         aetherforge 实现后替换为 AetherforgeTriageAdapter / HybridRouter, 守 F11 成本).
         若 mos_manager 已注入, 持久化 decision_outcome 到 MOS (ADR-0372).
         """
-        model_decision = self.model_router.route(
-            node, node_output, scene_id=self.scene_id
-        )
+        model_decision = self.model_router.route(node, node_output, scene_id=self.scene_id)
         decision = DecisionResult(
             action=model_decision.action,
             confidence=model_decision.confidence,
@@ -155,9 +151,7 @@ class SceneWatcher:
         # Principle 3: Risk-weighted confidence (with context modifiers)
         effective_threshold = base_threshold
         if novel:
-            effective_threshold = min(
-                effective_threshold + 0.3, 1.0
-            )  # Novel → stricter
+            effective_threshold = min(effective_threshold + 0.3, 1.0)  # Novel → stricter
 
         # Hysteresis: trust > 0.9 → permit; trust < 0.7 → ask; between → keep previous
         if trust >= 0.9 and effective_threshold <= 0.8:
@@ -199,9 +193,7 @@ class SceneWatcher:
                 method = getattr(self.mos_manager, method_name, None)
                 if method:
                     results = (
-                        method(action_type=action_type)
-                        if "action_type" in method.__code__.co_varnames
-                        else method()
+                        method(action_type=action_type) if "action_type" in method.__code__.co_varnames else method()
                     )
                     if results:
                         data = results[-1] if isinstance(results, list) else results
@@ -227,7 +219,7 @@ class SceneWatcher:
                 lines = [
                     line.strip()
                     for line in tf.read_text(encoding="utf-8").split("\n")
-                    if line.strip() and not l.startswith("#") and not l.startswith("---")
+                    if line.strip() and not line.startswith("#") and not line.startswith("---")
                 ][:3]
                 self._telos_cache[tf.stem.lower()] = " | ".join(lines)[:200]
             except Exception:
@@ -279,14 +271,10 @@ class SceneWatcher:
         trust_verdict = trust_result.get("verdict", "ask")
         if telos_alignment == "aligned" and trust_verdict == "ask":
             final_verdict = "recommend"  # TELOS aligned → upgrade ask to recommend
-            final_reason = (
-                f"Trust={trust_verdict} but TELOS aligned → recommend with monitoring"
-            )
+            final_reason = f"Trust={trust_verdict} but TELOS aligned → recommend with monitoring"
         elif telos_alignment == "caution" and trust_verdict == "permit":
             final_verdict = "caution"  # TELOS cautious → downgrade permit to caution
-            final_reason = (
-                f"Trust=permit but TELOS suggests caution → proceed carefully"
-            )
+            final_reason = "Trust=permit but TELOS suggests caution → proceed carefully"
         else:
             final_verdict = trust_verdict
             final_reason = f"Trust={trust_verdict}, TELOS={telos_alignment}"
@@ -323,9 +311,7 @@ class SceneWatcher:
         except Exception:
             logger.warning("MOS decision_outcome write failed", exc_info=True)
 
-    def on_journey_decision(
-        self, node: str, node_output: dict[str, Any]
-    ) -> DecisionResult:
+    def on_journey_decision(self, node: str, node_output: dict[str, Any]) -> DecisionResult:
         """journey-runner 回调入口 (复杂条件节点).
 
         journey-runner 跑到 agent_decisions node 时回调本方法.

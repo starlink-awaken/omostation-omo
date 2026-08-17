@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
+
 from omo.omo_ingress_goal import reconcile_goals
 
 
@@ -33,8 +34,6 @@ def test_reconcile_repairs_frontmatter_and_records_audit(tmp_path: Path) -> None
     assert payload["current_wave"] == "W1"
     assert payload["execution_mode"] == "waiting-for-scenario/next-bet"
     assert payload["goals"][0]["status"] == "archived"
-    assert list(
-        (tmp_path / "runtime/omo/_delivery/ingress/goals").glob("reconcile-*.yaml")
-    )
+    assert list((tmp_path / "runtime/omo/_delivery/ingress/goals").glob("reconcile-*.yaml"))
     mutation_log = tmp_path / "runtime/omo/change-log/mutations.jsonl"
     assert "reconcile_goals" in mutation_log.read_text(encoding="utf-8")

@@ -4,6 +4,7 @@ import hashlib
 import json
 
 import pytest
+
 from omo.cli import main as cli_main
 from omo.mesh_watchdog_runner import (
     _exclusive_run_lock,
@@ -29,9 +30,7 @@ def _grant(run_id: str, step_run_id: str) -> dict:
         "expires_at": "2026-08-02T01:00:00Z",
     }
     grant["proof"] = hashlib.sha256(
-        json.dumps(
-            grant, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode()
+        json.dumps(grant, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     return grant
 
@@ -41,11 +40,7 @@ def _context(tmp_path, run_id: str = "run-runner") -> dict[str, str]:
     grant = _grant(run_id, step_run_id)
     store = WorkflowMeshStore(tmp_path)
     store.append(new_workflow_event("WorkflowRequested", run_id))
-    store.append(
-        new_workflow_event(
-            "WorkflowAdmitted", run_id, payload={"admission": grant, **grant}
-        )
-    )
+    store.append(new_workflow_event("WorkflowAdmitted", run_id, payload={"admission": grant, **grant}))
     record_step_dispatch(
         tmp_path,
         workflow_run_id=run_id,
@@ -67,9 +62,7 @@ def _context(tmp_path, run_id: str = "run-runner") -> dict[str, str]:
 
 def test_runner_dry_run_is_durable_and_does_not_mutate_mesh(tmp_path):
     context = _context(tmp_path)
-    acknowledge_worker(
-        tmp_path, **context, lease_seconds=60, now="2026-08-02T00:00:00Z"
-    )
+    acknowledge_worker(tmp_path, **context, lease_seconds=60, now="2026-08-02T00:00:00Z")
     before = len(WorkflowMeshStore(tmp_path).events())
 
     result = run_once(tmp_path, now="2026-08-02T00:01:00Z")
@@ -90,29 +83,17 @@ def test_runner_dry_run_is_durable_and_does_not_mutate_mesh(tmp_path):
 
 def test_runner_apply_expires_once_and_never_reclaims(tmp_path):
     context = _context(tmp_path, "run-apply")
-    acknowledge_worker(
-        tmp_path, **context, lease_seconds=60, now="2026-08-02T00:00:00Z"
-    )
+    acknowledge_worker(tmp_path, **context, lease_seconds=60, now="2026-08-02T00:00:00Z")
 
-    applied = run_once(
-        tmp_path, now="2026-08-02T00:01:00Z", apply=True, reason="runner_timeout"
-    )
+    applied = run_once(tmp_path, now="2026-08-02T00:01:00Z", apply=True, reason="runner_timeout")
     repeated = run_once(tmp_path, now="2026-08-02T00:02:00Z", apply=True)
 
     assert applied["status"] == "completed"
     assert applied["scan"]["expired_count"] == 1
     assert repeated["status"] == "completed"
     assert repeated["scan"]["expired_count"] == 0
-    assert (
-        WorkflowMeshStore(tmp_path).snapshot(context["workflow_run_id"])["worker"][
-            "state"
-        ]
-        == "lease_expired"
-    )
-    assert not any(
-        event["event_type"] == "WorkerReclaimed"
-        for event in WorkflowMeshStore(tmp_path).events()
-    )
+    assert WorkflowMeshStore(tmp_path).snapshot(context["workflow_run_id"])["worker"]["state"] == "lease_expired"
+    assert not any(event["event_type"] == "WorkerReclaimed" for event in WorkflowMeshStore(tmp_path).events())
 
 
 def test_runner_skips_overlapping_tick(tmp_path):
@@ -127,10 +108,7 @@ def test_runner_skips_overlapping_tick(tmp_path):
 
 
 def test_public_cli_runs_governed_runner(tmp_path, capsys):
-    assert (
-        cli_main(["worker", "mesh-watchdog-run", "--json", "--omo-dir", str(tmp_path)])
-        == 0
-    )
+    assert cli_main(["worker", "mesh-watchdog-run", "--json", "--omo-dir", str(tmp_path)]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["schema"] == "workflow-mesh-watchdog-run/v1"
     assert payload["status"] == "completed"

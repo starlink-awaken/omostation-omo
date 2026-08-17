@@ -26,14 +26,10 @@ RUN_LOCK_NAME = "approval-timeout-run.lock"
 
 
 def _stamp(value: str | None = None) -> str:
-    parsed = datetime.fromisoformat(
-        (value or datetime.now(UTC).isoformat()).replace("Z", "+00:00")
-    )
+    parsed = datetime.fromisoformat((value or datetime.now(UTC).isoformat()).replace("Z", "+00:00"))
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    return (
-        parsed.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    )
+    return parsed.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _paths(omo_dir: Path) -> tuple[Path, Path, Path]:
@@ -68,11 +64,7 @@ def _scan_summary(result: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(items, list):
             return []
         return sorted(
-            {
-                str(item["workflow_run_id"])
-                for item in items
-                if isinstance(item, dict) and item.get("workflow_run_id")
-            }
+            {str(item["workflow_run_id"]) for item in items if isinstance(item, dict) and item.get("workflow_run_id")}
         )
 
     errors = result.get("errors", [])
@@ -89,9 +81,7 @@ def _scan_summary(result: dict[str, Any]) -> dict[str, Any]:
 
 def _persist_run(omo_dir: Path, summary: dict[str, Any]) -> None:
     log_path, latest_path, _ = _paths(omo_dir)
-    AppendOnlyLog(log_path, lock=fcntl_lock(log_path.with_suffix(".lock"))).append(
-        summary, sort_keys=True
-    )
+    AppendOnlyLog(log_path, lock=fcntl_lock(log_path.with_suffix(".lock"))).append(summary, sort_keys=True)
     write_text_atomic(
         latest_path,
         json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True),
@@ -151,9 +141,7 @@ def run_once(
             summary["skip_reason"] = "already_running"
         else:
             try:
-                result = scan_approval_timeouts(
-                    root, now=observed_at, apply=apply, reason=reason
-                )
+                result = scan_approval_timeouts(root, now=observed_at, apply=apply, reason=reason)
                 summary["scan"] = _scan_summary(result)
                 summary["errors"] = result.get("errors", [])
                 summary["status"] = "completed" if not summary["errors"] else "degraded"
@@ -168,9 +156,7 @@ def run_once(
     except (OSError, TypeError, ValueError) as exc:
         summary["ledger_recorded"] = False
         summary["status"] = "failed"
-        summary.setdefault("errors", []).append(
-            {"code": "ledger_write_failed", "error": str(exc)}
-        )
+        summary.setdefault("errors", []).append({"code": "ledger_write_failed", "error": str(exc)})
     return summary
 
 

@@ -34,7 +34,7 @@ class OMOProjectInspector:
         if self._registry_data is None:
             if self.registry_path.exists():
                 try:
-                    with open(self.registry_path, "r", encoding="utf-8") as f:
+                    with open(self.registry_path, encoding="utf-8") as f:
                         self._registry_data = yaml.safe_load(f) or {}
                 except Exception:
                     self._registry_data = {}
@@ -78,9 +78,7 @@ class OMOProjectInspector:
                     file_count += 1
                     fp = Path(root_path) / f
                     try:
-                        with open(
-                            fp, "r", encoding="utf-8", errors="ignore"
-                        ) as file_obj:
+                        with open(fp, encoding="utf-8", errors="ignore") as file_obj:
                             total_loc += sum(1 for _ in file_obj)
                     except Exception:
                         pass
@@ -224,29 +222,21 @@ def format_project_inspection(data: dict[str, Any]) -> str:
         return f"❌ 错误: {data.get('error')}"
 
     lines = []
-    lines.append(f"═══════════════════════════════════════════════════════════")
-    lines.append(
-        f" 🔍 项目 360° 体检报告: {data['project_name']} (Layer: {data['layer']})"
-    )
-    lines.append(f"═══════════════════════════════════════════════════════════")
+    lines.append("═══════════════════════════════════════════════════════════")
+    lines.append(f" 🔍 项目 360° 体检报告: {data['project_name']} (Layer: {data['layer']})")
+    lines.append("═══════════════════════════════════════════════════════════")
     lines.append(f"  • 角色: {data['role']}")
     lines.append(f"  • 架构 Stack: {data['stack']} (v{data['version']})")
     lines.append(f"  • 物理路径: {data['physical_location']}")
     if data.get("port"):
         lines.append(f"  • 绑定端口: {data['port']}")
     lines.append(f"  • BOS Services 暴露: {data['bos_services']} 个")
-    lines.append(
-        f"  • 代码规模: {data['scale']['files']} 个文件 / {data['scale']['loc']} 行代码"
-    )
-    lines.append(
-        f"  • Git 状态: Commit [{data['git']['head_commit']}] (Dirty: {data['git']['is_dirty']})"
-    )
-    lines.append(
-        f"  • 测试覆盖: {'✅ 包含 tests/' if data['has_tests'] else '⚠️ 缺 tests/'}"
-    )
-    lines.append(f"───────────────────────────────────────────────────────────")
+    lines.append(f"  • 代码规模: {data['scale']['files']} 个文件 / {data['scale']['loc']} 行代码")
+    lines.append(f"  • Git 状态: Commit [{data['git']['head_commit']}] (Dirty: {data['git']['is_dirty']})")
+    lines.append(f"  • 测试覆盖: {'✅ 包含 tests/' if data['has_tests'] else '⚠️ 缺 tests/'}")
+    lines.append("───────────────────────────────────────────────────────────")
     lines.append(f" 📊 项目健康得分: {data['health_score']} / 100")
     if data.get("deductions"):
         lines.append(f"   扣分项: {', '.join(data['deductions'])}")
-    lines.append(f"═══════════════════════════════════════════════════════════")
+    lines.append("═══════════════════════════════════════════════════════════")
     return "\n".join(lines)

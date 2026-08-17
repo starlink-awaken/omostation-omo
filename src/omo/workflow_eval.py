@@ -140,9 +140,7 @@ def build_request_eval_dataset(
         if event.get("event_type") == "WorkflowRequested":
             requests.setdefault(run_id, event)
 
-    snapshots = {
-        snapshot["workflow_run_id"]: snapshot for snapshot in store.snapshots()
-    }
+    snapshots = {snapshot["workflow_run_id"]: snapshot for snapshot in store.snapshots()}
     rows: list[dict[str, Any]] = []
     for run_id, event in requests.items():
         payload = event.get("payload") or {}
@@ -206,20 +204,12 @@ def build_request_eval_dataset(
     return dataset
 
 
-def evaluate_policy(
-    dataset: dict[str, Any], candidate: dict[str, Any]
-) -> dict[str, Any]:
+def evaluate_policy(dataset: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
     """Evaluate a candidate gate policy against labeled rows, without applying it."""
     rows = list(dataset.get("rows", []))
     require_admission = bool(candidate.get("require_admission", True))
-    require_evidence_for_verify = bool(
-        candidate.get("require_evidence_for_verify", True)
-    )
-    admitted_rows = [
-        row
-        for row in rows
-        if not require_admission or row["labels"].get("admitted", False)
-    ]
+    require_evidence_for_verify = bool(candidate.get("require_evidence_for_verify", True))
+    admitted_rows = [row for row in rows if not require_admission or row["labels"].get("admitted", False)]
     unsafe = [
         row
         for row in admitted_rows
@@ -237,21 +227,15 @@ def evaluate_policy(
         "rows_considered": len(rows),
         "rows_admitted_by_candidate": len(admitted_rows),
         "unsafe_rows": len(unsafe),
-        "success_rate": round(successes / len(admitted_rows), 4)
-        if admitted_rows
-        else 0.0,
-        "baseline_success_rate": round(baseline_successes / len(rows), 4)
-        if rows
-        else 0.0,
+        "success_rate": round(successes / len(admitted_rows), 4) if admitted_rows else 0.0,
+        "baseline_success_rate": round(baseline_successes / len(rows), 4) if rows else 0.0,
         "offline_gate_passed": bool(admitted_rows) and not unsafe,
         "not_applied": True,
     }
     return result
 
 
-def propose_policy_feedback(
-    dataset: dict[str, Any], candidate: dict[str, Any], *, proposal_id: str
-) -> dict[str, Any]:
+def propose_policy_feedback(dataset: dict[str, Any], candidate: dict[str, Any], *, proposal_id: str) -> dict[str, Any]:
     """Return an auditable proposal; production policy mutation is out of scope."""
     evaluation = evaluate_policy(dataset, candidate)
     return {
@@ -261,15 +245,11 @@ def propose_policy_feedback(
         "evaluation": evaluation,
         "requires_human_approval": True,
         "apply_ref": None,
-        "decision": "eligible_for_review"
-        if evaluation["offline_gate_passed"]
-        else "rejected_offline",
+        "decision": "eligible_for_review" if evaluation["offline_gate_passed"] else "rejected_offline",
     }
 
 
-def _selection_run_outcome(
-    run_events: list[dict[str, Any]], evidence: list[dict[str, Any]]
-) -> str:
+def _selection_run_outcome(run_events: list[dict[str, Any]], evidence: list[dict[str, Any]]) -> str:
     event_types = {str(event.get("event_type")) for event in run_events}
     if not run_events:
         return "not_executed"
@@ -298,9 +278,7 @@ def build_external_resource_selection_dataset(
     """
     store = WorkflowMeshStore(omo_dir)
     events = store.events()
-    snapshots = {
-        snapshot["workflow_run_id"]: snapshot for snapshot in store.snapshots()
-    }
+    snapshots = {snapshot["workflow_run_id"]: snapshot for snapshot in store.snapshots()}
     events_by_run: dict[str, list[dict[str, Any]]] = {}
     runs_by_trace: dict[str, set[str]] = {}
     for event in events:
@@ -310,9 +288,7 @@ def build_external_resource_selection_dataset(
 
     feedback_by_run: dict[str, list[dict[str, Any]]] = {}
     for feedback in read_outcome_feedback(omo_dir):
-        feedback_by_run.setdefault(str(feedback["workflow_run_id"]), []).append(
-            feedback
-        )
+        feedback_by_run.setdefault(str(feedback["workflow_run_id"]), []).append(feedback)
 
     rows: list[dict[str, Any]] = []
     for observation in read_external_resource_evaluations(omo_dir):
@@ -337,11 +313,7 @@ def build_external_resource_selection_dataset(
             for item in (snapshot.get("evidence") or {}).values()
             if isinstance(item, dict) and item.get("resource_id")
         ]
-        receipts = [
-            item
-            for item in evidence
-            if item.get("evidence_schema") == "external-connection-receipt/v1"
-        ]
+        receipts = [item for item in evidence if item.get("evidence_schema") == "external-connection-receipt/v1"]
         selected_resource_id = observation.get("selected_resource_id")
         used_resource_ids = {str(item["resource_id"]) for item in receipts}
         if not run_id:
@@ -356,21 +328,15 @@ def build_external_resource_selection_dataset(
             alignment = "different_resource"
 
         feedback = [
-            item
-            for item in feedback_by_run.get(run_id or "", [])
-            if item.get("consumption_state") != "rejected"
+            item for item in feedback_by_run.get(run_id or "", []) if item.get("consumption_state") != "rejected"
         ]
         outcome = _selection_run_outcome(run_events, evidence)
         labels = {
             "execution_outcome": outcome,
             "selection_alignment": alignment,
-            "consumption_state": feedback[0]["consumption_state"]
-            if feedback
-            else "unobserved",
-            "terminal": "WorkflowClosed"
-            in {str(event.get("event_type")) for event in run_events},
-            "verified": "WorkflowVerified"
-            in {str(event.get("event_type")) for event in run_events},
+            "consumption_state": feedback[0]["consumption_state"] if feedback else "unobserved",
+            "terminal": "WorkflowClosed" in {str(event.get("event_type")) for event in run_events},
+            "verified": "WorkflowVerified" in {str(event.get("event_type")) for event in run_events},
             "evidence_complete": bool(evidence),
             "label_quality": (
                 "execution_and_consumption"
@@ -406,11 +372,7 @@ def build_external_resource_selection_dataset(
                 "label_source": {
                     "evaluation_observation_id": observation["observation_id"],
                     "event_ids": [str(event["event_id"]) for event in run_events],
-                    "receipt_ids": [
-                        str(item["receipt_id"])
-                        for item in receipts
-                        if item.get("receipt_id")
-                    ],
+                    "receipt_ids": [str(item["receipt_id"]) for item in receipts if item.get("receipt_id")],
                     "feedback_ids": [str(item["feedback_id"]) for item in feedback],
                     "labeling_rule": f"{SELECTION_EVAL_SCHEMA_VERSION}:event-receipt-feedback-join",
                 },
@@ -432,25 +394,16 @@ def build_external_resource_selection_dataset(
             "row_count": len(rows),
             "linked_run_count": sum(bool(row["workflow_run_id"]) for row in rows),
             "executed_count": sum(
-                row["labels"]["execution_outcome"] not in {"not_executed", "incomplete"}
-                for row in rows
+                row["labels"]["execution_outcome"] not in {"not_executed", "incomplete"} for row in rows
             ),
-            "aligned_count": sum(
-                row["labels"]["selection_alignment"] == "aligned" for row in rows
-            ),
-            "outcomes": dict(
-                Counter(row["labels"]["execution_outcome"] for row in rows)
-            ),
-            "label_quality": dict(
-                Counter(row["labels"]["label_quality"] for row in rows)
-            ),
+            "aligned_count": sum(row["labels"]["selection_alignment"] == "aligned" for row in rows),
+            "outcomes": dict(Counter(row["labels"]["execution_outcome"] for row in rows)),
+            "label_quality": dict(Counter(row["labels"]["label_quality"] for row in rows)),
         },
     }
     if output_path is not None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(
-            json.dumps(dataset, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+        output_path.write_text(json.dumps(dataset, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return dataset
 
 
@@ -493,9 +446,7 @@ def build_evaluation_sample_readiness(dataset: dict[str, Any]) -> dict[str, Any]
                 "external_receipt_not_aligned",
             )
         )
-        fully_labeled = (
-            execution_ready and "consumption_feedback_missing" not in blockers
-        )
+        fully_labeled = execution_ready and "consumption_feedback_missing" not in blockers
         readiness_rows.append(
             {
                 "evaluation_id": row.get("evaluation_id"),
@@ -507,19 +458,13 @@ def build_evaluation_sample_readiness(dataset: dict[str, Any]) -> dict[str, Any]
                 "selection_alignment": labels.get("selection_alignment"),
                 "consumption_state": labels.get("consumption_state"),
                 "label_quality": labels.get("label_quality"),
-                "status": "ready"
-                if fully_labeled
-                else "execution_ready"
-                if execution_ready
-                else "blocked",
+                "status": "ready" if fully_labeled else "execution_ready" if execution_ready else "blocked",
                 "blockers": blockers,
             }
         )
 
     ready_count = sum(item["status"] == "ready" for item in readiness_rows)
-    execution_ready_count = sum(
-        item["status"] in {"ready", "execution_ready"} for item in readiness_rows
-    )
+    execution_ready_count = sum(item["status"] in {"ready", "execution_ready"} for item in readiness_rows)
     return {
         "schema_version": EVALUATION_READINESS_SCHEMA_VERSION,
         "status": "observed" if readiness_rows else "not_observed",
@@ -536,17 +481,11 @@ def build_evaluation_sample_readiness(dataset: dict[str, Any]) -> dict[str, Any]
             "blockers": dict(sorted(blocker_counts.items())),
         },
         "rows": readiness_rows,
-        "next_action": (
-            "review_ready_samples"
-            if ready_count
-            else "close_external_receipt_and_consumption_gaps"
-        ),
+        "next_action": ("review_ready_samples" if ready_count else "close_external_receipt_and_consumption_gaps"),
     }
 
 
-def evaluate_selection_policy(
-    dataset: dict[str, Any], candidate: dict[str, Any]
-) -> dict[str, Any]:
+def evaluate_selection_policy(dataset: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
     """Compare a selection policy offline; never apply it to routing or admission."""
     max_unaligned_rate = float(candidate.get("max_unaligned_rate", 0.2))
     if not 0 <= max_unaligned_rate <= 1:
@@ -554,16 +493,10 @@ def evaluate_selection_policy(
     rows = [
         row
         for row in dataset.get("rows", [])
-        if row.get("labels", {}).get("execution_outcome")
-        not in {"not_executed", "incomplete"}
+        if row.get("labels", {}).get("execution_outcome") not in {"not_executed", "incomplete"}
     ]
-    unaligned = sum(
-        row.get("labels", {}).get("selection_alignment") == "different_resource"
-        for row in rows
-    )
-    successful = sum(
-        row.get("labels", {}).get("execution_outcome") == "success" for row in rows
-    )
+    unaligned = sum(row.get("labels", {}).get("selection_alignment") == "different_resource" for row in rows)
+    successful = sum(row.get("labels", {}).get("execution_outcome") == "success" for row in rows)
     aligned_successful = sum(
         row.get("labels", {}).get("execution_outcome") == "success"
         and row.get("labels", {}).get("selection_alignment") == "aligned"
@@ -576,11 +509,8 @@ def evaluate_selection_policy(
         "unaligned_count": unaligned,
         "unaligned_rate": round(unaligned / len(rows), 4) if rows else None,
         "success_rate": round(successful / len(rows), 4) if rows else None,
-        "aligned_success_rate": round(aligned_successful / len(rows), 4)
-        if rows
-        else None,
-        "offline_gate_passed": bool(rows)
-        and (unaligned / len(rows)) <= max_unaligned_rate,
+        "aligned_success_rate": round(aligned_successful / len(rows), 4) if rows else None,
+        "offline_gate_passed": bool(rows) and (unaligned / len(rows)) <= max_unaligned_rate,
         "not_applied": True,
     }
 
@@ -597,9 +527,7 @@ def propose_selection_policy_feedback(
         "evaluation": evaluation,
         "requires_human_approval": True,
         "apply_ref": None,
-        "decision": "eligible_for_review"
-        if evaluation["offline_gate_passed"]
-        else "rejected_offline",
+        "decision": "eligible_for_review" if evaluation["offline_gate_passed"] else "rejected_offline",
     }
 
 
@@ -612,14 +540,10 @@ def _operations_rate(numerator: int, denominator: int) -> float | None:
 def _scene_key(binding: dict[str, str] | None) -> str:
     if not binding:
         return "_unbound"
-    return " / ".join(
-        binding[field] for field in ("scene_id", "journey_id", "outcome_metric")
-    )
+    return " / ".join(binding[field] for field in ("scene_id", "journey_id", "outcome_metric"))
 
 
-def _review_item(
-    snapshot: dict[str, Any], event_types: set[str]
-) -> dict[str, Any] | None:
+def _review_item(snapshot: dict[str, Any], event_types: set[str]) -> dict[str, Any] | None:
     state = str(snapshot.get("state", "unknown"))
     action_by_state = {
         "waiting_approval": ("approval", "review_pending_approval", "审批待处理"),
@@ -679,9 +603,7 @@ def build_operations_snapshot(
     snapshots = store.snapshots()
     if scene_id is not None:
         snapshots = [
-            snapshot
-            for snapshot in snapshots
-            if (snapshot.get("scene_binding") or {}).get("scene_id") == scene_id
+            snapshot for snapshot in snapshots if (snapshot.get("scene_binding") or {}).get("scene_id") == scene_id
         ]
     feedback_records = read_outcome_feedback(omo_dir)
     selected_run_ids = {snapshot["workflow_run_id"] for snapshot in snapshots}
@@ -739,17 +661,12 @@ def build_operations_snapshot(
         verified = "WorkflowVerified" in event_types
         closed = "WorkflowClosed" in event_types
         evidence_complete = bool(snapshot.get("evidence"))
-        sandbox_invocations = [
-            event
-            for event in run_events
-            if event.get("event_type") == "ToolInvocationRecorded"
-        ]
+        sandbox_invocations = [event for event in run_events if event.get("event_type") == "ToolInvocationRecorded"]
         if sandbox_invocations:
             sandbox_tool_invocations += len(sandbox_invocations)
             sandbox_tool_receipt_runs += int(evidence_complete)
             sandbox_tool_outcomes.update(
-                str(event.get("payload", {}).get("outcome") or "unknown")
-                for event in sandbox_invocations
+                str(event.get("payload", {}).get("outcome") or "unknown") for event in sandbox_invocations
             )
             scene["sandbox_tool_runs"] += 1
         if succeeded:
@@ -777,9 +694,7 @@ def build_operations_snapshot(
         if "BackendUnavailable" in event_types or "WorkerLeaseExpired" in event_types:
             unavailable_runs += 1
         run_feedback = feedback_by_run.get(snapshot["workflow_run_id"], [])
-        consumed_feedback = [
-            item for item in run_feedback if item["consumption_state"] != "rejected"
-        ]
+        consumed_feedback = [item for item in run_feedback if item["consumption_state"] != "rejected"]
         scene["feedback_count"] += len(run_feedback)
         if consumed_feedback:
             scene["consumed_runs"] += 1
@@ -791,25 +706,15 @@ def build_operations_snapshot(
             review_queue.append(item)
 
     request_rows = build_request_eval_dataset(omo_dir)["rows"]
-    selection_dataset = build_external_resource_selection_dataset(
-        omo_dir, scene_id=scene_id
-    )
+    selection_dataset = build_external_resource_selection_dataset(omo_dir, scene_id=scene_id)
     if scene_id is not None:
-        request_rows = [
-            row
-            for row in request_rows
-            if (row.get("scene_binding") or {}).get("scene_id") == scene_id
-        ]
+        request_rows = [row for row in request_rows if (row.get("scene_binding") or {}).get("scene_id") == scene_id]
     request_states = Counter(row["labels"]["current_state"] for row in request_rows)
     workflow_requests = {
         "request_count": len(request_rows),
-        "pending_count": sum(
-            row["labels"]["current_state"] == "planned" for row in request_rows
-        ),
+        "pending_count": sum(row["labels"]["current_state"] == "planned" for row in request_rows),
         "admitted_count": sum(row["labels"]["admitted"] for row in request_rows),
-        "approval_required_count": sum(
-            row["approval_required"] for row in request_rows
-        ),
+        "approval_required_count": sum(row["approval_required"] for row in request_rows),
         "states": dict(sorted(request_states.items())),
         "next_action": (
             "review_pending_workflow_requests"
@@ -818,28 +723,15 @@ def build_operations_snapshot(
         ),
     }
 
-    active_runs = sum(
-        count
-        for state, count in state_counts.items()
-        if state not in {"closed", "cancelled"}
-    )
+    active_runs = sum(count for state, count in state_counts.items() if state not in {"closed", "cancelled"})
     consumed_feedback = [
-        item
-        for items in feedback_by_run.values()
-        for item in items
-        if item["consumption_state"] != "rejected"
+        item for items in feedback_by_run.values() for item in items if item["consumption_state"] != "rejected"
     ]
     eligible_closed_runs = sum(
-        1
-        for snapshot in snapshots
-        if snapshot.get("state") == "closed" and snapshot.get("evidence")
+        1 for snapshot in snapshots if snapshot.get("state") == "closed" and snapshot.get("evidence")
     )
     consumed_run_ids = {item["workflow_run_id"] for item in consumed_feedback}
-    feedback_states = Counter(
-        item["consumption_state"]
-        for items in feedback_by_run.values()
-        for item in items
-    )
+    feedback_states = Counter(item["consumption_state"] for items in feedback_by_run.values() for item in items)
     eligible_outcomes = [
         {
             "workflow_run_id": snapshot["workflow_run_id"],
@@ -849,24 +741,15 @@ def build_operations_snapshot(
             "evidence_count": len(snapshot.get("evidence") or []),
         }
         for snapshot in snapshots
-        if snapshot.get("state") in ELIGIBLE_WORKFLOW_STATES
-        and snapshot.get("scene_binding")
+        if snapshot.get("state") in ELIGIBLE_WORKFLOW_STATES and snapshot.get("scene_binding")
     ]
     consumption = {
-        "status": (
-            "observed"
-            if consumed_feedback
-            else "rejected"
-            if feedback_by_run
-            else "not_observed"
-        ),
+        "status": ("observed" if consumed_feedback else "rejected" if feedback_by_run else "not_observed"),
         "consumed_runs": len(consumed_run_ids),
         "feedback_count": sum(len(items) for items in feedback_by_run.values()),
         "observed_event_types": [],
         "eligible_closed_runs": eligible_closed_runs,
-        "consumption_rate_among_eligible_closed_runs": _operations_rate(
-            len(consumed_run_ids), eligible_closed_runs
-        ),
+        "consumption_rate_among_eligible_closed_runs": _operations_rate(len(consumed_run_ids), eligible_closed_runs),
         "states": dict(sorted(feedback_states.items())),
         "eligible_outcomes": eligible_outcomes,
         "feedback": [
@@ -890,9 +773,7 @@ def build_operations_snapshot(
             for item in items
         ],
         "next_action": (
-            "review_feedback_and_value"
-            if consumed_feedback
-            else "record_explicit_outcome_consumption_feedback"
+            "review_feedback_and_value" if consumed_feedback else "record_explicit_outcome_consumption_feedback"
         ),
     }
     return {
@@ -918,19 +799,11 @@ def build_operations_snapshot(
             "recovered_runs": recovered_runs,
             "approval_runs": approval_runs,
             "retry_runs": retry_runs,
-            "average_duration_seconds": round(sum(durations) / len(durations), 3)
-            if durations
-            else None,
+            "average_duration_seconds": round(sum(durations) / len(durations), 3) if durations else None,
             "rates": {
-                "success_rate_among_admitted": _operations_rate(
-                    success_runs, admitted_runs
-                ),
-                "verification_rate_among_succeeded": _operations_rate(
-                    verified_runs, success_runs
-                ),
-                "closeout_rate_among_verified": _operations_rate(
-                    closed_runs, verified_runs
-                ),
+                "success_rate_among_admitted": _operations_rate(success_runs, admitted_runs),
+                "verification_rate_among_succeeded": _operations_rate(verified_runs, success_runs),
+                "closeout_rate_among_verified": _operations_rate(closed_runs, verified_runs),
             },
             "states": dict(sorted(state_counts.items())),
         },

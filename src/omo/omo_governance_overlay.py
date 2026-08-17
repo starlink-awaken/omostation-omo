@@ -36,75 +36,30 @@ def _dispatch_payload(root: Path, run_ref: str | None) -> dict[str, Any] | None:
     return _load_optional_yaml(root / run_ref)
 
 
-def _build_approval_prep_monitor_summary(
-    root: Path, omo_ref: Path
-) -> dict[str, Any] | None:
-    current = _load_optional_yaml(
-        root
-        / omo_ref
-        / "workers"
-        / "governance-overlay"
-        / "approval-prep"
-        / "current.yaml"
-    )
+def _build_approval_prep_monitor_summary(root: Path, omo_ref: Path) -> dict[str, Any] | None:
+    current = _load_optional_yaml(root / omo_ref / "workers" / "governance-overlay" / "approval-prep" / "current.yaml")
     trend = _load_optional_yaml(
-        root
-        / omo_ref
-        / "workers"
-        / "governance-overlay"
-        / "approval-prep"
-        / "trend"
-        / "current.yaml"
+        root / omo_ref / "workers" / "governance-overlay" / "approval-prep" / "trend" / "current.yaml"
     )
     diff = _load_optional_yaml(
-        root
-        / omo_ref
-        / "workers"
-        / "governance-overlay"
-        / "approval-prep"
-        / "diff"
-        / "current.yaml"
+        root / omo_ref / "workers" / "governance-overlay" / "approval-prep" / "diff" / "current.yaml"
     )
     aging = _load_optional_yaml(
-        root
-        / omo_ref
-        / "workers"
-        / "governance-overlay"
-        / "approval-prep"
-        / "aging"
-        / "current.yaml"
+        root / omo_ref / "workers" / "governance-overlay" / "approval-prep" / "aging" / "current.yaml"
     )
     if not any(packet for packet in (current, trend, diff, aging)):
         return None
     return {
         "prep_task_count": 0 if not current else int(current.get("prep_task_count", 0)),
-        "request_now_count": 0
-        if not current
-        else int(current.get("request_now_count", 0)),
-        "awaiting_approval_count": 0
-        if not current
-        else int(current.get("awaiting_approval_count", 0)),
-        "trend_status": "unavailable"
-        if not trend
-        else str(trend.get("trend_status", "unavailable")),
-        "window_event_count": 0
-        if not trend
-        else int(trend.get("window_event_count", 0)),
-        "changed_current_task_ids": []
-        if not diff
-        else list(diff.get("changed_current_task_ids", [])),
-        "no_longer_current_task_ids": []
-        if not diff
-        else list(diff.get("no_longer_current_task_ids", [])),
-        "attention_summary": {}
-        if not aging
-        else dict(aging.get("attention_summary", {})),
-        "followup_task_ids": []
-        if not aging
-        else list(aging.get("followup_task_ids", [])),
-        "escalation_task_ids": []
-        if not aging
-        else list(aging.get("escalation_task_ids", [])),
+        "request_now_count": 0 if not current else int(current.get("request_now_count", 0)),
+        "awaiting_approval_count": 0 if not current else int(current.get("awaiting_approval_count", 0)),
+        "trend_status": "unavailable" if not trend else str(trend.get("trend_status", "unavailable")),
+        "window_event_count": 0 if not trend else int(trend.get("window_event_count", 0)),
+        "changed_current_task_ids": [] if not diff else list(diff.get("changed_current_task_ids", [])),
+        "no_longer_current_task_ids": [] if not diff else list(diff.get("no_longer_current_task_ids", [])),
+        "attention_summary": {} if not aging else dict(aging.get("attention_summary", {})),
+        "followup_task_ids": [] if not aging else list(aging.get("followup_task_ids", [])),
+        "escalation_task_ids": [] if not aging else list(aging.get("escalation_task_ids", [])),
     }
 
 
@@ -125,9 +80,7 @@ def _build_monitor_summary(
         blockers = [str(blocker) for blocker in target.get("blockers", [])]
         if blockers:
             blocked_target_count += 1
-        if any(blocker.startswith("approval_") for blocker in blockers) and target.get(
-            "task_id"
-        ):
+        if any(blocker.startswith("approval_") for blocker in blockers) and target.get("task_id"):
             approval_blocked_task_ids.append(str(target["task_id"]))
         if "phase_mismatch" in blockers and target.get("task_id"):
             phase_blocked_task_ids.append(str(target["task_id"]))
@@ -164,9 +117,7 @@ def _derived_allowed_write_paths(task: dict[str, Any]) -> list[str]:
     return paths
 
 
-def _launch_contract_state(
-    task: dict[str, Any], dispatch: dict[str, Any] | None
-) -> tuple[str, str]:
+def _launch_contract_state(task: dict[str, Any], dispatch: dict[str, Any] | None) -> tuple[str, str]:
     deliverables = list(task.get("deliverables", []))
     allowed_paths = _derived_allowed_write_paths(task)
     if not deliverables or not allowed_paths:
@@ -179,9 +130,7 @@ def _launch_contract_state(
     return ("launch_ready", "task has explicit launch-ready write scope")
 
 
-def _target_state(
-    root: Path, target_ref: str, *, omo_dir: str | Path = ".omo"
-) -> dict[str, Any]:
+def _target_state(root: Path, target_ref: str, *, omo_dir: str | Path = ".omo") -> dict[str, Any]:
     if not target_ref.startswith(".omo/tasks/planned/"):
         return {
             "target_ref": target_ref,
@@ -206,9 +155,7 @@ def _target_state(
         task_id = task.get("id")
         if fixed_state:
             if fixed_state == "planned_pending":
-                return evaluate_governance_overlay_planned_target(
-                    root, target_ref, omo_dir=omo_dir
-                )
+                return evaluate_governance_overlay_planned_target(root, target_ref, omo_dir=omo_dir)
             return {
                 "target_ref": target_ref,
                 "task_id": task_id,
@@ -216,9 +163,7 @@ def _target_state(
                 "detail": f"task currently exists in tasks/{directory}/",
             }
         status = str(task.get("status", "pending"))
-        dispatch = _dispatch_payload(
-            root, str(task.get("run_ref")) if task.get("run_ref") else None
-        )
+        dispatch = _dispatch_payload(root, str(task.get("run_ref")) if task.get("run_ref") else None)
         if status == "in_progress" and dispatch:
             contract_state, detail = _launch_contract_state(task, dispatch)
             dispatch_state = str(dispatch.get("dispatch_state"))
@@ -256,36 +201,21 @@ def _target_state(
     }
 
 
-def build_governance_overlay_status(
-    root: Path, *, omo_dir: str | Path = ".omo", now: str
-) -> dict[str, Any]:
+def build_governance_overlay_status(root: Path, *, omo_dir: str | Path = ".omo", now: str) -> dict[str, Any]:
     omo_ref = Path(omo_dir)
-    state = _load_yaml_required(
-        root / omo_ref / "_control" / "governance-overlay" / "current.yaml"
-    )
-    roadmap = _load_yaml_required(
-        root / omo_ref / "_truth" / "governance-overlay" / "roadmap.yaml"
-    )
-    policy = _load_yaml_required(
-        root / omo_ref / "_truth" / "governance-overlay" / "autopilot-policy.yaml"
-    )
+    state = _load_yaml_required(root / omo_ref / "_control" / "governance-overlay" / "current.yaml")
+    roadmap = _load_yaml_required(root / omo_ref / "_truth" / "governance-overlay" / "roadmap.yaml")
+    policy = _load_yaml_required(root / omo_ref / "_truth" / "governance-overlay" / "autopilot-policy.yaml")
 
-    completed_items = {
-        item["id"] for item in roadmap.get("items", []) if item.get("status") == "done"
-    }
+    completed_items = {item["id"] for item in roadmap.get("items", []) if item.get("status") == "done"}
     autopilot_candidates: list[dict[str, Any]] = []
     blocked_items: list[dict[str, Any]] = []
-    active_items = [
-        item for item in roadmap.get("items", []) if item.get("status") == "in_progress"
-    ]
+    active_items = [item for item in roadmap.get("items", []) if item.get("status") == "in_progress"]
     if len(active_items) > 1:
         raise ValueError("multiple in_progress roadmap items are not supported in v1")
     active_item = active_items[0] if active_items else None
     active_target_states = (
-        [
-            _target_state(root, str(ref), omo_dir=omo_dir)
-            for ref in active_item.get("target_refs", [])
-        ]
+        [_target_state(root, str(ref), omo_dir=omo_dir) for ref in active_item.get("target_refs", [])]
         if active_item
         else []
     )
@@ -306,9 +236,7 @@ def build_governance_overlay_status(
         if item_status != "pending":
             continue
         missing_refs = _missing_target_refs(root, list(item.get("target_refs", [])))
-        unmet_deps = [
-            dep for dep in item.get("depends_on", []) if dep not in completed_items
-        ]
+        unmet_deps = [dep for dep in item.get("depends_on", []) if dep not in completed_items]
         if missing_refs:
             blocked_items.append(
                 {
@@ -343,42 +271,18 @@ def build_governance_overlay_status(
     next_action = "idle"
     if active_item:
         if any(target["state"] == "active_pending" for target in active_target_states):
-            first_pending = next(
-                target
-                for target in active_target_states
-                if target["state"] == "active_pending"
-            )
+            first_pending = next(target for target in active_target_states if target["state"] == "active_pending")
             next_action = f"dispatch:{first_pending['task_id']}"
-        elif any(
-            target["state"] == "active_dispatch_blocked"
-            for target in active_target_states
-        ):
-            blocked = next(
-                target
-                for target in active_target_states
-                if target["state"] == "active_dispatch_blocked"
-            )
+        elif any(target["state"] == "active_dispatch_blocked" for target in active_target_states):
+            blocked = next(target for target in active_target_states if target["state"] == "active_dispatch_blocked")
             next_action = f"contract:{blocked['task_id']}"
-        elif any(
-            target["state"] == "active_dispatched" for target in active_target_states
-        ):
-            dispatched = next(
-                target
-                for target in active_target_states
-                if target["state"] == "active_dispatched"
-            )
+        elif any(target["state"] == "active_dispatched" for target in active_target_states):
+            dispatched = next(target for target in active_target_states if target["state"] == "active_dispatched")
             next_action = f"launch:{dispatched['task_id']}"
         elif any(target["state"] == "active_review" for target in active_target_states):
-            first_review = next(
-                target
-                for target in active_target_states
-                if target["state"] == "active_review"
-            )
+            first_review = next(target for target in active_target_states if target["state"] == "active_review")
             next_action = f"verify:{first_review['task_id']}"
-        elif any(
-            target["state"] in {"active_in_progress", "active_review"}
-            for target in active_target_states
-        ):
+        elif any(target["state"] in {"active_in_progress", "active_review"} for target in active_target_states):
             next_action = f"monitor:{active_item['id']}"
         elif any(
             target["state"]
@@ -401,13 +305,10 @@ def build_governance_overlay_status(
             for target in active_target_states
         ):
             next_action = f"monitor:{active_item['id']}"
-        elif active_target_states and all(
-            target["state"] == "done" for target in active_target_states
-        ):
+        elif active_target_states and all(target["state"] == "done" for target in active_target_states):
             next_action = f"close:{active_item['id']}"
         elif active_target_states and all(
-            target["state"]
-            in {"planned_blocked", "unsupported_target_ref", "missing_target_ref"}
+            target["state"] in {"planned_blocked", "unsupported_target_ref", "missing_target_ref"}
             for target in active_target_states
         ):
             next_action = f"block:{active_item['id']}"
@@ -417,9 +318,7 @@ def build_governance_overlay_status(
         next_action = "repair_refs"
 
     monitor_summary = (
-        _build_monitor_summary(root, omo_ref, active_target_states)
-        if next_action.startswith("monitor:")
-        else None
+        _build_monitor_summary(root, omo_ref, active_target_states) if next_action.startswith("monitor:") else None
     )
 
     yaml_packet = {
@@ -490,23 +389,11 @@ def build_governance_overlay_status(
                     "",
                     f"blocked_target_count={monitor_summary['blocked_target_count']}",
                     "state_histogram="
-                    + ",".join(
-                        f"{state}:{count}"
-                        for state, count in monitor_summary["state_histogram"].items()
-                    ),
+                    + ",".join(f"{state}:{count}" for state, count in monitor_summary["state_histogram"].items()),
                     "blocker_histogram="
-                    + ",".join(
-                        f"{blocker}:{count}"
-                        for blocker, count in monitor_summary[
-                            "blocker_histogram"
-                        ].items()
-                    ),
-                    "approval_blocked="
-                    + (
-                        ",".join(monitor_summary["approval_blocked_task_ids"]) or "none"
-                    ),
-                    "phase_blocked="
-                    + (",".join(monitor_summary["phase_blocked_task_ids"]) or "none"),
+                    + ",".join(f"{blocker}:{count}" for blocker, count in monitor_summary["blocker_histogram"].items()),
+                    "approval_blocked=" + (",".join(monitor_summary["approval_blocked_task_ids"]) or "none"),
+                    "phase_blocked=" + (",".join(monitor_summary["phase_blocked_task_ids"]) or "none"),
                 ]
             )
             approval_prep = monitor_summary.get("approval_prep")
@@ -518,20 +405,10 @@ def build_governance_overlay_status(
                         f"prep_awaiting_approval={approval_prep['awaiting_approval_count']}",
                         f"prep_trend_status={approval_prep['trend_status']}",
                         f"prep_window_event_count={approval_prep['window_event_count']}",
-                        "prep_changed="
-                        + (
-                            ",".join(approval_prep["changed_current_task_ids"])
-                            or "none"
-                        ),
-                        "prep_exited="
-                        + (
-                            ",".join(approval_prep["no_longer_current_task_ids"])
-                            or "none"
-                        ),
-                        "prep_followup="
-                        + (",".join(approval_prep["followup_task_ids"]) or "none"),
-                        "prep_escalation="
-                        + (",".join(approval_prep["escalation_task_ids"]) or "none"),
+                        "prep_changed=" + (",".join(approval_prep["changed_current_task_ids"]) or "none"),
+                        "prep_exited=" + (",".join(approval_prep["no_longer_current_task_ids"]) or "none"),
+                        "prep_followup=" + (",".join(approval_prep["followup_task_ids"]) or "none"),
+                        "prep_escalation=" + (",".join(approval_prep["escalation_task_ids"]) or "none"),
                     ]
                 )
     for item in autopilot_candidates:

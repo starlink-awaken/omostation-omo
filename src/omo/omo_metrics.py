@@ -65,9 +65,7 @@ def write_worker_utilization_summary(root: Path) -> str:
     ]
     for worker_id, stats in sorted(by_worker.items()):
         average_handoffs = (
-            round(float(stats["handoffs_out"]) / float(stats["dispatches"]), 2)
-            if stats["dispatches"]
-            else 0.0
+            round(float(stats["handoffs_out"]) / float(stats["dispatches"]), 2) if stats["dispatches"] else 0.0
         )
         lines.extend(
             [

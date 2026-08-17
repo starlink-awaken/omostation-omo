@@ -29,9 +29,7 @@ def _run_gatekeeper(target: Path) -> subprocess.CompletedProcess[str]:
 def test_gatekeeper_blocks_direct_omo_write_text(tmp_path: Path) -> None:
     bad = tmp_path / "bad.py"
     bad.write_text(
-        "from pathlib import Path\n"
-        "path = Path('.omo/state/system.yaml')\n"
-        "path.write_text('boom', encoding='utf-8')\n",
+        "from pathlib import Path\npath = Path('.omo/state/system.yaml')\npath.write_text('boom', encoding='utf-8')\n",
         encoding="utf-8",
     )
 
@@ -44,8 +42,7 @@ def test_gatekeeper_blocks_direct_omo_write_text(tmp_path: Path) -> None:
 def test_gatekeeper_allows_read_only_omo_access(tmp_path: Path) -> None:
     ok = tmp_path / "ok.py"
     ok.write_text(
-        "from pathlib import Path\n"
-        "content = Path('.omo/state/system.yaml').read_text(encoding='utf-8')\n",
+        "from pathlib import Path\ncontent = Path('.omo/state/system.yaml').read_text(encoding='utf-8')\n",
         encoding="utf-8",
     )
 
@@ -58,8 +55,7 @@ def test_gatekeeper_allows_read_only_omo_access(tmp_path: Path) -> None:
 def test_cmd_lint_direct_omo_io_runs_gatekeeper(tmp_path: Path, capsys) -> None:
     bad = tmp_path / "bad.py"
     bad.write_text(
-        "with open('.omo/state/system.yaml', 'w', encoding='utf-8') as handle:\n"
-        "    handle.write('boom')\n",
+        "with open('.omo/state/system.yaml', 'w', encoding='utf-8') as handle:\n    handle.write('boom')\n",
         encoding="utf-8",
     )
 
@@ -70,9 +66,7 @@ def test_cmd_lint_direct_omo_io_runs_gatekeeper(tmp_path: Path, capsys) -> None:
     assert "forbidden direct mutation" in captured.out
 
 
-def test_cmd_lint_direct_omo_io_fails_when_baseline_not_empty(
-    monkeypatch, tmp_path: Path, capsys
-) -> None:
+def test_cmd_lint_direct_omo_io_fails_when_baseline_not_empty(monkeypatch, tmp_path: Path, capsys) -> None:
     fake_workspace = tmp_path / "workspace"
     baseline_dir = fake_workspace / ".omo" / "_truth" / "registry"
     baseline_dir.mkdir(parents=True, exist_ok=True)
@@ -92,9 +86,7 @@ def test_cmd_lint_direct_omo_io_fails_when_baseline_not_empty(
     assert "scripts/legacy.py" in captured.out
 
 
-def test_cmd_lint_direct_omo_io_passes_when_baseline_empty(
-    monkeypatch, tmp_path: Path, capsys
-) -> None:
+def test_cmd_lint_direct_omo_io_passes_when_baseline_empty(monkeypatch, tmp_path: Path, capsys) -> None:
     fake_workspace = tmp_path / "workspace"
     baseline_dir = fake_workspace / ".omo" / "_truth" / "registry"
     baseline_dir.mkdir(parents=True, exist_ok=True)
@@ -113,9 +105,7 @@ def test_cmd_lint_direct_omo_io_passes_when_baseline_empty(
     assert "PASS" in captured.out
 
 
-def test_cmd_lint_direct_omo_io_accepts_multi_document_baseline(
-    monkeypatch, tmp_path: Path, capsys
-) -> None:
+def test_cmd_lint_direct_omo_io_accepts_multi_document_baseline(monkeypatch, tmp_path: Path, capsys) -> None:
     fake_workspace = tmp_path / "workspace"
     baseline_dir = fake_workspace / ".omo" / "_truth" / "registry"
     baseline_dir.mkdir(parents=True, exist_ok=True)
@@ -134,9 +124,7 @@ def test_cmd_lint_direct_omo_io_accepts_multi_document_baseline(
     assert "PASS" in captured.out
 
 
-def test_cmd_lint_sensitive_governed_writes_blocks_system_yaml_write(
-    tmp_path: Path, capsys
-) -> None:
+def test_cmd_lint_sensitive_governed_writes_blocks_system_yaml_write(tmp_path: Path, capsys) -> None:
     bad = tmp_path / "bad_system.py"
     bad.write_text(
         "from pathlib import Path\n"
@@ -154,9 +142,7 @@ def test_cmd_lint_sensitive_governed_writes_blocks_system_yaml_write(
     assert "system.yaml" in captured.out
 
 
-def test_cmd_lint_sensitive_governed_writes_blocks_goal_write_yaml_atomic(
-    tmp_path: Path, capsys
-) -> None:
+def test_cmd_lint_sensitive_governed_writes_blocks_goal_write_yaml_atomic(tmp_path: Path, capsys) -> None:
     bad = tmp_path / "bad_goal.py"
     bad.write_text(
         "from pathlib import Path\n"
@@ -174,9 +160,7 @@ def test_cmd_lint_sensitive_governed_writes_blocks_goal_write_yaml_atomic(
     assert "current goal" in captured.out
 
 
-def test_cmd_lint_sensitive_governed_writes_allows_broker_usage(
-    tmp_path: Path, capsys
-) -> None:
+def test_cmd_lint_sensitive_governed_writes_allows_broker_usage(tmp_path: Path, capsys) -> None:
     ok = tmp_path / "ok_broker.py"
     ok.write_text(
         "from pathlib import Path\n"
@@ -193,12 +177,8 @@ def test_cmd_lint_sensitive_governed_writes_allows_broker_usage(
     assert "direct_writes=0" in captured.out
 
 
-def test_cmd_lint_mutation_ledger_passes_with_committed_entry(
-    tmp_path: Path, capsys
-) -> None:
-    artifact_path = (
-        tmp_path / "runtime" / "omo" / "_delivery" / "ingress" / "tasks" / "TASK-1.yaml"
-    )
+def test_cmd_lint_mutation_ledger_passes_with_committed_entry(tmp_path: Path, capsys) -> None:
+    artifact_path = tmp_path / "runtime" / "omo" / "_delivery" / "ingress" / "tasks" / "TASK-1.yaml"
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text("kind: planned_task_created\n", encoding="utf-8")
     ledger_path = tmp_path / "runtime" / "omo" / "change-log" / "mutations.jsonl"
@@ -215,9 +195,7 @@ def test_cmd_lint_mutation_ledger_passes_with_committed_entry(
     assert "omo lint mutation-ledger pass" in captured.out
 
 
-def test_cmd_lint_mutation_ledger_fails_when_artifact_missing(
-    tmp_path: Path, capsys
-) -> None:
+def test_cmd_lint_mutation_ledger_fails_when_artifact_missing(tmp_path: Path, capsys) -> None:
     ledger_path = tmp_path / "runtime" / "omo" / "change-log" / "mutations.jsonl"
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
     ledger_path.write_text(
@@ -291,9 +269,7 @@ def test_gatekeeper_baseline_suppresses_known_violation(tmp_path: Path) -> None:
     assert "baseline_suppressed=1" in result.stdout
 
 
-def test_cmd_lint_self_evolution_approval_passes_for_planned_only(
-    tmp_path: Path, capsys
-) -> None:
+def test_cmd_lint_self_evolution_approval_passes_for_planned_only(tmp_path: Path, capsys) -> None:
     planned_dir = tmp_path / ".omo" / "tasks" / "planned"
     active_dir = tmp_path / ".omo" / "tasks" / "active"
     workers_runs = tmp_path / ".omo" / "workers" / "runs"
@@ -309,10 +285,7 @@ def test_cmd_lint_self_evolution_approval_passes_for_planned_only(
         "approval_ref: .omo/workers/runs/OPC-P6-SELF-EVOLUTION-sample-promotion-approval-2026-06-19T00-00-00Z.yaml\n",
         encoding="utf-8",
     )
-    (
-        workers_runs
-        / "OPC-P6-SELF-EVOLUTION-sample-promotion-approval-2026-06-19T00-00-00Z.yaml"
-    ).write_text(
+    (workers_runs / "OPC-P6-SELF-EVOLUTION-sample-promotion-approval-2026-06-19T00-00-00Z.yaml").write_text(
         "approval_status: requested\n",
         encoding="utf-8",
     )
@@ -324,9 +297,7 @@ def test_cmd_lint_self_evolution_approval_passes_for_planned_only(
     assert "omo lint self-evolution-approval pass" in captured.out
 
 
-def test_cmd_lint_task_policy_matches_self_evolution_alias(
-    tmp_path: Path, capsys
-) -> None:
+def test_cmd_lint_task_policy_matches_self_evolution_alias(tmp_path: Path, capsys) -> None:
     planned_dir = tmp_path / ".omo" / "tasks" / "planned"
     active_dir = tmp_path / ".omo" / "tasks" / "active"
     workers_runs = tmp_path / ".omo" / "workers" / "runs"
@@ -342,10 +313,7 @@ def test_cmd_lint_task_policy_matches_self_evolution_alias(
         "approval_ref: .omo/workers/runs/OPC-P6-SELF-EVOLUTION-sample-promotion-approval-2026-06-19T00-00-00Z.yaml\n",
         encoding="utf-8",
     )
-    (
-        workers_runs
-        / "OPC-P6-SELF-EVOLUTION-sample-promotion-approval-2026-06-19T00-00-00Z.yaml"
-    ).write_text(
+    (workers_runs / "OPC-P6-SELF-EVOLUTION-sample-promotion-approval-2026-06-19T00-00-00Z.yaml").write_text(
         "approval_status: requested\n",
         encoding="utf-8",
     )
@@ -358,9 +326,7 @@ def test_cmd_lint_task_policy_matches_self_evolution_alias(
     assert "matches=1" in captured.out
 
 
-def test_cmd_lint_all_task_policies_runs_registered_rules(
-    tmp_path: Path, capsys
-) -> None:
+def test_cmd_lint_all_task_policies_runs_registered_rules(tmp_path: Path, capsys) -> None:
     planned_dir = tmp_path / ".omo" / "tasks" / "planned"
     active_dir = tmp_path / ".omo" / "tasks" / "active"
     remediation_dir = tmp_path / ".omo" / "tasks" / "remediation"
@@ -380,10 +346,7 @@ def test_cmd_lint_all_task_policies_runs_registered_rules(
         "approval_ref: .omo/workers/runs/OPC-P6-SELF-EVOLUTION-sample-promotion-approval-2026-06-19T00-00-00Z.yaml\n",
         encoding="utf-8",
     )
-    (
-        workers_runs
-        / "OPC-P6-SELF-EVOLUTION-sample-promotion-approval-2026-06-19T00-00-00Z.yaml"
-    ).write_text(
+    (workers_runs / "OPC-P6-SELF-EVOLUTION-sample-promotion-approval-2026-06-19T00-00-00Z.yaml").write_text(
         "approval_status: requested\n",
         encoding="utf-8",
     )
@@ -422,9 +385,7 @@ def test_cmd_lint_mutation_surfaces_passes_for_aligned_registry(capsys) -> None:
     assert "omo lint mutation-surfaces pass" in captured.out
 
 
-def test_cmd_lint_self_evolution_approval_blocks_missing_fields_and_active_leak(
-    tmp_path: Path, capsys
-) -> None:
+def test_cmd_lint_self_evolution_approval_blocks_missing_fields_and_active_leak(tmp_path: Path, capsys) -> None:
     planned_dir = tmp_path / ".omo" / "tasks" / "planned"
     active_dir = tmp_path / ".omo" / "tasks" / "active"
     planned_dir.mkdir(parents=True)

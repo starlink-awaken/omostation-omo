@@ -63,9 +63,7 @@ def cmd_evidence_list(omo_dir: Path, category: str | None) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="omo evidence", description="OMO evidence browser"
-    )
+    parser = argparse.ArgumentParser(prog="omo evidence", description="OMO evidence browser")
     sub = parser.add_subparsers(dest="command")
     el = sub.add_parser("list", help="List evidence files")
     el.add_argument("--category", "-c", help="Filter by category (divergence/phase15)")

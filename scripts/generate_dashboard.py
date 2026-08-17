@@ -207,7 +207,7 @@ def load_debt_items():
     print(f"Found {len(yaml_files)} YAML files in {DEBT_DIR}")
 
     for fpath in yaml_files:
-        with open(fpath, "r", encoding="utf-8") as f:
+        with open(fpath, encoding="utf-8") as f:
             data = yaml.safe_load(f)
         if not data or not isinstance(data, dict):
             print(f"  SKIP (empty/invalid): {fpath.name}")
@@ -722,7 +722,7 @@ def validate_all_yaml():
     broken = []
     for fpath in yaml_files:
         try:
-            with open(fpath, "r", encoding="utf-8") as f:
+            with open(fpath, encoding="utf-8") as f:
                 yaml.safe_load(f)
         except Exception as e:
             broken.append((fpath.name, str(e)))

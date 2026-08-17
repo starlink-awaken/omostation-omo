@@ -27,7 +27,7 @@ class GovernanceStateCache:
 
     def _load_cache(self):
         if self._cache_file.exists():
-            with open(self._cache_file, "r", encoding="utf-8") as f:
+            with open(self._cache_file, encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
                 return {
                     k: CacheEntry(
@@ -67,9 +67,7 @@ class GovernanceStateCache:
         return entry.value
 
     def cache_state(self, key, value, ttl_seconds=3600):
-        self._cache[key] = CacheEntry(
-            key, value, datetime.now(UTC).isoformat(), ttl_seconds
-        )
+        self._cache[key] = CacheEntry(key, value, datetime.now(UTC).isoformat(), ttl_seconds)
         self._save_cache()
 
     def invalidate_all(self):
@@ -81,9 +79,7 @@ class GovernanceStateCache:
         for entry in self._cache.values():
             try:
                 cached_time = datetime.fromisoformat(entry.timestamp)
-                if (
-                    datetime.now(UTC) - cached_time
-                ).total_seconds() <= entry.ttl_seconds:
+                if (datetime.now(UTC) - cached_time).total_seconds() <= entry.ttl_seconds:
                     valid += 1
             except Exception:
                 pass

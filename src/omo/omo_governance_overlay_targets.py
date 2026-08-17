@@ -13,11 +13,7 @@ def _load_yaml_required(path: Path) -> dict:
 
 
 def _task_has_task_specific_promotion_approval(approval_ref: str | None) -> bool:
-    return bool(
-        approval_ref
-        and approval_ref.endswith(".yaml")
-        and "-promotion-approval-" in approval_ref
-    )
+    return bool(approval_ref and approval_ref.endswith(".yaml") and "-promotion-approval-" in approval_ref)
 
 
 def evaluate_governance_overlay_planned_target(
@@ -106,9 +102,7 @@ def evaluate_governance_overlay_planned_target(
             "blockers": blockers,
         }
 
-    if blockers == ["approval_invalid"] and _task_has_task_specific_promotion_approval(
-        approval_ref
-    ):
+    if blockers == ["approval_invalid"] and _task_has_task_specific_promotion_approval(approval_ref):
         return {
             "target_ref": target_ref,
             "task_id": task_id,

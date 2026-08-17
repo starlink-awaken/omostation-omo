@@ -178,9 +178,7 @@ def apply_proposals_as_tasks(
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(
-        description="Wave2 Phase C: C2G → OMO governance proposals (ADR-0188)"
-    )
+    ap = argparse.ArgumentParser(description="Wave2 Phase C: C2G → OMO governance proposals (ADR-0188)")
     ap.add_argument(
         "--data-dir",
         type=Path,

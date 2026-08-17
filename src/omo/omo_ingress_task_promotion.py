@@ -101,11 +101,7 @@ def promote_task_to_active(
             "source_ref": source_ref,
             "promoted_at": timestamp,
         }
-        artifact_path = (
-            _delivery_root(omo_dir)
-            / "tasks"
-            / f"{task_id}-promote-{_timestamp_slug(timestamp)}.yaml"
-        )
+        artifact_path = _delivery_root(omo_dir) / "tasks" / f"{task_id}-promote-{_timestamp_slug(timestamp)}.yaml"
         write_yaml_atomic(artifact_path, artifact)
 
         parent_step_id = f"ingress:task-promote:{task_id}:{timestamp}"
@@ -120,14 +116,14 @@ def promote_task_to_active(
             details=details,
             audit_file=_audit_log_path(omo_dir),
         )
-        _record_trail(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_trail(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=f"broker:{actor}",
             action="promote_task_to_active",
             target=f".omo/tasks/active/{task_id}.yaml",
             parent_step_id=parent_step_id,
         )
-        _record_mutation(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_mutation(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=actor,
             action="promote_task_to_active",
@@ -150,9 +146,7 @@ def repair_task_promotion_approval(
 ) -> dict[str, Any]:
 
     timestamp = now or _utc_now()
-    located = _find_task_path(
-        omo_dir, task_id, groups=("planned", "active", "done", "remediation")
-    )
+    located = _find_task_path(omo_dir, task_id, groups=("planned", "active", "done", "remediation"))
     if located is None:
         raise ValueError(f"task not found: {task_id}")
 
@@ -177,11 +171,7 @@ def repair_task_promotion_approval(
         approval_record = build_promotion_approval_request(
             task_id=task_id,
             task_ref=task_ref,
-            requested_operation_level=str(
-                payload.get("allowed_operation_level")
-                or payload.get("risk_level")
-                or "L0"
-            ),
+            requested_operation_level=str(payload.get("allowed_operation_level") or payload.get("risk_level") or "L0"),
             requested_at=str(payload.get("created_at") or timestamp),
             approval_ref=approval_ref,
         )
@@ -189,9 +179,7 @@ def repair_task_promotion_approval(
             "review",
             "done",
         }:
-            approved_at = str(
-                payload.get("updated_at") or payload.get("started_at") or timestamp
-            )
+            approved_at = str(payload.get("updated_at") or payload.get("started_at") or timestamp)
             approval_record["approval_status"] = "granted"
             approval_record["approved_at"] = approved_at
             approval_record["approver"] = "omo-repair"
@@ -213,9 +201,7 @@ def repair_task_promotion_approval(
             ),
         }
         artifact_path = (
-            _delivery_root(omo_dir)
-            / "tasks"
-            / f"{task_id}-approval-repair-{_timestamp_slug(timestamp)}.yaml"
+            _delivery_root(omo_dir) / "tasks" / f"{task_id}-approval-repair-{_timestamp_slug(timestamp)}.yaml"
         )
         write_yaml_atomic(artifact_path, artifact)
 
@@ -231,14 +217,14 @@ def repair_task_promotion_approval(
             details=details,
             audit_file=_audit_log_path(omo_dir),
         )
-        _record_trail(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_trail(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=f"broker:{actor}",
             action="repair_task_promotion_approval",
             target=task_ref,
             parent_step_id=parent_step_id,
         )
-        _record_mutation(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_mutation(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=actor,
             action="repair_task_promotion_approval",
@@ -283,16 +269,12 @@ def request_task_promotion_approval(
             and existing_ref.endswith(".yaml")
             and "-promotion-approval-" in existing_ref
         ):
-            raise ValueError(
-                "task already points to a task-specific promotion approval"
-            )
+            raise ValueError("task already points to a task-specific promotion approval")
 
         payload["approval_ref"] = approval_ref
         errors = validate_task_data(payload, group="planned")
         if errors:
-            raise ValueError(
-                "invalid planned task after approval request: " + "; ".join(errors)
-            )
+            raise ValueError("invalid planned task after approval request: " + "; ".join(errors))
 
         write_yaml_atomic(approval_path, approval_record)
         write_yaml_atomic(task_path, payload)
@@ -308,9 +290,7 @@ def request_task_promotion_approval(
             "requested_at": timestamp,
         }
         artifact_path = (
-            _delivery_root(omo_dir)
-            / "tasks"
-            / f"{task_id}-promotion-approval-{_timestamp_slug(timestamp)}.yaml"
+            _delivery_root(omo_dir) / "tasks" / f"{task_id}-promotion-approval-{_timestamp_slug(timestamp)}.yaml"
         )
         write_yaml_atomic(artifact_path, artifact)
 
@@ -327,14 +307,14 @@ def request_task_promotion_approval(
             details=details,
             audit_file=_audit_log_path(omo_dir),
         )
-        _record_trail(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_trail(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=f"broker:{actor}",
             action="request_task_promotion_approval",
             target=f".omo/tasks/planned/{task_id}.yaml",
             parent_step_id=parent_step_id,
         )
-        _record_mutation(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_mutation(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=actor,
             action="request_task_promotion_approval",
@@ -395,11 +375,7 @@ def revert_task_to_planned(
             "source_ref": source_ref,
             "reverted_at": timestamp,
         }
-        artifact_path = (
-            _delivery_root(omo_dir)
-            / "tasks"
-            / f"{task_id}-revert-{_timestamp_slug(timestamp)}.yaml"
-        )
+        artifact_path = _delivery_root(omo_dir) / "tasks" / f"{task_id}-revert-{_timestamp_slug(timestamp)}.yaml"
         write_yaml_atomic(artifact_path, artifact)
 
         parent_step_id = f"ingress:task-revert:{task_id}:{timestamp}"
@@ -414,14 +390,14 @@ def revert_task_to_planned(
             details=details,
             audit_file=_audit_log_path(omo_dir),
         )
-        _record_trail(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_trail(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=f"broker:{actor}",
             action="revert_task_to_planned",
             target=f".omo/tasks/planned/{task_id}.yaml",
             parent_step_id=parent_step_id,
         )
-        _record_mutation(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_mutation(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=actor,
             action="revert_task_to_planned",

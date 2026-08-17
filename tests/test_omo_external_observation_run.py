@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+
 from omo.omo_external_observation_run import (
     ExternalObservationRunError,
     read_external_observation_runs,

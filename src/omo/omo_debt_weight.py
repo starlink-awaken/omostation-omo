@@ -110,9 +110,7 @@ def load_debt_items_from_ledger(omo_dir: Path | None = None) -> dict[str, dict]:
         return {}
 
 
-def compute_debt_weight(
-    resolved_items: set[str], debt_items: dict[str, dict] | None = None
-) -> float:
+def compute_debt_weight(resolved_items: set[str], debt_items: dict[str, dict] | None = None) -> float:
     """计算债务权重因子.
 
     Uses get_computed_weight() which applies tier multipliers (x3_tier).
@@ -125,16 +123,12 @@ def compute_debt_weight(
     total_weight = sum(get_computed_weight(v) for v in items.values())
     if total_weight == 0:
         return 1.0
-    resolved_weight = sum(
-        get_computed_weight(v) for k, v in items.items() if k in resolved_items
-    )
+    resolved_weight = sum(get_computed_weight(v) for k, v in items.items() if k in resolved_items)
     # Floor at 0.3 — even with zero debt resolution, system doesn't have zero health
     return max(round(resolved_weight / total_weight, 2), 0.30)
 
 
-def debt_summary(
-    resolved_items: set[str], debt_items: dict[str, dict] | None = None
-) -> dict:
+def debt_summary(resolved_items: set[str], debt_items: dict[str, dict] | None = None) -> dict:
     """生成债务状态摘要，用于写入 system.yaml."""
     items = debt_items or load_debt_items_from_ledger()
     return {

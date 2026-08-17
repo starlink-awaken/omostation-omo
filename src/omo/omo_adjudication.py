@@ -107,9 +107,7 @@ class AdjudicationStore:
         of claiming that every derived state update succeeded.
         """
         if verdict not in VALID_VERDICTS:
-            raise ValueError(
-                f"verdict must be one of {sorted(VALID_VERDICTS)}, got {verdict!r}"
-            )
+            raise ValueError(f"verdict must be one of {sorted(VALID_VERDICTS)}, got {verdict!r}")
         adj_id = self._next_id()
         record = AdjudicationRecord(
             id=adj_id,
@@ -208,9 +206,7 @@ class AdjudicationStore:
             if summary_path.exists():
                 loaded = yaml.safe_load(summary_path.read_text(encoding="utf-8")) or {}
                 if not isinstance(loaded, dict):
-                    raise ValueError(
-                        f"calibration summary must be a mapping: {summary_path}"
-                    )
+                    raise ValueError(f"calibration summary must be a mapping: {summary_path}")
                 existing = loaded
             existing[capability] = {
                 "calibration": round(calibration, 4),

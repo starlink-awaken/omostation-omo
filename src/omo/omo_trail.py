@@ -155,10 +155,7 @@ def cmd_trail_show(args: argparse.Namespace) -> int:
         return 0
 
     # 表头
-    print(
-        f"{'TS':26s}  {'ACTOR':14s}  {'ACTION':10s}  "
-        f"{'TARGET':30s}  {'STATUS':6s}  {'MS':>5s}  PARENT"
-    )
+    print(f"{'TS':26s}  {'ACTOR':14s}  {'ACTION':10s}  {'TARGET':30s}  {'STATUS':6s}  {'MS':>5s}  PARENT")
     print("-" * 110)
     for s in steps:
         ts = str(s.get("ts", "?"))[:26]
@@ -170,10 +167,7 @@ def cmd_trail_show(args: argparse.Namespace) -> int:
         ms_raw = s.get("duration_ms", 0)
         ms = int(ms_raw) if isinstance(ms_raw, (int, float)) else 0
         parent = str(s.get("parent_step_id", "") or "-")
-        print(
-            f"{ts:26s}  {actor:14s}  {action:10s}  "
-            f"{target:30s}  {status:6s}  {ms:>5d}  {parent}"
-        )
+        print(f"{ts:26s}  {actor:14s}  {action:10s}  {target:30s}  {status:6s}  {ms:>5d}  {parent}")
     print(f"\nTotal: {len(steps)} steps")
     return 0
 
@@ -190,9 +184,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # record 子命令
     rec = sub.add_parser("record", help="追加一条 trail step (走 Pydantic 校验)")
-    rec.add_argument(
-        "--actor", required=True, help="actor (e.g. user, agent:foo, cli:omo)"
-    )
+    rec.add_argument("--actor", required=True, help="actor (e.g. user, agent:foo, cli:omo)")
     rec.add_argument("--action", required=True, help="action (e.g. edit, read, exec)")
     rec.add_argument("--target", required=True, help="target (file path / command)")
     rec.add_argument(
@@ -221,9 +213,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # show 子命令
     show = sub.add_parser("show", help="显示最近 trail (倒序)")
-    show.add_argument(
-        "--limit", "-n", type=int, default=20, help="最多显示 N 条 (默认 20)"
-    )
+    show.add_argument("--limit", "-n", type=int, default=20, help="最多显示 N 条 (默认 20)")
     show.add_argument("--actor", default=None, help="按 actor 过滤")
     show.add_argument("--action", default=None, help="按 action 过滤")
     show.add_argument(
@@ -234,9 +224,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # seed 子命令 (Round 19 P0: 让 trail 业务真落地, 写 5 条样例 step)
-    seed = sub.add_parser(
-        "seed", help="写 5 条样例 step (Round 19 P0 — 让 trail.jsonl 出现)"
-    )
+    seed = sub.add_parser("seed", help="写 5 条样例 step (Round 19 P0 — 让 trail.jsonl 出现)")
     seed.add_argument(
         "--log",
         type=str,

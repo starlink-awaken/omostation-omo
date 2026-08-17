@@ -23,9 +23,7 @@ def _render_section(title: str, item_ids: list[str]) -> str:
     return "\n".join(lines)
 
 
-def _render_queue_section(
-    title: str, entries: list[dict[str, Any]], reason_key: str
-) -> str:
+def _render_queue_section(title: str, entries: list[dict[str, Any]], reason_key: str) -> str:
     lines = [f"## {title}", ""]
     if entries:
         for entry in entries:
@@ -70,19 +68,13 @@ def _render_owner_routing_section(owner_packet: dict[str, Any]) -> str:
         ("Continue Mitigation", "continue_mitigation"),
         ("Watch Only", "watch_only"),
     ]:
-        lane_entries = [
-            entry
-            for entry in owner_packet["entries"]
-            if entry["primary_lane"] == lane_name
-        ]
+        lane_entries = [entry for entry in owner_packet["entries"] if entry["primary_lane"] == lane_name]
         if not lane_entries:
             continue
         lines.extend([f"### {lane_title}", ""])
         for entry in lane_entries:
             flags = ", ".join(entry["priority_flags"]) or "none"
-            lines.append(
-                f"- `{entry['id']}` — {entry['reason']} — flags: {flags} — `{entry['shell_command']}`"
-            )
+            lines.append(f"- `{entry['id']}` — {entry['reason']} — flags: {flags} — `{entry['shell_command']}`")
         lines.append("")
     return "\n".join(lines)
 

@@ -33,9 +33,7 @@ from pydantic import BaseModel, model_validator
 def _validate_z_suffix_iso8601(v: str) -> str:
     """校验 ISO8601 UTC 时间戳以 'Z' 结尾 (与 omo_audit._utc_now() 协议)."""
     if not v.endswith("Z"):
-        raise ValueError(
-            f"timestamp must end with 'Z' (omo_audit convention), got: {v!r}"
-        )
+        raise ValueError(f"timestamp must end with 'Z' (omo_audit convention), got: {v!r}")
     try:
         datetime.fromisoformat(v)
     except ValueError as exc:

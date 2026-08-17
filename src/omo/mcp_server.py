@@ -18,11 +18,7 @@ def _default_workspace_root() -> Path:
 
 def _resolve_workspace_root() -> Path:
     configured = os.environ.get("WORKSPACE_ROOT")
-    return (
-        Path(configured).expanduser().resolve()
-        if configured
-        else _default_workspace_root()
-    )
+    return Path(configured).expanduser().resolve() if configured else _default_workspace_root()
 
 
 WORKSPACE_ROOT = _resolve_workspace_root()
@@ -104,9 +100,7 @@ async def validate_task(req: ValidateTaskRequest) -> str:
         from .omo_task_schema import validate_task_data
 
         errors = validate_task_data(req.task_data, group=req.group)
-        return json.dumps(
-            {"valid": len(errors) == 0, "errors": errors}, ensure_ascii=False
-        )
+        return json.dumps({"valid": len(errors) == 0, "errors": errors}, ensure_ascii=False)
     except Exception as e:  # defensive fallback
         return json.dumps({"valid": False, "errors": [str(e)]}, ensure_ascii=False)
 
@@ -232,17 +226,9 @@ async def omo_debt_list(req: DebtListRequest) -> str:
 
         items = []
         for item in ledger.items:
-            if (
-                req.status
-                and req.status.lower() == "open"
-                and item.lifecycle_state == "closed"
-            ):
+            if req.status and req.status.lower() == "open" and item.lifecycle_state == "closed":
                 continue
-            if (
-                req.status
-                and req.status.lower() == "closed"
-                and item.lifecycle_state != "closed"
-            ):
+            if req.status and req.status.lower() == "closed" and item.lifecycle_state != "closed":
                 continue
             items.append(
                 {
@@ -262,9 +248,7 @@ async def omo_debt_list(req: DebtListRequest) -> str:
                 }
             )
 
-        return json.dumps(
-            {"count": len(items), "items": items}, indent=2, ensure_ascii=False
-        )
+        return json.dumps({"count": len(items), "items": items}, indent=2, ensure_ascii=False)
     except Exception as e:  # defensive fallback
         return json.dumps({"error": str(e)}, ensure_ascii=False)
 
@@ -298,9 +282,7 @@ async def omo_metacognition(req: MetacognitionRequest) -> str:
         if req.lens:
             cmd.extend(["--lens", req.lens])
 
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, check=True, cwd=str(OMO_ROOT)
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, cwd=str(OMO_ROOT))
         return result.stdout
     except subprocess.CalledProcessError as e:
         return f"Error running metacognition: {e.stderr}"
@@ -423,9 +405,7 @@ async def cards_create(req: CardsCreateRequest) -> str:
             cmd.extend(["--severity", req.severity])
         if req.tags:
             cmd.extend(["--tags"] + req.tags.split(","))
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, check=True, cwd=str(OMO_ROOT)
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, cwd=str(OMO_ROOT))
         return result.stdout
     except subprocess.CalledProcessError as e:
         return f"Error: {e.stderr}"
@@ -452,9 +432,7 @@ async def cards_update(req: CardsUpdateRequest) -> str:
             cmd.extend(["--priority", req.priority])
         if req.note:
             cmd.extend(["--note", req.note])
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, check=True, cwd=str(OMO_ROOT)
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, cwd=str(OMO_ROOT))
         return result.stdout
     except subprocess.CalledProcessError as e:
         return f"Error: {e.stderr}"
@@ -471,9 +449,7 @@ async def acquire_lock(req: AcquireLockRequest) -> str:
     from omo._shared.advisory_lock import AdvisoryLock
 
     lock = AdvisoryLock(WORKSPACE_ROOT / req.omo_dir / "state" / "locks")
-    return json.dumps(
-        lock.acquire(req.resource, req.holder, req.ttl), ensure_ascii=False
-    )
+    return json.dumps(lock.acquire(req.resource, req.holder, req.ttl), ensure_ascii=False)
 
 
 @mcp.tool()
@@ -517,13 +493,9 @@ async def check_gac_rule(req: "CheckGacRuleRequest") -> str:
     import fnmatch
     import re
 
-    reg = (
-        WORKSPACE_ROOT / req.omo_dir / "_truth" / "registry" / "governance-checks.yaml"
-    )
+    reg = WORKSPACE_ROOT / req.omo_dir / "_truth" / "registry" / "governance-checks.yaml"
     if not reg.exists():
-        return json.dumps(
-            {"status": "ok", "warnings": [], "reason": "registry not found"}
-        )
+        return json.dumps({"status": "ok", "warnings": [], "reason": "registry not found"})
 
     import yaml
 
@@ -561,10 +533,7 @@ async def check_gac_rule(req: "CheckGacRuleRequest") -> str:
                 continue
             field = target.split("::", 1)[1]
             forbid = rule.get("forbid_copy_in", [])
-            matched = any(
-                fnmatch.fnmatch(rel, p) or fnmatch.fnmatch(rel, f"**/{p}")
-                for p in forbid
-            )
+            matched = any(fnmatch.fnmatch(rel, p) or fnmatch.fnmatch(rel, f"**/{p}") for p in forbid)
             if not matched:
                 continue
             pattern = re.compile(rf"(?<![\[\.]){re.escape(field)}\s*:\s*\d")
@@ -584,9 +553,7 @@ async def check_gac_rule(req: "CheckGacRuleRequest") -> str:
                     ]
                 ):
                     continue
-                warnings.append(
-                    f"{rid}: {rel} 硬编码 {field} 值 (违反 SSOT, 应用指针引用)"
-                )
+                warnings.append(f"{rid}: {rel} 硬编码 {field} 值 (违反 SSOT, 应用指针引用)")
 
         elif ct == "port_hardcode" and (is_py or is_yaml):
             pattern = re.compile(r"(?<!\w)[:=](\d{4,5})(?!\d)")
@@ -594,14 +561,9 @@ async def check_gac_rule(req: "CheckGacRuleRequest") -> str:
                 port = int(m.group(1))
                 if 1024 < port < 65536:
                     ctx = content[max(0, m.start() - 30) : m.end() + 30]
-                    if any(
-                        kw in ctx.lower()
-                        for kw in ["env", "os.environ", "getenv", "default", "registry"]
-                    ):
+                    if any(kw in ctx.lower() for kw in ["env", "os.environ", "getenv", "default", "registry"]):
                         continue
-                    warnings.append(
-                        f"{rid}: {rel} 疑似端口硬编码 :{port} (应走 port-registry + env)"
-                    )
+                    warnings.append(f"{rid}: {rel} 疑似端口硬编码 :{port} (应走 port-registry + env)")
 
         elif ct == "import_nucleus" and is_py:
             pattern = re.compile(r"^from\s+nucleus\b|^import\s+nucleus\b", re.MULTILINE)
@@ -609,34 +571,24 @@ async def check_gac_rule(req: "CheckGacRuleRequest") -> str:
                 ctx = content[max(0, m.start() - 20) : m.end() + 20]
                 if "type: ignore" in ctx or "TYPE_CHECKING" in ctx:
                     continue
-                warnings.append(
-                    f"{rid}: {rel} 顶层 import nucleus (已废弃, 改为 lazy import)"
-                )
+                warnings.append(f"{rid}: {rel} 顶层 import nucleus (已废弃, 改为 lazy import)")
 
         elif ct == "direct_omo_io" and is_py:
-            pattern = re.compile(
-                r'(open|write_text|mkdir|Path)\s*\(\s*["\'].*\.omo/', re.IGNORECASE
-            )
+            pattern = re.compile(r'(open|write_text|mkdir|Path)\s*\(\s*["\'].*\.omo/', re.IGNORECASE)
             for m in pattern.finditer(content):
-                warnings.append(
-                    f"{rid}: {rel} 疑似 direct .omo I/O (应走 omo CLI / broker)"
-                )
+                warnings.append(f"{rid}: {rel} 疑似 direct .omo I/O (应走 omo CLI / broker)")
 
         elif ct == "broad_except" and is_py:
             pattern = re.compile(r"except\s*(\s*:|\s+Exception\s*:)", re.MULTILINE)
             count = len(pattern.findall(content))
             if count > 3:
-                warnings.append(
-                    f"{rid}: {rel} 有 {count} 处 broad except (建议细化异常类型)"
-                )
+                warnings.append(f"{rid}: {rel} 有 {count} 处 broad except (建议细化异常类型)")
 
     return json.dumps(
         {
             "status": "ok" if not warnings else "warn",
             "warnings": warnings,
-            "rules_checked": len(
-                [r for r in active_rules if r.get("check_type", "") in HOOKABLE]
-            ),
+            "rules_checked": len([r for r in active_rules if r.get("check_type", "") in HOOKABLE]),
         },
         ensure_ascii=False,
     )
@@ -701,7 +653,7 @@ def read_omo_standard(rule: str) -> str:
         if not target_path.exists() or not target_path.is_file():
             return f"Error: Standard not found at {rule}"
 
-        with open(target_path, "r", encoding="utf-8") as f:
+        with open(target_path, encoding="utf-8") as f:
             return f.read()
     except Exception as e:  # defensive fallback
         return f"Error reading standard: {e!s}"

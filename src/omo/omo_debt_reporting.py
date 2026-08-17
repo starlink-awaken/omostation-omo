@@ -17,8 +17,7 @@ def _owner_rollup(owner_packet: dict[str, Any]) -> dict[str, Any]:
     approved_gate_item_count = sum(
         1
         for entry in entries
-        if entry.get("gate_level") == "gate"
-        and entry.get("campaign_state") != "pending_approval"
+        if entry.get("gate_level") == "gate" and entry.get("campaign_state") != "pending_approval"
     )
     executed_item_count = int(state_counts.get("executed", 0))
     item_count = int(owner_packet["item_count"])
@@ -28,13 +27,9 @@ def _owner_rollup(owner_packet: dict[str, Any]) -> dict[str, Any]:
         "state_counts": state_counts,
         "gate_item_count": gate_item_count,
         "approved_gate_item_count": approved_gate_item_count,
-        "approval_coverage_rate": _rate(
-            approved_gate_item_count, gate_item_count, empty_value=1.0
-        ),
+        "approval_coverage_rate": _rate(approved_gate_item_count, gate_item_count, empty_value=1.0),
         "executed_item_count": executed_item_count,
-        "execution_completion_rate": _rate(
-            executed_item_count, item_count, empty_value=0.0
-        ),
+        "execution_completion_rate": _rate(executed_item_count, item_count, empty_value=0.0),
     }
 
 
@@ -42,9 +37,7 @@ def build_reporting_packet(campaign_packet: dict[str, Any]) -> dict[str, Any]:
     owners = [_owner_rollup(owner_packet) for owner_packet in campaign_packet["owners"]]
     summary: dict[str, Any] = campaign_packet["summary"]
     gate_item_count = sum(owner["gate_item_count"] for owner in owners)
-    approved_gate_item_count = sum(
-        owner["approved_gate_item_count"] for owner in owners
-    )
+    approved_gate_item_count = sum(owner["approved_gate_item_count"] for owner in owners)
     executed_item_count = sum(owner["executed_item_count"] for owner in owners)
     total_items = int(summary["total_items"])
     return {
@@ -57,13 +50,9 @@ def build_reporting_packet(campaign_packet: dict[str, Any]) -> dict[str, Any]:
             "state_counts": dict(summary["state_counts"]),
             "gate_item_count": gate_item_count,
             "approved_gate_item_count": approved_gate_item_count,
-            "approval_coverage_rate": _rate(
-                approved_gate_item_count, gate_item_count, empty_value=1.0
-            ),
+            "approval_coverage_rate": _rate(approved_gate_item_count, gate_item_count, empty_value=1.0),
             "executed_item_count": executed_item_count,
-            "execution_completion_rate": _rate(
-                executed_item_count, total_items, empty_value=0.0
-            ),
+            "execution_completion_rate": _rate(executed_item_count, total_items, empty_value=0.0),
         },
         "owners": owners,
     }
@@ -103,9 +92,7 @@ def _delta_metric(latest: float, prior: float | None) -> dict[str, int | float |
     return {"latest": latest, "prior": prior, "delta": latest - prior}
 
 
-def _summary_diff(
-    latest_summary: dict[str, Any], prior_summary: dict[str, Any] | None
-) -> dict[str, Any]:
+def _summary_diff(latest_summary: dict[str, Any], prior_summary: dict[str, Any] | None) -> dict[str, Any]:
     prior_state_counts = prior_summary["state_counts"] if prior_summary else None
     return {
         "total_items": _delta_metric(
@@ -115,15 +102,11 @@ def _summary_diff(
         "state_counts": {
             "pending_approval": _delta_metric(
                 int(latest_summary["state_counts"]["pending_approval"]),
-                int(prior_state_counts["pending_approval"])
-                if prior_state_counts
-                else None,
+                int(prior_state_counts["pending_approval"]) if prior_state_counts else None,
             ),
             "ready_to_execute": _delta_metric(
                 int(latest_summary["state_counts"]["ready_to_execute"]),
-                int(prior_state_counts["ready_to_execute"])
-                if prior_state_counts
-                else None,
+                int(prior_state_counts["ready_to_execute"]) if prior_state_counts else None,
             ),
             "executed": _delta_metric(
                 int(latest_summary["state_counts"]["executed"]),
@@ -148,9 +131,7 @@ def _summary_diff(
         ),
         "execution_completion_rate": _delta_metric(
             float(latest_summary["execution_completion_rate"]),
-            float(prior_summary["execution_completion_rate"])
-            if prior_summary
-            else None,
+            float(prior_summary["execution_completion_rate"]) if prior_summary else None,
         ),
     }
 
@@ -164,9 +145,7 @@ def _owner_diff_entry(
     prior_state_counts = prior_owner["state_counts"]
     return {
         "owner": owner,
-        "item_count": _delta_metric(
-            int(latest_owner["item_count"]), int(prior_owner["item_count"])
-        ),
+        "item_count": _delta_metric(int(latest_owner["item_count"]), int(prior_owner["item_count"])),
         "state_counts": {
             "pending_approval": _delta_metric(
                 int(latest_state_counts["pending_approval"]),
@@ -181,9 +160,7 @@ def _owner_diff_entry(
                 int(prior_state_counts["executed"]),
             ),
         },
-        "gate_item_count": _delta_metric(
-            int(latest_owner["gate_item_count"]), int(prior_owner["gate_item_count"])
-        ),
+        "gate_item_count": _delta_metric(int(latest_owner["gate_item_count"]), int(prior_owner["gate_item_count"])),
         "approved_gate_item_count": _delta_metric(
             int(latest_owner["approved_gate_item_count"]),
             int(prior_owner["approved_gate_item_count"]),
@@ -203,9 +180,7 @@ def _owner_diff_entry(
     }
 
 
-def _owners_diff(
-    latest_owners: list[dict[str, Any]], prior_owners: list[dict[str, Any]]
-) -> dict[str, Any]:
+def _owners_diff(latest_owners: list[dict[str, Any]], prior_owners: list[dict[str, Any]]) -> dict[str, Any]:
     latest_by_owner = {str(owner["owner"]): owner for owner in latest_owners}
     prior_by_owner = {str(owner["owner"]): owner for owner in prior_owners}
     shared_names = sorted(latest_by_owner.keys() & prior_by_owner.keys())
@@ -213,9 +188,7 @@ def _owners_diff(
     removed_names = sorted(prior_by_owner.keys() - latest_by_owner.keys())
     return {
         "compared": [
-            _owner_diff_entry(
-                owner_name, latest_by_owner[owner_name], prior_by_owner[owner_name]
-            )
+            _owner_diff_entry(owner_name, latest_by_owner[owner_name], prior_by_owner[owner_name])
             for owner_name in shared_names
         ],
         "added": [{"owner": owner_name} for owner_name in added_names],
@@ -230,23 +203,15 @@ def build_reporting_diff_packet(
     prior_packet: dict[str, Any] | None,
 ) -> dict[str, Any]:
     latest_summary: dict[str, Any] = latest_packet["summary"]
-    prior_summary: dict[str, Any] | None = (
-        prior_packet["summary"] if prior_packet else None
-    )
-    owners = (
-        None
-        if prior_packet is None
-        else _owners_diff(latest_packet["owners"], prior_packet["owners"])
-    )
+    prior_summary: dict[str, Any] | None = prior_packet["summary"] if prior_packet else None
+    owners = None if prior_packet is None else _owners_diff(latest_packet["owners"], prior_packet["owners"])
     return {
         "generated_at": generated_at,
         "diff_status": "diff_available" if prior_packet else "no_prior_run",
         "latest_run_stamp": latest_packet["run_stamp"],
         "prior_run_stamp": prior_packet["run_stamp"] if prior_packet else None,
         "latest_dispatch_run_ref": latest_packet["dispatch_run_ref"],
-        "prior_dispatch_run_ref": prior_packet["dispatch_run_ref"]
-        if prior_packet
-        else None,
+        "prior_dispatch_run_ref": prior_packet["dispatch_run_ref"] if prior_packet else None,
         "summary_diff": _summary_diff(latest_summary, prior_summary),
         "owners": owners,
     }
@@ -274,9 +239,7 @@ def render_reporting_diff_markdown(packet: dict[str, Any]) -> str:
                 )
             lines.append("")
             continue
-        lines.append(
-            f"{field}: latest={payload['latest']}, prior={payload['prior']}, delta={payload['delta']}"
-        )
+        lines.append(f"{field}: latest={payload['latest']}, prior={payload['prior']}, delta={payload['delta']}")
     if packet["owners"] is not None:
         lines.extend(["", "## Owner Diff", "", "### Shared owners", ""])
         compared = packet["owners"]["compared"]
@@ -302,15 +265,11 @@ def render_reporting_diff_markdown(packet: dict[str, Any]) -> str:
             lines.extend(["- none", ""])
         if packet["owners"]["added"]:
             lines.extend(["### Added owners", ""])
-            lines.extend(
-                [f"- `{entry['owner']}`" for entry in packet["owners"]["added"]]
-            )
+            lines.extend([f"- `{entry['owner']}`" for entry in packet["owners"]["added"]])
             lines.append("")
         if packet["owners"]["removed"]:
             lines.extend(["### Removed owners", ""])
-            lines.extend(
-                [f"- `{entry['owner']}`" for entry in packet["owners"]["removed"]]
-            )
+            lines.extend([f"- `{entry['owner']}`" for entry in packet["owners"]["removed"]])
             lines.append("")
     return "\n".join(lines)
 
@@ -341,9 +300,7 @@ def _history_entry(
     if reporting_packet is None:
         return entry
     if reporting_packet.get("run_stamp") != run_stamp:
-        raise ValueError(
-            f"reporting run stamp mismatch: {reporting_packet.get('run_stamp')} != {run_stamp}"
-        )
+        raise ValueError(f"reporting run stamp mismatch: {reporting_packet.get('run_stamp')} != {run_stamp}")
     summary: dict[str, Any] = reporting_packet["summary"]
     entry.update(
         {
@@ -372,9 +329,7 @@ def build_reporting_history_packet(
     if len(run_stamps) != len(set(run_stamps)):
         raise ValueError("duplicate dispatch run stamp in reporting history")
     runs = [
-        _history_entry(
-            dispatch_run, reporting_packets_by_run.get(dispatch_run["run_stamp"])
-        )
+        _history_entry(dispatch_run, reporting_packets_by_run.get(dispatch_run["run_stamp"]))
         for dispatch_run in ordered_runs
     ]
     return {
@@ -420,9 +375,7 @@ def _trend_run(entry: dict[str, Any]) -> dict[str, Any]:
             "execution_completion_rate",
         )
     ):
-        raise ValueError(
-            f"missing reporting trend metadata for run: {entry['run_stamp']}"
-        )
+        raise ValueError(f"missing reporting trend metadata for run: {entry['run_stamp']}")
     return {
         "run_stamp": entry["run_stamp"],
         "dispatch_run_ref": entry["dispatch_run_ref"],
@@ -439,18 +392,13 @@ def _interval(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, An
         "from_run_stamp": previous["run_stamp"],
         "to_run_stamp": current["run_stamp"],
         "total_items_delta": current["total_items"] - previous["total_items"],
-        "executed_item_count_delta": current["executed_item_count"]
-        - previous["executed_item_count"],
-        "approval_coverage_rate_delta": current["approval_coverage_rate"]
-        - previous["approval_coverage_rate"],
-        "execution_completion_rate_delta": current["execution_completion_rate"]
-        - previous["execution_completion_rate"],
+        "executed_item_count_delta": current["executed_item_count"] - previous["executed_item_count"],
+        "approval_coverage_rate_delta": current["approval_coverage_rate"] - previous["approval_coverage_rate"],
+        "execution_completion_rate_delta": current["execution_completion_rate"] - previous["execution_completion_rate"],
     }
 
 
-def _owner_trend_run(
-    owner: str, run_stamp: str, entry: dict[str, Any]
-) -> dict[str, Any]:
+def _owner_trend_run(owner: str, run_stamp: str, entry: dict[str, Any]) -> dict[str, Any]:
     if any(
         entry[field] is None
         for field in (
@@ -460,9 +408,7 @@ def _owner_trend_run(
             "execution_completion_rate",
         )
     ):
-        raise ValueError(
-            f"missing owner trend metadata for owner {owner} in run: {run_stamp}"
-        )
+        raise ValueError(f"missing owner trend metadata for owner {owner} in run: {run_stamp}")
     return {
         "run_stamp": run_stamp,
         "item_count": entry["item_count"],
@@ -472,19 +418,14 @@ def _owner_trend_run(
     }
 
 
-def _owner_interval(
-    previous: dict[str, Any], current: dict[str, Any]
-) -> dict[str, Any]:
+def _owner_interval(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
     return {
         "from_run_stamp": previous["run_stamp"],
         "to_run_stamp": current["run_stamp"],
         "item_count_delta": current["item_count"] - previous["item_count"],
-        "executed_item_count_delta": current["executed_item_count"]
-        - previous["executed_item_count"],
-        "approval_coverage_rate_delta": current["approval_coverage_rate"]
-        - previous["approval_coverage_rate"],
-        "execution_completion_rate_delta": current["execution_completion_rate"]
-        - previous["execution_completion_rate"],
+        "executed_item_count_delta": current["executed_item_count"] - previous["executed_item_count"],
+        "approval_coverage_rate_delta": current["approval_coverage_rate"] - previous["approval_coverage_rate"],
+        "execution_completion_rate_delta": current["execution_completion_rate"] - previous["execution_completion_rate"],
     }
 
 
@@ -501,9 +442,7 @@ def _owners_by_run(
         reporting_packet = reporting_packets_by_run.get(run_stamp)
         if reporting_packet is None:
             raise ValueError(f"missing owner reporting packet for run: {run_stamp}")
-        owners_by_run.append(
-            {str(entry["owner"]): entry for entry in reporting_packet.get("owners", [])}
-        )
+        owners_by_run.append({str(entry["owner"]): entry for entry in reporting_packet.get("owners", [])})
     return owners_by_run
 
 
@@ -518,9 +457,7 @@ def _owner_trends(
     for owner_map in owners_by_run:
         union_names |= set(owner_map.keys())
 
-    shared_names = sorted(
-        set.intersection(*(set(owner_map.keys()) for owner_map in owners_by_run))
-    )
+    shared_names = sorted(set.intersection(*(set(owner_map.keys()) for owner_map in owners_by_run)))
     compared = []
     for owner_name in shared_names:
         owner_runs = [
@@ -532,16 +469,13 @@ def _owner_trends(
                 "owner": owner_name,
                 "runs": owner_runs,
                 "intervals": [
-                    _owner_interval(owner_runs[index], owner_runs[index + 1])
-                    for index in range(len(owner_runs) - 1)
+                    _owner_interval(owner_runs[index], owner_runs[index + 1]) for index in range(len(owner_runs) - 1)
                 ],
             }
         )
 
     return {
-        "owners_trend_status": "owners_trend_available"
-        if shared_names
-        else "no_shared_owners",
+        "owners_trend_status": "owners_trend_available" if shared_names else "no_shared_owners",
         "shared_owner_count": len(shared_names),
         "owners_excluded_count": len(union_names - set(shared_names)),
         "compared": compared,
@@ -602,9 +536,7 @@ def _execution_progress_run(
         "open_item_count": open_item_count,
         "open_item_delta_vs_baseline": open_item_count - baseline_open_item_count,
         "open_item_ratio_vs_baseline": (
-            None
-            if baseline_open_item_count == 0
-            else open_item_count / baseline_open_item_count
+            None if baseline_open_item_count == 0 else open_item_count / baseline_open_item_count
         ),
     }
 
@@ -616,18 +548,10 @@ def _execution_progress(
         return None
 
     anchor_run = ordered_runs[0]
-    baseline_open_item_count = int(anchor_run["total_items"]) - int(
-        anchor_run["executed_item_count"]
-    )
-    progress_runs = [
-        _execution_progress_run(run, baseline_open_item_count) for run in ordered_runs
-    ]
+    baseline_open_item_count = int(anchor_run["total_items"]) - int(anchor_run["executed_item_count"])
+    progress_runs = [_execution_progress_run(run, baseline_open_item_count) for run in ordered_runs]
     return {
-        "progress_status": (
-            "baseline_fully_executed"
-            if baseline_open_item_count == 0
-            else "progress_available"
-        ),
+        "progress_status": ("baseline_fully_executed" if baseline_open_item_count == 0 else "progress_available"),
         "anchor_run_stamp": anchor_run["run_stamp"],
         "baseline_open_item_count": baseline_open_item_count,
         "runs": progress_runs,
@@ -651,8 +575,7 @@ def _state_progress_run(
         "pending_approval": pending_approval,
         "ready_to_execute": ready_to_execute,
         "executed": executed,
-        "pending_approval_delta_vs_baseline": pending_approval
-        - baseline_pending_approval,
+        "pending_approval_delta_vs_baseline": pending_approval - baseline_pending_approval,
     }
 
 
@@ -665,9 +588,7 @@ def _state_progress(
 
     anchor_run = ordered_runs[0]
     anchor_packet = reporting_packets_by_run[str(anchor_run["run_stamp"])]
-    baseline_pending_approval = int(
-        anchor_packet["summary"]["state_counts"]["pending_approval"]
-    )
+    baseline_pending_approval = int(anchor_packet["summary"]["state_counts"]["pending_approval"])
     runs = [
         _state_progress_run(
             run,
@@ -705,9 +626,7 @@ def _select_runs(
         try:
             _validate_run_stamp(from_run_stamp_requested)
         except ValueError as exc:
-            raise ValueError(
-                f"invalid from-run-stamp: {from_run_stamp_requested}"
-            ) from exc
+            raise ValueError(f"invalid from-run-stamp: {from_run_stamp_requested}") from exc
         try:
             _validate_run_stamp(to_run_stamp_requested)
         except ValueError as exc:
@@ -738,10 +657,7 @@ def build_reporting_trend_packet(
         to_run_stamp_requested=to_run_stamp_requested,
     )
     ordered_runs = [_trend_run(entry) for entry in reversed(selected_runs)]
-    intervals = [
-        _interval(ordered_runs[index], ordered_runs[index + 1])
-        for index in range(len(ordered_runs) - 1)
-    ]
+    intervals = [_interval(ordered_runs[index], ordered_runs[index + 1]) for index in range(len(ordered_runs) - 1)]
     oldest_run_stamp = ordered_runs[0]["run_stamp"] if ordered_runs else None
     latest_run_stamp = ordered_runs[-1]["run_stamp"] if ordered_runs else None
     owners_by_run = _owners_by_run(ordered_runs, reporting_packets_by_run)
@@ -749,19 +665,13 @@ def build_reporting_trend_packet(
     owner_presence = _owner_presence(
         ordered_runs,
         owners_by_run,
-        (
-            {str(entry["owner"]) for entry in owners["compared"]}
-            if owners is not None
-            else None
-        ),
+        ({str(entry["owner"]) for entry in owners["compared"]} if owners is not None else None),
     )
     execution_progress = _execution_progress(ordered_runs)
     state_progress = _state_progress(ordered_runs, reporting_packets_by_run)
     return {
         "generated_at": generated_at,
-        "trend_status": "trend_available"
-        if len(ordered_runs) >= 2
-        else "insufficient_history",
+        "trend_status": "trend_available" if len(ordered_runs) >= 2 else "insufficient_history",
         "window_requested": window_requested,
         "from_run_stamp_requested": from_run_stamp_requested,
         "to_run_stamp_requested": to_run_stamp_requested,

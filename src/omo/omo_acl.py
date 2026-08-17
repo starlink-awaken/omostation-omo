@@ -73,9 +73,7 @@ def main(argv: list[str] | None = None) -> int:
     profile_path = Path(profile) if profile else None
 
     if args.command == "status":
-        return cmd_lint_path_acl(
-            root, json_output=args.json, strict=False, profile=profile
-        )
+        return cmd_lint_path_acl(root, json_output=args.json, strict=False, profile=profile)
 
     if args.command == "plan":
         report = plan_acl_actions(root, profile_path=profile_path)
@@ -86,22 +84,15 @@ def main(argv: list[str] | None = None) -> int:
             json.dump(report, sys.stdout, indent=2, ensure_ascii=False)
             sys.stdout.write("\n")
         else:
-            print(
-                f"[PLAN] actions={report['action_count']} "
-                f"OMO_OS_ACL={report['omo_os_acl_enabled']} (dry-run only)"
-            )
+            print(f"[PLAN] actions={report['action_count']} OMO_OS_ACL={report['omo_os_acl_enabled']} (dry-run only)")
             for a in report["actions"]:
-                print(
-                    f"  {a['shell']}  # {a.get('from_mode')} → {a.get('to_mode')} "
-                    f"({a.get('reason')})"
-                )
+                print(f"  {a['shell']}  # {a.get('from_mode')} → {a.get('to_mode')} ({a.get('reason')})")
             if not report["actions"]:
                 print("  (no chmod actions needed)")
             if report.get("named_acl"):
                 na = report["named_acl"]
                 print(
-                    f"\n[PLAN --acl] platform={na.get('platform')} "
-                    f"commands={na.get('command_count')} (script dry-run)"
+                    f"\n[PLAN --acl] platform={na.get('platform')} commands={na.get('command_count')} (script dry-run)"
                 )
                 print(na.get("script") or "")
         return 0
@@ -111,8 +102,7 @@ def main(argv: list[str] | None = None) -> int:
         if not os_acl_enabled():
             msg = {
                 "error": "OMO_OS_ACL not set",
-                "hint": "export OMO_OS_ACL=1 && omo acl apply --yes"
-                + (" --acl" if want_acl else ""),
+                "hint": "export OMO_OS_ACL=1 && omo acl apply --yes" + (" --acl" if want_acl else ""),
                 "mutation": False,
             }
             if args.json:
@@ -120,16 +110,12 @@ def main(argv: list[str] | None = None) -> int:
                 sys.stdout.write("\n")
             else:
                 print("❌ apply refused: set OMO_OS_ACL=1 (opt-in host mutation)")
-                print(
-                    "   preview: omo acl plan --json" + (" --acl" if want_acl else "")
-                )
+                print("   preview: omo acl plan --json" + (" --acl" if want_acl else ""))
             return 2
         if not getattr(args, "yes", False):
             plan = plan_acl_actions(root, profile_path=profile_path)
             if want_acl:
-                plan["named_acl"] = plan_named_acl_script(
-                    root, profile_path=profile_path
-                )
+                plan["named_acl"] = plan_named_acl_script(root, profile_path=profile_path)
             if args.json:
                 json.dump(
                     {
@@ -146,25 +132,17 @@ def main(argv: list[str] | None = None) -> int:
                 print("❌ apply requires --yes after reviewing plan")
                 print(f"   chmod actions queued: {plan['action_count']}")
                 if want_acl and plan.get("named_acl"):
-                    print(
-                        f"   named ACE commands: {plan['named_acl'].get('command_count')}"
-                    )
+                    print(f"   named ACE commands: {plan['named_acl'].get('command_count')}")
                 print("   omo acl plan --json" + (" --acl" if want_acl else ""))
             return 2
 
         report = apply_acl_actions(root, profile_path=profile_path, force=False)
         if want_acl:
-            named = apply_named_acl_actions(
-                root, profile_path=profile_path, force=False
-            )
+            named = apply_named_acl_actions(root, profile_path=profile_path, force=False)
             report["named_acl_apply"] = named
             # roll up fail counts
-            report["applied_fail"] = int(report.get("applied_fail") or 0) + int(
-                named.get("applied_fail") or 0
-            )
-            report["applied_ok"] = int(report.get("applied_ok") or 0) + int(
-                named.get("applied_ok") or 0
-            )
+            report["applied_fail"] = int(report.get("applied_fail") or 0) + int(named.get("applied_fail") or 0)
+            report["applied_ok"] = int(report.get("applied_ok") or 0) + int(named.get("applied_ok") or 0)
             if named.get("mutation"):
                 report["mutation"] = True
 
@@ -181,10 +159,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             for r in report.get("results") or []:
                 mark = "✓" if r.get("ok") else "✗"
-                print(
-                    f"  {mark} {r.get('path')} → "
-                    f"{r.get('applied_mode', r.get('error', r.get('op', '')))}"
-                )
+                print(f"  {mark} {r.get('path')} → {r.get('applied_mode', r.get('error', r.get('op', '')))}")
             if want_acl and report.get("named_acl_apply"):
                 na = report["named_acl_apply"]
                 print(

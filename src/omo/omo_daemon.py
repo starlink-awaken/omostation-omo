@@ -142,9 +142,7 @@ def _setup_logging(log_file: Path = DAEMON_LOG_FILE) -> logging.Logger:
     logger.setLevel(logging.INFO)
     if not logger.handlers:
         handler = logging.FileHandler(log_file, encoding="utf-8")
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-        )
+        handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
         logger.addHandler(handler)
         sh = logging.StreamHandler(sys.stdout)
         sh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
@@ -243,9 +241,7 @@ def run_once(
         )
         if mesh_watchdog_result["status"] in {"degraded", "failed"}:
             error = (error + "; " if error else "") + (
-                "mesh_watchdog_"
-                f"{mesh_watchdog_result['status']}: "
-                f"{len(mesh_watchdog_result['errors'])} error(s)"
+                f"mesh_watchdog_{mesh_watchdog_result['status']}: {len(mesh_watchdog_result['errors'])} error(s)"
             )
 
     # P0 完整第三块: 闭环消费 pending workflow requests (planned → admit → dispatch)
@@ -284,9 +280,7 @@ def _run_auto_consume() -> dict[str, Any] | None:
         from omo.workflow_dispatch import consume_pending_workflow_requests
 
         health = _collect_iris_capability_health()
-        return consume_pending_workflow_requests(
-            WORKSPACE_ROOT, capability_health=health
-        )
+        return consume_pending_workflow_requests(WORKSPACE_ROOT, capability_health=health)
     except Exception as exc:  # defensive: auto_consume 失败不炸 tick
         logging.getLogger("omo.daemon").error("auto_consume_failed: %s", exc)
         return None
@@ -338,11 +332,7 @@ def _collect_iris_capability_health() -> dict[str, Any]:
         if proc.returncode != 0 or not proc.stdout.strip():
             return {"status": "unavailable", "capabilities": {}}
         data = json.loads(proc.stdout.strip().splitlines()[-1])
-        capabilities = {
-            f"iris:{name}": {"available": available}
-            for name, available in data.items()
-            if available
-        }
+        capabilities = {f"iris:{name}": {"available": available} for name, available in data.items() if available}
         return {
             "status": "healthy" if capabilities else "unavailable",
             "capabilities": capabilities,
@@ -507,14 +497,10 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     p_stop = sub.add_parser("stop", help="发 SIGTERM 停止 daemon")
-    p_stop.add_argument(
-        "--pid-file", type=Path, default=DAEMON_PID_FILE, help="PID 文件路径"
-    )
+    p_stop.add_argument("--pid-file", type=Path, default=DAEMON_PID_FILE, help="PID 文件路径")
 
     p_status = sub.add_parser("status", help="查询 daemon 状态")
-    p_status.add_argument(
-        "--pid-file", type=Path, default=DAEMON_PID_FILE, help="PID 文件路径"
-    )
+    p_status.add_argument("--pid-file", type=Path, default=DAEMON_PID_FILE, help="PID 文件路径")
 
     p_once = sub.add_parser("once", help="跑一次 tick 就退出 (用于 cron / 测试)")
     p_once.add_argument("--mesh-watchdog", action="store_true")

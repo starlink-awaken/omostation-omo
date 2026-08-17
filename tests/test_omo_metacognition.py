@@ -6,9 +6,7 @@ from omo.omo_metacognition import _phase12_evidence
 
 
 def test_phase12_evidence_reads_compatibility_alias_inputs(tmp_path: Path) -> None:
-    trace_path = (
-        tmp_path / ".omo" / "evidence" / "phase12" / "research-pipeline-trace.yaml"
-    )
+    trace_path = tmp_path / ".omo" / "evidence" / "phase12" / "research-pipeline-trace.yaml"
     trace_path.parent.mkdir(parents=True, exist_ok=True)
     trace_path.write_text(
         "status: ok\nsteps:\n  - collect\nmissing_capabilities: []\n",

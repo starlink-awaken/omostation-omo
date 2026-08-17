@@ -25,9 +25,7 @@ def test_find_task_file_accepts_multi_document_yaml(tmp_path: Path) -> None:
     assert resolved == task_path
 
 
-def test_prompt_launcher_keeps_output_and_raises_on_nonzero(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_prompt_launcher_keeps_output_and_raises_on_nonzero(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     prompt = tmp_path / "prompt.md"
     stdout = tmp_path / "stdout.log"
     prompt.write_text("do work", encoding="utf-8")
@@ -43,14 +41,10 @@ def test_prompt_launcher_keeps_output_and_raises_on_nonzero(
     }
     monkeypatch.setattr(
         "omo.omo_worker_core.subprocess.run",
-        lambda *_args, **_kwargs: subprocess.CompletedProcess(
-            ["worker-a"], 4, stdout="partial\n", stderr="failed\n"
-        ),
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(["worker-a"], 4, stdout="partial\n", stderr="failed\n"),
     )
 
     with pytest.raises(RuntimeError, match="worker launch failed.*returncode=4"):
-        _launch_worker_from_prompt(
-            tmp_path, registry, "worker-a", "cli_prompt", prompt, stdout
-        )
+        _launch_worker_from_prompt(tmp_path, registry, "worker-a", "cli_prompt", prompt, stdout)
 
     assert stdout.read_text(encoding="utf-8") == "partial\nfailed\n"

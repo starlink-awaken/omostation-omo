@@ -97,9 +97,7 @@ class MOSBeliefManager:
         registry_file: Path | None = None,
     ):
         self.root = root or WORKSPACE_ROOT
-        self.registry_file = registry_file or (
-            self.root / ".omo/_truth/registry/memory-os.yaml"
-        )
+        self.registry_file = registry_file or (self.root / ".omo/_truth/registry/memory-os.yaml")
         self.state_dir = self.root / ".omo" / "state" / "agent-beliefs"
         self.state_file = self.state_dir / "index.yaml"
         self.audit_log_file = self.state_dir / "audit.log"
@@ -183,15 +181,11 @@ class MOSBeliefManager:
         # 原子落盘写入
         write_yaml_atomic(self.state_file, state)
         self._update_registry_summary(len(state["beliefs"]), state)
-        self._append_audit_log(
-            "RECORD_BELIEF", f"id={b_id} topic={topic} run_id={source_run_id}"
-        )
+        self._append_audit_log("RECORD_BELIEF", f"id={b_id} topic={topic} run_id={source_run_id}")
         self._try_auto_crystallize(topic, state)
         return b_id
 
-    def _try_auto_crystallize(
-        self, topic: str, state: dict[str, list[dict[str, Any]]]
-    ) -> None:
+    def _try_auto_crystallize(self, topic: str, state: dict[str, list[dict[str, Any]]]) -> None:
         """Best-effort: 当 topic 信念数 >= 2 时自动结晶为 Skill (BET-Y1Q2-T6-06)."""
         try:
             from .omo_crystallizer import CRYSTALLIZATION_THRESHOLD, SkillCrystallizer
@@ -213,9 +207,7 @@ class MOSBeliefManager:
         except Exception:
             pass
 
-    def _update_registry_summary(
-        self, total_beliefs: int, state: dict | None = None
-    ) -> None:
+    def _update_registry_summary(self, total_beliefs: int, state: dict | None = None) -> None:
         """同步更新注册表元数据汇总"""
         registry_data = self._load_registry()
         registry_data["schema"] = "memory-os/v1"
@@ -230,15 +222,9 @@ class MOSBeliefManager:
             "decision_outcome",
         ]
         if state:
-            registry_data["total_world_snapshots"] = len(
-                state.get("world_snapshots", [])
-            )
-            registry_data["total_capability_calibrations"] = len(
-                state.get("capability_calibrations", [])
-            )
-            registry_data["total_decision_outcomes"] = len(
-                state.get("decision_outcomes", [])
-            )
+            registry_data["total_world_snapshots"] = len(state.get("world_snapshots", []))
+            registry_data["total_capability_calibrations"] = len(state.get("capability_calibrations", []))
+            registry_data["total_decision_outcomes"] = len(state.get("decision_outcomes", []))
         self.registry_file.parent.mkdir(parents=True, exist_ok=True)
         write_yaml_atomic(self.registry_file, registry_data)
 
@@ -277,9 +263,7 @@ class MOSBeliefManager:
         state["world_snapshots"].append(asdict(entry))
         write_yaml_atomic(self.state_file, state)
         self._update_registry_summary(len(state["beliefs"]), state)
-        self._append_audit_log(
-            "RECORD_WORLD_SNAPSHOT", f"id={ws_id} domain={domain} source={source}"
-        )
+        self._append_audit_log("RECORD_WORLD_SNAPSHOT", f"id={ws_id} domain={domain} source={source}")
         return ws_id
 
     def record_capability_calibration(
@@ -414,14 +398,10 @@ class MOSBeliefManager:
             }
         )
         write_yaml_atomic(self.state_file, state)
-        self._append_audit_log(
-            "RECORD_SKILL", f"id={sk_id} agent={agent_id} skill={skill_name}"
-        )
+        self._append_audit_log("RECORD_SKILL", f"id={sk_id} agent={agent_id} skill={skill_name}")
         return sk_id
 
-    def record_experience(
-        self, agent_id: str, experience: str, outcome: str, *, context: str = ""
-    ) -> str:
+    def record_experience(self, agent_id: str, experience: str, outcome: str, *, context: str = "") -> str:
         """P2-T2: 记录agent的正/反面经验教训."""
         state = self._load_state()
         ex_id = f"exp-{len(state['agent_experiences']) + 1:04d}"
@@ -436,9 +416,7 @@ class MOSBeliefManager:
             }
         )
         write_yaml_atomic(self.state_file, state)
-        self._append_audit_log(
-            "RECORD_EXPERIENCE", f"id={ex_id} agent={agent_id} outcome={outcome}"
-        )
+        self._append_audit_log("RECORD_EXPERIENCE", f"id={ex_id} agent={agent_id} outcome={outcome}")
         return ex_id
 
     def forget_expired(self, *, max_age_days: int = 90) -> dict[str, int]:
@@ -446,7 +424,7 @@ class MOSBeliefManager:
         from datetime import datetime, timedelta, timezone
 
         state = self._load_state()
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(days=max_age_days)).isoformat()
         archived = {"world_snapshots": 0, "experiences": 0}
         for ws in state["world_snapshots"]:
             ts = str(ws.get("expires_at", ws.get("ts", "")))
@@ -459,14 +437,10 @@ class MOSBeliefManager:
                 exp["status"] = "archived"
                 archived["experiences"] += 1
         write_yaml_atomic(self.state_file, state)
-        self._append_audit_log(
-            "FORGET_EXPIRED", f"max_age={max_age_days}d archived={archived}"
-        )
+        self._append_audit_log("FORGET_EXPIRED", f"max_age={max_age_days}d archived={archived}")
         return archived
 
-    def update_memory(
-        self, table: str, key: str, operation: str, value: Any = None
-    ) -> bool:
+    def update_memory(self, table: str, key: str, operation: str, value: Any = None) -> bool:
         """P2-T4: Mem0模式记忆操作 — ADD/MERGE/UPDATE/DELETE."""
         state = self._load_state()
         if table not in state:
@@ -485,9 +459,7 @@ class MOSBeliefManager:
             items.pop(found_idx)
             write_yaml_atomic(self.state_file, state)
             return True
-        elif (
-            operation == "UPDATE" and found_idx is not None and isinstance(value, dict)
-        ):
+        elif operation == "UPDATE" and found_idx is not None and isinstance(value, dict):
             items[found_idx].update(value)
             write_yaml_atomic(self.state_file, state)
             return True

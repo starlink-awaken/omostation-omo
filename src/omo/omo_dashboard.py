@@ -32,11 +32,7 @@ def _generate_html() -> str:
     health = _load_json(OMO_DIR / "state" / "system_health.yaml")
     debt = _load_json(OMO_DIR / "debt" / "dashboard" / "current.yaml")
     try:
-        kei = (
-            Path(os.environ.get("RUNTIME_HOME", str(Path.home() / "runtime")))
-            / "data"
-            / "kei_audit.jsonl"
-        )
+        kei = Path(os.environ.get("RUNTIME_HOME", str(Path.home() / "runtime"))) / "data" / "kei_audit.jsonl"
         kei_lines = len(kei.read_text().strip().split("\n")) if kei.exists() else 0
     except Exception:  # defensive fallback
         kei_lines = 0
@@ -53,9 +49,7 @@ def _generate_html() -> str:
         if not isinstance(svc, dict):
             continue
         st = svc.get("health_check") or svc.get("runtime", {}).get("status", "") or "?"
-        icon = (
-            "🟢" if st == "healthy" else "🔴" if st in ("failed", "stopped") else "🟡"
-        )
+        icon = "🟢" if st == "healthy" else "🔴" if st in ("failed", "stopped") else "🟡"
         detail = svc.get("name", name)
         service_rows += f"<tr><td>{icon}</td><td>{detail}</td><td>{st}</td></tr>"
 
@@ -108,10 +102,7 @@ def cmd_dashboard_serve(port: int) -> int:
             if not _OMO_DASHBOARD_API_KEY:
                 return True
             auth = self.headers.get("Authorization", "")
-            if (
-                auth.startswith("Bearer ")
-                and auth[len("Bearer ") :] == _OMO_DASHBOARD_API_KEY
-            ):
+            if auth.startswith("Bearer ") and auth[len("Bearer ") :] == _OMO_DASHBOARD_API_KEY:
                 return True
             self.send_response(401)
             self.send_header("Content-Type", "application/json")
@@ -153,9 +144,9 @@ def cmd_dashboard_serve(port: int) -> int:
 
                 try:
                     import sys
-                    from pathlib import Path as P2
+                    from pathlib import Path
 
-                    src_path = str(P2(__file__).resolve().parents[1])
+                    src_path = str(Path(__file__).resolve().parents[1])
                     if src_path not in sys.path:
                         sys.path.insert(0, src_path)
                     from omo.omo_task_schema import validate_task_data
@@ -166,9 +157,7 @@ def cmd_dashboard_serve(port: int) -> int:
                         ensure_ascii=False,
                     )
                 except Exception as e:  # defensive fallback
-                    result = json.dumps(
-                        {"valid": False, "errors": [str(e)]}, ensure_ascii=False
-                    )
+                    result = json.dumps({"valid": False, "errors": [str(e)]}, ensure_ascii=False)
 
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -183,7 +172,7 @@ def cmd_dashboard_serve(port: int) -> int:
         def log_message(self, fmt, *args):  # type: ignore[reportIncompatibleMethodOverride]
             sys.stderr.write(f"[dashboard] {args[0]} {args[1]} {args[2]}\n")
 
-    server = HTTPServer(("0.0.0.0", port), DashboardHandler)
+    server = HTTPServer(("0.0.0.0", port), DashboardHandler)  # noqa: S104 — dashboard 服务需所有接口可访问
     print(f"🚀 eCOS Dashboard: http://localhost:{port}")
     print("   Auto-refresh: 30s")
     try:
@@ -194,9 +183,7 @@ def cmd_dashboard_serve(port: int) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="omo dashboard", description="eCOS Dashboard server"
-    )
+    parser = argparse.ArgumentParser(prog="omo dashboard", description="eCOS Dashboard server")
     sub = parser.add_subparsers(dest="command")
     ds = sub.add_parser("serve", help="Start HTTP dashboard server")
     ds.add_argument("--port", "-p", type=int, default=9190, help="Port (default: 9190)")

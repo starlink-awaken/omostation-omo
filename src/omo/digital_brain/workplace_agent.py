@@ -87,9 +87,7 @@ class WorkplaceAgent:
             "status": "ready_for_approval",
         }
 
-    def collect_and_summarize(
-        self, task_id: str, responses: list[dict[str, Any]] | None = None
-    ) -> dict[str, Any]:
+    def collect_and_summarize(self, task_id: str, responses: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         """汇总下级上报数据，生成最终汇报报告与领导批示建议."""
         resp_list = responses or [
             {"unit": "一区卫健局", "submitted": True, "data_count": 12},

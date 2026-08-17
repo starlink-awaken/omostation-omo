@@ -2,13 +2,15 @@
 Unit tests for projects/omo/src/omo/omo_belief.py (BET-Y1Q1-T3-01)
 """
 
-import pytest
 from pathlib import Path
+
+import pytest
+
 from omo.omo_belief import (
-    MOSBeliefManager,
-    WorldSnapshot,
     CapabilityCalibration,
     DecisionOutcome,
+    MOSBeliefManager,
+    WorldSnapshot,
 )
 
 
@@ -146,16 +148,9 @@ def test_registry_tables_list_includes_all_six(tmp_path: Path):
 
 def test_multiple_records_increment_ids(tmp_path: Path):
     mgr = MOSBeliefManager(root=tmp_path)
-    assert (
-        mgr.record_world_snapshot(source="a", domain="d", observations={}) == "ws-0001"
-    )
-    assert (
-        mgr.record_world_snapshot(source="b", domain="d", observations={}) == "ws-0002"
-    )
-    assert (
-        mgr.record_capability_calibration(capability_ref="ref://x", success_rate=0.5)
-        == "cc-0001"
-    )
+    assert mgr.record_world_snapshot(source="a", domain="d", observations={}) == "ws-0001"
+    assert mgr.record_world_snapshot(source="b", domain="d", observations={}) == "ws-0002"
+    assert mgr.record_capability_calibration(capability_ref="ref://x", success_rate=0.5) == "cc-0001"
     assert (
         mgr.record_decision_outcome(
             decision_type="t",
@@ -185,9 +180,7 @@ def test_audit_log_records_new_table_actions(tmp_path: Path):
     mgr = MOSBeliefManager(root=tmp_path)
     mgr.record_world_snapshot(source="s", domain="d", observations={})
     mgr.record_capability_calibration(capability_ref="ref://c", success_rate=0.8)
-    mgr.record_decision_outcome(
-        decision_type="t", input_summary="i", expected_outcome="e", actual_outcome="a"
-    )
+    mgr.record_decision_outcome(decision_type="t", input_summary="i", expected_outcome="e", actual_outcome="a")
 
     log_text = mgr.audit_log_file.read_text()
     assert "RECORD_WORLD_SNAPSHOT" in log_text

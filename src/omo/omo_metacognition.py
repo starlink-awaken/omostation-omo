@@ -42,9 +42,7 @@ def _load_registry(root: Path) -> list[dict[str, Any]]:
 def _phase12_evidence(root: Path) -> dict[str, Any]:
     omo = _omo(root)
     trace = (
-        _load_yaml(
-            omo / "_delivery" / "evidence" / "phase12" / "research-pipeline-trace.yaml"
-        )
+        _load_yaml(omo / "_delivery" / "evidence" / "phase12" / "research-pipeline-trace.yaml")
         or _load_yaml(omo / "evidence" / "phase12" / "research-pipeline-trace.yaml")
         or {}
     )
@@ -200,9 +198,7 @@ def proposals_command(args: argparse.Namespace) -> int:
                 "confidence": 0.86,
                 "risk": "medium",
                 "operation_level": "L1",
-                "evidence_refs": [
-                    ".omo/_delivery/evidence/phase12/research-pipeline-trace.yaml"
-                ],
+                "evidence_refs": [".omo/_delivery/evidence/phase12/research-pipeline-trace.yaml"],
                 "rollback": "Remove draft scenario and rerun policy tests.",
                 "verification": "scenario trace fixture must remain reproducible",
             },
@@ -214,9 +210,7 @@ def proposals_command(args: argparse.Namespace) -> int:
                 "confidence": 0.9,
                 "risk": "low",
                 "operation_level": "L1",
-                "evidence_refs": [
-                    ".omo/_knowledge/design/phase15-autonomous-governance-design.md"
-                ],
+                "evidence_refs": [".omo/_knowledge/design/phase15-autonomous-governance-design.md"],
                 "rollback": "Keep existing evidence refs as source of truth.",
                 "verification": "policy tests must prove no draft activation leak",
             },
@@ -228,9 +222,7 @@ def proposals_command(args: argparse.Namespace) -> int:
                 "confidence": 0.84,
                 "risk": "medium",
                 "operation_level": "L2",
-                "evidence_refs": [
-                    ".omo/_delivery/evidence/phase12/package-dry-run.yaml"
-                ],
+                "evidence_refs": [".omo/_delivery/evidence/phase12/package-dry-run.yaml"],
                 "rollback": "Restore package baseline and confirm mutations_applied remains 0.",
                 "verification": f"current package mutations: {evidence['package_mutations']}",
             },
@@ -285,9 +277,7 @@ def collaboration_command(args: argparse.Namespace) -> int:
     }
     output = Path(args.output)
     write_yaml_atomic(output, plan)
-    print(
-        json.dumps({"status": "draft-only", "output": str(output)}, ensure_ascii=False)
-    )
+    print(json.dumps({"status": "draft-only", "output": str(output)}, ensure_ascii=False))
     return 0
 
 
@@ -344,9 +334,7 @@ def build_parser() -> argparse.ArgumentParser:
     baseline.set_defaults(func=baseline_command)
 
     proposals = subparsers.add_parser("proposals")
-    proposals.add_argument(
-        "--output", default=".omo/_delivery/evidence/phase13/bottleneck-proposals.yaml"
-    )
+    proposals.add_argument("--output", default=".omo/_delivery/evidence/phase13/bottleneck-proposals.yaml")
     proposals.set_defaults(func=proposals_command)
 
     collaboration = subparsers.add_parser("collaboration")

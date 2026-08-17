@@ -29,7 +29,7 @@ OMO_SRC = Path(__file__).resolve().parents[1] / "src"
 if str(OMO_SRC) not in sys.path:
     sys.path.insert(0, str(OMO_SRC))
 
-from omo.event_ledger import (  # noqa: E402
+from omo.event_ledger import (
     DEFAULT_OUTBOX_DESTINATION,
     DEFAULT_SCHEMA_VERSION,
     OUTBOX_FAILED,
@@ -414,9 +414,7 @@ def test_tamper_via_trigger_bypass_detected(tmp_path: Path) -> None:
     conn = sqlite3.connect(str(broker.db_path))
     conn.execute("DROP TRIGGER trg_event_log_no_update")
     conn.execute("DROP TRIGGER trg_event_log_no_delete")
-    conn.execute(
-        "UPDATE event_log SET payload_json = '{\"hacked\": true}' WHERE sequence = 3"
-    )
+    conn.execute("UPDATE event_log SET payload_json = '{\"hacked\": true}' WHERE sequence = 3")
     conn.commit()
     conn.close()
     result = broker.verify_chain()
@@ -531,16 +529,12 @@ def test_outbox_mark_sent_and_failed(tmp_path: Path) -> None:
     pending = broker.outbox_pending()
     assert len(pending) == 1
     event_id = pending[0]["event_id"]
-    broker.outbox_mark(
-        event_id, DEFAULT_OUTBOX_DESTINATION, state=OUTBOX_SENT, attempts=1
-    )
+    broker.outbox_mark(event_id, DEFAULT_OUTBOX_DESTINATION, state=OUTBOX_SENT, attempts=1)
     assert broker.outbox_pending() == []
     entries = broker.outbox_entries()
     assert entries[0]["state"] == OUTBOX_SENT
     assert entries[0]["attempts"] == 1
-    broker.outbox_mark(
-        event_id, DEFAULT_OUTBOX_DESTINATION, state=OUTBOX_FAILED, attempts=2
-    )
+    broker.outbox_mark(event_id, DEFAULT_OUTBOX_DESTINATION, state=OUTBOX_FAILED, attempts=2)
     assert broker.outbox_entries()[0]["state"] == OUTBOX_FAILED
     broker.close()
 
@@ -772,9 +766,7 @@ def test_partial_verify_chain_detects_tamper_in_range(tmp_path: Path) -> None:
         "Action",
     ],
 )
-def test_episode_required_events_reject_missing_episode(
-    tmp_path: Path, event_type: str
-) -> None:
+def test_episode_required_events_reject_missing_episode(tmp_path: Path, event_type: str) -> None:
     broker = _broker(tmp_path)
     with pytest.raises(LedgerError, match="episode_id"):
         broker.append(
@@ -794,9 +786,7 @@ def test_episode_required_events_reject_missing_episode(
     "event_type",
     ["Decision.v1", "Mandate.v1", "Action.v1", "Evidence.v1", "Outcome.v1"],
 )
-def test_episode_required_events_accept_episode(
-    tmp_path: Path, event_type: str
-) -> None:
+def test_episode_required_events_accept_episode(tmp_path: Path, event_type: str) -> None:
     broker = _broker(tmp_path)
     seq = broker.append(
         event_type=event_type,
@@ -933,9 +923,7 @@ def test_dropped_trigger_fails_closed_on_reopen(tmp_path: Path) -> None:
         LedgerBroker.connect(db)
     # The database is NOT auto-repaired; the trigger is still missing.
     conn = sqlite3.connect(str(db))
-    row = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='trg_event_log_no_update'"
-    ).fetchone()
+    row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='trg_event_log_no_update'").fetchone()
     assert row is None
     conn.close()
 
@@ -948,9 +936,7 @@ def test_modified_trigger_fails_closed_on_reopen(tmp_path: Path) -> None:
     conn = sqlite3.connect(str(db))
     conn.execute("DROP TRIGGER trg_event_log_no_delete")
     conn.execute(
-        "CREATE TRIGGER trg_event_log_no_delete "
-        "BEFORE DELETE ON event_log "
-        "BEGIN SELECT RAISE(ABORT, 'tampered'); END"
+        "CREATE TRIGGER trg_event_log_no_delete BEFORE DELETE ON event_log BEGIN SELECT RAISE(ABORT, 'tampered'); END"
     )
     conn.commit()
     conn.close()
@@ -1009,9 +995,7 @@ def test_checksum_derived_from_actual_sql_text() -> None:
 
     from omo.event_ledger.schema import LEDGER_DDL, LEDGER_TRIGGERS, SCHEMA_CHECKSUM
 
-    expected = hashlib.sha256(
-        (LEDGER_DDL + "\n" + LEDGER_TRIGGERS).encode("utf-8")
-    ).hexdigest()
+    expected = hashlib.sha256((LEDGER_DDL + "\n" + LEDGER_TRIGGERS).encode("utf-8")).hexdigest()
     assert SCHEMA_CHECKSUM == expected
 
 
@@ -1022,13 +1006,9 @@ def test_checksum_changes_when_sql_text_changes() -> None:
 
     from omo.event_ledger.schema import LEDGER_DDL, LEDGER_TRIGGERS
 
-    base = hashlib.sha256(
-        (LEDGER_DDL + "\n" + LEDGER_TRIGGERS).encode("utf-8")
-    ).hexdigest()
+    base = hashlib.sha256((LEDGER_DDL + "\n" + LEDGER_TRIGGERS).encode("utf-8")).hexdigest()
     tampered_trigger = LEDGER_TRIGGERS + "\n-- injected comment"
-    alt = hashlib.sha256(
-        (LEDGER_DDL + "\n" + tampered_trigger).encode("utf-8")
-    ).hexdigest()
+    alt = hashlib.sha256((LEDGER_DDL + "\n" + tampered_trigger).encode("utf-8")).hexdigest()
     assert alt != base
 
 
@@ -1058,9 +1038,7 @@ def test_wal_checkpoint_receipt(tmp_path: Path) -> None:
     assert isinstance(receipt["log_frames"], int)
     assert isinstance(receipt["checkpointed_frames"], int)
     # Non-WAL DBs report a zero triple, still a valid receipt.
-    broker2 = _broker(
-        tmp_path
-    )  # same path; actual journal mode is whatever gate allows
+    broker2 = _broker(tmp_path)  # same path; actual journal mode is whatever gate allows
     r2 = broker2.wal_checkpoint(mode="FULL")
     assert r2["mode"] == "FULL"
     broker.close()
@@ -1148,8 +1126,7 @@ def test_apply_schema_single_transaction_no_residue(tmp_path: Path) -> None:
     names = {
         row[0]
         for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' "
-            "AND name NOT LIKE 'sqlite_%'"
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
         ).fetchall()
     }
     # The pre-existing malformed table remains, but no new objects (including
@@ -1165,9 +1142,7 @@ def test_migration_record_not_written_on_failure(tmp_path: Path) -> None:
     conn.commit()
     with pytest.raises((LedgerSchemaError, sqlite3.OperationalError)):
         apply_schema(conn)
-    row = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migration'"
-    ).fetchone()
+    row = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migration'").fetchone()
     assert row is None, "schema_migration must not survive a failed migration"
     conn.close()
 
@@ -1424,9 +1399,7 @@ def _make_hook_broker(
     return broker
 
 
-def test_verify_chain_snapshot_consistent_under_concurrent_append(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_verify_chain_snapshot_consistent_under_concurrent_append(tmp_path: Path, monkeypatch) -> None:
     """A concurrent append landing after the snapshot read must not change
     verify_chain's reported total/range: they refer to the frozen snapshot,
     while the database's live count has already grown."""
@@ -1476,9 +1449,7 @@ def test_verify_chain_snapshot_consistent_under_concurrent_append(
     broker.close()
 
 
-def test_verify_chain_partial_snapshot_consistent_under_concurrent_append(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_verify_chain_partial_snapshot_consistent_under_concurrent_append(tmp_path: Path, monkeypatch) -> None:
     """Partial verification (from_sequence>1) must also stay anchored to the
     snapshot: total reflects the snapshot, and the prior-row hash comes from
     the same frozen view even if more rows arrive concurrently."""
@@ -1602,10 +1573,7 @@ def test_index_moved_to_wrong_table_detected(tmp_path: Path) -> None:
     conn = broker._conn
     # Move idx_event_log_episode_sequence onto event_outbox.
     conn.execute("DROP INDEX idx_event_log_episode_sequence")
-    conn.execute(
-        "CREATE INDEX idx_event_log_episode_sequence "
-        "ON event_outbox(event_id, destination)"
-    )
+    conn.execute("CREATE INDEX idx_event_log_episode_sequence ON event_outbox(event_id, destination)")
     conn.commit()
     from omo.event_ledger.schema import verify_schema
 
@@ -1716,10 +1684,7 @@ def test_index_changed_to_unique_detected(tmp_path: Path) -> None:
     broker = _broker(tmp_path)
     conn = broker._conn
     conn.execute("DROP INDEX idx_event_log_episode_sequence")
-    conn.execute(
-        "CREATE UNIQUE INDEX idx_event_log_episode_sequence "
-        "ON event_log(episode_id, sequence)"
-    )
+    conn.execute("CREATE UNIQUE INDEX idx_event_log_episode_sequence ON event_log(episode_id, sequence)")
     conn.commit()
     from omo.event_ledger.schema import verify_schema
 
@@ -1732,9 +1697,7 @@ def test_index_column_order_drift_detected(tmp_path: Path) -> None:
     broker = _broker(tmp_path)
     conn = broker._conn
     conn.execute("DROP INDEX idx_event_log_episode_sequence")
-    conn.execute(
-        "CREATE INDEX idx_event_log_episode_sequence ON event_log(sequence, episode_id)"
-    )
+    conn.execute("CREATE INDEX idx_event_log_episode_sequence ON event_log(sequence, episode_id)")
     conn.commit()
     from omo.event_ledger.schema import verify_schema
 
@@ -1792,23 +1755,17 @@ def _assert_connection_closed(conn: sqlite3.Connection) -> None:
         pass
 
 
-def test_connect_failure_apply_schema_closes_connection(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_connect_failure_apply_schema_closes_connection(tmp_path: Path, monkeypatch) -> None:
     """A failed connect during apply_schema must close the raw connection."""
     db = tmp_path / "ledger.db"
     conn = _spy_connect_and_force_failure(monkeypatch, db, failure="apply_schema")
     _assert_connection_closed(conn)
 
 
-def test_connect_failure_journal_mode_closes_connection(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_connect_failure_journal_mode_closes_connection(tmp_path: Path, monkeypatch) -> None:
     """A failed connect during journal-mode setup must close the connection."""
     db = tmp_path / "ledger.db"
-    conn = _spy_connect_and_force_failure(
-        monkeypatch, db, failure="_configure_journal_mode"
-    )
+    conn = _spy_connect_and_force_failure(monkeypatch, db, failure="_configure_journal_mode")
     _assert_connection_closed(conn)
 
 

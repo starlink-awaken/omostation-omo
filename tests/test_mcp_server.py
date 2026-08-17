@@ -21,9 +21,7 @@ def test_default_workspace_root_is_workspace_not_projects_directory() -> None:
         assert mcp_server.WORKSPACE_ROOT == expected
 
 
-def test_workspace_root_environment_override_is_resolved(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_workspace_root_environment_override_is_resolved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     configured = tmp_path / "configured" / ".." / "workspace"
     monkeypatch.setenv("WORKSPACE_ROOT", str(configured))
 
@@ -31,9 +29,7 @@ def test_workspace_root_environment_override_is_resolved(
 
 
 @pytest.mark.asyncio
-async def test_worker_dispatch_cli_is_pinned_to_workspace_root(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_worker_dispatch_cli_is_pinned_to_workspace_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     workspace_root = tmp_path / "workspace"
     unrelated_cwd = tmp_path / "elsewhere"
     workspace_root.mkdir()
@@ -49,9 +45,7 @@ async def test_worker_dispatch_cli_is_pinned_to_workspace_root(
     monkeypatch.setattr(mcp_server.subprocess, "run", fake_run)
     monkeypatch.chdir(unrelated_cwd)
 
-    result = await mcp_server.omo_worker_dispatch(
-        mcp_server.DispatchRequest(task_id="TASK-1", worker_id="pi")
-    )
+    result = await mcp_server.omo_worker_dispatch(mcp_server.DispatchRequest(task_id="TASK-1", worker_id="pi"))
 
     assert result == "dispatched\n"
     assert observed["cwd"] == workspace_root

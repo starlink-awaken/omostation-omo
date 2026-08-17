@@ -64,10 +64,7 @@ def run_stdio_dispatch(
             try:
                 req = json.loads(line)
             except json.JSONDecodeError as exc:
-                sys.stdout.write(
-                    json.dumps({"status": "error", "error": f"json_decode: {exc}"})
-                    + "\n"
-                )
+                sys.stdout.write(json.dumps({"status": "error", "error": f"json_decode: {exc}"}) + "\n")
                 sys.stdout.flush()
                 continue
             action = req.get("action", "")
@@ -90,9 +87,7 @@ def run_stdio_dispatch(
         if not daemon_mode:
             return 0
         if restart_delay_sec > 0:
-            sys.stderr.write(
-                f"[daemon] stdin EOF, sleep {restart_delay_sec}s then exit (launchd restart)\n"
-            )
+            sys.stderr.write(f"[daemon] stdin EOF, sleep {restart_delay_sec}s then exit (launchd restart)\n")
             sys.stderr.flush()
             time.sleep(restart_delay_sec)
             return 0

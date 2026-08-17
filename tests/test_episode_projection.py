@@ -43,9 +43,7 @@ def broker(tmp_path) -> LedgerBroker:
     b.close()
 
 
-def _assign(
-    svc: SovereigntyService, principal_id: str, role_id: str, role_name: str
-) -> str:
+def _assign(svc: SovereigntyService, principal_id: str, role_id: str, role_name: str) -> str:
     resp = svc.assign(
         principal_id=principal_id,
         role_id=role_id,
@@ -112,16 +110,11 @@ def test_role_portfolio_is_isolated_per_principal(broker: LedgerBroker) -> None:
     svc = SovereigntyService(broker)
     _assign(svc, "principal:alice", "role:reviewer", "Reviewer")
 
-    snap_alice = build_episode_projection_snapshot(
-        broker, principal_id="principal:alice"
-    )
+    snap_alice = build_episode_projection_snapshot(broker, principal_id="principal:alice")
     snap_bob = build_episode_projection_snapshot(broker, principal_id="principal:bob")
 
     assert len(snap_alice["role_portfolio"]["active_assignments"]) == 1
-    assert (
-        snap_alice["role_portfolio"]["active_assignments"][0]["role_id"]
-        == "role:reviewer"
-    )
+    assert snap_alice["role_portfolio"]["active_assignments"][0]["role_id"] == "role:reviewer"
     assert snap_bob["role_portfolio"]["active_assignments"] == []
     assert snap_bob["role_portfolio"]["responsibilities"] == []
     assert snap_bob["role_portfolio"]["episode_counts"] == {}
@@ -397,9 +390,7 @@ class _FakeBroker:
     def __init__(self, rows: list[dict[str, Any]]) -> None:
         self._rows = rows
 
-    def read(
-        self, from_sequence: int = 1, *, producer: str | None = None, **_: Any
-    ) -> list[dict[str, Any]]:
+    def read(self, from_sequence: int = 1, *, producer: str | None = None, **_: Any) -> list[dict[str, Any]]:
         rows = [r for r in self._rows if r["sequence"] >= from_sequence]
         if producer is not None:
             rows = [r for r in rows if r.get("producer") == producer]
@@ -423,9 +414,7 @@ class _FakeBroker:
         pass
 
 
-def _fake_row(
-    sequence: int, event_type: str, payload_json: str, *, episode_id: str | None
-) -> dict[str, Any]:
+def _fake_row(sequence: int, event_type: str, payload_json: str, *, episode_id: str | None) -> dict[str, Any]:
     return {
         "sequence": sequence,
         "event_id": f"evt_{sequence:06d}",
@@ -526,12 +515,8 @@ def test_from_path_equivalence(broker: LedgerBroker, tmp_path) -> None:
     )
     db_path = tmp_path / "ledger.db"
 
-    from_broker = build_episode_projection_snapshot(
-        broker, principal_id="principal:alice"
-    )
-    from_path = build_episode_projection_snapshot_from_path(
-        db_path, principal_id="principal:alice"
-    )
+    from_broker = build_episode_projection_snapshot(broker, principal_id="principal:alice")
+    from_path = build_episode_projection_snapshot_from_path(db_path, principal_id="principal:alice")
     assert from_broker == from_path
 
     assert from_path["schema_version"] == "episode-projection/v1"

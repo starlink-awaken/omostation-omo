@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+
 from omo.omo_debt_registry import DebtItem
 from omo.omo_debt_review_queue import build_review_queue
 

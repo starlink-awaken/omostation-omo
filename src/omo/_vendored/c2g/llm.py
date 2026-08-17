@@ -15,27 +15,8 @@ def _find_cognitive_framework_dir() -> Path | None:
     here = Path(__file__).resolve()
     candidates: list[Path] = []
     for parent in here.parents:
-        candidates.append(
-            parent
-            / "projects"
-            / "ecos"
-            / "src"
-            / "ecos"
-            / "ssot"
-            / "mof"
-            / "m1"
-            / "cognitive_framework"
-        )
-        candidates.append(
-            parent
-            / "ecos"
-            / "src"
-            / "ecos"
-            / "ssot"
-            / "mof"
-            / "m1"
-            / "cognitive_framework"
-        )
+        candidates.append(parent / "projects" / "ecos" / "src" / "ecos" / "ssot" / "mof" / "m1" / "cognitive_framework")
+        candidates.append(parent / "ecos" / "src" / "ecos" / "ssot" / "mof" / "m1" / "cognitive_framework")
     for candidate in candidates:
         if candidate.is_dir():
             return candidate
@@ -52,9 +33,7 @@ def _load_cognitive_cartridges() -> str:
                 with f.open("r", encoding="utf-8") as file:
                     data = yaml.safe_load(file)
                     if data and data.get("type") == "CognitiveFramework":
-                        frameworks.append(
-                            f"- {data.get('id')}: {data.get('name')} ({data.get('description')})"
-                        )
+                        frameworks.append(f"- {data.get('id')}: {data.get('name')} ({data.get('description')})")
             except Exception:  # noqa: BLE001, S110  # defensive fallback
                 pass
     if not frameworks:

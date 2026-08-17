@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any
 
 
@@ -24,7 +24,7 @@ def _parse_ts(value: str | None) -> datetime | None:
     except ValueError:
         return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt
 
 
@@ -129,9 +129,7 @@ def outcomes_time_series(outcomes: dict[str, Any]) -> list[float]:
     for r in rows:
         if not isinstance(r, dict):
             continue
-        ts = _parse_ts(str(r.get("created_at") or "")) or datetime.min.replace(
-            tzinfo=timezone.utc
-        )
+        ts = _parse_ts(str(r.get("created_at") or "")) or datetime.min.replace(tzinfo=UTC)
         score = float(r.get("success_score") or 0.0)
         decorated.append((ts, score))
     decorated.sort(key=lambda x: x[0])
@@ -225,9 +223,7 @@ def render_heatmap_markdown(heatmap: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def blend_prior(
-    heuristic: float, historical_mean: float, n: int, k: float = 5.0
-) -> float:
+def blend_prior(heuristic: float, historical_mean: float, n: int, k: float = 5.0) -> float:
     """Bayesian-ish shrink of content heuristic toward historical base rate.
 
     weight_hist = n / (n + k); more outcomes → more weight on history.

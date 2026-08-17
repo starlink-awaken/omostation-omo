@@ -8,7 +8,7 @@ from typing import Any
 try:
     from datetime import UTC
 except ImportError:
-    UTC = timezone.utc
+    UTC = UTC
 from pathlib import Path
 
 import yaml
@@ -53,9 +53,7 @@ def _load_yaml(path: Path) -> dict:
 
 def _write_yaml(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), encoding="utf-8"
-    )
+    path.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
 
 def _parse_iso8601(value: str) -> datetime:
@@ -94,13 +92,7 @@ def _write_debt_sidecar(
     retention_mode: str,
     payload: dict[str, Any],
 ) -> None:
-    artifact_path = (
-        omo_dir
-        / "_delivery"
-        / "debt"
-        / lane
-        / f"{name}-{timestamp.replace(':', '-')}.yaml"
-    )
+    artifact_path = omo_dir / "_delivery" / "debt" / lane / f"{name}-{timestamp.replace(':', '-')}.yaml"
     sidecar = {
         "kind": f"debt_{lane}_artifact",
         "carrier_ref": carrier_ref,
@@ -118,9 +110,7 @@ def _write_debt_sidecar(
     _write_yaml(artifact_path, sidecar)
 
 
-def write_dashboard(
-    omo_dir: Path, metrics, review_queue: dict[str, Any], now: str
-) -> None:
+def write_dashboard(omo_dir: Path, metrics, review_queue: dict[str, Any], now: str) -> None:
     due_now = review_queue["due_now"]
     upcoming = review_queue["upcoming"]
     payload = {
@@ -138,10 +128,7 @@ def write_dashboard(
         "gate_item_ids": list(metrics.gate_item_ids),
         "overdue_review_count": len(due_now),
         "overdue_review_item_ids": [entry["id"] for entry in due_now],
-        "next_review_queue": [
-            {"id": entry["id"], "next_review_at": entry["next_review_at"]}
-            for entry in upcoming
-        ],
+        "next_review_queue": [{"id": entry["id"], "next_review_at": entry["next_review_at"]} for entry in upcoming],
     }
     _write_yaml(omo_dir / "debt" / "dashboard" / "current.yaml", payload)
 
@@ -184,9 +171,7 @@ def write_action_packet(omo_dir: Path, action_packet: dict[str, Any]) -> None:
             _render_action_packet_section("Revalidate Now", lanes["revalidate_now"]),
             _render_action_packet_section("Schedule Now", lanes["schedule_now"]),
             _render_action_packet_section("Escalate Now", lanes["escalate_now"]),
-            _render_action_packet_section(
-                "Continue Mitigation", lanes["continue_mitigation"]
-            ),
+            _render_action_packet_section("Continue Mitigation", lanes["continue_mitigation"]),
             _render_action_packet_section("Watch Only", lanes["watch_only"]),
         ]
     )
@@ -224,10 +209,7 @@ def write_owner_routing(omo_dir: Path, owner_routing: dict[str, Any]) -> None:
                 f"continue_mitigation={owner_routing['summary']['lane_counts']['continue_mitigation']}, "
                 f"watch_only={owner_routing['summary']['lane_counts']['watch_only']}\n"
             ),
-            *[
-                _render_owner_routing_section(owner)
-                for owner in owner_routing["owners"]
-            ],
+            *[_render_owner_routing_section(owner) for owner in owner_routing["owners"]],
         ]
     )
     path = omo_dir / "debt" / "owner-routing" / "current.md"
@@ -281,9 +263,7 @@ def write_dispatch_packet(omo_dir: Path, dispatch_packet: dict[str, Any]) -> Non
     run_md_path.write_text(markdown, encoding="utf-8")
 
 
-def _matching_approval_exists(
-    omo_dir: Path, item_id: str, dispatch_run_ref: str
-) -> bool:
+def _matching_approval_exists(omo_dir: Path, item_id: str, dispatch_run_ref: str) -> bool:
     approval_path = approval_current_path(omo_dir, item_id)
     if not approval_path.exists():
         return False
@@ -295,9 +275,7 @@ def _matching_approval_exists(
     )
 
 
-def _execution_record_ref(
-    omo_dir: Path, dispatch_run_ref: str, item_id: str
-) -> str | None:
+def _execution_record_ref(omo_dir: Path, dispatch_run_ref: str, item_id: str) -> str | None:
     record_path = execution_record_path(omo_dir, dispatch_run_ref, item_id)
     if not record_path.exists():
         return None
@@ -330,9 +308,7 @@ def write_reporting_packet(omo_dir: Path, reporting_packet: dict[str, Any]) -> N
     current_md_path.write_text(markdown, encoding="utf-8")
 
 
-def write_reporting_history_packet(
-    omo_dir: Path, history_packet: dict[str, Any]
-) -> None:
+def write_reporting_history_packet(omo_dir: Path, history_packet: dict[str, Any]) -> None:
     history_dir = omo_dir / "debt" / "reporting" / "history"
     markdown = render_reporting_history_markdown(history_packet)
     _write_yaml(history_dir / "current.yaml", history_packet)
@@ -369,9 +345,7 @@ def load_reporting_history_packet(omo_dir: Path) -> dict[str, Any]:
     return history_packet
 
 
-def _history_run_ref(
-    history_packet: dict[str, Any], run_stamp: str | None
-) -> str | None:
+def _history_run_ref(history_packet: dict[str, Any], run_stamp: str | None) -> str | None:
     if run_stamp is None:
         return None
     for entry in history_packet["runs"]:
@@ -398,9 +372,7 @@ def _reporting_history_inputs(
                 "dispatch_run_ref": f".omo/debt/dispatch/runs/{run_path.name}",
             }
         )
-        reporting_path = (
-            omo_dir / "debt" / "reporting" / "runs" / run_stamp / "current.yaml"
-        )
+        reporting_path = omo_dir / "debt" / "reporting" / "runs" / run_stamp / "current.yaml"
         if not reporting_path.exists():
             continue
         reporting_packet = _load_yaml(reporting_path)
@@ -427,20 +399,14 @@ def write_review_pack(
             f"# Debt Review Pack\n\nGenerated at: {now}\n",
             _render_section("Watchlist", watchlist),
             _render_section("Gate Debts", gate),
-            _render_queue_section(
-                "Due Now", review_queue["due_now"], "priority_reason"
-            ),
+            _render_queue_section("Due Now", review_queue["due_now"], "priority_reason"),
             _render_queue_section(
                 "Escalation Candidates",
                 review_queue["escalation_candidates"],
                 "escalation_reason",
             ),
-            _render_queue_section(
-                "Upcoming Window", review_queue["upcoming"], "priority_reason"
-            ),
-            _render_queue_section(
-                "Unscheduled Debts", review_queue["unscheduled"], "priority_reason"
-            ),
+            _render_queue_section("Upcoming Window", review_queue["upcoming"], "priority_reason"),
+            _render_queue_section("Unscheduled Debts", review_queue["unscheduled"], "priority_reason"),
             _render_section("Newly Registered", sections["newly_registered"]),
             _render_section("Closed Debts", sections["closed"]),
             _render_section("Drifted Debts", sections["drifted"]),
@@ -473,9 +439,7 @@ def dispatch_outputs(omo_dir: Path, now: str) -> None:
     owner_routing = _load_yaml(owner_routing_path)
     if not owner_routing:
         raise ValueError(f"empty owner routing packet: {owner_routing_path}")
-    write_dispatch_packet(
-        omo_dir, build_dispatch_packet(owner_routing, dispatched_at=now)
-    )
+    write_dispatch_packet(omo_dir, build_dispatch_packet(owner_routing, dispatched_at=now))
 
 
 def load_dispatch_packet(omo_dir: Path) -> dict:
@@ -498,9 +462,7 @@ def load_dispatch_run(omo_dir: Path, dispatch_run_ref: str) -> tuple[Path, dict]
     return run_path, run_packet
 
 
-def build_selected_campaign_packet(
-    omo_dir: Path, run_ref: str | None
-) -> dict[str, Any]:
+def build_selected_campaign_packet(omo_dir: Path, run_ref: str | None) -> dict[str, Any]:
     if run_ref:
         _, run_packet = load_dispatch_run(omo_dir, run_ref)
         dispatch_run_ref = run_ref
@@ -514,12 +476,8 @@ def build_selected_campaign_packet(
     for owner_packet in run_packet["owners"]:
         for entry in owner_packet["entries"]:
             item_id = entry["id"]
-            approval_lookup[item_id] = _matching_approval_exists(
-                omo_dir, item_id, dispatch_run_ref
-            )
-            execution_record_ref = _execution_record_ref(
-                omo_dir, dispatch_run_ref, item_id
-            )
+            approval_lookup[item_id] = _matching_approval_exists(omo_dir, item_id, dispatch_run_ref)
+            execution_record_ref = _execution_record_ref(omo_dir, dispatch_run_ref, item_id)
             if execution_record_ref:
                 execution_lookup[item_id] = execution_record_ref
 
@@ -557,21 +515,13 @@ def reporting_history_outputs(omo_dir: Path) -> None:
 
 def reporting_diff_outputs(omo_dir: Path) -> None:
     history_packet = load_reporting_history_packet(omo_dir)
-    latest_run_ref = _history_run_ref(
-        history_packet, history_packet.get("latest_run_stamp")
-    )
+    latest_run_ref = _history_run_ref(history_packet, history_packet.get("latest_run_stamp"))
     if latest_run_ref is None:
         raise ValueError("reporting history is missing latest_run_stamp")
-    prior_run_ref = _history_run_ref(
-        history_packet, history_packet.get("prior_run_stamp")
-    )
-    latest_reporting = build_reporting_packet(
-        build_selected_campaign_packet(omo_dir, latest_run_ref)
-    )
+    prior_run_ref = _history_run_ref(history_packet, history_packet.get("prior_run_stamp"))
+    latest_reporting = build_reporting_packet(build_selected_campaign_packet(omo_dir, latest_run_ref))
     prior_reporting = (
-        build_reporting_packet(build_selected_campaign_packet(omo_dir, prior_run_ref))
-        if prior_run_ref
-        else None
+        build_reporting_packet(build_selected_campaign_packet(omo_dir, prior_run_ref)) if prior_run_ref else None
     )
     write_reporting_diff_packet(
         omo_dir,
@@ -583,9 +533,7 @@ def reporting_diff_outputs(omo_dir: Path) -> None:
     )
 
 
-def _reporting_trend_owner_inputs(
-    trend_packet: dict[str, Any], omo_dir: Path
-) -> dict[str, dict[str, Any]]:
+def _reporting_trend_owner_inputs(trend_packet: dict[str, Any], omo_dir: Path) -> dict[str, dict[str, Any]]:
     packets: dict[str, dict[str, Any]] = {}
     for entry in trend_packet["runs"]:
         reporting_ref = entry.get("reporting_ref")
@@ -593,14 +541,10 @@ def _reporting_trend_owner_inputs(
             continue
         reporting_path = omo_dir.parent / str(reporting_ref)
         if not reporting_path.exists():
-            raise FileNotFoundError(
-                f"missing reporting artifact for owner trend: {reporting_path}"
-            )
+            raise FileNotFoundError(f"missing reporting artifact for owner trend: {reporting_path}")
         reporting_packet = _load_yaml(reporting_path)
         if not reporting_packet:
-            raise ValueError(
-                f"empty reporting artifact for owner trend: {reporting_path}"
-            )
+            raise ValueError(f"empty reporting artifact for owner trend: {reporting_path}")
         packets[str(entry["run_stamp"])] = reporting_packet
     return packets
 
@@ -612,12 +556,8 @@ def reporting_trend_outputs(
     to_run_stamp_requested: str | None = None,
 ) -> None:
     history_packet = load_reporting_history_packet(omo_dir)
-    if window_requested is not None and (
-        from_run_stamp_requested is not None or to_run_stamp_requested is not None
-    ):
-        raise ValueError(
-            "--last cannot be combined with --from-run-stamp or --to-run-stamp"
-        )
+    if window_requested is not None and (from_run_stamp_requested is not None or to_run_stamp_requested is not None):
+        raise ValueError("--last cannot be combined with --from-run-stamp or --to-run-stamp")
     if (from_run_stamp_requested is None) != (to_run_stamp_requested is None):
         raise ValueError("range mode requires both from-run-stamp and to-run-stamp")
     trend_packet = build_reporting_trend_packet(
@@ -662,26 +602,18 @@ def require_dispatch_bound_revalidate(
             raise ValueError(f"item is not a dispatched revalidate entry: {item_id}")
         return None
     if not dispatch_run_ref:
-        raise ValueError(
-            f"missing --dispatch-run-ref for dispatched revalidate item: {item_id}"
-        )
+        raise ValueError(f"missing --dispatch-run-ref for dispatched revalidate item: {item_id}")
     if dispatch_run_ref != dispatch_packet["latest_run_ref"]:
-        raise ValueError(
-            f"dispatch run must match latest dispatch run: {dispatch_run_ref}"
-        )
+        raise ValueError(f"dispatch run must match latest dispatch run: {dispatch_run_ref}")
 
     _, run_packet = load_dispatch_run(omo_dir, dispatch_run_ref)
     run_entry = find_dispatch_entry(run_packet, item_id)
     if not run_entry or run_entry.get("primary_lane") != "revalidate_now":
-        raise ValueError(
-            f"dispatch run does not contain a revalidate entry for: {item_id}"
-        )
+        raise ValueError(f"dispatch run does not contain a revalidate entry for: {item_id}")
     return dispatch_run_ref
 
 
-def require_matching_revalidate_approval(
-    omo_dir: Path, item_id: str, dispatch_run_ref: str | None
-) -> None:
+def require_matching_revalidate_approval(omo_dir: Path, item_id: str, dispatch_run_ref: str | None) -> None:
     dispatch_path = omo_dir / "debt" / "dispatch" / "current.yaml"
     if not dispatch_path.exists():
         return
@@ -691,9 +623,7 @@ def require_matching_revalidate_approval(
     if not dispatch_entry_requires_approval(entry):
         return
     if not dispatch_run_ref:
-        raise ValueError(
-            f"missing --dispatch-run-ref for approved dispatched item: {item_id}"
-        )
+        raise ValueError(f"missing --dispatch-run-ref for approved dispatched item: {item_id}")
 
     approval_path = approval_current_path(omo_dir, item_id)
     if not approval_path.exists():
@@ -702,13 +632,9 @@ def require_matching_revalidate_approval(
     if not approval_record:
         raise ValueError(f"empty approval record: {approval_path}")
     if approval_record.get("approval_scope") != APPROVAL_SCOPE_EXECUTE_REVALIDATE:
-        raise ValueError(
-            f"approval scope must be {APPROVAL_SCOPE_EXECUTE_REVALIDATE}: {approval_path}"
-        )
+        raise ValueError(f"approval scope must be {APPROVAL_SCOPE_EXECUTE_REVALIDATE}: {approval_path}")
     if approval_record.get("dispatch_run_ref") != dispatch_run_ref:
-        raise ValueError(
-            f"approval dispatch run mismatch: {approval_path} != {dispatch_run_ref}"
-        )
+        raise ValueError(f"approval dispatch run mismatch: {approval_path} != {dispatch_run_ref}")
 
 
 def approve_item(
@@ -722,9 +648,7 @@ def approve_item(
     dispatch_packet = load_dispatch_packet(omo_dir)
     entry = find_dispatch_entry(dispatch_packet, item_id)
     if not dispatch_entry_requires_approval(entry):
-        raise ValueError(
-            f"item is not a gate-level dispatched revalidate item: {item_id}"
-        )
+        raise ValueError(f"item is not a gate-level dispatched revalidate item: {item_id}")
 
     current_path, record_path = approval_paths(omo_dir, item_id, approved_at)
     if record_path.exists():

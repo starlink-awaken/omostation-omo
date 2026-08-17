@@ -8,9 +8,7 @@ from omo.omo_dashboard import _load_json
 def test_load_json_accepts_multi_document_yaml(tmp_path: Path) -> None:
     payload = tmp_path / "dashboard.yaml"
     payload.write_text(
-        "---\nstatus: active\nowner: governance\n---\n---\n"
-        "current_phase: 42\n"
-        "health_score: 98.0\n",
+        "---\nstatus: active\nowner: governance\n---\n---\ncurrent_phase: 42\nhealth_score: 98.0\n",
         encoding="utf-8",
     )
 

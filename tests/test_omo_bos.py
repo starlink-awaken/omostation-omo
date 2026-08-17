@@ -20,6 +20,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+
 from omo.omo_bos import (
     ALLOWED_DOMAINS,
     BOS_URI_PATTERN,
@@ -348,13 +349,9 @@ def test_register_3_domains_persists(tmp_path: Path) -> None:
     )
 
     # 按 domain 过滤读回
-    analysis = list_registrations(
-        domain="analysis", path=tmp_path / "bos-registry.json"
-    )
+    analysis = list_registrations(domain="analysis", path=tmp_path / "bos-registry.json")
     persona = list_registrations(domain="persona", path=tmp_path / "bos-registry.json")
-    capability = list_registrations(
-        domain="capability", path=tmp_path / "bos-registry.json"
-    )
+    capability = list_registrations(domain="capability", path=tmp_path / "bos-registry.json")
     assert any(r.uri == "bos://analysis/minerva/research" for r in analysis)
     assert any(r.uri == "bos://persona/sharedbrain-bridge/recall" for r in persona)
     assert any(r.uri == "bos://capability/forge/register-tool" for r in capability)
@@ -420,10 +417,7 @@ def test_save_to_kos_direct_call_fallback() -> None:
         try:
             sys.path.insert(
                 0,
-                str(
-                    Path(__file__).resolve().parents[3]
-                    / "projects/kairon/packages/kos/src"
-                ),
+                str(Path(__file__).resolve().parents[3] / "projects/kairon/packages/kos/src"),
             )
             from kos.ontology.store import delete_entity  # type: ignore
 
@@ -592,15 +586,11 @@ def test_list_filter_by_5_domains_w34(tmp_path: Path) -> None:
     for d, expected_count in expected.items():
         regs = list_registrations(domain=d, path=reg_path)
         assert all(r.domain == d for r in regs), f"域 {d} 过滤不纯"
-        assert len(regs) == expected_count, (
-            f"域 {d} 应 {expected_count} 条, 实得 {len(regs)}"
-        )
+        assert len(regs) == expected_count, f"域 {d} 应 {expected_count} 条, 实得 {len(regs)}"
 
 
 def test_no_duplicate_uris() -> None:
     """W34 验证: 40 URI 不重复."""
     uris = [r.uri for r in SEED_REGISTRATIONS]
-    assert len(uris) == len(set(uris)), (
-        f"URI 重复: {[u for u in uris if uris.count(u) > 1]}"
-    )
+    assert len(uris) == len(set(uris)), f"URI 重复: {[u for u in uris if uris.count(u) > 1]}"
     assert len(uris) == 34

@@ -119,9 +119,7 @@ def cmd_readiness_snapshot(omo_dir: Path, payload_json: str) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="omo readiness", description="OMO readiness history log"
-    )
+    parser = argparse.ArgumentParser(prog="omo readiness", description="OMO readiness history log")
     sub = parser.add_subparsers(dest="command")
     snap = sub.add_parser("snapshot", help="Write a readiness snapshot to .omo/_log/")
     snap.add_argument("payload", help="Snapshot payload as JSON string")

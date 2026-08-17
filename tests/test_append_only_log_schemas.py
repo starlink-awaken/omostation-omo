@@ -77,12 +77,7 @@ SCHEMAS: dict[str, dict] = {
 def test_schemas_doc_exists():
     """Schema SSOT 文档必须存在 (防文档漂移)."""
     doc_path = (
-        WORKSPACE_ROOT
-        / ".omo"
-        / "_knowledge"
-        / "management"
-        / "playbooks"
-        / "append-only-log-schemas-2026-06-09.md"
+        WORKSPACE_ROOT / ".omo" / "_knowledge" / "management" / "playbooks" / "append-only-log-schemas-2026-06-09.md"
     )
     assert doc_path.exists(), f"schema SSOT doc missing: {doc_path}"
 
@@ -109,11 +104,7 @@ def test_consumer_log_schema_when_exists(consumer_name, schema, tmp_path):
         pytest.skip(f"{consumer_name} log not yet created: {log_path}")
 
     # 抽前 5 + 后 5 条 (避免读 1MB+ 大文件)
-    lines = [
-        line_
-        for line_ in log_path.read_text(encoding="utf-8").splitlines()
-        if line_.strip()
-    ]
+    lines = [line_ for line_ in log_path.read_text(encoding="utf-8").splitlines() if line_.strip()]
     if not lines:
         pytest.skip(f"{consumer_name} log empty")
 
@@ -126,9 +117,7 @@ def test_consumer_log_schema_when_exists(consumer_name, schema, tmp_path):
         except json.JSONDecodeError as exc:
             parse_errors.append((i, str(exc)))
     if not parsed:
-        pytest.skip(
-            f"{consumer_name} log: all lines malformed (parse errors: {len(parse_errors)})"
-        )
+        pytest.skip(f"{consumer_name} log: all lines malformed (parse errors: {len(parse_errors)})")
 
     # 取前 5 + 后 5 条 (avoid reading 1MB+ file)
     sample = parsed[:5] + (parsed[-5:] if len(parsed) > 10 else [])
@@ -137,9 +126,7 @@ def test_consumer_log_schema_when_exists(consumer_name, schema, tmp_path):
     for i, rec in sample:
         missing = required - set(rec.keys())
         if missing:
-            failures.append(
-                f"line {i}: missing fields {sorted(missing)} (record keys: {list(rec.keys())})"
-            )
+            failures.append(f"line {i}: missing fields {sorted(missing)} (record keys: {list(rec.keys())})")
 
     if failures:
         # 顺便报告 parse errors (非 fatal, 仅信息)
@@ -205,9 +192,5 @@ def test_round_trip_omo_history_append(tmp_path):
             object_pairs_hook=list,
         )
     ]
-    expected_order = sorted(
-        ["date", "timestamp", "total_score", "grade", "watchlist_count", "source"]
-    )
-    assert parsed_order == expected_order, (
-        f"omo_history sort_keys 失守: {parsed_order} != {expected_order}"
-    )
+    expected_order = sorted(["date", "timestamp", "total_score", "grade", "watchlist_count", "source"])
+    assert parsed_order == expected_order, f"omo_history sort_keys 失守: {parsed_order} != {expected_order}"

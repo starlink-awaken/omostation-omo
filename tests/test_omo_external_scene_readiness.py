@@ -115,23 +115,15 @@ def _grant(run_id: str) -> dict[str, object]:
         "issued_at": datetime.now(UTC).isoformat(),
         "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
     }
-    grant["proof"] = hashlib.sha256(
-        json.dumps(grant, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    grant["proof"] = hashlib.sha256(json.dumps(grant, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return grant
 
 
 def _completed_run(tmp_path, run_id: str = "run-readiness") -> None:
     store = WorkflowMeshStore(tmp_path)
     grant = _grant(run_id)
-    store.append(
-        new_workflow_event("WorkflowRequested", run_id, scene_binding=_binding())
-    )
-    store.append(
-        new_workflow_event(
-            "WorkflowAdmitted", run_id, payload={"admission": grant, **grant}
-        )
-    )
+    store.append(new_workflow_event("WorkflowRequested", run_id, scene_binding=_binding()))
+    store.append(new_workflow_event("WorkflowAdmitted", run_id, payload={"admission": grant, **grant}))
     context = {
         "step_run_id": f"{run_id}:execute",
         "admission_id": grant["admission_id"],

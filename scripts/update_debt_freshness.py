@@ -38,9 +38,7 @@ def _is_open(state: str) -> bool:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Update x2_freshness on all open debt items."
-    )
+    parser = argparse.ArgumentParser(description="Update x2_freshness on all open debt items.")
     parser.add_argument(
         "--omo-dir",
         default=".omo",
@@ -65,9 +63,7 @@ def main() -> int:
     for seed_ref in seed_items:
         # seed_ref is like ".omo/debt/items/DEBT-OMO-001.yaml"
         # omo_dir is Path(".omo"), so omo_dir.parent is Path(".")
-        item_path = (
-            omo_dir.parent / seed_ref if seed_ref.startswith(".omo") else Path(seed_ref)
-        )
+        item_path = omo_dir.parent / seed_ref if seed_ref.startswith(".omo") else Path(seed_ref)
 
         if not item_path.exists():
             print(f"  SKIP  {seed_ref} — file not found")

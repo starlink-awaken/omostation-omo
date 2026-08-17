@@ -45,9 +45,7 @@ class LocalStorageProvider(IStorageProvider):
                 break
         else:
             data.append(record)
-        self.bets_file.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+        self.bets_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         return bet.goal_id
 
     def save_task(self, task: TaskSchema) -> str:
@@ -60,9 +58,7 @@ class LocalStorageProvider(IStorageProvider):
                 break
         else:
             data.append(record)
-        self.tasks_file.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+        self.tasks_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         return task.task_id
 
     def update_bet_status(self, goal_id: str, status: str) -> bool:
@@ -74,9 +70,7 @@ class LocalStorageProvider(IStorageProvider):
                 rec["status"] = status
                 changed = True
         if changed:
-            self.bets_file.write_text(
-                json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
-            )
+            self.bets_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         return changed
 
     def get_all_bets(self) -> list[BetSchema]:
@@ -89,20 +83,14 @@ class LocalStorageProvider(IStorageProvider):
         kept = [r for r in data if r.get("goal_id") != goal_id]
         removed = len(data) - len(kept)
         if removed:
-            self.bets_file.write_text(
-                json.dumps(kept, indent=2, ensure_ascii=False), encoding="utf-8"
-            )
+            self.bets_file.write_text(json.dumps(kept, indent=2, ensure_ascii=False), encoding="utf-8")
         return removed
 
     def get_pitches(self) -> list[PitchSchema]:
         pitches = []
         for pf in self.pitches_dir.glob("*.md"):
             content = pf.read_text(encoding="utf-8")
-            pitches.append(
-                PitchSchema(
-                    pitch_id=pf.name, title=pf.stem, content=content, created_at=""
-                )
-            )
+            pitches.append(PitchSchema(pitch_id=pf.name, title=pf.stem, content=content, created_at=""))
         return pitches
 
     def delete_pitch(self, pitch_id: str) -> bool:
@@ -157,9 +145,7 @@ def consolidate_data(dest_dir, source_files) -> dict:
             records.extend(json.loads(cand.read_text(encoding="utf-8")))
             used_sources.append(str(cand))
         merged, dropped = _dedup_by_key(records, key)
-        target.write_text(
-            json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+        target.write_text(json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8")
         report[fname] = {
             "total": len(merged),
             "dropped_duplicates": dropped,

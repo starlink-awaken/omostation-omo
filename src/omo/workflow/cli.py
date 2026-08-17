@@ -54,28 +54,9 @@ from .lifecycle import (
 from .lint import lint_registry, print_lint
 
 
-def _load_chain_bind():
-    """Shared bind predicate from workspace root. Missing file = standalone omo."""
-    from .core import WORKSPACE as workspace
-
-    plan = workspace / "bin" / "plan"
-    if not (plan / "chain_bind.py").is_file():
-        return None
-    path = str(plan)
-    if path not in sys.path:
-        sys.path.insert(0, path)
-    import chain_bind
-
-    return chain_bind
-
-
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Run executable project governance workflows"
-    )
-    parser.add_argument(
-        "--registry", default=str(REGISTRY_PATH), help="Workflow registry path"
-    )
+    parser = argparse.ArgumentParser(description="Run executable project governance workflows")
+    parser.add_argument("--registry", default=str(REGISTRY_PATH), help="Workflow registry path")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_lint = sub.add_parser("lint", help="Validate the workflow registry")
@@ -84,43 +65,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_doctor = sub.add_parser("doctor", help="Report optional adapter availability")
     p_doctor.add_argument("--json", action="store_true")
 
-    p_observe = sub.add_parser(
-        "observe", help="Read-only observer audit for workflow runs and locks"
-    )
+    p_observe = sub.add_parser("observe", help="Read-only observer audit for workflow runs and locks")
     p_observe.add_argument("run_id", nargs="?")
     p_observe.add_argument("--json", action="store_true")
 
-    p_status = sub.add_parser(
-        "status", help="Show AGCP run, lock, claim, compliance, and lane status"
-    )
+    p_status = sub.add_parser("status", help="Show AGCP run, lock, claim, compliance, and lane status")
     p_status.add_argument("--json", action="store_true")
-    p_status.add_argument(
-        "--health", action="store_true", help="Include doctor health checks"
-    )
+    p_status.add_argument("--health", action="store_true", help="Include doctor health checks")
 
-    p_claim = sub.add_parser(
-        "claim", help="Claim paths or governance surfaces for an active run"
-    )
+    p_claim = sub.add_parser("claim", help="Claim paths or governance surfaces for an active run")
     p_claim.add_argument("run_id")
     p_claim.add_argument("--path", action="append", default=[])
     p_claim.add_argument("--surface", action="append", default=[])
     p_claim.add_argument("--actor", default=os.environ.get("USER", "agent"))
-    p_claim.add_argument(
-        "--affected-receipt",
-        "--affected-hash",
-        dest="affected_receipt",
-        default=None,
-        help=(
-            "Path to affected-graph-receipt/v1 JSON; --affected-hash is a "
-            "deprecated path alias and no longer accepts an arbitrary hash"
-        ),
-    )
+    p_claim.add_argument("--affected-hash", default=None, help="Hash from affected-graph.py")
     p_claim.add_argument("--force-lock", action="store_true")
     p_claim.add_argument("--json", action="store_true")
 
-    p_verify = sub.add_parser(
-        "verify", help="Select and optionally run checks for changed files"
-    )
+    p_verify = sub.add_parser("verify", help="Select and optionally run checks for changed files")
     p_verify.add_argument("run_id", nargs="?")
     p_verify.add_argument("--from-diff", action="store_true")
     p_verify.add_argument("--file", action="append", default=[])
@@ -129,9 +91,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_verify.add_argument("--execute", action="store_true")
     p_verify.add_argument("--json", action="store_true")
 
-    p_compliance = sub.add_parser(
-        "compliance", help="Audit run, lock, ledger, and evidence compliance"
-    )
+    p_compliance = sub.add_parser("compliance", help="Audit run, lock, ledger, and evidence compliance")
     p_compliance.add_argument("run_id", nargs="?")
     p_compliance.add_argument("--json", action="store_true")
 
@@ -144,14 +104,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_adapters = sub.add_parser("adapters", help="List external adapter contracts")
     p_adapters.add_argument("--json", action="store_true")
 
-    p_integrations = sub.add_parser(
-        "integrations", help="List internal integration contracts"
-    )
+    p_integrations = sub.add_parser("integrations", help="List internal integration contracts")
     p_integrations.add_argument("--json", action="store_true")
 
-    p_bootstrap = sub.add_parser(
-        "bootstrap", help="Show one-shot startup context for agents"
-    )
+    p_bootstrap = sub.add_parser("bootstrap", help="Show one-shot startup context for agents")
     p_bootstrap.add_argument("--json", action="store_true")
     p_bootstrap.add_argument("--skip-health", action="store_true")
 
@@ -171,9 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_run = sub.add_parser("run", help="Run or print a workflow stage")
     p_run.add_argument("workflow_id")
     p_run.add_argument("--stage", default="preflight")
-    p_run.add_argument(
-        "--execute", action="store_true", help="Actually run non-manual commands"
-    )
+    p_run.add_argument("--execute", action="store_true", help="Actually run non-manual commands")
     p_run.add_argument("--project", default="")
     p_run.add_argument("--format", default="openspec")
     p_run.add_argument("--source-file", default="")
@@ -203,9 +157,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_start.add_argument("--json", action="store_true")
 
-    p_spawn = sub.add_parser(
-        "spawn", help="Create a child run linked to a parent (attribution chain)"
-    )
+    p_spawn = sub.add_parser("spawn", help="Create a child run linked to a parent (attribution chain)")
     p_spawn.add_argument("parent_run_id")
     p_spawn.add_argument("workflow_id")
     p_spawn.add_argument("--project", default="")
@@ -246,13 +198,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_close.add_argument("--keep-locks", action="store_true")
     p_close.add_argument("--json", action="store_true")
 
-    p_closeout = sub.add_parser(
-        "closeout", help="Verify, observe, record evidence, and close a run"
-    )
+    p_closeout = sub.add_parser("closeout", help="Verify, observe, record evidence, and close a run")
     p_closeout.add_argument("run_id")
-    p_closeout.add_argument(
-        "--status", choices=["ok", "failed", "blocked"], default="ok"
-    )
+    p_closeout.add_argument("--status", choices=["ok", "failed", "blocked"], default="ok")
     p_closeout.add_argument("--evidence", action="append", default=[])
     p_closeout.add_argument("--from-diff", action="store_true")
     p_closeout.add_argument("--file", action="append", default=[])
@@ -282,9 +230,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Only scan and report locks, do not prune",
     )
 
-    p_heartbeat = sub.add_parser(
-        "heartbeat", help="Renew heartbeat for an active run's locks (SR-01)"
-    )
+    p_heartbeat = sub.add_parser("heartbeat", help="Renew heartbeat for an active run's locks (SR-01)")
     p_heartbeat.add_argument("run_id")
     p_heartbeat.add_argument("--json", action="store_true")
 
@@ -321,9 +267,7 @@ def main(argv: list[str] | None = None) -> int:
                 if args.scan_only:
                     live = [e for e in locks if e["kind"] == "live"]
                     zombie = [e for e in locks if e["kind"] != "live"]
-                    print(
-                        f"locks: {len(locks)} total, {len(live)} live, {len(zombie)} zombie"
-                    )
+                    print(f"locks: {len(locks)} total, {len(live)} live, {len(zombie)} zombie")
                     for entry in locks:
                         tag = "LIVE" if entry["kind"] == "live" else "ZOMBIE"
                         print(f"  [{tag}] {entry['path']} — {entry['detail']}")
@@ -337,10 +281,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.json:
                 print(json.dumps(receipt, ensure_ascii=False, indent=2))
             else:
-                print(
-                    f"heartbeat {receipt['run_id']}: "
-                    f"{receipt['count']} lock(s) renewed at {receipt['heartbeat_at']}"
-                )
+                print(f"heartbeat {receipt['run_id']}: {receipt['count']} lock(s) renewed at {receipt['heartbeat_at']}")
             return 0
         if args.command == "claim":
             claim = claim_run(
@@ -350,7 +291,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.path,
                 args.surface,
                 args.force_lock,
-                args.affected_receipt,
+                args.affected_hash,
             )
             if args.json:
                 print(json.dumps(claim, ensure_ascii=False, indent=2))
@@ -390,9 +331,7 @@ def main(argv: list[str] | None = None) -> int:
             list_integrations(registry, args.json)
             return 0
         if args.command in {"bootstrap", "context"}:
-            report = bootstrap_report(
-                registry, not args.skip_health, include_agcp_drift
-            )
+            report = bootstrap_report(registry, not args.skip_health, include_agcp_drift)
             print_bootstrap_report(report, args.json)
             return 0 if report["ok"] else 1
         if args.command == "suggest":
@@ -403,63 +342,42 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "show":
             workflow = workflow_by_id(registry, args.workflow_id)
             context = context_from_args(args)
-            validate_agent_profile(
-                registry, workflow, context["profile"], require=False
-            )
+            validate_agent_profile(registry, workflow, context["profile"], require=False)
             print_plan(workflow_plan(workflow, context), args.json)
             return 0
         if args.command == "run":
             workflow = workflow_by_id(registry, args.workflow_id)
             context = context_from_args(args)
-            validate_agent_profile(
-                registry, workflow, context["profile"], require=args.execute
-            )
+            validate_agent_profile(registry, workflow, context["profile"], require=args.execute)
             return run_stage(workflow, args.stage, context, args.execute, args.json)
         if args.command == "start":
             workflow = workflow_by_id(registry, args.workflow_id)
-            bet_id = getattr(args, "bet", "") or ""
-            chain_bind = _load_chain_bind()
-            if chain_bind is not None:
-                verdict = chain_bind.start_requires_bet(args.workflow_id, bet_id)
-                if not verdict.ok:
-                    print(
-                        "agent-workflow: requirement-iteration start requires "
-                        f"--bet <BET-ID> ({', '.join(verdict.reasons)})",
-                        file=sys.stderr,
-                    )
-                    return 1
             objective = args.objective
-            if bet_id:
+            if getattr(args, "bet", None):
+                bet_id = args.bet
                 import yaml
 
-                from .core import WORKSPACE as workspace_root
+                from ..omo_paths import WORKSPACE_ROOT
 
-                ledger_file = workspace_root / "docs/plans/3y-bet-ledger.yaml"
+                ledger_file = WORKSPACE_ROOT / "docs/plans/3y-bet-ledger.yaml"
                 if ledger_file.exists():
                     data = {}
-                    for d in yaml.safe_load_all(
-                        ledger_file.read_text(encoding="utf-8")
-                    ):
+                    for d in yaml.safe_load_all(ledger_file.read_text(encoding="utf-8")):
                         if isinstance(d, dict):
                             data.update(d)
                     for item in data.get("bets", []):
                         if isinstance(item, dict) and item.get("id") == bet_id:
                             objective = f"[{bet_id}] {item.get('title', '')} (Appetite: {item.get('appetite', '')})"
                             break
-            context = context_from_args(args)
-            if bet_id:
-                context["bet_id"] = bet_id
             record = start_run(
                 registry,
                 workflow,
-                context,
+                context_from_args(args),
                 objective,
                 args.dry_run,
                 args.force_lock,
                 parent_run_id=getattr(args, "parent_run", "") or "",
             )
-            if bet_id and chain_bind is not None:
-                chain_bind.persist_bind_on_run(record, bet_id)
             if args.json:
                 print(json.dumps(record, ensure_ascii=False, indent=2))
             else:
@@ -504,9 +422,7 @@ def main(argv: list[str] | None = None) -> int:
                     if status == "missing":
                         print(f"{prefix} {rid} — MISSING")
                     else:
-                        print(
-                            f"{prefix} {rid}  actor={actor}  profile={profile}  workflow={wid}  status={status}"
-                        )
+                        print(f"{prefix} {rid}  actor={actor}  profile={profile}  workflow={wid}  status={status}")
             return 0
         if args.command in {"resume", "show-run"}:
             _, payload = read_run(registry, args.run_id)
@@ -529,9 +445,7 @@ def main(argv: list[str] | None = None) -> int:
                     "close --status ok requires --evidence (ADR-0209 A1; "
                     "use closeout for auto evidence, or pass --evidence <note>)"
                 )
-            payload = close_run(
-                registry, args.run_id, args.status, args.evidence, not args.keep_locks
-            )
+            payload = close_run(registry, args.run_id, args.status, args.evidence, not args.keep_locks)
             if args.json:
                 print(json.dumps(payload, ensure_ascii=False, indent=2))
             else:
@@ -552,12 +466,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.json:
                 print(json.dumps(report, ensure_ascii=False, indent=2))
             else:
-                print(
-                    f"closeout {report['run']['run_id']} as {report['run']['status']}"
-                )
-                print(
-                    f"verify checks={report['verify']['check_count']} ok={report['verify']['ok']}"
-                )
+                print(f"closeout {report['run']['run_id']} as {report['run']['status']}")
+                print(f"verify checks={report['verify']['check_count']} ok={report['verify']['ok']}")
                 print(f"observe={report['observe']['decision']}")
             return 0 if report["ok"] else 1
     except WorkflowError as exc:

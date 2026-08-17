@@ -101,9 +101,7 @@ def _check_ingress_artifacts(
             "task_artifacts": 0,
             "debt_artifacts": 0,
             "capability_artifacts": 0,
-        }, [
-            f"ingress artifacts: required registry missing: {registry_path.relative_to(workspace_root)}"
-        ]
+        }, [f"ingress artifacts: required registry missing: {registry_path.relative_to(workspace_root)}"]
 
     registry = _load_yaml(registry_path)
     issues: list[str] = []
@@ -125,29 +123,21 @@ def _check_ingress_artifacts(
         bucket = registry.get(bucket_name, {})
         by_id = bucket.get("by_id", {}) if isinstance(bucket, dict) else {}
         if not isinstance(by_id, dict):
-            issues.append(
-                f"ingress artifacts: {bucket_name}.by_id missing or not a mapping"
-            )
+            issues.append(f"ingress artifacts: {bucket_name}.by_id missing or not a mapping")
             continue
         summary[summary_key] = len(by_id)
         rules = INGRESS_ARTIFACT_RULES[bucket_name]
         for item_id, meta in by_id.items():
             if not isinstance(meta, dict):
-                issues.append(
-                    f"ingress artifacts: {bucket_name}.by_id.{item_id} not a mapping"
-                )
+                issues.append(f"ingress artifacts: {bucket_name}.by_id.{item_id} not a mapping")
                 continue
             artifact_ref = meta.get("artifact_ref")
             if not isinstance(artifact_ref, str) or not artifact_ref:
-                issues.append(
-                    f"ingress artifacts: {bucket_name}.by_id.{item_id} missing artifact_ref"
-                )
+                issues.append(f"ingress artifacts: {bucket_name}.by_id.{item_id} missing artifact_ref")
                 continue
             artifact_path = workspace_root / artifact_ref
             if not artifact_path.exists():
-                issues.append(
-                    f"ingress artifacts: artifact file missing for {bucket_name}.{item_id}: {artifact_ref}"
-                )
+                issues.append(f"ingress artifacts: artifact file missing for {bucket_name}.{item_id}: {artifact_ref}")
                 continue
             payload = _load_yaml(artifact_path)
             expected_kind = (
@@ -161,28 +151,20 @@ def _check_ingress_artifacts(
                     f"(expected {expected_kind}, got {payload.get('kind')!r})"
                 )
             if payload.get(rules["id_field"]) != item_id:
-                issues.append(
-                    f"ingress artifacts: {artifact_ref} {rules['id_field']} mismatch for {item_id}"
-                )
+                issues.append(f"ingress artifacts: {artifact_ref} {rules['id_field']} mismatch for {item_id}")
             if not payload.get("created_at"):
                 issues.append(f"ingress artifacts: {artifact_ref} missing created_at")
             if payload.get("source_ref", "") != meta.get("source_ref", ""):
-                issues.append(
-                    f"ingress artifacts: {artifact_ref} source_ref mismatch for {item_id}"
-                )
+                issues.append(f"ingress artifacts: {artifact_ref} source_ref mismatch for {item_id}")
             if not payload.get("ingress_plane"):
-                issues.append(
-                    f"ingress artifacts: {artifact_ref} missing ingress_plane"
-                )
+                issues.append(f"ingress artifacts: {artifact_ref} missing ingress_plane")
             target_field = (
                 (rules.get("target_field_by_id") or {}).get(item_id)
                 if isinstance(rules.get("target_field_by_id"), dict)
                 else rules.get("target_field")
             )
             if not isinstance(target_field, str) or not target_field:
-                issues.append(
-                    f"ingress artifacts: {bucket_name}.{item_id} missing target_field rule"
-                )
+                issues.append(f"ingress artifacts: {bucket_name}.{item_id} missing target_field rule")
                 continue
             target_value = payload.get(target_field)
             expected_target = (
@@ -192,21 +174,13 @@ def _check_ingress_artifacts(
             )
             if isinstance(expected_target, list):
                 if not isinstance(target_value, list) or not target_value:
-                    issues.append(
-                        f"ingress artifacts: {artifact_ref} missing {target_field}"
-                    )
+                    issues.append(f"ingress artifacts: {artifact_ref} missing {target_field}")
                 else:
-                    missing_refs = [
-                        ref for ref in expected_target if ref not in target_value
-                    ]
+                    missing_refs = [ref for ref in expected_target if ref not in target_value]
                     if missing_refs:
-                        issues.append(
-                            f"ingress artifacts: {artifact_ref} {target_field} missing refs {missing_refs}"
-                        )
+                        issues.append(f"ingress artifacts: {artifact_ref} {target_field} missing refs {missing_refs}")
             elif not isinstance(target_value, str) or not target_value:
-                issues.append(
-                    f"ingress artifacts: {artifact_ref} missing {target_field}"
-                )
+                issues.append(f"ingress artifacts: {artifact_ref} missing {target_field}")
             elif "target_ref" in rules and target_value != rules["target_ref"]:
                 issues.append(
                     f"ingress artifacts: {artifact_ref} {target_field} mismatch "
@@ -217,9 +191,7 @@ def _check_ingress_artifacts(
                     f"ingress artifacts: {artifact_ref} {target_field} mismatch "
                     f"(expected {expected_target}, got {target_value!r})"
                 )
-            elif "target_prefix" in rules and not target_value.startswith(
-                str(rules["target_prefix"])
-            ):
+            elif "target_prefix" in rules and not target_value.startswith(str(rules["target_prefix"])):
                 issues.append(
                     f"ingress artifacts: {artifact_ref} {target_field} must start with {rules['target_prefix']}"
                 )

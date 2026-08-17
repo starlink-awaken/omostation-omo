@@ -14,27 +14,18 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 
 DOCS_ROOT = Path("/Users/xiamingxing/Documents")
 WS_ROOT = Path("/Users/xiamingxing/Workspace")
 PREFERENCE_FILE = WS_ROOT / ".omo" / "state" / "human_preference_vector.json"
-WORKFLOW_SPEC = (
-    WS_ROOT
-    / "projects"
-    / "ecos"
-    / "etc"
-    / "workflows"
-    / "universal-ingest-pipeline.workflow.yaml"
-)
+WORKFLOW_SPEC = WS_ROOT / "projects" / "ecos" / "etc" / "workflows" / "universal-ingest-pipeline.workflow.yaml"
 
 
 def extract_human_verdict_history() -> list[dict[str, str]]:
     """扫描所有历史裁决单中的打钩选择 [x]."""
-    verdict_files = list(
-        (DOCS_ROOT / "@驾驶舱" / "_knowledge" / "20-operations").glob("*VERDICT*.md")
-    )
+    verdict_files = list((DOCS_ROOT / "@驾驶舱" / "_knowledge" / "20-operations").glob("*VERDICT*.md"))
     verdict_files += list((DOCS_ROOT / "_inbox").glob("*VERDICT*.md"))
 
     choices = []
@@ -68,21 +59,17 @@ def update_preference_vector() -> dict[str, float]:
         if "MVP" in text or "极速" in text:
             prefs["prefer_mvp_speed"] = min(1.0, prefs["prefer_mvp_speed"] + 0.1)
         if "本地" in text or "隐私" in text:
-            prefs["prefer_privacy_local"] = min(
-                1.0, prefs["prefer_privacy_local"] + 0.05
-            )
+            prefs["prefer_privacy_local"] = min(1.0, prefs["prefer_privacy_local"] + 0.05)
         if "UI" in text or "图表" in text or "看板" in text:
             prefs["prefer_rich_ui"] = min(1.0, prefs["prefer_rich_ui"] + 0.1)
 
     PREFERENCE_FILE.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
         "preference_vector": prefs,
         "sample_size": len(choices),
     }
-    PREFERENCE_FILE.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    PREFERENCE_FILE.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     print(
         f"🧠 人类决策偏好权值向量已学习更新 ──► {PREFERENCE_FILE.name} (权重: MVP={prefs['prefer_mvp_speed']:.2f}, 隐私={prefs['prefer_privacy_local']:.2f})"
     )
@@ -105,7 +92,7 @@ def self_inspect_and_evolve_workflow() -> bool:
 """
         updated_spec = spec_text.strip() + "\n" + new_step
         WORKFLOW_SPEC.write_text(updated_spec, encoding="utf-8")
-        print(f"🧬 Workflow Spec 架构完成自我进化重构 ──► 新增自进化节点 ST-06")
+        print("🧬 Workflow Spec 架构完成自我进化重构 ──► 新增自进化节点 ST-06")
         return True
     return False
 
@@ -114,9 +101,7 @@ def main() -> int:
     print("🧬 启动 MetaOS 智能体架构自进化与偏好向量学习引擎...")
     update_preference_vector()
     evolved = self_inspect_and_evolve_workflow()
-    print(
-        f"🎉 自进化轮次完成: {'架构发生自我重构' if evolved else '架构已处于最佳进化态'}"
-    )
+    print(f"🎉 自进化轮次完成: {'架构发生自我重构' if evolved else '架构已处于最佳进化态'}")
     return 0
 
 

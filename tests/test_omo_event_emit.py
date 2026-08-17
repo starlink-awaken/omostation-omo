@@ -39,11 +39,7 @@ def test_omo_event_emit_subprocess_writes_jsonl(tmp_path):
     assert "✅ event emitted" in r.stdout
 
     # 验证 log 写 1 条结构化 event
-    lines = [
-        line_
-        for line_ in log_path.read_text(encoding="utf-8").splitlines()
-        if line_.strip()
-    ]
+    lines = [line_ for line_ in log_path.read_text(encoding="utf-8").splitlines() if line_.strip()]
     assert len(lines) == 1
     event = json.loads(lines[0])
     assert event["kind"] == "test_event"

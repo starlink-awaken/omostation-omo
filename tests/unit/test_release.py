@@ -41,9 +41,7 @@ def test_omo_version_matches_workspace() -> None:
     from omo import __version__
 
     expected = VERSION_FILE.read_text().strip()
-    assert __version__ == expected, (
-        f"omo.__version__={__version__!r} != VERSION={expected!r}"
-    )
+    assert __version__ == expected, f"omo.__version__={__version__!r} != VERSION={expected!r}"
 
 
 def test_kairon_version_matches_workspace() -> None:

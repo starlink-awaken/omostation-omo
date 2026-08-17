@@ -21,10 +21,11 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from types import MappingProxyType
-from typing import Any, Callable, Mapping
+from typing import Any
 from uuid import uuid4
 
 from ecos.ssot.mof.generated.control.mof_control_models import DelegationMandate
@@ -198,7 +199,7 @@ _TERMINAL = frozenset(
 
 def _utc_now() -> str:
     """Default clock: current UTC ISO-8601 (timezone-aware)."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -291,9 +292,7 @@ class MandateManager:
         # Cross-principal existence check (not just per-principal replay)
         all_state = self._replay_all()
         if mandate.mandate_id in all_state.mandates:
-            raise IllegalMandateTransitionError(
-                f"mandate {mandate.mandate_id} already exists; cannot re-grant"
-            )
+            raise IllegalMandateTransitionError(f"mandate {mandate.mandate_id} already exists; cannot re-grant")
 
         # Verify W2-01 role context and snapshot versions.
         actual = self._resolve_role_assignment_versions(mandate)
@@ -347,21 +346,16 @@ class MandateManager:
             raise IllegalMandateTransitionError(f"mandate {mandate_id} not found")
         if current.principal_id != principal_id:
             raise IllegalMandateTransitionError(
-                f"principal mismatch for mandate {mandate_id}: "
-                f"owned by {current.principal_id}, not {principal_id}"
+                f"principal mismatch for mandate {mandate_id}: owned by {current.principal_id}, not {principal_id}"
             )
         if current.status == STATUS_REVOKED:
-            raise IllegalMandateTransitionError(
-                f"mandate {mandate_id} is already revoked"
-            )
+            raise IllegalMandateTransitionError(f"mandate {mandate_id} is already revoked")
         if current.mandate_version != 1:
             raise IllegalMandateTransitionError(
                 f"mandate {mandate_id} has unexpected version {current.mandate_version}"
             )
         if not current.revocable:
-            raise IllegalMandateTransitionError(
-                f"mandate {mandate_id} is not revocable"
-            )
+            raise IllegalMandateTransitionError(f"mandate {mandate_id} is not revocable")
         if expected_version != current.mandate_version:
             raise StaleMandateVersionError(
                 f"stale version for mandate {mandate_id}: expected "
@@ -384,9 +378,7 @@ class MandateManager:
                 }
             )
         except PydanticValidationError as exc:
-            raise MandateError(
-                f"invalid revoke payload for mandate {mandate_id}: {exc.errors()}"
-            ) from exc
+            raise MandateError(f"invalid revoke payload for mandate {mandate_id}: {exc.errors()}") from exc
 
         payload = revoked.model_dump(mode="json")
         payload["kind"] = "revoke"
@@ -497,9 +489,7 @@ class MandateManager:
             return AdmissionResult(False, REASON_DISCLOSURE_MISMATCH, mandate)
 
         # 10. 16-cell matrix + approval_mode tightening
-        matrix_reason = _evaluate_matrix_cell(
-            mandate.autonomy_level, risk_level, mandate
-        )
+        matrix_reason = _evaluate_matrix_cell(mandate.autonomy_level, risk_level, mandate)
         reason = _tighten(matrix_reason, mandate.approval_mode)
 
         allowed = reason == REASON_ALLOW
@@ -547,8 +537,7 @@ class MandateManager:
             mandate = DelegationMandate.model_validate(payload)
         except PydanticValidationError as exc:
             raise MandateReplayError(
-                f"malformed mandate event at seq {sequence}: "
-                f"invalid DelegationMandate payload: {exc}"
+                f"malformed mandate event at seq {sequence}: invalid DelegationMandate payload: {exc}"
             ) from exc
         try:
             # Generated Pydantic does NOT enforce the local invariants;
@@ -557,21 +546,18 @@ class MandateManager:
             _check_local_invariants(mandate)
         except MandateError as exc:
             raise MandateReplayError(
-                f"malformed mandate event at seq {sequence}: "
-                f"mandate violates local invariant: {exc.message}"
+                f"malformed mandate event at seq {sequence}: mandate violates local invariant: {exc.message}"
             ) from exc
         kind = payload["kind"]
 
         # event_type / kind mismatch
         if event_type == EVT_MANDATE_GRANT and kind != "grant":
             raise MandateReplayError(
-                f"malformed mandate event at seq {sequence}: "
-                f"event_type {EVT_MANDATE_GRANT} but kind={kind!r}"
+                f"malformed mandate event at seq {sequence}: event_type {EVT_MANDATE_GRANT} but kind={kind!r}"
             )
         if event_type == EVT_MANDATE_REVOKE and kind != "revoke":
             raise MandateReplayError(
-                f"malformed mandate event at seq {sequence}: "
-                f"event_type {EVT_MANDATE_REVOKE} but kind={kind!r}"
+                f"malformed mandate event at seq {sequence}: event_type {EVT_MANDATE_REVOKE} but kind={kind!r}"
             )
 
         # Envelope fields MUST be present and exactly equal to payload fields.
@@ -588,8 +574,7 @@ class MandateManager:
             payload_val = payload.get(fld)
             if env_val is None or not isinstance(env_val, str) or not env_val:
                 raise MandateReplayError(
-                    f"malformed mandate event at seq {sequence}: "
-                    f"missing/empty required envelope field {fld}"
+                    f"malformed mandate event at seq {sequence}: missing/empty required envelope field {fld}"
                 )
             if payload_val != env_val:
                 raise MandateReplayError(
@@ -604,13 +589,11 @@ class MandateManager:
             # grant: active v1, no prior ID
             if previous is not None:
                 raise MandateReplayError(
-                    f"malformed mandate event at seq {sequence}: "
-                    f"duplicate grant for mandate {mandate_id!r}"
+                    f"malformed mandate event at seq {sequence}: duplicate grant for mandate {mandate_id!r}"
                 )
             if mandate.status != STATUS_ACTIVE:
                 raise MandateReplayError(
-                    f"malformed mandate event at seq {sequence}: "
-                    f"grant must have status active, got {mandate.status!r}"
+                    f"malformed mandate event at seq {sequence}: grant must have status active, got {mandate.status!r}"
                 )
             if mandate.mandate_version != 1:
                 raise MandateReplayError(
@@ -623,8 +606,7 @@ class MandateManager:
             # revoke: revoked v2, prev_version=1, prior active v1 MUST exist
             if previous is None:
                 raise MandateReplayError(
-                    f"malformed mandate event at seq {sequence}: "
-                    f"revoke without prior grant for mandate {mandate_id!r}"
+                    f"malformed mandate event at seq {sequence}: revoke without prior grant for mandate {mandate_id!r}"
                 )
             if previous.status != STATUS_ACTIVE:
                 raise MandateReplayError(
@@ -676,44 +658,26 @@ class MandateManager:
         try:
             payload = json.loads(row["payload_json"])
         except (TypeError, ValueError, KeyError):
-            raise MandateReplayError(
-                f"malformed mandate event at seq {sequence}: payload is not valid JSON"
-            ) from None
+            raise MandateReplayError(f"malformed mandate event at seq {sequence}: payload is not valid JSON") from None
         if not isinstance(payload, dict):
-            raise MandateReplayError(
-                f"malformed mandate event at seq {sequence}: "
-                "payload must be a JSON object"
-            )
+            raise MandateReplayError(f"malformed mandate event at seq {sequence}: payload must be a JSON object")
         kind = payload.get("kind")
         if kind not in ("grant", "revoke"):
-            raise MandateReplayError(
-                f"malformed mandate event at seq {sequence}: unknown kind {kind!r}"
-            )
+            raise MandateReplayError(f"malformed mandate event at seq {sequence}: unknown kind {kind!r}")
         return payload
 
-    def _resolve_role_assignment_versions(
-        self, mandate: DelegationMandate
-    ) -> _RoleSnapshot:
+    def _resolve_role_assignment_versions(self, mandate: DelegationMandate) -> _RoleSnapshot:
         """Verify W2-01 RoleAssignment and return actual versions."""
         svc = SovereigntyService(self._broker)
-        assignment = svc.current_assignment(
-            mandate.principal_id, mandate.role_context_id
-        )
+        assignment = svc.current_assignment(mandate.principal_id, mandate.role_context_id)
         if assignment is None or assignment.status != STATUS_ACTIVE:
-            raise MandateError(
-                f"role {mandate.role_context_id} not active for {mandate.principal_id}"
-            )
+            raise MandateError(f"role {mandate.role_context_id} not active for {mandate.principal_id}")
         resp_ids = {r.resp_id for r in assignment.responsibilities}
         if mandate.responsibility_id not in resp_ids:
             raise MandateError(
-                f"responsibility {mandate.responsibility_id} not in "
-                f"assignment {assignment.assignment_id}"
+                f"responsibility {mandate.responsibility_id} not in assignment {assignment.assignment_id}"
             )
-        resp = next(
-            r
-            for r in assignment.responsibilities
-            if r.resp_id == mandate.responsibility_id
-        )
+        resp = next(r for r in assignment.responsibilities if r.resp_id == mandate.responsibility_id)
         return _RoleSnapshot(
             role_assignment_id=assignment.assignment_id,
             role_assignment_version=assignment.version,
@@ -732,9 +696,7 @@ class MandateManager:
             producer=MANDATE_PRODUCER,
             principal_id=mandate.principal_id,
             space_id=MANDATE_SPACE_ID,
-            correlation_id=(
-                f"mandate|{mandate.mandate_id}|{kind}|{mandate.mandate_version}"
-            ),
+            correlation_id=(f"mandate|{mandate.mandate_id}|{kind}|{mandate.mandate_version}"),
             idempotency_key=f"{mandate.mandate_id}|{mandate.mandate_version}",
             episode_id=mandate.episode_id,
             role_context_id=mandate.role_context_id,
@@ -754,13 +716,9 @@ class MandateManager:
         try:
             dt = datetime.fromisoformat(ts)
         except (ValueError, TypeError) as exc:
-            raise MandateError(
-                f"clock returned invalid ISO datetime {ts!r}: {exc}"
-            ) from exc
+            raise MandateError(f"clock returned invalid ISO datetime {ts!r}: {exc}") from exc
         if dt.tzinfo is None:
-            raise MandateError(
-                f"clock returned naive (non-timezone-aware) datetime {ts!r}"
-            )
+            raise MandateError(f"clock returned naive (non-timezone-aware) datetime {ts!r}")
         return dt.isoformat()
 
     def _now_dt(self) -> datetime:
@@ -791,13 +749,11 @@ def _validate_mandate_state(
 ) -> None:
     if mandate.mandate_version != expect_version:
         raise IllegalMandateTransitionError(
-            f"mandate {mandate.mandate_id}: expected version "
-            f"{expect_version}, got {mandate.mandate_version}"
+            f"mandate {mandate.mandate_id}: expected version {expect_version}, got {mandate.mandate_version}"
         )
     if mandate.status != expect_status:
         raise IllegalMandateTransitionError(
-            f"mandate {mandate.mandate_id}: expected status "
-            f"{expect_status!r}, got {mandate.status!r}"
+            f"mandate {mandate.mandate_id}: expected status {expect_status!r}, got {mandate.status!r}"
         )
 
 

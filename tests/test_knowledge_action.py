@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
+
 from omo.knowledge_action import (
     KnowledgeActionError,
     build_knowledge_action_snapshot,
@@ -37,12 +38,8 @@ def _task_payload() -> dict:
 
 
 def test_record_is_reference_only_and_idempotent(tmp_path):
-    result = record_knowledge_action(
-        tmp_path, _task_payload(), actor="cockpit-ui://knowledge-action"
-    )
-    duplicate = record_knowledge_action(
-        tmp_path, _task_payload(), actor="cockpit-ui://knowledge-action"
-    )
+    result = record_knowledge_action(tmp_path, _task_payload(), actor="cockpit-ui://knowledge-action")
+    duplicate = record_knowledge_action(tmp_path, _task_payload(), actor="cockpit-ui://knowledge-action")
 
     assert result["status"] == "recorded"
     assert duplicate["status"] == "deduplicated"
@@ -68,9 +65,7 @@ def test_snapshot_projects_funnel_and_sources(tmp_path):
     )
     record_knowledge_action(tmp_path, _task_payload())
 
-    snapshot = build_knowledge_action_snapshot(
-        tmp_path, scene_id="engineering-delivery"
-    )
+    snapshot = build_knowledge_action_snapshot(tmp_path, scene_id="engineering-delivery")
     assert snapshot["summary"]["action_count"] == 1
     assert snapshot["funnel"]["task_created"] == 1
     assert snapshot["top_sources"] == [{"ref": "kos:delivery-1", "use_count": 1}]
@@ -107,9 +102,5 @@ def test_invalid_receipts_are_rejected(tmp_path, payload):
 
 def test_log_lines_are_json_objects(tmp_path):
     record_knowledge_action(tmp_path, _task_payload())
-    line = (
-        (tmp_path / "_knowledge/knowledge-mesh/actions.jsonl")
-        .read_text(encoding="utf-8")
-        .strip()
-    )
+    line = (tmp_path / "_knowledge/knowledge-mesh/actions.jsonl").read_text(encoding="utf-8").strip()
     assert isinstance(json.loads(line), dict)

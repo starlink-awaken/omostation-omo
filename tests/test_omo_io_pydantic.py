@@ -35,9 +35,10 @@ def test_append_with_schema_valid_record(tmp_path):
 
 def test_append_with_schema_invalid_record_raises(tmp_path):
     """传 schema + 非法 record → 抛 ValidationError, 不写入."""
+    from pydantic import ValidationError
+
     from omo.omo_io import AppendOnlyLog
     from omo.omo_io_schemas import OmoBosMetricsRecord
-    from pydantic import ValidationError
 
     log = AppendOnlyLog(tmp_path / "test.jsonl")
     # elapsed_ms 必填, status 必填
@@ -54,9 +55,10 @@ def test_append_with_schema_invalid_record_raises(tmp_path):
 
 def test_append_with_schema_invalid_status_enum_raises(tmp_path):
     """status 字段非法值 → 校验失败 (BosStatus Enum)."""
+    from pydantic import ValidationError
+
     from omo.omo_io import AppendOnlyLog
     from omo.omo_io_schemas import OmoBosMetricsRecord
-    from pydantic import ValidationError
 
     log = AppendOnlyLog(tmp_path / "test.jsonl")
     with pytest.raises(ValidationError):
@@ -73,9 +75,10 @@ def test_append_with_schema_invalid_status_enum_raises(tmp_path):
 
 def test_append_with_schema_z_suffix_violation_raises(tmp_path):
     """timestamp 不以 'Z' 结尾 → 校验失败 (Round 8 P2 锁)."""
+    from pydantic import ValidationError
+
     from omo.omo_io import AppendOnlyLog
     from omo.omo_io_schemas import OmoAuditRecord
-    from pydantic import ValidationError
 
     log = AppendOnlyLog(tmp_path / "test.jsonl")
     with pytest.raises(ValidationError) as exc_info:
@@ -141,9 +144,10 @@ def test_append_with_pydantic_instance_and_schema(tmp_path):
 def test_append_with_invalid_instance_raises_via_schema(tmp_path):
     """传 Pydantic 实例 (但 schema 不符) → ValidationError."""
     # 这场景实际不会发生 (Pydantic 实例创建时已 valid), 但锁住 fail-fast
+    from pydantic import ValidationError
+
     from omo.omo_io import AppendOnlyLog
     from omo.omo_io_schemas import OmoAuditRecord, OmoBosMetricsRecord
-    from pydantic import ValidationError
 
     log = AppendOnlyLog(tmp_path / "test.jsonl")
     rec = OmoAuditRecord(

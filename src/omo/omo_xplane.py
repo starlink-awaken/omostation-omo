@@ -121,9 +121,7 @@ def _probe_jsonl_freshness(m: dict) -> ProbeResult:
         return ProbeResult(**base, status=DEAD, detail="尾行无可解析时间戳")
     age_h = (datetime.now(UTC) - ts).total_seconds() / 3600
     max_h = float(sla.get("max_silence_h", 24))
-    detail = (
-        f"age={age_h:.1f}h / sla={max_h:.0f}h · last={ts.isoformat(timespec='seconds')}"
-    )
+    detail = f"age={age_h:.1f}h / sla={max_h:.0f}h · last={ts.isoformat(timespec='seconds')}"
     if age_h < max_h * 0.8:
         return ProbeResult(**base, status=GREEN, detail=detail)
     if age_h < max_h:
@@ -245,10 +243,7 @@ def _aggregate(results: list[ProbeResult]) -> dict:
     for axis, items in axes.items():
         probed = [r for r in items if r.status != PENDING]
         if probed:
-            pts = sum(
-                1.0 if r.status == GREEN else 0.5 if r.status == YELLOW else 0.0
-                for r in probed
-            )
+            pts = sum(1.0 if r.status == GREEN else 0.5 if r.status == YELLOW else 0.0 for r in probed)
             survival[axis] = round(pts / len(probed) * 100, 1)
         else:
             survival[axis] = None
@@ -326,9 +321,7 @@ def _render(results: list[ProbeResult], agg: dict) -> str:
 
 def cmd_check(args: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="omo x-axis check")
-    ap.add_argument(
-        "--quick", action="store_true", help="只跑 jsonl_freshness (只读,秒级)"
-    )
+    ap.add_argument("--quick", action="store_true", help="只跑 jsonl_freshness (只读,秒级)")
     ap.add_argument("--json", action="store_true", help="输出 JSON")
     ns = ap.parse_args(args)
 

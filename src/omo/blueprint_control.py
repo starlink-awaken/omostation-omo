@@ -10,11 +10,11 @@ import shlex
 import signal
 import subprocess
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, NoReturn
+from typing import Any, NoReturn
 
 import yaml
 from ecos.ssot.mof.generated.control.mof_control_models import WorkPacket
@@ -75,12 +75,8 @@ def _stamp(value: str | None = None) -> str:
 
 
 def _canonical_receipt_digest(receipt: Mapping[str, Any]) -> str:
-    projected = {
-        key: value for key, value in receipt.items() if key != "receipt_sha256"
-    }
-    canonical = json.dumps(
-        projected, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    )
+    projected = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    canonical = json.dumps(projected, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
@@ -90,9 +86,7 @@ def _is_sha256(value: Any, *, prefixed: bool) -> bool:
         if not text.startswith("sha256:"):
             return False
         text = text.removeprefix("sha256:")
-    return len(text) == 64 and all(
-        character in "0123456789abcdef" for character in text
-    )
+    return len(text) == 64 and all(character in "0123456789abcdef" for character in text)
 
 
 def _safe_relative_path(value: Any, field_name: str) -> str:
@@ -114,11 +108,7 @@ def _safe_relative_path(value: Any, field_name: str) -> str:
 
 def _required_string_list(container: Mapping[str, Any], field_name: str) -> list[str]:
     value = container.get(field_name)
-    if (
-        not isinstance(value, list)
-        or not value
-        or any(not isinstance(item, str) or not item.strip() for item in value)
-    ):
+    if not isinstance(value, list) or not value or any(not isinstance(item, str) or not item.strip() for item in value):
         raise BlueprintControlError(f"{field_name} must be a non-empty string list")
     return [item.strip() for item in value]
 
@@ -135,9 +125,7 @@ class BlueprintControlService:
         try:
             resolved_ledger = ledger_path.resolve(strict=True)
             resolved_ledger.relative_to(self.root)
-            documents = list(
-                yaml.safe_load_all(resolved_ledger.read_text(encoding="utf-8"))
-            )
+            documents = list(yaml.safe_load_all(resolved_ledger.read_text(encoding="utf-8")))
         except (OSError, ValueError, yaml.YAMLError) as exc:
             raise BlueprintControlError("canonical BET ledger is unavailable") from exc
         matches = [
@@ -165,9 +153,7 @@ class BlueprintControlService:
             if task.get("id") == task_id:
                 matches.append((task_path, task))
         if len(matches) != 1:
-            raise BlueprintControlError(
-                f"active Task identity is not unique: {task_id}"
-            )
+            raise BlueprintControlError(f"active Task identity is not unique: {task_id}")
         task_path, task = matches[0]
         errors = validate_task_file(task_path)
         if errors:
@@ -220,36 +206,24 @@ class BlueprintControlService:
         }
         accepted_bindings = bet.get("accepted_specifications")
         if not isinstance(accepted_bindings, list) or accepted not in [
-            dict(binding)
-            for binding in accepted_bindings
-            if isinstance(binding, Mapping)
+            dict(binding) for binding in accepted_bindings if isinstance(binding, Mapping)
         ]:
-            raise BlueprintControlError(
-                "accepted specification binding or exact digest is missing"
-            )
+            raise BlueprintControlError("accepted specification binding or exact digest is missing")
 
         read_field = "read_surfaces" if task.get("read_surfaces") else "source_docs"
         write_field = "write_surfaces" if task.get("write_surfaces") else "deliverables"
-        read_surfaces = [
-            _safe_relative_path(path, "read surface")
-            for path in _required_string_list(task, read_field)
-        ]
+        read_surfaces = [_safe_relative_path(path, "read surface") for path in _required_string_list(task, read_field)]
         write_surfaces = [
-            _safe_relative_path(path, "write surface")
-            for path in _required_string_list(task, write_field)
+            _safe_relative_path(path, "write surface") for path in _required_string_list(task, write_field)
         ]
         if spec_path not in [surface.rstrip("/") for surface in read_surfaces]:
-            raise BlueprintControlError(
-                "accepted specification is outside read surfaces"
-            )
+            raise BlueprintControlError("accepted specification is outside read surfaces")
         capabilities = _required_string_list(task, "required_capabilities")
         evidence = _required_string_list(task, "evidence_required")
         acceptance_criteria = _required_string_list(task, "acceptance_criteria")
         verify_commands = _required_string_list(task, "test_plan")
         if len(acceptance_criteria) != len(verify_commands):
-            raise BlueprintControlError(
-                "Task acceptance_criteria and test_plan must be one-to-one"
-            )
+            raise BlueprintControlError("Task acceptance_criteria and test_plan must be one-to-one")
         done_when = [
             {
                 "id": f"AC{index}",
@@ -267,9 +241,7 @@ class BlueprintControlService:
             "bet_id": bet_id,
             "strategic_outcome": str(bet.get("goal") or bet.get("title") or bet_id),
             "objective": str(task.get("title") or task_id),
-            "why_now": str(
-                bet.get("why_now") or "accepted specification is executable"
-            ),
+            "why_now": str(bet.get("why_now") or "accepted specification is executable"),
             "status": str(bet["status"]),
             "authority": {
                 "human_gate": True,
@@ -300,15 +272,10 @@ class BlueprintControlService:
                 "required": True,
                 "owner": "controller",
                 "instructions": str(
-                    bet.get("rollback")
-                    or "apply the controller-owned inverse patch and verify the baseline"
+                    bet.get("rollback") or "apply the controller-owned inverse patch and verify the baseline"
                 ),
             },
-            "circuit_breaker": {
-                "conditions": [
-                    str(bet.get("circuit_breaker") or "stop on scope or approval drift")
-                ]
-            },
+            "circuit_breaker": {"conditions": [str(bet.get("circuit_breaker") or "stop on scope or approval drift")]},
             "assignment": {
                 "task_id": task_id,
                 "required_capabilities": capabilities,
@@ -328,9 +295,7 @@ class BlueprintControlService:
             raise BlueprintControlError("WorkPacket canonical hash is unstable")
         return CompiledBlueprintPacket(packet=packet, packet_hash=packet_hash)
 
-    def _validate_compiled_packet(
-        self, compiled: CompiledBlueprintPacket
-    ) -> dict[str, Any]:
+    def _validate_compiled_packet(self, compiled: CompiledBlueprintPacket) -> dict[str, Any]:
         packet = dict(compiled.packet)
         WorkPacket.model_validate(packet)
         measured_hash = compute_packet_hash(canonicalize(packet))
@@ -356,17 +321,13 @@ class BlueprintControlService:
         task_ref = str(task_path.relative_to(self.root))
         if packet.get("dependencies", {}).get("task_ref") != task_ref:
             raise BlueprintControlError("packet Task binding mismatch")
-        capabilities = _required_string_list(
-            packet.get("assignment", {}), "required_capabilities"
-        )
+        capabilities = _required_string_list(packet.get("assignment", {}), "required_capabilities")
         write_surfaces = [
             _safe_relative_path(path, "write surface")
             for path in _required_string_list(packet.get("scope", {}), "write_surfaces")
         ]
 
-        registry = load_yaml(
-            self.root / self.omo_dir / "_truth" / "registry" / "workers.yaml"
-        )
+        registry = load_yaml(self.root / self.omo_dir / "_truth" / "registry" / "workers.yaml")
         worker = _require_admitted_worker(registry, worker_id, transport)
         _require_worker_policy(
             registry,
@@ -406,13 +367,8 @@ class BlueprintControlService:
             omo_dir=self.omo_dir,
         )
         control_state = worker_dispatch.get("control_state")
-        if (
-            not isinstance(control_state, Mapping)
-            or control_state.get("transport") != "accepted"
-        ):
-            raise BlueprintControlError(
-                "transport acceptance was not durably projected"
-            )
+        if not isinstance(control_state, Mapping) or control_state.get("transport") != "accepted":
+            raise BlueprintControlError("transport acceptance was not durably projected")
         return {
             "state": "transport_accepted",
             "workflow_run_id": admission["workflow_run_id"],
@@ -426,9 +382,7 @@ class BlueprintControlService:
     def observe_dispatch(self, dispatch_result: Mapping[str, Any]) -> dict[str, Any]:
         """Observe projections without treating acknowledgements as model readiness."""
         run_id = str(dispatch_result.get("workflow_run_id") or "").strip()
-        dispatch_ref = _safe_relative_path(
-            dispatch_result.get("dispatch_path"), "dispatch path"
-        )
+        dispatch_ref = _safe_relative_path(dispatch_result.get("dispatch_path"), "dispatch path")
         if not run_id:
             raise BlueprintControlError("dispatch observation requires workflow_run_id")
         dispatch_path = self.root / dispatch_ref
@@ -452,8 +406,7 @@ class BlueprintControlService:
         state = (
             "transport_accepted"
             if control_state.get("transport") == "accepted"
-            and snapshot.get("state")
-            in {"dispatched", "running", "succeeded", "verified"}
+            and snapshot.get("state") in {"dispatched", "running", "succeeded", "verified"}
             else "controller_approval_granted"
         )
         if receipt.get("readiness") == "model_output_observed":
@@ -512,12 +465,8 @@ class BlueprintControlService:
         listing = self._git(["ls-tree", "-r", tree, "--", *paths]).stdout
         return _sha256(listing)
 
-    def _restore_controller_paths(
-        self, index_file: Path, baseline_tree: str, post_tree: str
-    ) -> str:
-        controller_paths = [
-            (self.omo_dir / "_knowledge" / "workflow-mesh" / "events.jsonl").as_posix()
-        ]
+    def _restore_controller_paths(self, index_file: Path, baseline_tree: str, post_tree: str) -> str:
+        controller_paths = [(self.omo_dir / "_knowledge" / "workflow-mesh" / "events.jsonl").as_posix()]
         present = [
             path
             for path in controller_paths
@@ -529,14 +478,10 @@ class BlueprintControlService:
                 ["reset", "-q", baseline_tree, "--", *present],
                 index_file=index_file,
             )
-            return (
-                self._git(["write-tree"], index_file=index_file).stdout.decode().strip()
-            )
+            return self._git(["write-tree"], index_file=index_file).stdout.decode().strip()
         return post_tree
 
-    def _dispatch_context(
-        self, dispatch_result: Mapping[str, Any]
-    ) -> tuple[str, str, str, str]:
+    def _dispatch_context(self, dispatch_result: Mapping[str, Any]) -> tuple[str, str, str, str]:
         run_id = str(dispatch_result.get("workflow_run_id") or "").strip()
         admission_id = str(dispatch_result.get("admission_id") or "").strip()
         dispatch_id = str(dispatch_result.get("dispatch_id") or "").strip()
@@ -544,36 +489,22 @@ class BlueprintControlService:
             raise BlueprintControlError("dispatch identity is incomplete")
         snapshot = WorkflowMeshStore(self.root / self.omo_dir).snapshot(run_id)
         admission = snapshot.get("admission")
-        step_ids = (
-            admission.get("step_run_ids") if isinstance(admission, Mapping) else None
-        )
+        step_ids = admission.get("step_run_ids") if isinstance(admission, Mapping) else None
         if not isinstance(step_ids, list) or len(step_ids) != 1:
             raise BlueprintControlError("dispatch does not bind one admitted step")
         return run_id, admission_id, dispatch_id, str(step_ids[0])
 
     def _execution_projection_path(self, dispatch_result: Mapping[str, Any]) -> Path:
-        dispatch_path = self.root / _safe_relative_path(
-            dispatch_result.get("dispatch_path"), "dispatch path"
-        )
-        return dispatch_path.with_name(
-            dispatch_path.name.removesuffix("-dispatch.yaml") + "-execution.json"
-        )
+        dispatch_path = self.root / _safe_relative_path(dispatch_result.get("dispatch_path"), "dispatch path")
+        return dispatch_path.with_name(dispatch_path.name.removesuffix("-dispatch.yaml") + "-execution.json")
 
     def _candidate_projection_path(self, dispatch_result: Mapping[str, Any]) -> Path:
-        dispatch_path = self.root / _safe_relative_path(
-            dispatch_result.get("dispatch_path"), "dispatch path"
-        )
-        return dispatch_path.with_name(
-            dispatch_path.name.removesuffix("-dispatch.yaml") + "-manifest.json"
-        )
+        dispatch_path = self.root / _safe_relative_path(dispatch_result.get("dispatch_path"), "dispatch path")
+        return dispatch_path.with_name(dispatch_path.name.removesuffix("-dispatch.yaml") + "-manifest.json")
 
     @staticmethod
     def _projection_digest(projection: Mapping[str, Any]) -> str:
-        projected = {
-            key: value
-            for key, value in projection.items()
-            if key != "projection_digest"
-        }
+        projected = {key: value for key, value in projection.items() if key != "projection_digest"}
         return _sha256(
             json.dumps(
                 projected,
@@ -597,9 +528,7 @@ class BlueprintControlService:
             or dispatch_result.get("bet_id") != packet["bet_id"]
         ):
             raise BlueprintControlError("dispatch packet binding mismatch")
-        run_id, admission_id, dispatch_id, step_run_id = self._dispatch_context(
-            dispatch_result
-        )
+        run_id, admission_id, dispatch_id, step_run_id = self._dispatch_context(dispatch_result)
         task_id = str(packet.get("dependencies", {}).get("task_id") or "").strip()
         if not task_id:
             raise BlueprintControlError("packet Task binding is missing")
@@ -623,9 +552,7 @@ class BlueprintControlService:
         return binding, dict(prompt_binding)
 
     def _require_live_admission(self, binding: Mapping[str, str], *, now: str) -> None:
-        snapshot = WorkflowMeshStore(self.root / self.omo_dir).snapshot(
-            binding["workflow_run_id"]
-        )
+        snapshot = WorkflowMeshStore(self.root / self.omo_dir).snapshot(binding["workflow_run_id"])
         admission = snapshot.get("admission")
         if (
             snapshot.get("state") != "dispatched"
@@ -651,17 +578,12 @@ class BlueprintControlService:
         }:
             raise BlueprintControlError("provider approval wait binding missing")
         projected = {
-            key: str(approval_wait.get(key) or "").strip()
-            for key in ("approval_id", "requested_at", "timeout_at")
+            key: str(approval_wait.get(key) or "").strip() for key in ("approval_id", "requested_at", "timeout_at")
         }
         try:
-            invalid = not all(projected.values()) or _utc(
-                projected["timeout_at"]
-            ) <= _utc(projected["requested_at"])
+            invalid = not all(projected.values()) or _utc(projected["timeout_at"]) <= _utc(projected["requested_at"])
         except ValueError as exc:
-            raise BlueprintControlError(
-                "provider approval wait binding invalid"
-            ) from exc
+            raise BlueprintControlError("provider approval wait binding invalid") from exc
         if invalid:
             raise BlueprintControlError("provider approval wait binding invalid")
         return projected
@@ -672,9 +594,7 @@ class BlueprintControlService:
         binding: Mapping[str, str],
     ) -> dict[str, Any]:
         approval_wait = self._approval_wait_binding(execution)
-        snapshot = WorkflowMeshStore(self.root / self.omo_dir).snapshot(
-            binding["workflow_run_id"]
-        )
+        snapshot = WorkflowMeshStore(self.root / self.omo_dir).snapshot(binding["workflow_run_id"])
         approval = snapshot.get("approvals", {}).get(approval_wait["approval_id"])
         if (
             not isinstance(approval, Mapping)
@@ -728,9 +648,7 @@ class BlueprintControlService:
             )
             approval = event["payload"]
         projection["state"] = "awaiting_human_action"
-        projection["approval_wait"] = {
-            key: approval[key] for key in ("approval_id", "requested_at", "timeout_at")
-        }
+        projection["approval_wait"] = {key: approval[key] for key in ("approval_id", "requested_at", "timeout_at")}
         projection["projection_digest"] = self._projection_digest(projection)
         write_text_atomic(
             path,
@@ -739,35 +657,25 @@ class BlueprintControlService:
         return projection
 
     def _workflow_trace_id(self, workflow_run_id: str) -> str:
-        trace_id = (
-            WorkflowMeshStore(self.root / self.omo_dir)
-            .snapshot(workflow_run_id)
-            .get("trace_id")
-        )
+        trace_id = WorkflowMeshStore(self.root / self.omo_dir).snapshot(workflow_run_id).get("trace_id")
         if not isinstance(trace_id, str) or not trace_id.strip():
             raise BlueprintControlError("workflow trace identity is missing")
         return trace_id
 
     @staticmethod
-    def _supervisor_binding(
-        binding: Mapping[str, str], prompt_binding: Mapping[str, Any]
-    ) -> dict[str, str]:
+    def _supervisor_binding(binding: Mapping[str, str], prompt_binding: Mapping[str, Any]) -> dict[str, str]:
         return {
             "workflow_run_id": binding["workflow_run_id"],
             "omo_task_id": binding["omo_task_id"],
             "packet_id": binding["packet_id"],
             "packet_hash": binding["packet_hash"],
             "omo_dispatch_id": binding["omo_dispatch_id"],
-            "prompt_ref": _safe_relative_path(
-                prompt_binding["prompt_ref"], "prompt reference"
-            ),
+            "prompt_ref": _safe_relative_path(prompt_binding["prompt_ref"], "prompt reference"),
             "prompt_digest": str(prompt_binding["prompt_digest"]),
         }
 
     @staticmethod
-    def _clone_attestation(
-        source: Mapping[str, Any], *, expected_agent_id: str | None = None
-    ) -> dict[str, str] | None:
+    def _clone_attestation(source: Mapping[str, Any], *, expected_agent_id: str | None = None) -> dict[str, str] | None:
         clone_agent_id = source.get("clone_agent_id")
         canonical_root_digest = source.get("canonical_root_digest")
         guard_receipt_digest = source.get("guard_receipt_digest")
@@ -869,9 +777,7 @@ class BlueprintControlService:
         try:
             receipt = json.loads(completed.stdout)
         except json.JSONDecodeError as exc:
-            raise BlueprintControlError(
-                "Orca Codex supervisor receipt is invalid"
-            ) from exc
+            raise BlueprintControlError("Orca Codex supervisor receipt is invalid") from exc
         if not isinstance(receipt, Mapping):
             raise BlueprintControlError("Orca Codex supervisor receipt is invalid")
         if completed.returncode not in {0, 1}:
@@ -889,13 +795,11 @@ class BlueprintControlService:
             projection = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise BlueprintControlError("execution projection is invalid") from exc
-        if not isinstance(projection, dict) or projection.get(
-            "projection_digest"
-        ) != self._projection_digest(projection):
+        if not isinstance(projection, dict) or projection.get("projection_digest") != self._projection_digest(
+            projection
+        ):
             raise BlueprintControlError("execution projection digest mismatch")
-        if projection.get("binding") != dict(binding) or projection.get(
-            "prompt_binding"
-        ) != dict(prompt_binding):
+        if projection.get("binding") != dict(binding) or projection.get("prompt_binding") != dict(prompt_binding):
             raise BlueprintControlError("execution binding mismatch")
         if projection.get("state") == "control_projection_failed":
             raise BlueprintControlError("execution control projection failed")
@@ -914,17 +818,11 @@ class BlueprintControlService:
             self._approval_wait_binding(projection)
         return projection
 
-    def _dispatch_prompt_binding(
-        self, dispatch_result: Mapping[str, Any]
-    ) -> tuple[str, str]:
-        dispatch_path = self.root / _safe_relative_path(
-            dispatch_result.get("dispatch_path"), "dispatch path"
-        )
+    def _dispatch_prompt_binding(self, dispatch_result: Mapping[str, Any]) -> tuple[str, str]:
+        dispatch_path = self.root / _safe_relative_path(dispatch_result.get("dispatch_path"), "dispatch path")
         dispatch_doc = load_yaml(dispatch_path)
         inputs = dispatch_doc.get("inputs")
-        prompt_value = (
-            inputs.get("prompt_file") if isinstance(inputs, Mapping) else None
-        )
+        prompt_value = inputs.get("prompt_file") if isinstance(inputs, Mapping) else None
         prompt_ref = _safe_relative_path(prompt_value, "prompt reference")
         candidate = self.root / prompt_ref
         try:
@@ -944,38 +842,25 @@ class BlueprintControlService:
         dispatch_result: Mapping[str, Any],
         require_approval_wait: bool = True,
     ) -> None:
-        dispatch_path = self.root / _safe_relative_path(
-            dispatch_result.get("dispatch_path"), "dispatch path"
-        )
+        dispatch_path = self.root / _safe_relative_path(dispatch_result.get("dispatch_path"), "dispatch path")
         dispatch_doc = load_yaml(dispatch_path)
         expected_surfaces = _required_string_list(packet["scope"], "write_surfaces")
         baseline_tree = str(execution.get("baseline_tree") or "")
-        object_type = (
-            self._git(["cat-file", "-t", baseline_tree], check=False)
-            .stdout.decode()
-            .strip()
-        )
+        object_type = self._git(["cat-file", "-t", baseline_tree], check=False).stdout.decode().strip()
         orca = execution.get("orca")
         placement = self._clone_attestation(execution)
         git_dir = self.root / ".git"
         identity_path = git_dir / "agent-clone-identity.json"
         try:
-            if (
-                not git_dir.is_dir()
-                or git_dir.is_symlink()
-                or identity_path.is_symlink()
-            ):
+            if not git_dir.is_dir() or git_dir.is_symlink() or identity_path.is_symlink():
                 raise OSError("clone identity is not local to an independent clone")
             clone_identity = json.loads(identity_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise BlueprintControlError("execution clone identity mismatch") from exc
-        branch = (
-            self._git(["branch", "--show-current"], check=False).stdout.decode().strip()
-        )
+        branch = self._git(["branch", "--show-current"], check=False).stdout.decode().strip()
         if (
             object_type != "tree"
-            or execution.get("baseline_digest")
-            != self._tree_scope_digest(baseline_tree, expected_surfaces)
+            or execution.get("baseline_digest") != self._tree_scope_digest(baseline_tree, expected_surfaces)
             or execution.get("write_surfaces") != expected_surfaces
             or execution.get("worker_id") != dispatch_doc.get("worker_id")
             or placement is None
@@ -985,8 +870,7 @@ class BlueprintControlService:
             or clone_identity.get("agent_id") != execution.get("clone_agent_id")
             or clone_identity.get("canonical_root") != str(self.root)
             or clone_identity.get("working_branch") != branch
-            or execution.get("canonical_root_digest")
-            != _sha256(str(self.root).encode())
+            or execution.get("canonical_root_digest") != _sha256(str(self.root).encode())
             or not isinstance(orca, Mapping)
             or set(orca) != {"run_id", "task_id", "dispatch_id", "terminal_handle"}
             or not all(isinstance(value, str) and value for value in orca.values())
@@ -1020,9 +904,7 @@ class BlueprintControlService:
         )
         if "approval_wait" not in execution:
             if recovery_supervisor is None:
-                raise BlueprintControlError(
-                    "provider approval recovery attestation unavailable"
-                )
+                raise BlueprintControlError("provider approval recovery attestation unavailable")
             orca = execution.get("orca")
             placement = self._clone_attestation(execution)
             assert isinstance(orca, Mapping)
@@ -1046,15 +928,11 @@ class BlueprintControlService:
             )
             if (
                 receipt.get("schema") != "orca-codex-supervisor/v1"
-                or receipt_binding
-                != {**self._supervisor_binding(binding, prompt_binding), **placement}
+                or receipt_binding != {**self._supervisor_binding(binding, prompt_binding), **placement}
                 or receipt.get("orca") != dict(orca)
                 or receipt_placement != placement
                 or not (
-                    (
-                        receipt.get("ok") is False
-                        and receipt.get("reason") == "worker_not_settled"
-                    )
+                    (receipt.get("ok") is False and receipt.get("reason") == "worker_not_settled")
                     or (
                         receipt.get("ok") is True
                         and receipt.get("state") == "settled"
@@ -1062,9 +940,7 @@ class BlueprintControlService:
                     )
                 )
             ):
-                raise BlueprintControlError(
-                    "provider approval recovery attestation mismatch"
-                )
+                raise BlueprintControlError("provider approval recovery attestation mismatch")
         execution = self._recover_approval_wait(
             path=path,
             projection=execution,
@@ -1100,10 +976,7 @@ class BlueprintControlService:
             "projection_digest"
         ) != self._projection_digest(projection):
             raise BlueprintControlError("candidate projection invalid")
-        dispatch_doc = load_yaml(
-            self.root
-            / _safe_relative_path(dispatch_result.get("dispatch_path"), "dispatch path")
-        )
+        dispatch_doc = load_yaml(self.root / _safe_relative_path(dispatch_result.get("dispatch_path"), "dispatch path"))
         worker_id = str(dispatch_doc.get("worker_id") or "")
         execution: Mapping[str, Any] | None = None
         if interactive:
@@ -1131,21 +1004,9 @@ class BlueprintControlService:
         post_tree = str(projection.get("post_tree") or "")
         patch_ref = str(projection.get("patch_ref") or "")
         patch_oid = patch_ref.removeprefix("git-object://")
-        baseline_type = (
-            self._git(["cat-file", "-t", baseline_tree], check=False)
-            .stdout.decode()
-            .strip()
-        )
-        post_type = (
-            self._git(["cat-file", "-t", post_tree], check=False)
-            .stdout.decode()
-            .strip()
-        )
-        patch_type = (
-            self._git(["cat-file", "-t", patch_oid], check=False)
-            .stdout.decode()
-            .strip()
-        )
+        baseline_type = self._git(["cat-file", "-t", baseline_tree], check=False).stdout.decode().strip()
+        post_type = self._git(["cat-file", "-t", post_tree], check=False).stdout.decode().strip()
+        patch_type = self._git(["cat-file", "-t", patch_oid], check=False).stdout.decode().strip()
         if baseline_type != "tree" or post_type != "tree" or patch_type != "blob":
             raise BlueprintControlError("candidate projection invalid")
         surfaces = _required_string_list(packet["scope"], "write_surfaces")
@@ -1153,31 +1014,17 @@ class BlueprintControlService:
         stored_patch = self._git(["cat-file", "blob", patch_oid]).stdout
         changed_paths = sorted(
             value.decode()
-            for value in self._git(
-                ["diff", "--name-only", "-z", baseline_tree, post_tree, "--"]
-            ).stdout.split(b"\0")
+            for value in self._git(["diff", "--name-only", "-z", baseline_tree, post_tree, "--"]).stdout.split(b"\0")
             if value
         )
         orca = execution["orca"] if execution is not None else None
-        execution_placement = (
-            self._clone_attestation(execution) if execution is not None else None
-        )
-        expected_clone_agent_id = (
-            str(execution["clone_agent_id"]) if execution is not None else None
-        )
-        projection_placement = self._clone_attestation(
-            projection, expected_agent_id=expected_clone_agent_id
-        )
-        receipt_placement = self._clone_attestation(
-            receipt, expected_agent_id=expected_clone_agent_id
-        )
+        execution_placement = self._clone_attestation(execution) if execution is not None else None
+        expected_clone_agent_id = str(execution["clone_agent_id"]) if execution is not None else None
+        projection_placement = self._clone_attestation(projection, expected_agent_id=expected_clone_agent_id)
+        receipt_placement = self._clone_attestation(receipt, expected_agent_id=expected_clone_agent_id)
         if (
-            (
-                execution is not None
-                and projection.get("baseline_tree") != execution.get("baseline_tree")
-            )
-            or projection.get("baseline_digest")
-            != self._tree_scope_digest(baseline_tree, surfaces)
+            (execution is not None and projection.get("baseline_tree") != execution.get("baseline_tree"))
+            or projection.get("baseline_digest") != self._tree_scope_digest(baseline_tree, surfaces)
             or projection.get("write_surfaces") != surfaces
             or patch_ref != f"git-object://{patch_oid}"
             or stored_patch != patch
@@ -1243,9 +1090,7 @@ class BlueprintControlService:
     ) -> dict[str, Any]:
         """Freeze Git state, then start one Orca-owned interactive Codex worker."""
         packet = self._validate_compiled_packet(compiled)
-        binding, spec_binding = self._execution_binding(
-            packet, compiled, dispatch_result
-        )
+        binding, spec_binding = self._execution_binding(packet, compiled, dispatch_result)
         prompt_ref, prompt_digest = self._dispatch_prompt_binding(dispatch_result)
         prompt_binding = {"prompt_ref": prompt_ref, "prompt_digest": prompt_digest}
         execution_path = self._execution_projection_path(dispatch_result)
@@ -1268,10 +1113,7 @@ class BlueprintControlService:
         self._require_live_admission(binding, now=observed_at)
 
         allowed = _required_string_list(packet["scope"], "write_surfaces")
-        dispatch_doc = load_yaml(
-            self.root
-            / _safe_relative_path(dispatch_result.get("dispatch_path"), "dispatch path")
-        )
+        dispatch_doc = load_yaml(self.root / _safe_relative_path(dispatch_result.get("dispatch_path"), "dispatch path"))
         worker_id = str(dispatch_doc.get("worker_id") or "").strip()
         if not worker_id:
             raise BlueprintControlError("dispatch worker identity is missing")
@@ -1337,8 +1179,7 @@ class BlueprintControlService:
             projection["projection_digest"] = self._projection_digest(projection)
             write_text_atomic(
                 execution_path,
-                json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2)
-                + "\n",
+                json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
             )
             raise
         orca = receipt.get("orca")
@@ -1350,8 +1191,7 @@ class BlueprintControlService:
         )
         residual_resources = receipt.get("residual_resources")
         if not isinstance(residual_resources, list) or any(
-            not isinstance(value, str) or not value.startswith("orca:")
-            for value in residual_resources
+            not isinstance(value, str) or not value.startswith("orca:") for value in residual_resources
         ):
             residual_resources = []
         if (
@@ -1359,8 +1199,7 @@ class BlueprintControlService:
             or receipt.get("ok") is not True
             or receipt.get("state") != "awaiting_human_action"
             or placement is None
-            or receipt_binding
-            != {**self._supervisor_binding(binding, prompt_binding), **placement}
+            or receipt_binding != {**self._supervisor_binding(binding, prompt_binding), **placement}
             or not isinstance(orca, Mapping)
             or set(orca) != {"run_id", "task_id", "dispatch_id", "terminal_handle"}
             or not all(isinstance(value, str) and value for value in orca.values())
@@ -1390,8 +1229,7 @@ class BlueprintControlService:
             projection["projection_digest"] = self._projection_digest(projection)
             write_text_atomic(
                 execution_path,
-                json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2)
-                + "\n",
+                json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
             )
             raise BlueprintControlError("Orca Codex start receipt is invalid")
         projection.update(
@@ -1420,10 +1258,7 @@ class BlueprintControlService:
                         "admission_id": binding["admission_id"],
                         "dispatch_id": binding["omo_dispatch_id"],
                     },
-                    idempotency_key=(
-                        f"{binding['workflow_run_id']}:step-started:"
-                        f"{binding['omo_dispatch_id']}"
-                    ),
+                    idempotency_key=(f"{binding['workflow_run_id']}:step-started:{binding['omo_dispatch_id']}"),
                 )
             )
         except Exception:
@@ -1432,8 +1267,7 @@ class BlueprintControlService:
             projection["projection_digest"] = self._projection_digest(projection)
             write_text_atomic(
                 execution_path,
-                json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2)
-                + "\n",
+                json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
             )
             raise
         approval_id = f"provider:{binding['omo_dispatch_id']}"
@@ -1461,19 +1295,14 @@ class BlueprintControlService:
                             "reason": "approval_request_failed",
                         },
                         idempotency_key=(
-                            f"{binding['workflow_run_id']}:step-failed:"
-                            f"{binding['omo_dispatch_id']}:approval-request"
+                            f"{binding['workflow_run_id']}:step-failed:{binding['omo_dispatch_id']}:approval-request"
                         ),
                     )
                 )
                 step_failure_recorded = True
             except Exception:
                 pass
-            projection["state"] = (
-                "control_projection_failed"
-                if step_failure_recorded
-                else "approval_request_pending"
-            )
+            projection["state"] = "control_projection_failed" if step_failure_recorded else "approval_request_pending"
             projection["candidate_collected"] = False
             projection["control_failure"] = {
                 "reason": "approval_request_failed",
@@ -1482,13 +1311,11 @@ class BlueprintControlService:
             projection["projection_digest"] = self._projection_digest(projection)
             write_text_atomic(
                 execution_path,
-                json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2)
-                + "\n",
+                json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
             )
             raise
         projection["approval_wait"] = {
-            key: approval_event["payload"][key]
-            for key in ("approval_id", "requested_at", "timeout_at")
+            key: approval_event["payload"][key] for key in ("approval_id", "requested_at", "timeout_at")
         }
         projection["projection_digest"] = self._projection_digest(projection)
         write_text_atomic(
@@ -1509,9 +1336,7 @@ class BlueprintControlService:
     ) -> dict[str, Any]:
         """Collect a settled Orca worker, then independently measure its Git delta."""
         packet = self._validate_compiled_packet(compiled)
-        binding, _spec_binding = self._execution_binding(
-            packet, compiled, dispatch_result
-        )
+        binding, _spec_binding = self._execution_binding(packet, compiled, dispatch_result)
         prompt_ref, prompt_digest = self._dispatch_prompt_binding(dispatch_result)
         prompt_binding = {"prompt_ref": prompt_ref, "prompt_digest": prompt_digest}
         candidate_path = self._candidate_projection_path(dispatch_result)
@@ -1536,8 +1361,7 @@ class BlueprintControlService:
         observed_at = _stamp(now)
         approval = self._approval_snapshot(execution, binding)
         if approval["state"] == "timed_out" or (
-            approval["state"] == "requested"
-            and _utc(observed_at) >= _utc(str(approval["timeout_at"]))
+            approval["state"] == "requested" and _utc(observed_at) >= _utc(str(approval["timeout_at"]))
         ):
             if approval["state"] == "requested":
                 expire_approval_timeout(
@@ -1553,8 +1377,7 @@ class BlueprintControlService:
             execution["projection_digest"] = self._projection_digest(execution)
             write_text_atomic(
                 self._execution_projection_path(dispatch_result),
-                json.dumps(execution, ensure_ascii=False, sort_keys=True, indent=2)
-                + "\n",
+                json.dumps(execution, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
             )
             raise BlueprintControlError("provider approval wait timed out")
         orca = execution.get("orca")
@@ -1579,8 +1402,7 @@ class BlueprintControlService:
             expected_agent_id=str(execution["clone_agent_id"]),
         )
         if (
-            receipt_binding
-            != {**self._supervisor_binding(binding, prompt_binding), **placement}
+            receipt_binding != {**self._supervisor_binding(binding, prompt_binding), **placement}
             or receipt.get("orca") != dict(orca)
             or receipt_placement != placement
         ):
@@ -1595,8 +1417,7 @@ class BlueprintControlService:
         model_output_source = receipt.get("model_output_source")
         model_output_digest = receipt.get("model_output_digest")
         structured_output_valid = (
-            model_output_source == "structured_transcript"
-            and receipt.get("transcript_digest") == model_output_digest
+            model_output_source == "structured_transcript" and receipt.get("transcript_digest") == model_output_digest
         )
         terminal_fallback_valid = (
             model_output_source == "bounded_terminal_fallback"
@@ -1649,9 +1470,7 @@ class BlueprintControlService:
         with tempfile.TemporaryDirectory(prefix="omo-blueprint-collect-") as directory:
             after_index = Path(directory) / "after.index"
             post_tree = self._snapshot_tree(after_index)
-            post_tree = self._restore_controller_paths(
-                after_index, str(execution["baseline_tree"]), post_tree
-            )
+            post_tree = self._restore_controller_paths(after_index, str(execution["baseline_tree"]), post_tree)
             patch = self._git(
                 ["diff", "--binary", str(execution["baseline_tree"]), post_tree, "--"],
                 index_file=after_index,
@@ -1678,28 +1497,23 @@ class BlueprintControlService:
                 for line in self._git(
                     ["ls-files", "--others", "--exclude-standard"],
                     index_file=after_index,
-                ).stdout.decode().splitlines()
+                )
+                .stdout.decode()
+                .splitlines()
                 if line and not line.startswith(".omo/workers/runs/")
             )
             changed_paths = sorted(set(changed_paths) | set(untracked))
             allowed = list(execution["write_surfaces"])
             if any(
                 not any(
-                    changed == surface.rstrip("/")
-                    or (surface.endswith("/") and changed.startswith(surface))
+                    changed == surface.rstrip("/") or (surface.endswith("/") and changed.startswith(surface))
                     for surface in allowed
                 )
                 for changed in changed_paths
             ):
-                reject_execution(
-                    "Git delta contains an out-of-scope path", "write_scope_violation"
-                )
+                reject_execution("Git delta contains an out-of-scope path", "write_scope_violation")
             patch_digest = _sha256(patch)
-            patch_oid = (
-                self._git(["hash-object", "-w", "--stdin"], input_bytes=patch)
-                .stdout.decode()
-                .strip()
-            )
+            patch_oid = self._git(["hash-object", "-w", "--stdin"], input_bytes=patch).stdout.decode().strip()
 
         acceptance_items = packet["acceptance"]["done_when"]
         verify_commands = packet["acceptance"]["verify_commands"]
@@ -1739,9 +1553,7 @@ class BlueprintControlService:
             returncode = int(result.get("returncode", 1))
             stdout = result.get("stdout", b"")
             stdout_bytes = stdout.encode() if isinstance(stdout, str) else bytes(stdout)
-            check = build_command_check(
-                argv, returncode, stdout_bytes.decode(errors="replace")
-            )
+            check = build_command_check(argv, returncode, stdout_bytes.decode(errors="replace"))
             measurement = {
                 "acceptance_id": acceptance_id,
                 "assertion": assertion,
@@ -1829,9 +1641,7 @@ class BlueprintControlService:
         }
         if terminal_fallback_valid:
             transport_receipt["fallback_reason"] = str(receipt["fallback_reason"])
-        transport_receipt["receipt_digest"] = compute_packet_hash(
-            canonicalize(transport_receipt)
-        )
+        transport_receipt["receipt_digest"] = compute_packet_hash(canonicalize(transport_receipt))
         store.append(
             new_workflow_event(
                 "WorkflowSucceeded",
@@ -1890,9 +1700,7 @@ class BlueprintControlService:
                 "patch_ref": f"git-object://{patch_oid}",
                 "patch_digest": patch_digest,
             }
-            failed_projection["projection_digest"] = self._projection_digest(
-                failed_projection
-            )
+            failed_projection["projection_digest"] = self._projection_digest(failed_projection)
             write_text_atomic(
                 candidate_path,
                 json.dumps(
@@ -1962,13 +1770,9 @@ class BlueprintControlService:
                 try:
                     process.communicate(timeout=5)
                 except subprocess.TimeoutExpired as cleanup_exc:
-                    raise BlueprintControlError(
-                        "bounded runner cleanup_unconfirmed"
-                    ) from cleanup_exc
+                    raise BlueprintControlError("bounded runner cleanup_unconfirmed") from cleanup_exc
             if process.poll() is None:
-                raise BlueprintControlError(
-                    "bounded runner cleanup_unconfirmed"
-                ) from exc
+                raise BlueprintControlError("bounded runner cleanup_unconfirmed") from exc
             raise BlueprintControlError("bounded runner timed out") from exc
         return {"returncode": process.returncode, "stdout": stdout, "stderr": stderr}
 
@@ -1983,9 +1787,7 @@ class BlueprintControlService:
     ) -> dict[str, Any]:
         """Execute one supervised worker and compile independently measured evidence."""
         packet = self._validate_compiled_packet(compiled)
-        execution_binding, _spec_binding = self._execution_binding(
-            packet, compiled, dispatch_result
-        )
+        execution_binding, _spec_binding = self._execution_binding(packet, compiled, dispatch_result)
         run_id = execution_binding["workflow_run_id"]
         admission_id = execution_binding["admission_id"]
         dispatch_id = execution_binding["omo_dispatch_id"]
@@ -1993,9 +1795,7 @@ class BlueprintControlService:
         store = WorkflowMeshStore(self.root / self.omo_dir)
         allowed = _required_string_list(packet["scope"], "write_surfaces")
         dispatch_path = self.root / str(dispatch_result["dispatch_path"])
-        projection_path = dispatch_path.with_name(
-            dispatch_path.name.removesuffix("-dispatch.yaml") + "-manifest.json"
-        )
+        projection_path = dispatch_path.with_name(dispatch_path.name.removesuffix("-dispatch.yaml") + "-manifest.json")
         if projection_path.is_file():
             return self._validate_candidate_projection(
                 path=projection_path,
@@ -2055,9 +1855,7 @@ class BlueprintControlService:
             worker_id = str(dispatch_doc.get("worker_id") or "").strip()
             if not worker_id:
                 raise BlueprintControlError("dispatch worker identity is missing")
-            launch_command = str(
-                dispatch_doc.get("execution", {}).get("launch_command") or ""
-            )
+            launch_command = str(dispatch_doc.get("execution", {}).get("launch_command") or "")
             argv = shlex.split(launch_command)
             if runner is None and not argv:
                 raise BlueprintControlError("dispatch has no bounded launch command")
@@ -2095,22 +1893,11 @@ class BlueprintControlService:
             except (OSError, json.JSONDecodeError):
                 reject_execution("model output receipt is invalid", "receipt_invalid")
             if receipt.get("receipt_sha256") != _canonical_receipt_digest(receipt):
-                reject_execution(
-                    "adapter receipt digest mismatch", "receipt_digest_mismatch"
-                )
+                reject_execution("adapter receipt digest mismatch", "receipt_digest_mismatch")
             supervision = receipt.get("supervision")
-            provider_review = (
-                supervision.get("provider_review")
-                if isinstance(supervision, Mapping)
-                else None
-            )
-            if (
-                not isinstance(supervision, Mapping)
-                or supervision.get("controller_approval") != "granted"
-            ):
-                reject_execution(
-                    "controller approval receipt is invalid", "approval_mismatch"
-                )
+            provider_review = supervision.get("provider_review") if isinstance(supervision, Mapping) else None
+            if not isinstance(supervision, Mapping) or supervision.get("controller_approval") != "granted":
+                reject_execution("controller approval receipt is invalid", "approval_mismatch")
             if provider_review == "human_required":
                 if step_started:
                     store.append(
@@ -2129,9 +1916,7 @@ class BlueprintControlService:
                     )
                 raise BlueprintControlError("provider human approval is unresolved")
             if provider_review != "completed_without_observed_escalation":
-                reject_execution(
-                    "provider review is unresolved", "provider_review_unresolved"
-                )
+                reject_execution("provider review is unresolved", "provider_review_unresolved")
             if receipt.get("worker") != "codex":
                 reject_execution("adapter worker identity mismatch", "worker_mismatch")
             if not all(
@@ -2142,17 +1927,10 @@ class BlueprintControlService:
                     _is_sha256(receipt.get("output_sha256"), prefixed=False),
                 )
             ):
-                reject_execution(
-                    "adapter digest fields are invalid", "adapter_digest_invalid"
-                )
+                reject_execution("adapter digest fields are invalid", "adapter_digest_invalid")
             if receipt.get("readiness") != "model_output_observed":
-                reject_execution(
-                    "valid model output was not observed", "model_output_missing"
-                )
-            if (
-                receipt.get("status") != "succeeded"
-                or int(result.get("returncode", 1)) != 0
-            ):
+                reject_execution("valid model output was not observed", "model_output_missing")
+            if receipt.get("status") != "succeeded" or int(result.get("returncode", 1)) != 0:
                 if step_started:
                     store.append(
                         new_workflow_event(
@@ -2173,9 +1951,7 @@ class BlueprintControlService:
                 raise BlueprintControlError("provider process start was not observed")
 
             post_tree = self._snapshot_tree(after_index)
-            post_tree = self._restore_controller_paths(
-                after_index, baseline_tree, post_tree
-            )
+            post_tree = self._restore_controller_paths(after_index, baseline_tree, post_tree)
             patch = self._git(
                 ["diff", "--binary", baseline_tree, post_tree, "--"],
                 index_file=after_index,
@@ -2189,30 +1965,19 @@ class BlueprintControlService:
                 if value
             )
             if receipt.get("changed_paths") != changed_paths:
-                reject_execution(
-                    "adapter changed paths do not match Git", "changed_paths_mismatch"
-                )
+                reject_execution("adapter changed paths do not match Git", "changed_paths_mismatch")
             patch_digest = _sha256(patch)
             if receipt.get("patch_digest") != patch_digest:
-                reject_execution(
-                    "adapter patch digest does not match Git", "patch_digest_mismatch"
-                )
+                reject_execution("adapter patch digest does not match Git", "patch_digest_mismatch")
             if any(
                 not any(
-                    changed == surface.rstrip("/")
-                    or (surface.endswith("/") and changed.startswith(surface))
+                    changed == surface.rstrip("/") or (surface.endswith("/") and changed.startswith(surface))
                     for surface in allowed
                 )
                 for changed in changed_paths
             ):
-                reject_execution(
-                    "Git delta contains an out-of-scope path", "write_scope_violation"
-                )
-            patch_oid = (
-                self._git(["hash-object", "-w", "--stdin"], input_bytes=patch)
-                .stdout.decode()
-                .strip()
-            )
+                reject_execution("Git delta contains an out-of-scope path", "write_scope_violation")
+            patch_oid = self._git(["hash-object", "-w", "--stdin"], input_bytes=patch).stdout.decode().strip()
 
         acceptance_items = packet["acceptance"]["done_when"]
         verify_commands = packet["acceptance"]["verify_commands"]
@@ -2252,9 +2017,7 @@ class BlueprintControlService:
             returncode = int(result.get("returncode", 1))
             stdout = result.get("stdout", b"")
             stdout_bytes = stdout.encode() if isinstance(stdout, str) else bytes(stdout)
-            check = build_command_check(
-                argv, returncode, stdout_bytes.decode(errors="replace")
-            )
+            check = build_command_check(argv, returncode, stdout_bytes.decode(errors="replace"))
             measurement = {
                 "acceptance_id": acceptance_id,
                 "assertion": assertion,
@@ -2330,14 +2093,10 @@ class BlueprintControlService:
             "worker_id": worker_id,
             "output_digest": str(receipt["output_sha256"]),
             "changed_paths": changed_paths,
-            "observed_at": str(
-                receipt.get("completed_at") or datetime.now().astimezone().isoformat()
-            ),
+            "observed_at": str(receipt.get("completed_at") or datetime.now().astimezone().isoformat()),
             "provenance_ref": f"receipt://codex/{dispatch_id}",
         }
-        transport_receipt["receipt_digest"] = compute_packet_hash(
-            canonicalize(transport_receipt)
-        )
+        transport_receipt["receipt_digest"] = compute_packet_hash(canonicalize(transport_receipt))
         store.append(
             new_workflow_event(
                 "WorkflowSucceeded",
@@ -2378,9 +2137,7 @@ class BlueprintControlService:
         return projection
 
     @staticmethod
-    def _default_verifier(
-        *, argv: list[str], workspace_root: Path, timeout_seconds: int
-    ) -> Mapping[str, Any]:
+    def _default_verifier(*, argv: list[str], workspace_root: Path, timeout_seconds: int) -> Mapping[str, Any]:
         try:
             result = subprocess.run(
                 argv,
@@ -2427,11 +2184,7 @@ class BlueprintControlService:
             returncode = int(result.get("returncode", 1))
             stdout = result.get("stdout", b"")
             stdout_bytes = stdout.encode() if isinstance(stdout, str) else bytes(stdout)
-            checks.append(
-                build_command_check(
-                    argv, returncode, stdout_bytes.decode(errors="replace")
-                )
-            )
+            checks.append(build_command_check(argv, returncode, stdout_bytes.decode(errors="replace")))
             all_green = all_green and returncode == 0
         receipt = build_verification_receipt(
             packet=packet,
@@ -2480,9 +2233,7 @@ class BlueprintControlService:
         manifest = collected.get("manifest")
         receipt = collected.get("transport_receipt")
         source_event = collected.get("evidence")
-        if not all(
-            isinstance(value, Mapping) for value in (manifest, receipt, source_event)
-        ):
+        if not all(isinstance(value, Mapping) for value in (manifest, receipt, source_event)):
             return False
         assert isinstance(manifest, Mapping)
         assert isinstance(receipt, Mapping)
@@ -2525,15 +2276,11 @@ class BlueprintControlService:
         ):
             return False
         receipt_digest = receipt.get("receipt_digest")
-        canonical_receipt = {
-            key: value for key, value in receipt.items() if key != "receipt_digest"
-        }
+        canonical_receipt = {key: value for key, value in receipt.items() if key != "receipt_digest"}
         if receipt_digest != compute_packet_hash(canonicalize(canonical_receipt)):
             return False
         payload = source_event.get("payload")
-        factors = (
-            payload.get("decision_factors") if isinstance(payload, Mapping) else None
-        )
+        factors = payload.get("decision_factors") if isinstance(payload, Mapping) else None
         if (
             source_event.get("workflow_run_id") != run_id
             or source_event.get("event_type") != "EvidenceRecorded"
@@ -2568,9 +2315,7 @@ class BlueprintControlService:
         collected: Mapping[str, Any],
     ) -> dict[str, Any]:
         """Reverse only the controller-owned Git blob and prove baseline identity."""
-        run_id, admission_id, dispatch_id, step_run_id = self._dispatch_context(
-            dispatch_result
-        )
+        run_id, admission_id, dispatch_id, step_run_id = self._dispatch_context(dispatch_result)
         store = WorkflowMeshStore(self.root / self.omo_dir)
         if not self._candidate_binds_dispatch(
             store=store,
@@ -2597,11 +2342,7 @@ class BlueprintControlService:
             },
             idempotency_key=f"{run_id}:compensation:{dispatch_id}",
         )
-        existing_types = [
-            event["event_type"]
-            for event in store.events()
-            if event.get("workflow_run_id") == run_id
-        ]
+        existing_types = [event["event_type"] for event in store.events() if event.get("workflow_run_id") == run_id]
         if "CompensationStarted" not in existing_types:
             store.append(started)
         surfaces = list(collected["write_surfaces"])
@@ -2658,9 +2399,7 @@ class _BlueprintArgumentParser(argparse.ArgumentParser):
         raise BlueprintControlError(f"invalid blueprint command: {message}")
 
 
-def _artifact_path(
-    root: Path, reference: str, *, field_name: str, write: bool = False
-) -> Path:
+def _artifact_path(root: Path, reference: str, *, field_name: str, write: bool = False) -> Path:
     """Resolve an explicit repository-relative artifact without following it outside root."""
     relative = _safe_relative_path(reference, field_name)
     candidate = root / relative
@@ -2674,9 +2413,7 @@ def _artifact_path(
     return resolved
 
 
-def _read_json_artifact(
-    root: Path, reference: str, *, field_name: str
-) -> dict[str, Any]:
+def _read_json_artifact(root: Path, reference: str, *, field_name: str) -> dict[str, Any]:
     path = _artifact_path(root, reference, field_name=field_name)
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -2700,9 +2437,7 @@ def _candidate_projection_path(root: Path, dispatch_reference: str) -> Path:
     dispatch_path = _artifact_path(root, dispatch_reference, field_name="dispatch file")
     if not dispatch_path.name.endswith("-dispatch.yaml"):
         raise BlueprintControlError("dispatch file name is invalid")
-    return dispatch_path.with_name(
-        dispatch_path.name.removesuffix("-dispatch.yaml") + "-manifest.json"
-    )
+    return dispatch_path.with_name(dispatch_path.name.removesuffix("-dispatch.yaml") + "-manifest.json")
 
 
 def _error_code(error: Exception) -> str:
@@ -2841,9 +2576,7 @@ def main(argv: list[str] | None = None) -> int:
                 spec_version=parsed.spec_version,
                 expires_at=parsed.expires_at,
             )
-            packet_file = _artifact_path(
-                root, parsed.packet_file, field_name="packet file", write=True
-            )
+            packet_file = _artifact_path(root, parsed.packet_file, field_name="packet file", write=True)
             write_text_atomic(
                 packet_file,
                 json.dumps(
@@ -2860,18 +2593,14 @@ def main(argv: list[str] | None = None) -> int:
                     "state": "compiled",
                     "packet_id": compiled.packet["packet_id"],
                     "packet_hash": compiled.packet_hash,
-                    "packet_file": _safe_relative_path(
-                        parsed.packet_file, "packet file"
-                    ),
+                    "packet_file": _safe_relative_path(parsed.packet_file, "packet file"),
                 }
             )
             return 0
 
         if parsed.command == "dispatch":
             compiled = _compiled_from_artifact(root, parsed.packet_file)
-            health = _read_json_artifact(
-                root, parsed.capability_health_file, field_name="capability health file"
-            )
+            health = _read_json_artifact(root, parsed.capability_health_file, field_name="capability health file")
             result = service.dispatch_packet(
                 compiled,
                 worker_id=parsed.worker_id,
@@ -2891,9 +2620,7 @@ def main(argv: list[str] | None = None) -> int:
             if not parsed.supervised:
                 raise BlueprintControlError("supervised execution flag is required")
             compiled = _compiled_from_artifact(root, parsed.packet_file)
-            approval_ref = str(
-                compiled.packet.get("authority", {}).get("approval_ref") or ""
-            )
+            approval_ref = str(compiled.packet.get("authority", {}).get("approval_ref") or "")
             if parsed.approval_ref != approval_ref:
                 raise BlueprintControlError("controller approval reference mismatch")
             _artifact_path(root, parsed.approval_ref, field_name="approval reference")
@@ -2914,33 +2641,24 @@ def main(argv: list[str] | None = None) -> int:
             if projection.get("state") != "candidate_collected":
                 _emit({"ok": False, **projection})
                 return 4
-            candidate_file = _artifact_path(
-                root, parsed.candidate_file, field_name="candidate file", write=True
-            )
+            candidate_file = _artifact_path(root, parsed.candidate_file, field_name="candidate file", write=True)
             write_text_atomic(
                 candidate_file,
-                json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2)
-                + "\n",
+                json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
             )
             _emit(
                 {
                     "ok": True,
                     "state": "candidate_collected",
-                    "candidate_file": _safe_relative_path(
-                        parsed.candidate_file, "candidate file"
-                    ),
+                    "candidate_file": _safe_relative_path(parsed.candidate_file, "candidate file"),
                 }
             )
             return 0
 
-        candidate = _read_json_artifact(
-            root, parsed.candidate_file, field_name="candidate file"
-        )
+        candidate = _read_json_artifact(root, parsed.candidate_file, field_name="candidate file")
         if parsed.command == "verify":
             compiled = _compiled_from_artifact(root, parsed.packet_file)
-            result = service.verify_candidate(
-                compiled, dispatch, candidate, timeout_seconds=parsed.timeout_seconds
-            )
+            result = service.verify_candidate(compiled, dispatch, candidate, timeout_seconds=parsed.timeout_seconds)
             if result.get("state") != "independently_verified":
                 _emit({"ok": False, "error": "verification_rejected", **result})
                 return 4

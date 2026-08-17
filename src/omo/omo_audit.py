@@ -90,9 +90,7 @@ def record_compute_node_state(node_id: str, **fields: dict) -> dict:
     from omo.omo_io import write_yaml_atomic
     from omo.omo_shared import load_yaml
 
-    m1_dir = Path(
-        "~/Workspace/projects/ecos/src/ecos/ssot/mof/m1/compute_engine"
-    ).expanduser()
+    m1_dir = Path("~/Workspace/projects/ecos/src/ecos/ssot/mof/m1/compute_engine").expanduser()
     m1_dir.mkdir(parents=True, exist_ok=True)
     target_file = None
 
@@ -153,7 +151,7 @@ def summary(audit_file: str | Path | None = None) -> dict:
 # =============================================================================
 
 # 模块级路径(允许测试覆盖)
-_KAIRON_DIR: Path = Path(__file__).resolve().parents[4] / "projects" / "knowledge" / "kairon"
+_KAIRON_DIR: Path = Path(__file__).resolve().parents[4] / "projects" / "kairon"
 _OMO_ROOT: Path = WORKSPACE_ROOT / ".omo"
 _WORKSPACE_ROOT: Path = WORKSPACE_ROOT
 
@@ -204,9 +202,7 @@ class GovernanceReport:
         ]
         for c in self.checks:
             sev = sev_emoji.get(c.severity, c.severity)
-            lines.append(
-                f"| {c.name} | {c.category} | {sev} | {c.score:.0f} | {c.message} |"
-            )
+            lines.append(f"| {c.name} | {c.category} | {sev} | {c.score:.0f} | {c.message} |")
 
         lines += ["", "## 2. 检查细节", ""]
         for c in self.checks:
@@ -283,9 +279,7 @@ def _mini_yaml_parse(text: str) -> dict:
         key, _, value = line.partition(":")
         key = key.strip()
         value = value.strip()
-        if (value.startswith('"') and value.endswith('"')) or (
-            value.startswith("'") and value.endswith("'")
-        ):
+        if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
             value = value[1:-1]
         out[key] = value
     return out
@@ -418,9 +412,7 @@ def governance_check_debt_integrity() -> CheckResult:
                     if note and len(note) >= 20:
                         evidence = note
         if not evidence or len(evidence) < 20:
-            suspicious.append(
-                f"{yaml_file.stem}: lifecycle={lifecycle} 但无 resolution_evidence"
-            )
+            suspicious.append(f"{yaml_file.stem}: lifecycle={lifecycle} 但无 resolution_evidence")
     if not suspicious:
         return CheckResult(
             name="debt integrity",
@@ -466,9 +458,7 @@ def governance_check_adr_links() -> CheckResult:
     # filenames. ADR file refs always sit in their own table cell.
     for m in re.finditer(r"(?:^|[|\s])(\d{4})-([a-z0-9-]+)\.md(?=$|[|\s])", content):
         referenced.add(f"{m.group(1)}-{m.group(2)}.md")
-    existing: set[str] = {
-        p.name for p in decisions_dir.glob("[0-9][0-9][0-9][0-9]-*.md")
-    }
+    existing: set[str] = {p.name for p in decisions_dir.glob("[0-9][0-9][0-9][0-9]-*.md")}
     broken = sorted(referenced - existing)
     orphan = sorted(existing - referenced)
     if not broken and not orphan:
@@ -534,9 +524,7 @@ def governance_check_task_consistency() -> CheckResult:
                     continue
                 inconsistent.append(f"{yaml_file.stem} → {d} (glob 展开无匹配)")
                 continue
-            inconsistent.append(
-                f"{yaml_file.stem} → {d} (status=completed 但文件不存在)"
-            )
+            inconsistent.append(f"{yaml_file.stem} → {d} (status=completed 但文件不存在)")
     if checked == 0:
         return CheckResult(
             name="task consistency",
@@ -589,9 +577,7 @@ def governance_check_doc_lifecycle() -> CheckResult:
         )
 
     md_files = [f for f in omo.rglob("*.md")] + [f for f in omo.rglob("*.yaml")]
-    md_files = [
-        f for f in md_files if "_delivery" not in f.parts and "/drafts/" not in str(f)
-    ]
+    md_files = [f for f in md_files if "_delivery" not in f.parts and "/drafts/" not in str(f)]
 
     need_fm_total = 0
     frontmatter_active = 0
@@ -811,30 +797,19 @@ def build_recommendations(checks: list[CheckResult]) -> list[str]:
         if c.severity == "ok":
             continue
         if c.category == "lint":
-            recs.append(
-                "修复 ruff 错误, 参考 `cd projects/knowledge/kairon && uv run ruff check packages/ --fix`"
-            )
+            recs.append("修复 ruff 错误, 参考 `cd projects/kairon && uv run ruff check packages/ --fix`")
         elif c.category == "tests":
             sample = ", ".join(d.split(":")[0] for d in c.details[:3])
             recs.append(f"为 {sample} 等包至少添加 1 个 smoke test")
         elif c.category == "debt":
-            recs.append(
-                "给 resolved/closed 债务补上 `resolution_evidence` 字段(>= 20 字符)"
-            )
+            recs.append("给 resolved/closed 债务补上 `resolution_evidence` 字段(>= 20 字符)")
         elif c.category == "knowledge":
-            recs.append(
-                "清理 ADR INDEX.md 中的死链 / 补齐未列出的 ADR / 创建缺失的 ADR"
-            )
+            recs.append("清理 ADR INDEX.md 中的死链 / 补齐未列出的 ADR / 创建缺失的 ADR")
         elif c.category == "tasks":
-            recs.append(
-                "补齐任务 YAML 中声明的 deliverables, 或将 status 回退到 in_progress"
-            )
+            recs.append("补齐任务 YAML 中声明的 deliverables, 或将 status 回退到 in_progress")
         elif c.category == "agora":
             unhealthy = ", ".join(d for d in c.details[:5])
-            recs.append(
-                f"修复 agora 服务可达性 ({unhealthy}); "
-                "检查 service 端口与 health_endpoint 字段"
-            )
+            recs.append(f"修复 agora 服务可达性 ({unhealthy}); 检查 service 端口与 health_endpoint 字段")
     return recs
 
 
@@ -846,7 +821,7 @@ def run_governance_audit(workspace: Path | None = None) -> GovernanceReport:
     global _OMO_ROOT, _KAIRON_DIR, _WORKSPACE_ROOT
     if workspace is not None:
         _OMO_ROOT = workspace / ".omo"
-        _KAIRON_DIR = workspace / "projects" / "knowledge" / "kairon"
+        _KAIRON_DIR = workspace / "projects" / "kairon"
         _WORKSPACE_ROOT = workspace
 
     checks = [
@@ -882,9 +857,7 @@ def render_markdown(report: GovernanceReport) -> str:
 def governance_main(argv: list[str] | None = None) -> int:
     """CLI: omo governance audit [--output PATH] [--json] [--no-history]."""
     parser = argparse.ArgumentParser(prog="omo governance audit")
-    parser.add_argument(
-        "--output", "-o", default=None, help="Markdown 报告输出路径(默认 stdout)"
-    )
+    parser.add_argument("--output", "-o", default=None, help="Markdown 报告输出路径(默认 stdout)")
     parser.add_argument("--json", action="store_true", help="同时输出 JSON 数据")
     parser.add_argument(
         "--no-history",
@@ -904,9 +877,7 @@ def governance_main(argv: list[str] | None = None) -> int:
         print(md)
 
     if args.json:
-        json_target = (
-            Path(args.output) if args.output else Path("/tmp/governance_audit.json")
-        )
+        json_target = Path(args.output) if args.output else Path("/tmp/governance_audit.json")
         json_path = json_target.with_suffix(".json")
         json_path.write_text(
             json.dumps(asdict(report), ensure_ascii=False, indent=2),
@@ -973,9 +944,7 @@ def governance_history_main(argv: list[str] | None = None) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     """主 CLI 入口: `omo audit` 子命令路由."""
-    parser = argparse.ArgumentParser(
-        prog="omo audit", description="OMO governance audit"
-    )
+    parser = argparse.ArgumentParser(prog="omo audit", description="OMO governance audit")
     sub = parser.add_subparsers(dest="cmd")
     sub.add_parser("governance", help="Run 6-check workspace compliance audit")
     sub.add_parser("history", help="View governance history")

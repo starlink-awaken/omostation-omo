@@ -68,9 +68,7 @@ def cmd_logs_list() -> int:
         except Exception:  # defensive fallback
             count = -1
         size = p.stat().st_size
-        mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=UTC).strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
+        mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=UTC).strftime("%Y-%m-%d %H:%M:%S")
         print(f"{p.stem:30s} {size:>10,} {count:>10,} {mtime:20s}")
     return 0
 
@@ -122,9 +120,7 @@ def cmd_logs_inspect(name: str) -> int:
     for field, count in field_counter.most_common(10):
         print(f"  {field:30s} {count:>10,}")
     if schema_name:
-        print(
-            f"\nSchema 推断: {schema_name} ({len(SCHEMA_REGISTRY[schema_name].model_fields)} 必填字段)"
-        )
+        print(f"\nSchema 推断: {schema_name} ({len(SCHEMA_REGISTRY[schema_name].model_fields)} 必填字段)")
     if missing_required:
         print(f"\n⚠️  {len(missing_required)} 条记录缺必填字段:")
         for i, missing in missing_required[:5]:
@@ -188,21 +184,8 @@ def cmd_logs_tail(name: str, lines: int) -> int:
     for r in records:
         if isinstance(r, dict):
             ts = r.get("ts") or r.get("recorded_at") or r.get("timestamp", "?")
-            action = (
-                r.get("action")
-                or r.get("status")
-                or r.get("kind")
-                or r.get("uri")
-                or r.get("severity")
-                or "?"
-            )
-            detail = (
-                r.get("details")
-                or r.get("error")
-                or r.get("payload")
-                or r.get("message")
-                or ""
-            )
+            action = r.get("action") or r.get("status") or r.get("kind") or r.get("uri") or r.get("severity") or "?"
+            detail = r.get("details") or r.get("error") or r.get("payload") or r.get("message") or ""
             if isinstance(detail, str):
                 detail = detail[:80]
             print(f"  [{ts}] {action}: {detail}")
@@ -240,11 +223,7 @@ def cmd_logs_audit(
     """
     paths = _list_log_paths()
     if consumer:
-        paths = [
-            p
-            for p in paths
-            if p.stem == consumer or p.stem.replace("-", "_") == consumer
-        ]
+        paths = [p for p in paths if p.stem == consumer or p.stem.replace("-", "_") == consumer]
         if not paths:
             print(f"❌ consumer not found: {consumer}", file=sys.stderr)
             return 1
@@ -252,9 +231,7 @@ def cmd_logs_audit(
     total_records = 0
     # 按 schema_name 累计 drift (而非按文件名, baseline 用 schema 维度更稳定)
     drift_by_consumer: dict[str, int] = {}
-    file_results: list[
-        tuple[Path, str, int, int]
-    ] = []  # (path, schema_name, drift, parse_errors)
+    file_results: list[tuple[Path, str, int, int]] = []  # (path, schema_name, drift, parse_errors)
 
     for p in paths:
         log = AppendOnlyLog(p)
@@ -275,9 +252,7 @@ def cmd_logs_audit(
                 # 仅当缺字段时报 (多余字段允许, forward compat)
                 failures += 1
         file_results.append((p, schema_name, failures, parse_errors))
-        drift_by_consumer[schema_name] = (
-            drift_by_consumer.get(schema_name, 0) + failures
-        )
+        drift_by_consumer[schema_name] = drift_by_consumer.get(schema_name, 0) + failures
 
     # ── 模式 1: --baseline-init (生成/刷新 baseline) ──
     if baseline_init is not None:
@@ -350,9 +325,7 @@ def cmd_logs_audit(
             if k not in drift_by_consumer:
                 print(f"⚠️  {k}: baseline 存在但当前无 audit 数据 (skip)")
         if any_regression:
-            print(
-                f"\n❌ baseline check fail: 增量 drift {delta_total} (有回归, 新代码引入漂移)"
-            )
+            print(f"\n❌ baseline check fail: 增量 drift {delta_total} (有回归, 新代码引入漂移)")
             return 1
         print("\n✅ baseline check pass: 0 增量 drift (新代码未引入新漂移)")
         return 0
@@ -367,9 +340,7 @@ def cmd_logs_audit(
             )
             total_failures += failures
         else:
-            print(
-                f"✅ {p.stem} ({schema_name}): {len(AppendOnlyLog(p).read_all()):,} records 符合 SSOT"
-            )
+            print(f"✅ {p.stem} ({schema_name}): {len(AppendOnlyLog(p).read_all()):,} records 符合 SSOT")
 
     # Round 40 P0: --exclude-locked flag 区分历史锁 vs 新债 (默认 True)
     # 历史锁消费者: omo_history (R14 之前的 1100+ 老 record 永久锁住)
@@ -377,9 +348,7 @@ def cmd_logs_audit(
     # §17.1.3 老 record 锁校正: 这些"债" 永久不可清理, 不应误报 R5
     if exclude_locked:
         locked_consumers = {"omo_history", "omo_sync"}
-        locked_drift = sum(
-            v for k, v in drift_by_consumer.items() if k in locked_consumers
-        )
+        locked_drift = sum(v for k, v in drift_by_consumer.items() if k in locked_consumers)
         new_debt_drift = total_failures - locked_drift
     else:
         locked_drift = 0
@@ -425,9 +394,7 @@ def cmd_logs_audit(
 
     print(f"\n总计: {total_records:,} records, {total_failures} 漂移")
     if total_failures:
-        print(
-            "   提示: 用 --baseline-init 生成 baseline, 后续 --baseline-check 仅查增量"
-        )
+        print("   提示: 用 --baseline-init 生成 baseline, 后续 --baseline-check 仅查增量")
     return 0 if total_failures == 0 else 1
 
 
@@ -446,22 +413,16 @@ def main(argv: list[str] | None = None) -> int:
 
     # inspect
     ins = sub.add_parser("inspect", help="查指定 jsonl 字段分布 + 必填字段缺失")
-    ins.add_argument(
-        "name", help="jsonl 文件名 (e.g. 'bos-metrics' 或 'bos-metrics.jsonl')"
-    )
+    ins.add_argument("name", help="jsonl 文件名 (e.g. 'bos-metrics' 或 'bos-metrics.jsonl')")
 
     # tail
-    tl = sub.add_parser(
-        "tail", help="读指定 jsonl 最近 N 条 (AppendOnlyLog.tail 真正 O(n))"
-    )
+    tl = sub.add_parser("tail", help="读指定 jsonl 最近 N 条 (AppendOnlyLog.tail 真正 O(n))")
     tl.add_argument("name", help="jsonl 文件名")
     tl.add_argument("--lines", "-n", type=int, default=10)
 
     # audit
     au = sub.add_parser("audit", help="走 SSOT schema 检查所有 .jsonl, 报漂移")
-    au.add_argument(
-        "--consumer", help="限定 audit 单个 consumer (e.g. 'omo-bos-metrics')"
-    )
+    au.add_argument("--consumer", help="限定 audit 单个 consumer (e.g. 'omo-bos-metrics')")
     au.add_argument(
         "--baseline-init",
         metavar="PATH",

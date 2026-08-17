@@ -204,11 +204,7 @@ def test_debt_schedule_updates_item_state(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    payload = yaml.safe_load(
-        (tmp_path / ".omo" / "debt" / "items" / "D2_CI_E2E.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
+    payload = yaml.safe_load((tmp_path / ".omo" / "debt" / "items" / "D2_CI_E2E.yaml").read_text(encoding="utf-8"))
     assert payload["lifecycle_state"] == "scheduled"
     assert payload["next_review_at"] == "2026-06-15T00:00:00Z"
     assert payload["history"][-1]["action"] == "schedule"
@@ -250,9 +246,7 @@ def test_debt_register_creates_new_item(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    payload = yaml.safe_load(
-        (debt_dir / "items" / "NEW_GATE.yaml").read_text(encoding="utf-8")
-    )
+    payload = yaml.safe_load((debt_dir / "items" / "NEW_GATE.yaml").read_text(encoding="utf-8"))
     registry = yaml.safe_load((debt_dir / "registry.yaml").read_text(encoding="utf-8"))
     assert payload["lifecycle_state"] == "identified"
     assert payload["history"][-1]["action"] == "register"
@@ -284,9 +278,7 @@ def test_debt_reclassify_updates_dimension_fields(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     payload = yaml.safe_load(
-        (tmp_path / ".omo" / "debt" / "items" / "SB_ORPHANED_TASKS.yaml").read_text(
-            encoding="utf-8"
-        )
+        (tmp_path / ".omo" / "debt" / "items" / "SB_ORPHANED_TASKS.yaml").read_text(encoding="utf-8")
     )
     assert payload["dimension"] == "governance_process"
     assert payload["subdimension"] == "pointer_hygiene"
@@ -335,11 +327,7 @@ def test_debt_escalate_and_revalidate_update_gate_and_review_state(
 
     assert escalate.returncode == 0, escalate.stderr
     assert revalidate.returncode == 0, revalidate.stderr
-    payload = yaml.safe_load(
-        (tmp_path / ".omo" / "debt" / "items" / "D2_CI_E2E.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
+    payload = yaml.safe_load((tmp_path / ".omo" / "debt" / "items" / "D2_CI_E2E.yaml").read_text(encoding="utf-8"))
     assert payload["gate_level"] == "gate"
     assert payload["last_reviewed_at"] == "2026-06-11T00:00:00Z"
     assert payload["history"][-2]["action"] == "escalate"
@@ -381,11 +369,7 @@ def test_debt_close_and_reopen_update_lifecycle_state(tmp_path: Path) -> None:
 
     assert close.returncode == 0, close.stderr
     assert reopen.returncode == 0, reopen.stderr
-    payload = yaml.safe_load(
-        (tmp_path / ".omo" / "debt" / "items" / "D3_EU_PRICING.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
+    payload = yaml.safe_load((tmp_path / ".omo" / "debt" / "items" / "D3_EU_PRICING.yaml").read_text(encoding="utf-8"))
     assert payload["lifecycle_state"] == "identified"
     assert payload["history"][-2]["action"] == "close"
     assert payload["history"][-1]["action"] == "reopen"
@@ -398,9 +382,7 @@ def test_debt_refresh_fails_on_invalid_next_review_timestamp(tmp_path: Path) -> 
     broken_item = tmp_path / ".omo" / "debt" / "items" / "SB_UNTESTED_PKGS.yaml"
     payload = yaml.safe_load(broken_item.read_text(encoding="utf-8"))
     payload["next_review_at"] = "not-a-timestamp"
-    broken_item.write_text(
-        yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), encoding="utf-8"
-    )
+    broken_item.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
     result = subprocess.run(
         [
@@ -538,17 +520,9 @@ def test_debt_approve_writes_current_and_record_files_for_gate_item(
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "approved SB_DECOMPOSITION"
 
-    current_path = (
-        tmp_path / ".omo" / "debt" / "approvals" / "SB_DECOMPOSITION" / "current.yaml"
-    )
+    current_path = tmp_path / ".omo" / "debt" / "approvals" / "SB_DECOMPOSITION" / "current.yaml"
     record_path = (
-        tmp_path
-        / ".omo"
-        / "debt"
-        / "approvals"
-        / "SB_DECOMPOSITION"
-        / "records"
-        / "2026-06-11T00-00-00Z.yaml"
+        tmp_path / ".omo" / "debt" / "approvals" / "SB_DECOMPOSITION" / "records" / "2026-06-11T00-00-00Z.yaml"
     )
     current = yaml.safe_load(current_path.read_text(encoding="utf-8"))
     record = yaml.safe_load(record_path.read_text(encoding="utf-8"))
@@ -595,13 +569,7 @@ def test_debt_approve_rejects_non_gate_item_and_duplicate_record(
     assert "gate" in non_gate.stderr
 
     record_path = (
-        tmp_path
-        / ".omo"
-        / "debt"
-        / "approvals"
-        / "SB_DECOMPOSITION"
-        / "records"
-        / "2026-06-11T00-00-00Z.yaml"
+        tmp_path / ".omo" / "debt" / "approvals" / "SB_DECOMPOSITION" / "records" / "2026-06-11T00-00-00Z.yaml"
     )
     record_path.parent.mkdir(parents=True, exist_ok=True)
     record_path.write_text("existing: true\n", encoding="utf-8")
@@ -755,13 +723,7 @@ def test_debt_revalidate_writes_execution_record_for_dispatched_item(
     )
 
     record_path = (
-        tmp_path
-        / ".omo"
-        / "debt"
-        / "dispatch"
-        / "executions"
-        / "2026-06-10T00-00-00Z"
-        / "SB_UNTESTED_PKGS.yaml"
+        tmp_path / ".omo" / "debt" / "dispatch" / "executions" / "2026-06-10T00-00-00Z" / "SB_UNTESTED_PKGS.yaml"
     )
     assert result.returncode == 0, result.stderr
     payload = yaml.safe_load(record_path.read_text(encoding="utf-8"))
@@ -823,21 +785,13 @@ def test_debt_revalidate_gate_item_succeeds_after_matching_approval(
     assert approve.returncode == 0, approve.stderr
     assert revalidate.returncode == 0, revalidate.stderr
     payload = yaml.safe_load(
-        (tmp_path / ".omo" / "debt" / "items" / "SB_DECOMPOSITION.yaml").read_text(
-            encoding="utf-8"
-        )
+        (tmp_path / ".omo" / "debt" / "items" / "SB_DECOMPOSITION.yaml").read_text(encoding="utf-8")
     )
     assert payload["last_reviewed_at"] == "2026-06-11T12:00:00Z"
     assert payload["history"][-1]["action"] == "revalidate"
     execution_record = yaml.safe_load(
         (
-            tmp_path
-            / ".omo"
-            / "debt"
-            / "dispatch"
-            / "executions"
-            / "2026-06-10T00-00-00Z"
-            / "SB_DECOMPOSITION.yaml"
+            tmp_path / ".omo" / "debt" / "dispatch" / "executions" / "2026-06-10T00-00-00Z" / "SB_DECOMPOSITION.yaml"
         ).read_text(encoding="utf-8")
     )
     assert execution_record == {
@@ -962,28 +916,17 @@ def test_debt_campaign_writes_latest_run_outputs(tmp_path: Path) -> None:
     )
 
     current_yaml = yaml.safe_load(
-        (tmp_path / ".omo" / "debt" / "campaign" / "current.yaml").read_text(
-            encoding="utf-8"
-        )
+        (tmp_path / ".omo" / "debt" / "campaign" / "current.yaml").read_text(encoding="utf-8")
     )
     run_yaml = yaml.safe_load(
-        (
-            tmp_path
-            / ".omo"
-            / "debt"
-            / "campaign"
-            / "runs"
-            / "2026-06-10T00-00-00Z"
-            / "current.yaml"
-        ).read_text(encoding="utf-8")
+        (tmp_path / ".omo" / "debt" / "campaign" / "runs" / "2026-06-10T00-00-00Z" / "current.yaml").read_text(
+            encoding="utf-8"
+        )
     )
 
     assert result.returncode == 0, result.stderr
     assert current_yaml == run_yaml
-    assert (
-        current_yaml["dispatch_run_ref"]
-        == ".omo/debt/dispatch/runs/2026-06-10T00-00-00Z.yaml"
-    )
+    assert current_yaml["dispatch_run_ref"] == ".omo/debt/dispatch/runs/2026-06-10T00-00-00Z.yaml"
     assert current_yaml["summary"]["state_counts"] == {
         "pending_approval": 1,
         "ready_to_execute": 8,
@@ -1050,14 +993,8 @@ def test_debt_campaign_reflects_approval_and_execution_facts(tmp_path: Path) -> 
         cwd=Path(__file__).resolve().parents[2],
     )
 
-    packet = yaml.safe_load(
-        (tmp_path / ".omo" / "debt" / "campaign" / "current.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
-    entries = {
-        entry["id"]: entry for owner in packet["owners"] for entry in owner["entries"]
-    }
+    packet = yaml.safe_load((tmp_path / ".omo" / "debt" / "campaign" / "current.yaml").read_text(encoding="utf-8"))
+    entries = {entry["id"]: entry for owner in packet["owners"] for entry in owner["entries"]}
 
     assert approve.returncode == 0, approve.stderr
     assert execute.returncode == 0, execute.stderr
@@ -1111,20 +1048,12 @@ def test_debt_report_writes_latest_run_outputs(tmp_path: Path) -> None:
     )
 
     current_yaml = yaml.safe_load(
-        (tmp_path / ".omo" / "debt" / "reporting" / "current.yaml").read_text(
-            encoding="utf-8"
-        )
+        (tmp_path / ".omo" / "debt" / "reporting" / "current.yaml").read_text(encoding="utf-8")
     )
     run_yaml = yaml.safe_load(
-        (
-            tmp_path
-            / ".omo"
-            / "debt"
-            / "reporting"
-            / "runs"
-            / "2026-06-10T00-00-00Z"
-            / "current.yaml"
-        ).read_text(encoding="utf-8")
+        (tmp_path / ".omo" / "debt" / "reporting" / "runs" / "2026-06-10T00-00-00Z" / "current.yaml").read_text(
+            encoding="utf-8"
+        )
     )
 
     assert result.returncode == 0, result.stderr
@@ -1189,11 +1118,7 @@ def test_debt_report_reflects_approval_and_execution_facts(tmp_path: Path) -> No
         cwd=Path(__file__).resolve().parents[2],
     )
 
-    packet = yaml.safe_load(
-        (tmp_path / ".omo" / "debt" / "reporting" / "current.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
+    packet = yaml.safe_load((tmp_path / ".omo" / "debt" / "reporting" / "current.yaml").read_text(encoding="utf-8"))
 
     assert approve.returncode == 0, approve.stderr
     assert execute.returncode == 0, execute.stderr
@@ -1231,22 +1156,10 @@ def test_debt_report_history_writes_latest_and_prior_run_metadata(
     _reset_generated_reporting_artifacts(tmp_path / ".omo" / "debt")
     _seed_legacy_dispatch_snapshot(tmp_path / ".omo" / "debt")
 
-    older_dispatch = (
-        tmp_path / ".omo" / "debt" / "dispatch" / "runs" / "2026-06-01T00-00-00Z.yaml"
-    )
-    older_reporting = (
-        tmp_path
-        / ".omo"
-        / "debt"
-        / "reporting"
-        / "runs"
-        / "2026-06-01T00-00-00Z"
-        / "current.yaml"
-    )
+    older_dispatch = tmp_path / ".omo" / "debt" / "dispatch" / "runs" / "2026-06-01T00-00-00Z.yaml"
+    older_reporting = tmp_path / ".omo" / "debt" / "reporting" / "runs" / "2026-06-01T00-00-00Z" / "current.yaml"
     older_dispatch.parent.mkdir(parents=True, exist_ok=True)
-    older_dispatch.write_text(
-        "dispatched_at: '2026-06-01T00:00:00Z'\n", encoding="utf-8"
-    )
+    older_dispatch.write_text("dispatched_at: '2026-06-01T00:00:00Z'\n", encoding="utf-8")
     older_reporting.parent.mkdir(parents=True, exist_ok=True)
     older_reporting.write_text(
         yaml.safe_dump(
@@ -1304,9 +1217,7 @@ def test_debt_report_history_writes_latest_and_prior_run_metadata(
     )
 
     packet = yaml.safe_load(
-        (
-            tmp_path / ".omo" / "debt" / "reporting" / "history" / "current.yaml"
-        ).read_text(encoding="utf-8")
+        (tmp_path / ".omo" / "debt" / "reporting" / "history" / "current.yaml").read_text(encoding="utf-8")
     )
 
     assert result.returncode == 0, result.stderr
@@ -1327,13 +1238,9 @@ def test_debt_report_history_keeps_run_when_reporting_artifact_is_missing(
     _reset_generated_reporting_artifacts(tmp_path / ".omo" / "debt")
     _seed_legacy_dispatch_snapshot(tmp_path / ".omo" / "debt")
 
-    older_dispatch = (
-        tmp_path / ".omo" / "debt" / "dispatch" / "runs" / "2026-06-01T00-00-00Z.yaml"
-    )
+    older_dispatch = tmp_path / ".omo" / "debt" / "dispatch" / "runs" / "2026-06-01T00-00-00Z.yaml"
     older_dispatch.parent.mkdir(parents=True, exist_ok=True)
-    older_dispatch.write_text(
-        "dispatched_at: '2026-06-01T00:00:00Z'\n", encoding="utf-8"
-    )
+    older_dispatch.write_text("dispatched_at: '2026-06-01T00:00:00Z'\n", encoding="utf-8")
 
     latest_report = subprocess.run(
         [
@@ -1363,9 +1270,7 @@ def test_debt_report_history_keeps_run_when_reporting_artifact_is_missing(
     )
 
     packet = yaml.safe_load(
-        (
-            tmp_path / ".omo" / "debt" / "reporting" / "history" / "current.yaml"
-        ).read_text(encoding="utf-8")
+        (tmp_path / ".omo" / "debt" / "reporting" / "history" / "current.yaml").read_text(encoding="utf-8")
     )
 
     assert result.returncode == 0, result.stderr
@@ -1445,9 +1350,7 @@ def test_debt_report_diff_writes_no_prior_run_packet_for_single_history_run(
     )
 
     packet = yaml.safe_load(
-        (tmp_path / ".omo" / "debt" / "reporting" / "diff" / "current.yaml").read_text(
-            encoding="utf-8"
-        )
+        (tmp_path / ".omo" / "debt" / "reporting" / "diff" / "current.yaml").read_text(encoding="utf-8")
     )
 
     assert result.returncode == 0, result.stderr
@@ -1466,19 +1369,10 @@ def test_debt_report_diff_rederives_metrics_from_facts_not_history_metadata(
     source = Path(__file__).resolve().parents[2] / ".omo" / "debt"
     shutil.copytree(source, tmp_path / ".omo" / "debt")
 
-    older_dispatch = (
-        tmp_path / ".omo" / "debt" / "dispatch" / "runs" / "2026-06-01T00-00-00Z.yaml"
-    )
+    older_dispatch = tmp_path / ".omo" / "debt" / "dispatch" / "runs" / "2026-06-01T00-00-00Z.yaml"
     older_dispatch.parent.mkdir(parents=True, exist_ok=True)
     older_dispatch.write_text(
-        (
-            tmp_path
-            / ".omo"
-            / "debt"
-            / "dispatch"
-            / "runs"
-            / "2026-06-10T00-00-00Z.yaml"
-        ).read_text(encoding="utf-8"),
+        (tmp_path / ".omo" / "debt" / "dispatch" / "runs" / "2026-06-10T00-00-00Z.yaml").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
 
@@ -1499,9 +1393,7 @@ def test_debt_report_diff_rederives_metrics_from_facts_not_history_metadata(
         encoding="utf-8",
     )
 
-    execution_dir = (
-        tmp_path / ".omo" / "debt" / "dispatch" / "executions" / "2026-06-01T00-00-00Z"
-    )
+    execution_dir = tmp_path / ".omo" / "debt" / "dispatch" / "executions" / "2026-06-01T00-00-00Z"
     execution_dir.mkdir(parents=True, exist_ok=True)
     execution_dir.joinpath("SB_UNTESTED_PKGS.yaml").write_text(
         yaml.safe_dump(
@@ -1571,9 +1463,7 @@ def test_debt_report_diff_rederives_metrics_from_facts_not_history_metadata(
     )
 
     packet = yaml.safe_load(
-        (tmp_path / ".omo" / "debt" / "reporting" / "diff" / "current.yaml").read_text(
-            encoding="utf-8"
-        )
+        (tmp_path / ".omo" / "debt" / "reporting" / "diff" / "current.yaml").read_text(encoding="utf-8")
     )
 
     assert result.returncode == 0, result.stderr
@@ -1601,17 +1491,11 @@ def test_debt_report_diff_writes_owner_diff_from_rederived_run_facts(
     source = Path(__file__).resolve().parents[2] / ".omo" / "debt"
     shutil.copytree(source, tmp_path / ".omo" / "debt")
 
-    latest_run = (
-        tmp_path / ".omo" / "debt" / "dispatch" / "runs" / "2026-06-10T00-00-00Z.yaml"
-    )
-    prior_run = (
-        tmp_path / ".omo" / "debt" / "dispatch" / "runs" / "2026-06-01T00-00-00Z.yaml"
-    )
+    latest_run = tmp_path / ".omo" / "debt" / "dispatch" / "runs" / "2026-06-10T00-00-00Z.yaml"
+    prior_run = tmp_path / ".omo" / "debt" / "dispatch" / "runs" / "2026-06-01T00-00-00Z.yaml"
     prior_payload = yaml.safe_load(latest_run.read_text(encoding="utf-8"))
     prior_payload["dispatched_at"] = "2026-06-01T00:00:00Z"
-    prior_payload["latest_run_ref"] = (
-        ".omo/debt/dispatch/runs/2026-06-01T00-00-00Z.yaml"
-    )
+    prior_payload["latest_run_ref"] = ".omo/debt/dispatch/runs/2026-06-01T00-00-00Z.yaml"
     removed_owner = prior_payload["owners"][3]
     removed_owner["owner"] = "retired-governance"
     for entry in removed_owner["entries"]:
@@ -1684,9 +1568,7 @@ def test_debt_report_diff_writes_owner_diff_from_rederived_run_facts(
     )
 
     packet = yaml.safe_load(
-        (tmp_path / ".omo" / "debt" / "reporting" / "diff" / "current.yaml").read_text(
-            encoding="utf-8"
-        )
+        (tmp_path / ".omo" / "debt" / "reporting" / "diff" / "current.yaml").read_text(encoding="utf-8")
     )
 
     assert result.returncode == 0, result.stderr
@@ -1774,9 +1656,7 @@ def test_debt_report_trend_writes_insufficient_history_packet_for_single_history
     )
 
     packet = yaml.safe_load(
-        (tmp_path / ".omo" / "debt" / "reporting" / "trend" / "current.yaml").read_text(
-            encoding="utf-8"
-        )
+        (tmp_path / ".omo" / "debt" / "reporting" / "trend" / "current.yaml").read_text(encoding="utf-8")
     )
 
     assert result.returncode == 0, result.stderr
@@ -1894,9 +1774,7 @@ def test_debt_report_trend_reads_history_summary_metadata_not_raw_facts(
         cwd=Path(__file__).resolve().parents[2],
     )
 
-    packet = yaml.safe_load(
-        (debt_dir / "reporting" / "trend" / "current.yaml").read_text(encoding="utf-8")
-    )
+    packet = yaml.safe_load((debt_dir / "reporting" / "trend" / "current.yaml").read_text(encoding="utf-8"))
 
     assert result.returncode == 0, result.stderr
     assert [entry["run_stamp"] for entry in packet["runs"]] == [
@@ -2010,10 +1888,7 @@ def test_debt_report_trend_fails_closed_on_missing_history_reporting_metadata(
     )
 
     assert result.returncode != 0
-    assert (
-        "missing reporting trend metadata for run: 2026-06-01T00-00-00Z"
-        in result.stderr
-    )
+    assert "missing reporting trend metadata for run: 2026-06-01T00-00-00Z" in result.stderr
 
 
 def test_debt_report_trend_writes_owner_block_from_reporting_run_artifacts(
@@ -2061,9 +1936,7 @@ def test_debt_report_trend_writes_owner_block_from_reporting_run_artifacts(
         encoding="utf-8",
     )
 
-    latest_reporting = (
-        debt_dir / "reporting" / "runs" / "2026-06-10T00-00-00Z" / "current.yaml"
-    )
+    latest_reporting = debt_dir / "reporting" / "runs" / "2026-06-10T00-00-00Z" / "current.yaml"
     latest_reporting.parent.mkdir(parents=True, exist_ok=True)
     latest_reporting.write_text(
         yaml.safe_dump(
@@ -2122,9 +1995,7 @@ def test_debt_report_trend_writes_owner_block_from_reporting_run_artifacts(
         encoding="utf-8",
     )
 
-    prior_reporting = (
-        debt_dir / "reporting" / "runs" / "2026-06-01T00-00-00Z" / "current.yaml"
-    )
+    prior_reporting = debt_dir / "reporting" / "runs" / "2026-06-01T00-00-00Z" / "current.yaml"
     prior_reporting.parent.mkdir(parents=True, exist_ok=True)
     prior_reporting.write_text(
         yaml.safe_dump(
@@ -2196,9 +2067,7 @@ def test_debt_report_trend_writes_owner_block_from_reporting_run_artifacts(
         cwd=Path(__file__).resolve().parents[2],
     )
 
-    packet = yaml.safe_load(
-        (debt_dir / "reporting" / "trend" / "current.yaml").read_text(encoding="utf-8")
-    )
+    packet = yaml.safe_load((debt_dir / "reporting" / "trend" / "current.yaml").read_text(encoding="utf-8"))
 
     assert result.returncode == 0, result.stderr
     assert packet["trend_status"] == "trend_available"
@@ -2379,9 +2248,7 @@ def test_debt_report_trend_writes_owner_presence_for_selected_last_window(
         cwd=Path(__file__).resolve().parents[2],
     )
 
-    packet = yaml.safe_load(
-        (debt_dir / "reporting" / "trend" / "current.yaml").read_text(encoding="utf-8")
-    )
+    packet = yaml.safe_load((debt_dir / "reporting" / "trend" / "current.yaml").read_text(encoding="utf-8"))
 
     assert result.returncode == 0, result.stderr
     assert packet["window_requested"] == 2
@@ -2501,9 +2368,7 @@ def test_debt_report_trend_writes_execution_progress_for_selected_last_window(
         cwd=Path(__file__).resolve().parents[2],
     )
 
-    packet = yaml.safe_load(
-        (debt_dir / "reporting" / "trend" / "current.yaml").read_text(encoding="utf-8")
-    )
+    packet = yaml.safe_load((debt_dir / "reporting" / "trend" / "current.yaml").read_text(encoding="utf-8"))
 
     assert result.returncode == 0, result.stderr
     assert packet["window_requested"] == 2
@@ -2626,9 +2491,7 @@ def test_debt_report_trend_writes_state_progress_for_selected_last_window(
         cwd=Path(__file__).resolve().parents[2],
     )
 
-    packet = yaml.safe_load(
-        (debt_dir / "reporting" / "trend" / "current.yaml").read_text(encoding="utf-8")
-    )
+    packet = yaml.safe_load((debt_dir / "reporting" / "trend" / "current.yaml").read_text(encoding="utf-8"))
 
     assert result.returncode == 0, result.stderr
     assert packet["state_progress"] == {
@@ -2759,9 +2622,7 @@ def test_debt_report_trend_accepts_last_window_override(tmp_path: Path) -> None:
         cwd=Path(__file__).resolve().parents[2],
     )
 
-    packet = yaml.safe_load(
-        (debt_dir / "reporting" / "trend" / "current.yaml").read_text(encoding="utf-8")
-    )
+    packet = yaml.safe_load((debt_dir / "reporting" / "trend" / "current.yaml").read_text(encoding="utf-8"))
 
     assert result.returncode == 0, result.stderr
     assert packet["window_requested"] == 2
@@ -2925,9 +2786,7 @@ def test_debt_report_trend_accepts_inclusive_run_range(tmp_path: Path) -> None:
         cwd=Path(__file__).resolve().parents[2],
     )
 
-    packet = yaml.safe_load(
-        (debt_dir / "reporting" / "trend" / "current.yaml").read_text(encoding="utf-8")
-    )
+    packet = yaml.safe_load((debt_dir / "reporting" / "trend" / "current.yaml").read_text(encoding="utf-8"))
 
     assert result.returncode == 0, result.stderr
     assert packet["from_run_stamp_requested"] == "2026-05-20T00-00-00Z"
@@ -2986,7 +2845,4 @@ def test_debt_report_trend_rejects_last_with_run_range(tmp_path: Path) -> None:
     )
 
     assert result.returncode != 0
-    assert (
-        "--last cannot be combined with --from-run-stamp or --to-run-stamp"
-        in result.stderr
-    )
+    assert "--last cannot be combined with --from-run-stamp or --to-run-stamp" in result.stderr

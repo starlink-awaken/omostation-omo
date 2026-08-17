@@ -40,9 +40,7 @@ _WORKSPACE = Path(os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace"
 DEFAULT_METRICS_PATH = _WORKSPACE / ".omo" / "_knowledge" / "bos-metrics.jsonl"
 
 # Agora 内部 SQLite metrics 库路径 (与 agora.mcp.bos_metrics 默认值一致)
-_AGORA_METRICS_DB = Path(
-    os.environ.get("AGORA_METRICS_DB", str(Path.home() / ".agora" / "bos_metrics.db"))
-)
+_AGORA_METRICS_DB = Path(os.environ.get("AGORA_METRICS_DB", str(Path.home() / ".agora" / "bos_metrics.db")))
 
 
 # ── Agora metrics → OMO metrics 同步桥 ─────────────────────────────────────
@@ -68,12 +66,7 @@ def _write_watermark(path: Path, watermark: int) -> None:
 
 
 def _ts_to_iso(ts: float) -> str:
-    return (
-        datetime.fromtimestamp(ts, tz=UTC)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    return datetime.fromtimestamp(ts, tz=UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def sync_from_agora_metrics(
@@ -97,8 +90,7 @@ def sync_from_agora_metrics(
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            "SELECT id, uri, success, latency_ms, timestamp "
-            "FROM bos_metrics WHERE id > ? ORDER BY id ASC",
+            "SELECT id, uri, success, latency_ms, timestamp FROM bos_metrics WHERE id > ? ORDER BY id ASC",
             (last_id,),
         ).fetchall()
         conn.close()
@@ -172,9 +164,7 @@ def record(
         error=error,
         recorded_at=_utc_now(),
     )
-    AppendOnlyLog(path).append(
-        rec.model_dump(), schema=OmoBosMetricsRecord, sort_keys=True
-    )
+    AppendOnlyLog(path).append(rec.model_dump(), schema=OmoBosMetricsRecord, sort_keys=True)
 
 
 def time_invoke(uri: str, transport: str = "") -> _Timer:
@@ -294,12 +284,8 @@ def summary(
             "timeout": timeout,
             "success_rate": round(success / n, 3) if n else 0.0,
             "p50_ms": round(latencies[n // 2], 2) if n else 0.0,
-            "p95_ms": round(latencies[int(n * 0.95)] if n > 1 else latencies[-1], 2)
-            if n
-            else 0.0,
-            "p99_ms": round(latencies[int(n * 0.99)] if n > 1 else latencies[-1], 2)
-            if n
-            else 0.0,
+            "p95_ms": round(latencies[int(n * 0.95)] if n > 1 else latencies[-1], 2) if n else 0.0,
+            "p99_ms": round(latencies[int(n * 0.99)] if n > 1 else latencies[-1], 2) if n else 0.0,
             "max_ms": round(max(latencies), 2) if n else 0.0,
         }
         for r in items:
@@ -313,9 +299,7 @@ def summary(
     by_domain = {
         d: {
             "count": by_domain_count[d],
-            "success_rate": round(by_domain_success[d] / by_domain_count[d], 3)
-            if by_domain_count[d]
-            else 0.0,
+            "success_rate": round(by_domain_success[d] / by_domain_count[d], 3) if by_domain_count[d] else 0.0,
         }
         for d in sorted(by_domain_count)
     }

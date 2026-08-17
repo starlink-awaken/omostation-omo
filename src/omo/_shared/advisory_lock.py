@@ -90,9 +90,7 @@ class AdvisoryLock:
         """fcntl.flock sidecar. 和 meta 分开: meta 可删, guard 永久 (防 flock 语义坑)."""
         return self.lock_dir / f".{self._safe_name(resource)}.lock.guard"
 
-    def acquire(
-        self, resource: str, holder: str, ttl: int = DEFAULT_TTL
-    ) -> dict[str, Any]:
+    def acquire(self, resource: str, holder: str, ttl: int = DEFAULT_TTL) -> dict[str, Any]:
         """获取锁. 返回 status=ok (acquired/reentrant) 或 status=locked (被他人持有).
 
         Args:

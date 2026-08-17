@@ -25,18 +25,14 @@ def _grant(run_id: str, step_run_ids: list[str]) -> dict:
         "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
     }
     grant["proof"] = hashlib.sha256(
-        json.dumps(
-            grant, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode()
+        json.dumps(grant, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     return grant
 
 
 def _admit(run_id: str, step_run_ids: list[str]) -> dict:
     grant = _grant(run_id, step_run_ids)
-    return new_workflow_event(
-        "WorkflowAdmitted", run_id, payload={"admission": grant, **grant}
-    )
+    return new_workflow_event("WorkflowAdmitted", run_id, payload={"admission": grant, **grant})
 
 
 def test_workflow_mesh_store_projects_lifecycle_and_is_idempotent(tmp_path):
@@ -53,9 +49,7 @@ def test_workflow_mesh_store_projects_lifecycle_and_is_idempotent(tmp_path):
         producer="runtime",
         payload={"step_run_id": "step-1", "admission_id": "adm-run-1"},
     )
-    succeeded = new_workflow_event(
-        "WorkflowSucceeded", "run-1", producer="runtime", payload={"step_count": 1}
-    )
+    succeeded = new_workflow_event("WorkflowSucceeded", "run-1", producer="runtime", payload={"step_count": 1})
 
     store.append(requested)
     store.append(_admit("run-1", ["step-1"]))
@@ -89,9 +83,7 @@ def test_scene_binding_is_projected_and_immutable(tmp_path):
 
     changed_binding = {**binding, "outcome_metric": "unapproved-change"}
     with pytest.raises(WorkflowMeshEventError, match="cannot change"):
-        store.append(
-            new_workflow_event("WorkflowFailed", run_id, scene_binding=changed_binding)
-        )
+        store.append(new_workflow_event("WorkflowFailed", run_id, scene_binding=changed_binding))
 
 
 def test_scene_binding_requires_all_business_identifiers(tmp_path):
@@ -159,9 +151,7 @@ def test_succeeded_candidate_can_enter_compensation_and_close_cancelled(tmp_path
     store.append(new_workflow_event("StepDispatched", run_id, payload=step_context))
     store.append(new_workflow_event("StepStarted", run_id, payload=step_context))
     store.append(new_workflow_event("WorkflowSucceeded", run_id))
-    store.append(
-        new_workflow_event("CompensationStarted", run_id, payload=step_context)
-    )
+    store.append(new_workflow_event("CompensationStarted", run_id, payload=step_context))
     store.append(new_workflow_event("WorkflowRecovered", run_id))
     store.append(new_workflow_event("WorkflowCancelled", run_id))
     store.append(new_workflow_event("WorkflowClosed", run_id))

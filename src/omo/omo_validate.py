@@ -165,9 +165,7 @@ def cmd_all() -> int:
     print("OMO 全面验证\n")
 
     result = validate_completeness()
-    print(
-        f"完整性: {result['covered']}/{result['total_dirs']} ({result['coverage_pct']:.1f}%)"
-    )
+    print(f"完整性: {result['covered']}/{result['total_dirs']} ({result['coverage_pct']:.1f}%)")
     if result["missing"]:
         print(f"  未覆盖: {', '.join(result['missing'])}")
 

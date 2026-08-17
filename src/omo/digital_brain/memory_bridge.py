@@ -6,9 +6,10 @@
 
 from __future__ import annotations
 
-import yaml
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+import yaml
 
 
 class DigitalBrainMemoryBridge:
@@ -16,9 +17,7 @@ class DigitalBrainMemoryBridge:
 
     def __init__(self, root_dir: Path | None = None) -> None:
         self.root_dir = root_dir or Path.cwd()
-        self.beliefs_path = (
-            self.root_dir / ".omo" / "state" / "agent-beliefs" / "index.yaml"
-        )
+        self.beliefs_path = self.root_dir / ".omo" / "state" / "agent-beliefs" / "index.yaml"
 
     def get_user_mental_model(self) -> dict[str, Any]:
         """获取用户个人背景、心智模型与沟通偏好."""
@@ -46,18 +45,13 @@ class DigitalBrainMemoryBridge:
             return []
 
         try:
-            with open(self.beliefs_path, "r", encoding="utf-8") as f:
+            with open(self.beliefs_path, encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
                 beliefs = data.get("beliefs", [])
                 if not topic_keyword:
                     return beliefs
                 kw = topic_keyword.lower()
-                return [
-                    b
-                    for b in beliefs
-                    if kw in b.get("topic", "").lower()
-                    or kw in b.get("belief", "").lower()
-                ]
+                return [b for b in beliefs if kw in b.get("topic", "").lower() or kw in b.get("belief", "").lower()]
         except Exception:
             return []
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+
 from omo.omo_debt_reporting import (
     build_reporting_history_packet,
     render_reporting_history_markdown,
@@ -86,9 +87,7 @@ def test_build_reporting_history_packet_orders_runs_and_sets_latest_prior() -> N
     assert packet["runs"][0]["approval_coverage_rate"] == 1.0
 
 
-def test_build_reporting_history_packet_marks_missing_reporting_artifacts_without_dropping_run() -> (
-    None
-):
+def test_build_reporting_history_packet_marks_missing_reporting_artifacts_without_dropping_run() -> None:
     packet = build_reporting_history_packet(
         generated_at="2026-06-12T00:00:00Z",
         dispatch_runs=_dispatch_runs(),
@@ -119,9 +118,7 @@ def test_build_reporting_history_packet_marks_missing_reporting_artifacts_withou
     }
 
 
-def test_build_reporting_history_packet_rejects_duplicate_or_malformed_run_stamps() -> (
-    None
-):
+def test_build_reporting_history_packet_rejects_duplicate_or_malformed_run_stamps() -> None:
     with pytest.raises(ValueError, match="duplicate dispatch run stamp"):
         build_reporting_history_packet(
             generated_at="2026-06-12T00:00:00Z",
@@ -151,9 +148,7 @@ def test_build_reporting_history_packet_rejects_duplicate_or_malformed_run_stamp
         )
 
 
-def test_render_reporting_history_markdown_lists_latest_prior_and_run_presence() -> (
-    None
-):
+def test_render_reporting_history_markdown_lists_latest_prior_and_run_presence() -> None:
     packet = build_reporting_history_packet(
         generated_at="2026-06-12T00:00:00Z",
         dispatch_runs=_dispatch_runs(),

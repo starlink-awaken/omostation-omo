@@ -16,12 +16,10 @@ REGISTRY_PATH = WORKSPACE / ".omo/_truth/registry/agent-workflows"
 AGENT_CLIS_PATH = WORKSPACE / ".omo/_truth/registry/agent-clis.yaml"
 AGORA_BOS_REGISTRY_PATH = WORKSPACE / "projects/agora/etc/bos-services.yaml"
 AGCP_MOF_WORKFLOW_PATH = (
-    WORKSPACE / "projects/ecos/src/ecos/ssot/mof/m1/workflow/"
-    "WORKFLOW-AGENT-GOVERNANCE-CONTROL-PLANE.yaml"
+    WORKSPACE / "projects/ecos/src/ecos/ssot/mof/m1/workflow/WORKFLOW-AGENT-GOVERNANCE-CONTROL-PLANE.yaml"
 )
 AGCP_MOF_BOSROUTE_PATH = (
-    WORKSPACE / "projects/ecos/src/ecos/ssot/mof/m1/bosroute/"
-    "BOSROUTE-GOVERNANCE-AGENT-WORKFLOW.yaml"
+    WORKSPACE / "projects/ecos/src/ecos/ssot/mof/m1/bosroute/BOSROUTE-GOVERNANCE-AGENT-WORKFLOW.yaml"
 )
 AGCP_BOS_ROUTES = {
     "bos://governance/agent-workflow/bootstrap",
@@ -86,9 +84,7 @@ def load_registry(path: Path = REGISTRY_PATH) -> dict[str, Any]:
                     if doc and isinstance(doc, dict):
                         documents.append(doc)
             except yaml.YAMLError as exc:
-                raise WorkflowError(
-                    f"invalid YAML in {display_path(yaml_file)}: {exc}"
-                ) from exc
+                raise WorkflowError(f"invalid YAML in {display_path(yaml_file)}: {exc}") from exc
     else:
         yaml_files = [path]
         try:
@@ -117,11 +113,7 @@ def load_registry(path: Path = REGISTRY_PATH) -> dict[str, Any]:
                     if key == "external_patterns" and isinstance(value, dict):
                         external_patterns.update(value)
                         continue
-                    if (
-                        key in merged
-                        and isinstance(merged[key], dict)
-                        and isinstance(value, dict)
-                    ):
+                    if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
                         merged[key] = _deep_merge(merged[key], value)
                     else:
                         merged[key] = value
@@ -133,11 +125,7 @@ def load_registry(path: Path = REGISTRY_PATH) -> dict[str, Any]:
                 if is_adapter_file:
                     external_patterns[key] = value
                 elif key != "external_patterns":
-                    if (
-                        key in merged
-                        and isinstance(merged[key], dict)
-                        and isinstance(value, dict)
-                    ):
+                    if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
                         merged[key] = _deep_merge(merged[key], value)
                     else:
                         merged[key] = value
@@ -162,15 +150,11 @@ def is_default_registry_path(path: Path) -> bool:
         return False
 
 
-def load_yaml_document_with(
-    path: Path, key: str
-) -> tuple[dict[str, Any] | None, str | None]:
+def load_yaml_document_with(path: Path, key: str) -> tuple[dict[str, Any] | None, str | None]:
     if not path.exists():
         return None, f"missing file: {display_path(path)}"
     try:
-        documents = [
-            doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if doc
-        ]
+        documents = [doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if doc]
     except yaml.YAMLError as exc:
         return None, f"invalid YAML: {display_path(path)} ({exc})"
     for document in documents:
@@ -204,9 +188,7 @@ def validate_agent_profile(
     workflow_id = str(workflow.get("id") or "")
     if not profile_id:
         if require and roles:
-            raise WorkflowError(
-                f"{workflow_id} requires --profile ({', '.join(roles)})"
-            )
+            raise WorkflowError(f"{workflow_id} requires --profile ({', '.join(roles)})")
         return
     profiles = registry.get("agent_profiles") or {}
     profile = profiles.get(profile_id) if isinstance(profiles, dict) else None
@@ -214,13 +196,9 @@ def validate_agent_profile(
         raise WorkflowError(f"unknown agent profile: {profile_id}")
     allowed = profile.get("allowed_workflows", [])
     if allowed != ["*"] and workflow_id not in allowed:
-        raise WorkflowError(
-            f"agent profile {profile_id} cannot run workflow {workflow_id}"
-        )
+        raise WorkflowError(f"agent profile {profile_id} cannot run workflow {workflow_id}")
     if roles and profile_id not in roles:
-        raise WorkflowError(
-            f"agent profile {profile_id} is not listed in {workflow_id}.agents.roles"
-        )
+        raise WorkflowError(f"agent profile {profile_id} is not listed in {workflow_id}.agents.roles")
 
 
 def context_from_args(args: argparse.Namespace) -> dict[str, str]:
@@ -274,13 +252,9 @@ def changed_files_from_git(include_untracked: bool) -> list[str]:
         commands.append(["git", "ls-files", "--others", "--exclude-standard"])
     changed: set[str] = set()
     for command in commands:
-        completed = subprocess.run(
-            command, cwd=WORKSPACE, capture_output=True, text=True, check=False
-        )
+        completed = subprocess.run(command, cwd=WORKSPACE, capture_output=True, text=True, check=False)
         if completed.returncode != 0:
-            raise WorkflowError(
-                f"failed to inspect changed files: {command_display(command)}"
-            )
+            raise WorkflowError(f"failed to inspect changed files: {command_display(command)}")
         for line in completed.stdout.splitlines():
             if line.strip():
                 changed.add(normalize_repo_path(line.strip()))
@@ -299,21 +273,15 @@ def display_path(path: Path) -> str:
 
 
 def run_state_dir(registry: dict[str, Any]) -> Path:
-    return WORKSPACE / registry.get("runner", {}).get(
-        "run_state_dir", ".omo/_delivery/agent-workflows/runs"
-    )
+    return WORKSPACE / registry.get("runner", {}).get("run_state_dir", ".omo/_delivery/agent-workflows/runs")
 
 
 def lock_state_dir(registry: dict[str, Any]) -> Path:
-    return WORKSPACE / registry.get("runner", {}).get(
-        "lock_state_dir", ".omo/_delivery/agent-workflows/locks"
-    )
+    return WORKSPACE / registry.get("runner", {}).get("lock_state_dir", ".omo/_delivery/agent-workflows/locks")
 
 
 def ledger_path(registry: dict[str, Any]) -> Path:
-    return WORKSPACE / registry.get("runner", {}).get(
-        "ledger_path", ".omo/_delivery/agent-workflows/events.jsonl"
-    )
+    return WORKSPACE / registry.get("runner", {}).get("ledger_path", ".omo/_delivery/agent-workflows/events.jsonl")
 
 
 def workflow_rows(registry: dict[str, Any]) -> list[dict[str, Any]]:
@@ -335,9 +303,7 @@ def agent_rows(registry: dict[str, Any]) -> list[dict[str, Any]]:
             "allowed_workflows": profile.get("allowed_workflows", []),
             "can_write_lanes": profile.get("can_write_lanes", []),
         }
-        for profile_id, profile in sorted(
-            (registry.get("agent_profiles") or {}).items()
-        )
+        for profile_id, profile in sorted((registry.get("agent_profiles") or {}).items())
         if isinstance(profile, dict)
     ]
 

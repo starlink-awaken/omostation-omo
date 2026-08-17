@@ -299,9 +299,7 @@ def _seed_run(
         "locks": lock_paths,
     }
     run_path = rdir / f"{run_id}.yaml"
-    run_path.write_text(
-        yaml.safe_dump(record, allow_unicode=True, sort_keys=False), encoding="utf-8"
-    )
+    run_path.write_text(yaml.safe_dump(record, allow_unicode=True, sort_keys=False), encoding="utf-8")
     return run_path
 
 
@@ -354,9 +352,7 @@ def test_heartbeat_run_missing_lock(registry: dict) -> None:
 def test_heartbeat_run_malformed_yaml(registry: dict) -> None:
     """Malformed lock (non-mapping YAML) → WorkflowError."""
     _seed_run(registry, "run-bad-yaml", lock_scopes=["path:bad.py"])
-    _lock_file_for_scope(registry, "path:bad.py").write_text(
-        "not-a-mapping-just-a-string\n", encoding="utf-8"
-    )
+    _lock_file_for_scope(registry, "path:bad.py").write_text("not-a-mapping-just-a-string\n", encoding="utf-8")
     with pytest.raises(WorkflowError, match="malformed"):
         heartbeat_run(registry, "run-bad-yaml")
 
@@ -386,9 +382,7 @@ def test_heartbeat_run_path_escape(registry: dict) -> None:
 def test_heartbeat_run_no_partial_mutation(registry: dict) -> None:
     """When one lock fails validation, all locks remain unchanged."""
     _seed_run(registry, "run-partial", lock_scopes=["path:good.py", "path:bad.py"])
-    _lock_file_for_scope(registry, "path:bad.py").write_text(
-        ":::not[yaml::", encoding="utf-8"
-    )
+    _lock_file_for_scope(registry, "path:bad.py").write_text(":::not[yaml::", encoding="utf-8")
     good_lock = _lock_file_for_scope(registry, "path:good.py")
     good_before = good_lock.read_text()
     with pytest.raises(WorkflowError):
@@ -424,9 +418,7 @@ def test_heartbeat_cli_failure_rc2(
     assert rc == 2
 
 
-def test_heartbeat_wired_into_claim(
-    registry: dict, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_heartbeat_wired_into_claim(registry: dict, monkeypatch: pytest.MonkeyPatch) -> None:
     """claim_run renews heartbeat before acquiring new locks."""
     _seed_run(registry, "run-claim", lock_scopes=["path:init.py"])
 
@@ -456,9 +448,7 @@ def test_heartbeat_wired_into_claim(
     assert "run-claim" in heartbeat_called
 
 
-def test_heartbeat_wired_into_closeout_ok(
-    registry: dict, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_heartbeat_wired_into_closeout_ok(registry: dict, monkeypatch: pytest.MonkeyPatch) -> None:
     """closeout status=ok calls heartbeat before verify/observe."""
     _seed_run(registry, "run-co", lock_scopes=["path:co.py"])
 
@@ -490,9 +480,7 @@ def test_heartbeat_wired_into_closeout_ok(
 # ---------------------------------------------------------------------------
 
 
-def test_heartbeat_run_uses_atomic_write(
-    registry: dict, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_heartbeat_run_uses_atomic_write(registry: dict, monkeypatch: pytest.MonkeyPatch) -> None:
     """heartbeat_run must use write_yaml_atomic, not raw Path.write_text."""
     _seed_run(registry, "run-atomic", lock_scopes=["path:atomic.py"])
 
@@ -513,9 +501,7 @@ def test_heartbeat_run_uses_atomic_write(
     assert atomic_calls[0].name == "path_atomic.py.lock.yaml"
 
 
-def test_heartbeat_run_serializes_concurrent_renewals(
-    registry: dict, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_heartbeat_run_serializes_concurrent_renewals(registry: dict, monkeypatch: pytest.MonkeyPatch) -> None:
     """Concurrent renewals for one run never enter the atomic writer together."""
     _seed_run(registry, "run-concurrent", lock_scopes=["path:concurrent.py"])
 
@@ -543,10 +529,7 @@ def test_heartbeat_run_serializes_concurrent_renewals(
 
     monkeypatch.setattr(lifecycle_mod, "write_yaml_atomic", slow_atomic_write)
     with ThreadPoolExecutor(max_workers=2) as pool:
-        receipts = [
-            future.result(timeout=5)
-            for future in (pool.submit(renew), pool.submit(renew))
-        ]
+        receipts = [future.result(timeout=5) for future in (pool.submit(renew), pool.submit(renew))]
 
     assert [receipt["count"] for receipt in receipts] == [1, 1]
     assert max_active_writers == 1
@@ -685,9 +668,7 @@ def test_heartbeat_run_empty_string_entry_raises(registry: dict) -> None:
         heartbeat_run(registry, "run-empty-str")
 
 
-def test_heartbeat_run_oserror_on_read(
-    registry: dict, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_heartbeat_run_oserror_on_read(registry: dict, monkeypatch: pytest.MonkeyPatch) -> None:
     """OSError during lock read → WorkflowError, not bare OSError."""
     _seed_run(registry, "run-oserr", lock_scopes=["path:target.py"])
     lock_file = _lock_file_for_scope(registry, "path:target.py")
@@ -704,9 +685,7 @@ def test_heartbeat_run_oserror_on_read(
         heartbeat_run(registry, "run-oserr")
 
 
-def test_heartbeat_run_unicodeerror_on_read(
-    registry: dict, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_heartbeat_run_unicodeerror_on_read(registry: dict, monkeypatch: pytest.MonkeyPatch) -> None:
     """UnicodeDecodeError during lock read → WorkflowError."""
     _seed_run(registry, "run-unicode", lock_scopes=["path:target.py"])
     lock_file = _lock_file_for_scope(registry, "path:target.py")
@@ -723,9 +702,7 @@ def test_heartbeat_run_unicodeerror_on_read(
         heartbeat_run(registry, "run-unicode")
 
 
-def test_heartbeat_run_no_partial_mutation_on_oserror(
-    registry: dict, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_heartbeat_run_no_partial_mutation_on_oserror(registry: dict, monkeypatch: pytest.MonkeyPatch) -> None:
     """When second lock read raises OSError, first lock remains unchanged."""
     _seed_run(
         registry,

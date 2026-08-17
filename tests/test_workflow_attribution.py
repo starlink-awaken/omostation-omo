@@ -84,17 +84,11 @@ def _ledger_events(registry: dict) -> list[dict]:
     path = lifecycle_mod.WORKSPACE / registry["runner"]["ledger_path"]
     if not path.exists():
         return []
-    return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def test_start_run_without_parent(registry: dict) -> None:
-    record = start_run(
-        registry, _workflow(registry), _context(), "test objective", True, False
-    )
+    record = start_run(registry, _workflow(registry), _context(), "test objective", True, False)
     assert "parent_run_id" not in record
     assert "parent_agent" not in record
 

@@ -99,17 +99,13 @@ def _emit_admission_chain(
         "backend": "agent-workflow",
         "step_run_ids": [step_run_id],
         "capabilities": [],
-        "policy_digest": hashlib.sha256(
-            f"{run_id}:agent-workflow".encode()
-        ).hexdigest(),
+        "policy_digest": hashlib.sha256(f"{run_id}:agent-workflow".encode()).hexdigest(),
         "issued_at": now.isoformat(),
         "expires_at": expires_at,
     }
     unsigned = {k: v for k, v in grant.items() if k != "proof"}
     grant["proof"] = hashlib.sha256(
-        json.dumps(
-            unsigned, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
+        json.dumps(unsigned, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
 
     # planned -> admitted
@@ -189,15 +185,11 @@ def emit_workflow_mesh_event(
             _try_append(sink, _make_event("WorkflowCancelled", run_id, event_payload))
         else:
             # Transition: planned -> admitted -> dispatched -> running
-            step_run_id, admission_id = _emit_admission_chain(
-                sink, run_id, event_payload
-            )
+            step_run_id, admission_id = _emit_admission_chain(sink, run_id, event_payload)
 
             # Transition: running -> terminal
             if ok or status in ("succeeded", "verified", "merged"):
-                _try_append(
-                    sink, _make_event("WorkflowSucceeded", run_id, event_payload)
-                )
+                _try_append(sink, _make_event("WorkflowSucceeded", run_id, event_payload))
             else:
                 # StepFailed transitions running -> failed
                 fail_payload = {

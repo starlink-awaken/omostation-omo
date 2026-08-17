@@ -73,9 +73,7 @@ def test_find_belief_by_topic(tmp_path: Path):
 
 def test_find_belief_by_topic_partial_match(tmp_path: Path):
     mos = MOSBeliefManager(root=tmp_path)
-    mos.record_belief(
-        topic="scene_watcher:engineering-delivery", belief_text="delivery ok"
-    )
+    mos.record_belief(topic="scene_watcher:engineering-delivery", belief_text="delivery ok")
     belief = mos.find_belief_by_topic("engineering-delivery")
     assert belief is not None
 
@@ -87,9 +85,7 @@ def test_find_belief_by_topic_not_found(tmp_path: Path):
 
 def test_adjudication_triggers_belief_update(tmp_path: Path):
     mos = MOSBeliefManager(root=tmp_path)
-    mos.record_belief(
-        topic="scene_watcher:test-scene", belief_text="test decision is correct"
-    )
+    mos.record_belief(topic="scene_watcher:test-scene", belief_text="test decision is correct")
     do_id = mos.record_decision_outcome(
         decision_type="scene_watcher:test-scene",
         input_summary="node=n1",
@@ -180,9 +176,7 @@ def test_create_watcher_decision_persists(tmp_path: Path):
 
 def test_full_closed_loop(tmp_path: Path):
     mos = MOSBeliefManager(root=tmp_path)
-    mos.record_belief(
-        topic="scene_watcher:review", belief_text="review decisions are reliable"
-    )
+    mos.record_belief(topic="scene_watcher:review", belief_text="review decisions are reliable")
 
     watcher = SceneWatcher(
         scene_id="review",
@@ -205,9 +199,7 @@ def test_full_closed_loop(tmp_path: Path):
     state = mos._load_state()
     for b in state["beliefs"]:
         if "review" in b["topic"]:
-            assert b["confidence"] < 1.0, (
-                f"rejected verdict should lower confidence, got {b['confidence']}"
-            )
+            assert b["confidence"] < 1.0, f"rejected verdict should lower confidence, got {b['confidence']}"
             break
     else:
         assert False, "belief not found"
@@ -217,9 +209,7 @@ def test_verdict_confidence_delta_values():
     assert VERDICT_CONFIDENCE_DELTA["accepted"] > 0
     assert VERDICT_CONFIDENCE_DELTA["rejected"] < 0
     assert VERDICT_CONFIDENCE_DELTA["modified"] < 0
-    assert abs(VERDICT_CONFIDENCE_DELTA["rejected"]) > abs(
-        VERDICT_CONFIDENCE_DELTA["modified"]
-    )
+    assert abs(VERDICT_CONFIDENCE_DELTA["rejected"]) > abs(VERDICT_CONFIDENCE_DELTA["modified"])
 
 
 def test_adjudication_triggers_capability_calibration(tmp_path: Path):
@@ -283,9 +273,7 @@ def test_calibration_formula_accepted_over_total(tmp_path: Path):
     store.record(decision_id=do3, verdict="accepted")
 
     state = mos._load_state()
-    calibrations = [
-        c for c in state["capability_calibrations"] if c["capability_ref"] == "review"
-    ]
+    calibrations = [c for c in state["capability_calibrations"] if c["capability_ref"] == "review"]
     assert len(calibrations) >= 1
     last = calibrations[-1]
     assert last["sample_size"] == 3
@@ -341,9 +329,7 @@ def test_explicit_observation_state_stays_in_injected_runtime_paths(
     before_ladder = REGISTRY_PATH.read_bytes() if REGISTRY_PATH.exists() else None
 
     runtime_root = tmp_path / "runtime/omo"
-    summary_path = (
-        runtime_root / "_delivery/outcomes/capability_calibration_summary.yaml"
-    )
+    summary_path = runtime_root / "_delivery/outcomes/capability_calibration_summary.yaml"
     ladder_path = runtime_root / "_truth/registry/autonomy-levels.yaml"
     log_path = tmp_path / "adjudications.jsonl"
     store = AdjudicationStore(
@@ -362,12 +348,8 @@ def test_explicit_observation_state_stays_in_injected_runtime_paths(
     ladder = yaml.safe_load(ladder_path.read_text(encoding="utf-8"))
     assert summary["deploy-check"]["calibration"] == 1.0
     assert ladder["capabilities"]["deploy-check"]["observations"] == 1
-    assert (
-        default_summary.read_bytes() if default_summary.exists() else None
-    ) == before_summary
-    assert (
-        REGISTRY_PATH.read_bytes() if REGISTRY_PATH.exists() else None
-    ) == before_ladder
+    assert (default_summary.read_bytes() if default_summary.exists() else None) == before_summary
+    assert (REGISTRY_PATH.read_bytes() if REGISTRY_PATH.exists() else None) == before_ladder
 
 
 def test_missing_observation_dependencies_do_not_write_global_state(tmp_path: Path):
@@ -393,12 +375,8 @@ def test_missing_observation_dependencies_do_not_write_global_state(tmp_path: Pa
     store.record(decision_id=decision_id, verdict="accepted")
 
     assert mos._load_state()["capability_calibrations"][-1]["sample_size"] == 1
-    assert (
-        default_summary.read_bytes() if default_summary.exists() else None
-    ) == before_summary
-    assert (
-        REGISTRY_PATH.read_bytes() if REGISTRY_PATH.exists() else None
-    ) == before_ladder
+    assert (default_summary.read_bytes() if default_summary.exists() else None) == before_summary
+    assert (REGISTRY_PATH.read_bytes() if REGISTRY_PATH.exists() else None) == before_ladder
 
 
 def test_observation_failure_is_not_silenced_after_primary_append(tmp_path: Path):
@@ -458,9 +436,7 @@ def test_calibration_summary_merges_capabilities(tmp_path: Path):
     assert set(summary) == {"deploy", "review"}
 
 
-def test_feedback_composes_runtime_observation_dependencies(
-    tmp_path: Path, monkeypatch
-):
+def test_feedback_composes_runtime_observation_dependencies(tmp_path: Path, monkeypatch):
     import omo.omo_adjudication as adjudication_module
     import omo.omo_belief as belief_module
     import omo.omo_paths as paths_module
@@ -491,34 +467,15 @@ def test_feedback_composes_runtime_observation_dependencies(
     root_truth = workspace_root / ".omo/_truth/registry/memory-os.yaml"
     before_root_truth = root_truth.read_bytes()
 
-    assert (
-        cli._cmd_feedback(["--decision-id", decision_id, "--verdict", "accepted"]) == 0
-    )
+    assert cli._cmd_feedback(["--decision-id", decision_id, "--verdict", "accepted"]) == 0
     assert root_truth.read_bytes() == before_root_truth
 
-    calibration_summary = (
-        runtime_delivery / "outcomes/capability_calibration_summary.yaml"
-    )
+    calibration_summary = runtime_delivery / "outcomes/capability_calibration_summary.yaml"
     autonomy_state = runtime_truth / "registry/autonomy-levels.yaml"
     memory_summary = runtime_truth / "registry/memory-os.yaml"
+    assert yaml.safe_load(calibration_summary.read_text(encoding="utf-8"))["deploy-check"]["total"] == 1
     assert (
-        yaml.safe_load(calibration_summary.read_text(encoding="utf-8"))["deploy-check"][
-            "total"
-        ]
-        == 1
+        yaml.safe_load(autonomy_state.read_text(encoding="utf-8"))["capabilities"]["deploy-check"]["observations"] == 1
     )
-    assert (
-        yaml.safe_load(autonomy_state.read_text(encoding="utf-8"))["capabilities"][
-            "deploy-check"
-        ]["observations"]
-        == 1
-    )
-    assert (
-        yaml.safe_load(memory_summary.read_text(encoding="utf-8"))[
-            "total_capability_calibrations"
-        ]
-        == 1
-    )
-    assert (primary_outcomes / "adjudications.jsonl").read_text(encoding="utf-8").count(
-        "\n"
-    ) == 1
+    assert yaml.safe_load(memory_summary.read_text(encoding="utf-8"))["total_capability_calibrations"] == 1
+    assert (primary_outcomes / "adjudications.jsonl").read_text(encoding="utf-8").count("\n") == 1

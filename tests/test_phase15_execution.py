@@ -79,11 +79,7 @@ def test_phase15_proposal_compiler_outputs_inactive_task_drafts_only() -> None:
     compiler = _read_yaml("_delivery/evidence/phase15/proposal-to-task-dry-run.yaml")
     drafts = sorted((OMO_ROOT / "tasks" / "drafts").glob("P15-*.yaml"))
     active = sorted((OMO_ROOT / "tasks" / "active").glob("*.yaml"))
-    p15_active = [
-        task
-        for task in active
-        if yaml.safe_load(task.read_text(encoding="utf-8")).get("phase") == 15
-    ]
+    p15_active = [task for task in active if yaml.safe_load(task.read_text(encoding="utf-8")).get("phase") == 15]
 
     assert compiler["status"] == "ready"
     assert compiler["mode"] == "inactive-draft-only"
@@ -104,9 +100,7 @@ def test_phase15_proposal_compiler_outputs_inactive_task_drafts_only() -> None:
 
 
 def test_phase15_dashboard_includes_projects_and_user_value_not_only_omo() -> None:
-    dashboard = _read_yaml(
-        "_delivery/evidence/phase15/operating-dashboard-snapshot.yaml"
-    )
+    dashboard = _read_yaml("_delivery/evidence/phase15/operating-dashboard-snapshot.yaml")
 
     assert dashboard["status"] == "ready"
     assert dashboard["ledger_authoritative"] is True
@@ -117,9 +111,7 @@ def test_phase15_dashboard_includes_projects_and_user_value_not_only_omo() -> No
         "agentmesh",
         "SharedBrain",
     }
-    assert all(
-        project["evidence_refs"] for project in dashboard["project_health"].values()
-    )
+    assert all(project["evidence_refs"] for project in dashboard["project_health"].values())
     assert dashboard["user_value"]["scenario_count"] >= 3
     assert dashboard["user_value"]["live_demo_candidates"] >= 2
     assert dashboard["user_value"]["risk"] == "governed-preview"
@@ -166,46 +158,30 @@ def test_phase15_cli_commands_are_usable() -> None:
         assert expected in result.stdout
 
 
-def test_phase15_remains_completed_after_phase16_completion_allowing_only_authorized_active_tasks() -> (
-    None
-):
+def test_phase15_remains_completed_after_phase16_completion_allowing_only_authorized_active_tasks() -> None:
     goals = _read_yaml("goals/current.yaml")
     state = _read_yaml("state/system.yaml")
     active_tasks = list((OMO_ROOT / "tasks" / "active").glob("*.yaml"))
-    active_payloads = [
-        yaml.safe_load(path.read_text(encoding="utf-8")) for path in active_tasks
-    ]
-    stale_active = [
-        task for task in active_payloads if task.get("phase", 0) <= goals["phase"]
-    ]
+    active_payloads = [yaml.safe_load(path.read_text(encoding="utf-8")) for path in active_tasks]
+    stale_active = [task for task in active_payloads if task.get("phase", 0) <= goals["phase"]]
     unauthorized_active = [
         task["id"]
         for task in active_payloads
-        if task.get("status") == "pending"
-        and not any("-promotion-" in ref for ref in task.get("handoff_refs", []))
+        if task.get("status") == "pending" and not any("-promotion-" in ref for ref in task.get("handoff_refs", []))
     ]
 
     assert goals["phase"] >= 16
     assert goals["status"] in ("completed", "active", "done")
-    assert all(
-        s in ("completed", "active", "done")
-        for s in [goal["status"] for goal in goals["goals"]]
-    )
+    assert all(s in ("completed", "active", "done") for s in [goal["status"] for goal in goals["goals"]])
     assert state["current_phase"] >= 16
     assert state["phase_status"] in ("completed", "active")
     assert state["phase15_status"] == "completed"
     assert state["phase16_status"] == "completed"
     assert state["active_tasks"] == len(active_tasks)
     assert stale_active == [], f"Unexpected non-future active tasks: {stale_active}"
-    assert unauthorized_active == [], (
-        f"Unexpected non-authorized active tasks: {unauthorized_active}"
-    )
+    assert unauthorized_active == [], f"Unexpected non-authorized active tasks: {unauthorized_active}"
 
-    assert "Phase 15 is complete" in _read(
-        "_knowledge/summaries/phase15/phase15-closeout.md"
-    )
+    assert "Phase 15 is complete" in _read("_knowledge/summaries/phase15/phase15-closeout.md")
     assert "Status: GO" in _read("_knowledge/summaries/phase15/phase15-closeout.md")
-    assert "projects and user value loop" in _read(
-        "_knowledge/summaries/phase15/phase15-retrospective.md"
-    )
+    assert "projects and user value loop" in _read("_knowledge/summaries/phase15/phase15-retrospective.md")
     assert "Status: pass" in _read("_knowledge/management/phase15-cross-audit.md")

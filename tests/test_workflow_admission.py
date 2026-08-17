@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+
 from omo.omo_ingress_task_promotion import promote_task_to_active
 from omo.workflow_dispatch import (
     WorkflowDispatchError,
@@ -44,9 +45,7 @@ def _task(root: Path, *, risk_level: str = "L1") -> None:
         "deliverables": ["docs/result.md"],
         "test_plan": ["pytest"],
     }
-    task_dir.joinpath("TASK-ADMISSION-1.yaml").write_text(
-        yaml.safe_dump(payload, sort_keys=False), encoding="utf-8"
-    )
+    task_dir.joinpath("TASK-ADMISSION-1.yaml").write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 
 
 def _request(root: Path) -> dict:
@@ -89,20 +88,13 @@ def test_preview_is_read_only_and_reports_eligible_request(tmp_path: Path) -> No
     _task(tmp_path)
     requested = _request(tmp_path)
 
-    preview = preview_requested_workflow(
-        tmp_path, **_admission_args(requested["workflow_run_id"])
-    )
+    preview = preview_requested_workflow(tmp_path, **_admission_args(requested["workflow_run_id"]))
 
     assert preview["status"] == "eligible"
     assert preview["dispatch_state"] == "preview"
     assert preview["worker_launch"] is False
     assert len(WorkflowMeshStore(tmp_path / ".omo").events()) == 1
-    assert (
-        WorkflowMeshStore(tmp_path / ".omo").snapshot(requested["workflow_run_id"])[
-            "state"
-        ]
-        == "planned"
-    )
+    assert WorkflowMeshStore(tmp_path / ".omo").snapshot(requested["workflow_run_id"])["state"] == "planned"
 
 
 def test_preview_is_blocked_for_health_or_approval_gates(tmp_path: Path) -> None:

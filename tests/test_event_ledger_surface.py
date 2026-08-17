@@ -44,9 +44,7 @@ def _cli_env(tmp_path: Path) -> dict[str, str]:
     return {**os.environ, "PYTHONPATH": str(OMO_SRC), "WORKSPACE_ROOT": str(tmp_path)}
 
 
-def _run(
-    tmp_path: Path, *args: str, stdin: str | None = None
-) -> subprocess.CompletedProcess[str]:
+def _run(tmp_path: Path, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "omo.omo_ledger", *args],
         input=stdin,
@@ -68,9 +66,7 @@ def _agora_envelope(args: list[Any], kwargs: dict[str, Any]) -> str:
 
 def test_surface_append_and_read(tmp_path: Path) -> None:
     surface = _tmp_surface(tmp_path)
-    surface.append(
-        event_type="Test.v1", producer="test-producer", payload={"msg": "hello"}
-    )
+    surface.append(event_type="Test.v1", producer="test-producer", payload={"msg": "hello"})
     assert surface.read().count == 1
     surface.close()
 
@@ -127,9 +123,7 @@ def test_db_path_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     assert EventLedgerSurface().db_path == _default_db_path()
 
 
-def test_explicit_wins_over_env(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_explicit_wins_over_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from omo.event_ledger.surface import EventLedgerSurface
 
     monkeypatch.setenv("OMO_EVENT_LEDGER_DB", str(tmp_path / "env.db"))
@@ -219,9 +213,7 @@ def test_parse_agora_stdin_kwargs_arguments_dict() -> None:
 
     old = sys.stdin
     try:
-        sys.stdin = io.StringIO(
-            _agora_envelope([], {"arguments": {"db": "/tmp/db.sqlite"}})
-        )
+        sys.stdin = io.StringIO(_agora_envelope([], {"arguments": {"db": "/tmp/db.sqlite"}}))
         args_list, kwargs = parse_agora_stdin()
         assert kwargs == {"db": "/tmp/db.sqlite"}
     finally:
@@ -235,9 +227,7 @@ def test_parse_agora_stdin_kwargs_arguments_string() -> None:
 
     old = sys.stdin
     try:
-        sys.stdin = io.StringIO(
-            _agora_envelope([], {"arguments": json.dumps({"db": "/tmp/db.sqlite"})})
-        )
+        sys.stdin = io.StringIO(_agora_envelope([], {"arguments": json.dumps({"db": "/tmp/db.sqlite"})}))
         args_list, kwargs = parse_agora_stdin()
         assert kwargs == {"db": "/tmp/db.sqlite"}
     finally:
@@ -279,9 +269,7 @@ def test_parse_agora_stdin_ambiguous_kwargs_raises() -> None:
 
     old = sys.stdin
     try:
-        sys.stdin = io.StringIO(
-            json.dumps({"args": [], "kwargs": {"arguments": {"a": 1}, "extra": "bad"}})
-        )
+        sys.stdin = io.StringIO(json.dumps({"args": [], "kwargs": {"arguments": {"a": 1}, "extra": "bad"}}))
         with pytest.raises(AgoraValidationError, match="ambiguous_kwargs"):
             parse_agora_stdin()
     finally:
@@ -296,9 +284,7 @@ def test_parse_agora_stdin_ambiguous_kwargs_raises() -> None:
 def test_emit_receipt_stable_json() -> None:
     from omo.event_ledger.surface import emit_receipt
 
-    parsed = json.loads(
-        emit_receipt({"ok": True, "count": 5, "db_path": "/tmp/test.db"})
-    )
+    parsed = json.loads(emit_receipt({"ok": True, "count": 5, "db_path": "/tmp/test.db"}))
     assert parsed["ok"] is True
     assert parsed["count"] == 5
 
@@ -308,9 +294,7 @@ def test_emit_receipt_stable_json() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_legacy_with_message_flag(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_legacy_with_message_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from omo import omo_ledger
 
     omo_dir = tmp_path / ".omo"
@@ -318,18 +302,14 @@ def test_legacy_with_message_flag(
         (omo_dir / d).mkdir(parents=True, exist_ok=True)
     (omo_dir / "state" / "system.yaml").write_text("status: active\n", encoding="utf-8")
     (omo_dir / "goals" / "current.yaml").write_text("goals: []\n", encoding="utf-8")
-    (omo_dir / "debt" / "dashboard" / "current.yaml").write_text(
-        "summary: {}\n", encoding="utf-8"
-    )
+    (omo_dir / "debt" / "dashboard" / "current.yaml").write_text("summary: {}\n", encoding="utf-8")
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(omo_ledger, "get_omo_dir", lambda base_dir: omo_dir)
     assert omo_ledger.main(["--message", "test message"]) == 0
 
 
-@pytest.mark.parametrize(
-    "message", ["append", "read", "verify", "status", "normal message"]
-)
+@pytest.mark.parametrize("message", ["append", "read", "verify", "status", "normal message"])
 def test_legacy_message_with_subcommand_name_still_legacy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, message: str
 ) -> None:
@@ -343,18 +323,14 @@ def test_legacy_message_with_subcommand_name_still_legacy(
         (omo_dir / d).mkdir(parents=True, exist_ok=True)
     (omo_dir / "state" / "system.yaml").write_text("status: active\n", encoding="utf-8")
     (omo_dir / "goals" / "current.yaml").write_text("goals: []\n", encoding="utf-8")
-    (omo_dir / "debt" / "dashboard" / "current.yaml").write_text(
-        "summary: {}\n", encoding="utf-8"
-    )
+    (omo_dir / "debt" / "dashboard" / "current.yaml").write_text("summary: {}\n", encoding="utf-8")
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(omo_ledger, "get_omo_dir", lambda base_dir: omo_dir)
     rc = omo_ledger.main(["--message", message])
     assert rc == 0, f"--message '{message}' returned {rc}"
 
-    latest = (
-        omo_dir / "_delivery" / "governance-evidence" / "ledgers" / "ledger-latest.yaml"
-    )
+    latest = omo_dir / "_delivery" / "governance-evidence" / "ledgers" / "ledger-latest.yaml"
     payload = yaml.safe_load(latest.read_text(encoding="utf-8"))
     assert payload["message"] == message
 
@@ -380,20 +356,14 @@ def test_omo_ledger_accepts_multi_document_yaml_inputs_unchanged(
     (omo_dir / "debt" / "dashboard" / "current.yaml").write_text(
         "---\nstatus: active\n---\n---\nsummary:\n  total: 1\n", encoding="utf-8"
     )
-    (omo_dir / "tasks" / "active" / "TASK-1.yaml").write_text(
-        "id: TASK-1\n", encoding="utf-8"
-    )
-    (omo_dir / "tasks" / "planned" / "TASK-2.yaml").write_text(
-        "id: TASK-2\n", encoding="utf-8"
-    )
+    (omo_dir / "tasks" / "active" / "TASK-1.yaml").write_text("id: TASK-1\n", encoding="utf-8")
+    (omo_dir / "tasks" / "planned" / "TASK-2.yaml").write_text("id: TASK-2\n", encoding="utf-8")
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(omo_ledger, "get_omo_dir", lambda base_dir: omo_dir)
     assert omo_ledger.main(["--message", "multi-doc snapshot"]) == 0
 
-    latest = (
-        omo_dir / "_delivery" / "governance-evidence" / "ledgers" / "ledger-latest.yaml"
-    )
+    latest = omo_dir / "_delivery" / "governance-evidence" / "ledgers" / "ledger-latest.yaml"
     payload = yaml.safe_load(latest.read_text(encoding="utf-8"))
     assert payload["system_state"]["current_phase"] == 46
     assert payload["debt"]["summary"]["total"] == 1
@@ -540,9 +510,7 @@ def test_agora_args_single_mapping_applies_producer_and_payload(tmp_path: Path) 
         "--db",
         str(db),
         "--agora",
-        stdin=_agora_envelope(
-            [{"producer": "pos-producer", "payload": {"from_pos": True}}], {}
-        ),
+        stdin=_agora_envelope([{"producer": "pos-producer", "payload": {"from_pos": True}}], {}),
     )
     assert p.returncode == 0, p.stderr
     r = json.loads(p.stdout.strip())
@@ -659,9 +627,7 @@ def test_agora_kwargs_arguments_success(tmp_path: Path) -> None:
         "--db",
         str(db),
         "--agora",
-        stdin=_agora_envelope(
-            [], {"arguments": {"producer": "s2", "payload": {"in_args": True}}}
-        ),
+        stdin=_agora_envelope([], {"arguments": {"producer": "s2", "payload": {"in_args": True}}}),
     )
     assert p.returncode == 0, p.stderr
     r = json.loads(p.stdout.strip())
@@ -705,17 +671,12 @@ def test_agora_duplicate_receipt_on_stderr(tmp_path: Path) -> None:
         "--db",
         str(db),
         "--agora",
-        stdin=_agora_envelope(
-            [], {"producer": "da", "idempotency_key": "k", "payload": {}}
-        ),
+        stdin=_agora_envelope([], {"producer": "da", "idempotency_key": "k", "payload": {}}),
     )
     assert p.returncode != 0
     r = json.loads(p.stderr.strip())
     assert r["ok"] is False
-    assert (
-        "duplicate" in r.get("error", "").lower()
-        or r.get("reason") == "duplicate_event"
-    )
+    assert "duplicate" in r.get("error", "").lower() or r.get("reason") == "duplicate_event"
 
 
 def test_agora_full_append_read_verify_cycle(tmp_path: Path) -> None:
@@ -731,15 +692,11 @@ def test_agora_full_append_read_verify_cycle(tmp_path: Path) -> None:
         )
         assert p.returncode == 0
 
-    p = _run(
-        tmp_path, "read", "--db", str(db), "--agora", stdin=_agora_envelope([], {})
-    )
+    p = _run(tmp_path, "read", "--db", str(db), "--agora", stdin=_agora_envelope([], {}))
     assert p.returncode == 0
     assert json.loads(p.stdout)["count"] == 2
 
-    p = _run(
-        tmp_path, "verify", "--db", str(db), "--agora", stdin=_agora_envelope([], {})
-    )
+    p = _run(tmp_path, "verify", "--db", str(db), "--agora", stdin=_agora_envelope([], {}))
     assert p.returncode == 0
 
 
@@ -748,9 +705,7 @@ def test_agora_full_append_read_verify_cycle(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_agora_envelope_db_writes_to_intended_db(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_agora_envelope_db_writes_to_intended_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Envelope db=intended must write there, not to OMO_EVENT_LEDGER_DB=fallback."""
     fallback = tmp_path / "fallback.db"
     intended = tmp_path / "intended.db"
@@ -830,9 +785,7 @@ def test_agora_envelope_db_same_as_cli_accepted(tmp_path: Path) -> None:
         ('"just a string"', "string"),
     ],
 )
-def test_agora_bad_payload_type_rejected(
-    tmp_path: Path, bad_payload: str, label: str
-) -> None:
+def test_agora_bad_payload_type_rejected(tmp_path: Path, bad_payload: str, label: str) -> None:
     """Non-mapping payload (array/number/bool/string) → payload_type, nonzero, stderr."""
     db = tmp_path / f"bp-{label}.db"
     p = _run(
@@ -860,9 +813,7 @@ def test_agora_bad_payload_type_rejected(
         (True, "inline_bool"),
     ],
 )
-def test_agora_inline_non_dict_payload_rejected(
-    tmp_path: Path, inline_payload: Any, label: str
-) -> None:
+def test_agora_inline_non_dict_payload_rejected(tmp_path: Path, inline_payload: Any, label: str) -> None:
     """Inline array/number/bool from Agora → payload_type."""
     db = tmp_path / f"il-{label}.db"
     envelope = json.dumps(
@@ -943,9 +894,7 @@ def test_payload_file_object_succeeds(tmp_path: Path) -> None:
         ("limit", -1, "negative"),
     ],
 )
-def test_agora_read_bad_numeric_field_rejected(
-    tmp_path: Path, field: str, value: Any, label: str
-) -> None:
+def test_agora_read_bad_numeric_field_rejected(tmp_path: Path, field: str, value: Any, label: str) -> None:
     """Bad numeric field (string/bool/zero/negative) → invalid_field, stderr, nonzero, no traceback."""
     db = tmp_path / f"bn-{label}.db"
     p = _run(
@@ -999,9 +948,7 @@ def test_agora_read_valid_integer_path(tmp_path: Path) -> None:
         (True, "bool"),
     ],
 )
-def test_agora_read_bad_string_field_rejected(
-    tmp_path: Path, value: Any, label: str
-) -> None:
+def test_agora_read_bad_string_field_rejected(tmp_path: Path, value: Any, label: str) -> None:
     """String fields (event_type/producer/episode_id) must be string or null."""
     db = tmp_path / f"bs-{label}.db"
     p = _run(
@@ -1026,9 +973,7 @@ def test_agora_read_bad_string_field_rejected(
         (42, "number"),
     ],
 )
-def test_agora_append_bad_meta_field_rejected(
-    tmp_path: Path, value: Any, label: str
-) -> None:
+def test_agora_append_bad_meta_field_rejected(tmp_path: Path, value: Any, label: str) -> None:
     """Append metadata must be string or null."""
     db = tmp_path / f"am-{label}.db"
     p = _run(
@@ -1073,9 +1018,7 @@ def test_agora_db_bad_value_rejected(tmp_path: Path, value: Any, label: str) -> 
         ([42], "inline_list"),
     ],
 )
-def test_agora_payload_bad_type_still_handled(
-    tmp_path: Path, value: Any, label: str
-) -> None:
+def test_agora_payload_bad_type_still_handled(tmp_path: Path, value: Any, label: str) -> None:
     """Payload type errors remain payload_type (not swallowed)."""
     db = tmp_path / f"bp2-{label}.db"
     p = _run(

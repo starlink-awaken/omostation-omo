@@ -38,9 +38,7 @@ def _record_trail(
         duration_ms=0,
         parent_step_id=parent_step_id,
     )
-    AppendOnlyLog(_trail_log_path(omo_dir)).append(
-        trail_record.model_dump(), schema=OmoTrailRecord, sort_keys=True
-    )
+    AppendOnlyLog(_trail_log_path(omo_dir)).append(trail_record.model_dump(), schema=OmoTrailRecord, sort_keys=True)
 
 
 def _load_registry(omo_dir: Path) -> dict[str, Any]:
@@ -132,9 +130,7 @@ def write_system_projection_fields(
     allowed = set(allowed_fields or updates.keys())
     invalid = sorted(key for key in updates if key not in allowed)
     if invalid:
-        raise ValueError(
-            f"system projection contains non-whitelisted fields: {invalid}"
-        )
+        raise ValueError(f"system projection contains non-whitelisted fields: {invalid}")
 
     with fcntl_lock(_lock_path(omo_dir)):
         payload = _load_yaml(system_path)
@@ -152,11 +148,7 @@ def write_system_projection_fields(
             "source_ref": source_ref,
             "updated_at": timestamp,
         }
-        artifact_path = (
-            _delivery_root(omo_dir)
-            / "state"
-            / f"system-projection-{_timestamp_slug(timestamp)}.yaml"
-        )
+        artifact_path = _delivery_root(omo_dir) / "state" / f"system-projection-{_timestamp_slug(timestamp)}.yaml"
         write_yaml_atomic(artifact_path, artifact)
         parent_step_id = f"ingress:system-projection:{timestamp}"
         details = (
@@ -262,7 +254,7 @@ def __getattr__(name: str):
 for _sym in list(_RE_EXPORTS.keys()):
     globals().get(_sym)  # noqa: PLE1117  trigger __getattr__
 
-__all__ = sorted(_RE_EXPORTS)
+__all__ = sorted(_RE_EXPORTS)  # noqa: PLE0605 — 动态导出 keys
 
 
 # --- Post-load rebind hook: omo.ingress_doc, _task_lifecycle, etc. captured

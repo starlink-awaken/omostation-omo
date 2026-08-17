@@ -9,11 +9,7 @@ from typing import Any
 
 _log = logging.getLogger(__name__)
 
-CACHE_FILE = (
-    Path(os.environ.get("RUNTIME_HOME", str(Path.home() / ".runtime")))
-    / "cache"
-    / "quota_rates.json"
-)
+CACHE_FILE = Path(os.environ.get("RUNTIME_HOME", str(Path.home() / ".runtime"))) / "cache" / "quota_rates.json"
 TTL_SECONDS = 300  # 5 minutes
 
 

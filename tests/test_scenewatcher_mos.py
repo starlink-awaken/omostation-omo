@@ -62,9 +62,7 @@ def test_persistence_survives_reinit(tmp_path: Path):
     w1 = SceneWatcher(scene_id="s1", scene_path=tmp_path, mos_manager=mos)
     w1.evaluate_confidence({"key": "val"}, node="decision_node")
 
-    w2 = SceneWatcher(
-        scene_id="s1", scene_path=tmp_path, mos_manager=MOSBeliefManager(root=tmp_path)
-    )
+    w2 = SceneWatcher(scene_id="s1", scene_path=tmp_path, mos_manager=MOSBeliefManager(root=tmp_path))
     state = w2.mos_manager._load_state()
     assert len(state["decision_outcomes"]) == 1
     assert "decision_node" in state["decision_outcomes"][0]["input_summary"]

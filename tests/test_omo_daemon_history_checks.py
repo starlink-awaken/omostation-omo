@@ -38,16 +38,10 @@ def test_run_once_appends_checks_to_history(tmp_path, monkeypatch):
         pytest.skip("audit 未产出 report, 跳过 daemon append 验证")
 
     # 4) 读回最后一条 record, 验证 checks 字段存在且完整
-    records = [
-        json.loads(line_)
-        for line_ in history_path.read_text(encoding="utf-8").splitlines()
-        if line_.strip()
-    ]
+    records = [json.loads(line_) for line_ in history_path.read_text(encoding="utf-8").splitlines() if line_.strip()]
     assert records, "history 文件应为非空"
     last = records[-1]
-    assert "checks" in last, (
-        f"daemon append 漏写 checks (ADR-0390 根因): keys={list(last.keys())}"
-    )
+    assert "checks" in last, f"daemon append 漏写 checks (ADR-0390 根因): keys={list(last.keys())}"
     checks = last["checks"]
     assert isinstance(checks, list)
     assert len(checks) >= 1, "daemon append 必须含至少 1 个 check 记录"
@@ -63,10 +57,9 @@ def test_run_once_appends_checks_to_history(tmp_path, monkeypatch):
 
 def test_daemon_history_appended_flag_honors_audit_failure():
     """若 audit 失败, history_appended 必须为 False (不写空 record)."""
-    from omo.omo_daemon import run_once
-
     # 强制 audit 抛异常: monkeypatch run_governance_audit via sys.modules stub
     import omo.omo_daemon as mod
+    from omo.omo_daemon import run_once
 
     orig = mod.run_governance_audit if hasattr(mod, "run_governance_audit") else None
 

@@ -5,6 +5,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
+
 from omo.outcome_feedback import (
     OutcomeFeedbackError,
     read_outcome_feedback,
@@ -33,9 +34,7 @@ def _grant(run_id: str) -> dict[str, object]:
         "issued_at": datetime.now(UTC).isoformat(),
         "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
     }
-    grant["proof"] = hashlib.sha256(
-        json.dumps(grant, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    grant["proof"] = hashlib.sha256(json.dumps(grant, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return grant
 
 
@@ -43,11 +42,7 @@ def _closed_run(omo_dir, run_id: str = "run-feedback-1") -> None:
     store = WorkflowMeshStore(omo_dir)
     grant = _grant(run_id)
     store.append(new_workflow_event("WorkflowRequested", run_id, scene_binding=SCENE))
-    store.append(
-        new_workflow_event(
-            "WorkflowAdmitted", run_id, payload={"admission": grant, **grant}
-        )
-    )
+    store.append(new_workflow_event("WorkflowAdmitted", run_id, payload={"admission": grant, **grant}))
     step_payload = {
         "step_run_id": f"{run_id}:execute",
         "admission_id": grant["admission_id"],
@@ -102,9 +97,7 @@ def test_record_feedback_is_durable_idempotent_and_consumed(tmp_path):
     assert operations["consumption"]["status"] == "observed"
     assert operations["consumption"]["consumed_runs"] == 1
     assert operations["consumption"]["feedback_count"] == 1
-    assert (
-        operations["consumption"]["consumption_rate_among_eligible_closed_runs"] == 1.0
-    )
+    assert operations["consumption"]["consumption_rate_among_eligible_closed_runs"] == 1.0
     assert operations["by_scene"][0]["consumed_runs"] == 1
 
 
@@ -118,9 +111,7 @@ def test_feedback_must_match_run_scene_and_not_record_before_outcome(tmp_path):
 
     running_dir = tmp_path / "running"
     store = WorkflowMeshStore(running_dir)
-    store.append(
-        new_workflow_event("WorkflowRequested", "run-running", scene_binding=SCENE)
-    )
+    store.append(new_workflow_event("WorkflowRequested", "run-running", scene_binding=SCENE))
     running_payload = _payload("run-running")
     with pytest.raises(OutcomeFeedbackError, match="eligible outcome"):
         record_outcome_feedback(running_dir, running_payload)

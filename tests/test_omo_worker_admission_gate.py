@@ -21,9 +21,7 @@ def _task_fixture(root: Path, *, worker: dict) -> Path:
     registry_dir = root / ".omo" / "_truth" / "registry"
     active_dir.mkdir(parents=True)
     registry_dir.mkdir(parents=True)
-    (registry_dir / "workers.yaml").write_text(
-        yaml.safe_dump({"workers": [worker]}, sort_keys=False), encoding="utf-8"
-    )
+    (registry_dir / "workers.yaml").write_text(yaml.safe_dump({"workers": [worker]}, sort_keys=False), encoding="utf-8")
     task_path = active_dir / "TASK-ADMISSION-GATE.yaml"
     task = {
         "id": "TASK-ADMISSION-GATE",
@@ -64,9 +62,7 @@ def _worker(
         "id": "pi",
         "enabled": enabled,
         "admission_state": admission_state,
-        "transports": transports
-        if transports is not None
-        else {"cli_prompt": {"command": "pi --prompt {prompt}"}},
+        "transports": transports if transports is not None else {"cli_prompt": {"command": "pi --prompt {prompt}"}},
     }
 
 
@@ -112,9 +108,7 @@ def _file_snapshot(root: Path) -> dict[str, str]:
 def test_dispatch_rejects_declared_worker_before_any_runtime_write(
     tmp_path: Path,
 ) -> None:
-    task_path = _task_fixture(
-        tmp_path, worker=_worker(enabled=False, admission_state="declared")
-    )
+    task_path = _task_fixture(tmp_path, worker=_worker(enabled=False, admission_state="declared"))
     before = _file_snapshot(tmp_path)
     runs_dir = tmp_path / ".omo" / "workers" / "runs"
     mesh_log = tmp_path / ".omo" / "_knowledge" / "workflow-mesh" / "events.jsonl"
@@ -154,18 +148,12 @@ def test_dispatch_rejects_declared_worker_before_any_runtime_write(
         ),
         (
             "pi",
-            {
-                "workers": [
-                    _worker(enabled=True, admission_state="admitted", transports={})
-                ]
-            },
+            {"workers": [_worker(enabled=True, admission_state="admitted", transports={})]},
             "transport_missing",
         ),
     ],
 )
-def test_worker_admission_reasons_are_stable(
-    worker_id: str, registry: dict, reason: str
-) -> None:
+def test_worker_admission_reasons_are_stable(worker_id: str, registry: dict, reason: str) -> None:
     with pytest.raises(
         ValueError,
         match=rf"worker admission denied: worker_id={worker_id} reason={reason}",
@@ -182,16 +170,12 @@ def test_default_worker_skips_declared_enabled_worker() -> None:
     declared = _worker(enabled=True, admission_state="declared")
     admitted = _worker(enabled=True, admission_state="admitted")
     admitted["id"] = "admitted-pi"
-    assert (
-        _default_enabled_worker_id({"workers": [declared, admitted]}) == "admitted-pi"
-    )
+    assert _default_enabled_worker_id({"workers": [declared, admitted]}) == "admitted-pi"
 
 
 def test_default_worker_requires_an_admitted_worker() -> None:
     with pytest.raises(ValueError, match="no admitted worker is registered"):
-        _default_enabled_worker_id(
-            {"workers": [_worker(enabled=True, admission_state="declared")]}
-        )
+        _default_enabled_worker_id({"workers": [_worker(enabled=True, admission_state="declared")]})
 
 
 def test_admitted_pi_worker_uses_one_shell_free_omo_transport(tmp_path: Path) -> None:
@@ -240,9 +224,7 @@ def test_admitted_pi_worker_uses_one_shell_free_omo_transport(tmp_path: Path) ->
     ]
     assert argv.count(prompt) == 1
     assert "-c" not in argv
-    assert not any(
-        fragment in argument for argument in argv for fragment in ("&&", "||", "|")
-    )
+    assert not any(fragment in argument for argument in argv for fragment in ("&&", "||", "|"))
 
 
 @pytest.mark.parametrize(
@@ -294,9 +276,7 @@ def test_pi_policy_rejection_is_side_effect_free(
 
     assert _file_snapshot(tmp_path) == before
     assert not (tmp_path / ".omo" / "workers" / "runs").exists()
-    assert not (
-        tmp_path / ".omo" / "_knowledge" / "workflow-mesh" / "events.jsonl"
-    ).exists()
+    assert not (tmp_path / ".omo" / "_knowledge" / "workflow-mesh" / "events.jsonl").exists()
 
 
 def test_task_risk_level_cannot_be_downgraded_by_allowed_operation_level(
@@ -330,9 +310,7 @@ def test_task_risk_level_cannot_be_downgraded_by_allowed_operation_level(
 
     assert _file_snapshot(tmp_path) == before
     assert not (tmp_path / ".omo" / "workers" / "runs").exists()
-    assert not (
-        tmp_path / ".omo" / "_knowledge" / "workflow-mesh" / "events.jsonl"
-    ).exists()
+    assert not (tmp_path / ".omo" / "_knowledge" / "workflow-mesh" / "events.jsonl").exists()
 
 
 @pytest.mark.parametrize(
@@ -464,12 +442,8 @@ def test_admitted_pi_worker_dispatch_without_launch_creates_only_governed_artifa
     )
 
     after = _file_snapshot(tmp_path)
-    changed_paths = {
-        path for path, digest in after.items() if before.get(path) != digest
-    }
-    expected_run_paths = {
-        Path(path).as_posix() for name, path in result.items() if name.endswith("_path")
-    }
+    changed_paths = {path for path, digest in after.items() if before.get(path) != digest}
+    expected_run_paths = {Path(path).as_posix() for name, path in result.items() if name.endswith("_path")}
     assert expected_run_paths <= changed_paths
     assert changed_paths <= {
         str(task_path.relative_to(tmp_path)),
@@ -477,12 +451,8 @@ def test_admitted_pi_worker_dispatch_without_launch_creates_only_governed_artifa
         ".omo/_knowledge/workflow-mesh/events.jsonl",
         ".omo/_knowledge/workflow-mesh/events.jsonl.lock",
     }
-    assert not (
-        tmp_path / ".omo" / "workers" / "runs" / f"{result['dispatch_id']}-stdout.log"
-    ).exists()
-    dispatch = yaml.safe_load(
-        (tmp_path / result["dispatch_path"]).read_text(encoding="utf-8")
-    )
+    assert not (tmp_path / ".omo" / "workers" / "runs" / f"{result['dispatch_id']}-stdout.log").exists()
+    dispatch = yaml.safe_load((tmp_path / result["dispatch_path"]).read_text(encoding="utf-8"))
     launch_command = dispatch["execution"]["launch_command"]
     assert "<workspace_root>/bin/gac/pi-worker-adapter.py" in launch_command
     assert str(tmp_path.resolve()) not in launch_command
@@ -553,9 +523,7 @@ def test_launch_failure_is_visible_and_keeps_redacted_stdout_evidence(
             now="2026-08-13T01:02:03+00:00",
         )
 
-    dispatch_path = next(
-        (tmp_path / ".omo" / "workers" / "runs").glob("*-dispatch.yaml")
-    )
+    dispatch_path = next((tmp_path / ".omo" / "workers" / "runs").glob("*-dispatch.yaml"))
     dispatch = yaml.safe_load(dispatch_path.read_text(encoding="utf-8"))
     assert dispatch["dispatch_state"] != "active"
     log = (tmp_path / dispatch["execution"]["log_ref"]).read_text(encoding="utf-8")

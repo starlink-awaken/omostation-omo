@@ -62,9 +62,7 @@ def _print_worker_status(root: Path, omo_dir: str | Path = ".omo") -> int:
     return 0
 
 
-def _print_worker_watchdog(
-    root: Path, now: str | None = None, omo_dir: str | Path = ".omo"
-) -> int:
+def _print_worker_watchdog(root: Path, now: str | None = None, omo_dir: str | Path = ".omo") -> int:
     watchdog = scan_runtime_watchdog(root, now=now, omo_dir=omo_dir)
     counts = watchdog["counts"]
     print(
@@ -79,9 +77,7 @@ def _print_worker_watchdog(
     return 0
 
 
-def _print_worker_admission_eval(
-    root: Path, envelope_ref: str, matrix_ref: str | None = None
-) -> int:
+def _print_worker_admission_eval(root: Path, envelope_ref: str, matrix_ref: str | None = None) -> int:
     result = evaluate_worker_envelope(
         root,
         Path(envelope_ref),
@@ -100,12 +96,8 @@ def _request_worker_admission_approval(
     requested_by: str,
     now: str,
 ) -> int:
-    result = request_conditional_approval(
-        root, Path(envelope_ref), requested_by=requested_by, now=now
-    )
-    print(
-        f"proposal={result['proposal_id']} approval_ref={result['approval_ref']} decision={result['decision']}"
-    )
+    result = request_conditional_approval(root, Path(envelope_ref), requested_by=requested_by, now=now)
+    print(f"proposal={result['proposal_id']} approval_ref={result['approval_ref']} decision={result['decision']}")
     return 0
 
 
@@ -118,12 +110,8 @@ def _print_worker_rollout_eval(root: Path, envelope_ref: str) -> int:
     return 0
 
 
-def _accept_worker_rollout(
-    root: Path, envelope_ref: str, accepted_by: str, now: str
-) -> int:
-    result = accept_rollout_envelope(
-        root, Path(envelope_ref), accepted_by=accepted_by, now=now
-    )
+def _accept_worker_rollout(root: Path, envelope_ref: str, accepted_by: str, now: str) -> int:
+    result = accept_rollout_envelope(root, Path(envelope_ref), accepted_by=accepted_by, now=now)
     print(f"acceptance_ref={result['acceptance_ref']} decision={result['decision']}")
     return 0
 
@@ -131,9 +119,7 @@ def _accept_worker_rollout(
 def _print_worker_rules_eval(root: Path, envelope_ref: str) -> int:
     result = evaluate_rule_bundle(root, Path(envelope_ref))
     delivery_contract = result.get("delivery_contract_ref")
-    delivery_segment = (
-        f" delivery_contract={delivery_contract}" if delivery_contract else ""
-    )
+    delivery_segment = f" delivery_contract={delivery_contract}" if delivery_contract else ""
     print(
         f"action={result['action']} registry={result['registry_ref']} "
         f"data_policy={result['data_policy_ref']}{delivery_segment} "
@@ -143,10 +129,7 @@ def _print_worker_rules_eval(root: Path, envelope_ref: str) -> int:
 
 
 def _print_mesh_event(event: dict[str, Any]) -> int:
-    print(
-        f"event_id={event['event_id']} event_type={event['event_type']} "
-        f"workflow_run_id={event['workflow_run_id']}"
-    )
+    print(f"event_id={event['event_id']} event_type={event['event_type']} workflow_run_id={event['workflow_run_id']}")
     return 0
 
 
@@ -168,10 +151,7 @@ def _print_mesh_watchdog(
             f"errors={len(result['errors'])}"
         )
         for item in result["due"] + result["expired"]:
-            print(
-                f"workflow_run_id={item['workflow_run_id']} "
-                f"worker={item['worker_id']} action={item['action']}"
-            )
+            print(f"workflow_run_id={item['workflow_run_id']} worker={item['worker_id']} action={item['action']}")
         for error in result["errors"]:
             print(f"workflow_run_id={error['workflow_run_id']} error={error['error']}")
     return 2 if result["errors"] else 0
@@ -286,38 +266,28 @@ def setup_worker_parser(subparsers: Any) -> None:
     dispatch_parser = worker_sub.add_parser("dispatch")
     dispatch_parser.add_argument("task_id")
     dispatch_parser.add_argument("--worker", required=True, dest="worker_id")
-    dispatch_parser.add_argument(
-        "--write-path", action="append", default=[], dest="write_paths"
-    )
+    dispatch_parser.add_argument("--write-path", action="append", default=[], dest="write_paths")
     dispatch_parser.add_argument("--launch", action="store_true")
     dispatch_parser.add_argument("--transport", default="cli_prompt")
     dispatch_parser.add_argument("--omo-dir", default=".omo")
 
     reclaim_parser = worker_sub.add_parser("reclaim")
     reclaim_parser.add_argument("task_id")
-    reclaim_parser.add_argument(
-        "--successor", required=True, dest="successor_worker_id"
-    )
+    reclaim_parser.add_argument("--successor", required=True, dest="successor_worker_id")
     reclaim_parser.add_argument("--reason", required=True)
-    reclaim_parser.add_argument(
-        "--write-path", action="append", default=[], dest="write_paths"
-    )
+    reclaim_parser.add_argument("--write-path", action="append", default=[], dest="write_paths")
     reclaim_parser.add_argument("--launch", action="store_true")
     reclaim_parser.add_argument("--transport", default="cli_prompt")
     reclaim_parser.add_argument("--omo-dir", default=".omo")
 
     mesh_ack_parser = worker_sub.add_parser("mesh-ack")
     _add_mesh_worker_context(mesh_ack_parser)
-    mesh_ack_parser.add_argument(
-        "--lease-seconds", type=int, default=_mesh_lease_seconds()
-    )
+    mesh_ack_parser.add_argument("--lease-seconds", type=int, default=_mesh_lease_seconds())
     mesh_ack_parser.add_argument("--now")
 
     mesh_heartbeat_parser = worker_sub.add_parser("mesh-heartbeat")
     _add_mesh_worker_context(mesh_heartbeat_parser)
-    mesh_heartbeat_parser.add_argument(
-        "--lease-seconds", type=int, default=_mesh_lease_seconds()
-    )
+    mesh_heartbeat_parser.add_argument("--lease-seconds", type=int, default=_mesh_lease_seconds())
     mesh_heartbeat_parser.add_argument("--heartbeat-id")
     mesh_heartbeat_parser.add_argument("--now")
 
@@ -328,12 +298,8 @@ def setup_worker_parser(subparsers: Any) -> None:
 
     mesh_reclaim_parser = worker_sub.add_parser("mesh-reclaim")
     _add_mesh_worker_context(mesh_reclaim_parser)
-    mesh_reclaim_parser.add_argument(
-        "--successor-worker", required=True, dest="successor_worker_id"
-    )
-    mesh_reclaim_parser.add_argument(
-        "--successor-dispatch", required=True, dest="successor_dispatch_id"
-    )
+    mesh_reclaim_parser.add_argument("--successor-worker", required=True, dest="successor_worker_id")
+    mesh_reclaim_parser.add_argument("--successor-dispatch", required=True, dest="successor_dispatch_id")
     mesh_reclaim_parser.add_argument("--reason", default="lease_expired")
     mesh_reclaim_parser.add_argument("--now")
 
@@ -343,9 +309,7 @@ def setup_worker_parser(subparsers: Any) -> None:
     yield_parser.add_argument("--omo-dir", default=".omo")
 
     gc_parser = worker_sub.add_parser("gc")
-    gc_parser.add_argument(
-        "--dry-run", action="store_true", help="Just list, don't delete"
-    )
+    gc_parser.add_argument("--dry-run", action="store_true", help="Just list, don't delete")
     gc_parser.add_argument(
         "--retain",
         type=int,
@@ -373,20 +337,14 @@ def setup_worker_parser(subparsers: Any) -> None:
     mesh_watchdog_run_parser.add_argument("--now")
     mesh_watchdog_run_parser.add_argument("--apply", action="store_true")
     mesh_watchdog_run_parser.add_argument("--reason", default="lease_expired")
-    mesh_watchdog_run_parser.add_argument(
-        "--json", action="store_true", dest="json_output"
-    )
+    mesh_watchdog_run_parser.add_argument("--json", action="store_true", dest="json_output")
     mesh_watchdog_run_parser.add_argument("--omo-dir", default=".omo")
     external_receipt_parser = worker_sub.add_parser("external-receipt")
     external_receipt_parser.add_argument("workflow_run_id")
     external_receipt_parser.add_argument("--receipt-file", required=True)
     external_receipt_parser.add_argument("--step-run-id")
-    external_receipt_parser.add_argument(
-        "--producer", default="external-connection-fabric"
-    )
-    external_receipt_parser.add_argument(
-        "--json", action="store_true", dest="json_output"
-    )
+    external_receipt_parser.add_argument("--producer", default="external-connection-fabric")
+    external_receipt_parser.add_argument("--json", action="store_true", dest="json_output")
     external_receipt_parser.add_argument("--omo-dir", default=".omo")
     sandbox_tool_parser = worker_sub.add_parser("sandbox-tool")
     _add_mesh_worker_context(sandbox_tool_parser)
@@ -543,9 +501,7 @@ def execute_worker_command(args: argparse.Namespace) -> int:
         )
 
     if args.worker_command == "gc":
-        return _worker_gc(
-            Path.cwd(), dry_run=args.dry_run, retain=args.retain, omo_dir=args.omo_dir
-        )
+        return _worker_gc(Path.cwd(), dry_run=args.dry_run, retain=args.retain, omo_dir=args.omo_dir)
 
     if args.worker_command == "status":
         return _print_worker_status(Path.cwd(), omo_dir=args.omo_dir)
@@ -562,9 +518,7 @@ def execute_worker_command(args: argparse.Namespace) -> int:
         return _print_worker_watchdog(Path.cwd(), now=args.now, omo_dir=args.omo_dir)
 
     if args.worker_command == "admission-eval":
-        return _print_worker_admission_eval(
-            Path.cwd(), args.envelope_ref, matrix_ref=args.matrix_ref
-        )
+        return _print_worker_admission_eval(Path.cwd(), args.envelope_ref, matrix_ref=args.matrix_ref)
 
     if args.worker_command == "admission-request-approval":
         return _request_worker_admission_approval(
@@ -578,8 +532,6 @@ def execute_worker_command(args: argparse.Namespace) -> int:
         return _print_worker_rollout_eval(Path.cwd(), args.envelope_ref)
 
     if args.worker_command == "rollout-accept":
-        return _accept_worker_rollout(
-            Path.cwd(), args.envelope_ref, accepted_by=args.accepted_by, now=args.now
-        )
+        return _accept_worker_rollout(Path.cwd(), args.envelope_ref, accepted_by=args.accepted_by, now=args.now)
 
     return 1

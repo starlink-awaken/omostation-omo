@@ -51,11 +51,7 @@ def create_knowledge_doc(
             "source_ref": source_ref,
             "created_at": timestamp,
         }
-        artifact_path = (
-            _delivery_root(omo_dir)
-            / "knowledge"
-            / f"{plane}-{safe_name}-{_timestamp_slug(timestamp)}.yaml"
-        )
+        artifact_path = _delivery_root(omo_dir) / "knowledge" / f"{plane}-{safe_name}-{_timestamp_slug(timestamp)}.yaml"
         write_yaml_atomic(artifact_path, artifact)
         parent_step_id = f"ingress:knowledge:{plane}:{safe_name}:{timestamp}"
         details = (
@@ -69,14 +65,14 @@ def create_knowledge_doc(
             details=details,
             audit_file=_audit_log_path(omo_dir),
         )
-        _record_trail(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_trail(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=f"broker:{actor}",
             action="create_knowledge_doc",
             target=f".omo/_knowledge/{plane}/{safe_name}.md",
             parent_step_id=parent_step_id,
         )
-        _record_mutation(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_mutation(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=actor,
             action="create_knowledge_doc",
@@ -115,16 +111,11 @@ def create_standard_doc(
             "source_ref": source_ref,
             "created_at": timestamp,
         }
-        artifact_path = (
-            _delivery_root(omo_dir)
-            / "standards"
-            / f"{safe_name}-{_timestamp_slug(timestamp)}.yaml"
-        )
+        artifact_path = _delivery_root(omo_dir) / "standards" / f"{safe_name}-{_timestamp_slug(timestamp)}.yaml"
         write_yaml_atomic(artifact_path, artifact)
         parent_step_id = f"ingress:standard:{safe_name}:{timestamp}"
         details = (
-            f"title={title} actor={actor} source_ref={source_ref or '-'} "
-            f"artifact={_workspace_relative(artifact_path)}"
+            f"title={title} actor={actor} source_ref={source_ref or '-'} artifact={_workspace_relative(artifact_path)}"
         )
         record_audit(
             action="ingress_create_standard_doc",
@@ -133,14 +124,14 @@ def create_standard_doc(
             details=details,
             audit_file=_audit_log_path(omo_dir),
         )
-        _record_trail(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_trail(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=f"broker:{actor}",
             action="create_standard_doc",
             target=f".omo/standards/{safe_name}.md",
             parent_step_id=parent_step_id,
         )
-        _record_mutation(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_mutation(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=actor,
             action="create_standard_doc",
@@ -179,11 +170,7 @@ def create_audit_report(
             "source_ref": source_ref,
             "created_at": timestamp,
         }
-        artifact_path = (
-            _delivery_root(omo_dir)
-            / "audits"
-            / f"{filename}-{_timestamp_slug(timestamp)}.yaml"
-        )
+        artifact_path = _delivery_root(omo_dir) / "audits" / f"{filename}-{_timestamp_slug(timestamp)}.yaml"
         write_yaml_atomic(artifact_path, artifact)
         parent_step_id = f"ingress:audit:{filename}:{timestamp}"
         details = (
@@ -197,14 +184,14 @@ def create_audit_report(
             details=details,
             audit_file=_audit_log_path(omo_dir),
         )
-        _record_trail(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_trail(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=f"broker:{actor}",
             action="create_audit_report",
             target=f".omo/_knowledge/audits/{filename}.md",
             parent_step_id=parent_step_id,
         )
-        _record_mutation(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_mutation(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=actor,
             action="create_audit_report",

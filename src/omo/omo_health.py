@@ -124,11 +124,7 @@ def derive_endpoints(
     ports = default_ports if default_ports is not None else DEFAULT_SERVICE_PORTS
     out: dict[str, str] = {}
 
-    routing_table = (
-        routes.get("_meta", {}).get("routing_table", {})
-        if isinstance(routes, dict)
-        else {}
-    )
+    routing_table = routes.get("_meta", {}).get("routing_table", {}) if isinstance(routes, dict) else {}
     for svc, info in routing_table.items():
         if not isinstance(info, dict):
             continue
@@ -258,9 +254,7 @@ def health_summary(results: list[HealthCheckResult]) -> dict:
         }
     healthy = sum(1 for r in results if r.is_healthy)
     response_times = [r.response_ms for r in results if r.response_ms is not None]
-    avg_ms = (
-        round(sum(response_times) / len(response_times), 1) if response_times else 0.0
-    )
+    avg_ms = round(sum(response_times) / len(response_times), 1) if response_times else 0.0
     return {
         "total": total,
         "healthy": healthy,
@@ -316,9 +310,7 @@ def cmd_dashboard() -> int:
         if SYSTEM_YAML.exists():
             sys_data = load_yaml(SYSTEM_YAML)
             freeze = sys_data.get("governance", {}).get("code_freeze", False)
-            print(
-                f"System State: {'CODE FREEZE ACTIVE' if freeze else 'DEVELOPMENT ACTIVE'}"
-            )
+            print(f"System State: {'CODE FREEZE ACTIVE' if freeze else 'DEVELOPMENT ACTIVE'}")
         else:
             print("System State: Unknown (system.yaml missing)")
     except Exception:
@@ -355,9 +347,7 @@ def cmd_dashboard() -> int:
     except Exception as e:
         print(f"Error reading debt ledger: {e}")
 
-    print(
-        "\nUse this dashboard to monitor physical reality rather than theoretical design.\n"
-    )
+    print("\nUse this dashboard to monitor physical reality rather than theoretical design.\n")
     return 0
 
 
@@ -412,10 +402,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
             print()
             print(json.dumps(payload, ensure_ascii=False, indent=2))
 
-    print(
-        f"\n[omo-health] 健康度: {summary['health_rate'] * 100:.1f}% "
-        f"({summary['healthy']}/{summary['total']})"
-    )
+    print(f"\n[omo-health] 健康度: {summary['health_rate'] * 100:.1f}% ({summary['healthy']}/{summary['total']})")
     return 0
 
 
@@ -431,9 +418,7 @@ def main(argv: list[str] | None = None) -> int:
         "check",
         help="探活 agora-routes.json 注册的服务端点",
     )
-    check_parser.add_argument(
-        "--output", "-o", default=None, help="Markdown 报告输出路径(默认 stdout)"
-    )
+    check_parser.add_argument("--output", "-o", default=None, help="Markdown 报告输出路径(默认 stdout)")
     check_parser.add_argument("--json", action="store_true", help="同时输出 JSON 摘要")
     check_parser.add_argument(
         "--routes-path",
@@ -441,12 +426,8 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="agora-routes.json 路径(测试或自定义场景)",
     )
-    check_parser.add_argument(
-        "--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS, help="单服务超时秒数"
-    )
-    check_parser.add_argument(
-        "--concurrency", type=int, default=DEFAULT_CONCURRENCY, help="并发请求数"
-    )
+    check_parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS, help="单服务超时秒数")
+    check_parser.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY, help="并发请求数")
 
     # dashboard: keeper dashboard
     sub.add_parser(

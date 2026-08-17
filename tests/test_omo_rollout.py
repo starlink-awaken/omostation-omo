@@ -8,9 +8,7 @@ from omo.omo_rollout import evaluate_rollout_envelope
 def test_evaluate_rollout_envelope_accepts_multi_document_yaml(tmp_path: Path) -> None:
     approval = tmp_path / ".omo" / "workers" / "runs" / "demo-approval.yaml"
     policy = tmp_path / ".omo" / "_truth" / "policies" / "rollout.yaml"
-    runtime_boundary = (
-        tmp_path / ".omo" / "_truth" / "policies" / "runtime-boundary.yaml"
-    )
+    runtime_boundary = tmp_path / ".omo" / "_truth" / "policies" / "runtime-boundary.yaml"
     envelope = tmp_path / ".omo" / "workers" / "runs" / "demo-envelope.yaml"
     evidence = tmp_path / ".omo" / "_knowledge" / "audits" / "evidence.md"
     evidence.parent.mkdir(parents=True, exist_ok=True)
@@ -34,9 +32,7 @@ def test_evaluate_rollout_envelope_accepts_multi_document_yaml(tmp_path: Path) -
         encoding="utf-8",
     )
     runtime_boundary.write_text(
-        "---\nstatus: active\nowner: runtime\n---\n---\n"
-        "allowed_runtime_roots:\n"
-        "  - runtime/logs\n",
+        "---\nstatus: active\nowner: runtime\n---\n---\nallowed_runtime_roots:\n  - runtime/logs\n",
         encoding="utf-8",
     )
     envelope.write_text(
@@ -55,9 +51,7 @@ def test_evaluate_rollout_envelope_accepts_multi_document_yaml(tmp_path: Path) -
         encoding="utf-8",
     )
 
-    result = evaluate_rollout_envelope(
-        tmp_path, Path(".omo/workers/runs/demo-envelope.yaml")
-    )
+    result = evaluate_rollout_envelope(tmp_path, Path(".omo/workers/runs/demo-envelope.yaml"))
 
     assert result["decision"] == "allow"
     assert result["acceptance_ready"] is True

@@ -14,7 +14,7 @@ Admission is pure read: ledger count never changes.
 from __future__ import annotations
 
 import math
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from ecos.ssot.mof.generated.control.mof_control_models import DelegationMandate
@@ -70,7 +70,7 @@ def svc(broker):
 
 @pytest.fixture()
 def now():
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # ---------------------------------------------------------------------------
@@ -214,9 +214,7 @@ def test_admit_budget_unit_mismatch(svc, broker, now):
     assert result.reason == REASON_BUDGET_EXCEEDED
 
 
-@pytest.mark.parametrize(
-    "bad_budget", [float("nan"), float("inf"), float("-inf"), -1.0]
-)
+@pytest.mark.parametrize("bad_budget", [float("nan"), float("inf"), float("-inf"), -1.0])
 def test_admit_denies_invalid_requested_budget(svc, broker, now, bad_budget):
     mgr = MandateManager(broker)
     _grant_mandate(svc, mgr, now, budget_limit=10.0)

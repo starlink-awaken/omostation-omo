@@ -66,9 +66,7 @@ OUTBOX_SENT = "sent"
 OUTBOX_FAILED = "failed"
 
 #: Event classes that MUST carry an ``episode_id`` (blueprint §10.2).
-EPISODE_REQUIRED_CLASSES = frozenset(
-    {"Decision", "Mandate", "Action", "Evidence", "Outcome"}
-)
+EPISODE_REQUIRED_CLASSES = frozenset({"Decision", "Mandate", "Action", "Evidence", "Outcome"})
 
 #: Columns stored in ``event_log`` (order used for canonical hashing).
 _EVENT_LOG_COLUMNS = (
@@ -123,9 +121,7 @@ def _utc_now() -> str:
 
 def _canonical_json(value: Mapping[str, Any]) -> bytes:
     """Deterministic JSON encoding used for all ledger hashing."""
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
 class LedgerError(RuntimeError):
@@ -186,9 +182,7 @@ class LedgerBroker:
         ``wal_enabled`` always reports the actual ``PRAGMA journal_mode``.
         """
         if busy_timeout_ms < BUSY_TIMEOUT_MS:
-            raise LedgerError(
-                f"busy_timeout_ms must be >= {BUSY_TIMEOUT_MS}, got {busy_timeout_ms}"
-            )
+            raise LedgerError(f"busy_timeout_ms must be >= {BUSY_TIMEOUT_MS}, got {busy_timeout_ms}")
         path = Path(db_path)
         path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -336,29 +330,20 @@ class LedgerBroker:
     def _require_episode(event_type: str, episode_id: str | None) -> None:
         cls_name = event_type.split(".")[0]
         if cls_name in EPISODE_REQUIRED_CLASSES and not episode_id:
-            raise LedgerError(
-                f"{event_type} requires an episode_id "
-                f"({cls_name} events must link to an Episode)"
-            )
+            raise LedgerError(f"{event_type} requires an episode_id ({cls_name} events must link to an Episode)")
 
     def _encode_payload(self, payload: Mapping[str, Any] | None) -> str:
         value = {} if payload is None else payload
         if not isinstance(value, Mapping):
             raise InvalidPayloadError("payload must be a JSON object")
         try:
-            encoded = json.dumps(
-                value, ensure_ascii=False, sort_keys=True, allow_nan=False
-            )
+            encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False)
         except (TypeError, ValueError) as exc:
-            raise InvalidPayloadError(
-                f"payload is not JSON-serializable: {exc}"
-            ) from exc
+            raise InvalidPayloadError(f"payload is not JSON-serializable: {exc}") from exc
         # Reject non-finite floats even if json.dumps would emit them; SQLite
         # json_valid() also rejects NaN/Infinity.
         if _contains_non_finite(value):
-            raise InvalidPayloadError(
-                "payload contains NaN/Infinity, which are not valid JSON"
-            )
+            raise InvalidPayloadError("payload contains NaN/Infinity, which are not valid JSON")
         # The database CHECK(json_valid(...)) is the final authority; verify
         # at the boundary too so callers get a typed error before a rollback.
         if not _json_valid(encoded):
@@ -393,8 +378,7 @@ class LedgerBroker:
             # Read the chain tip inside the transaction so the computed
             # previous_hash and sequence are race-free.
             tip = self._conn.execute(
-                "SELECT sequence, event_hash FROM event_log "
-                "ORDER BY sequence DESC LIMIT 1"
+                "SELECT sequence, event_hash FROM event_log ORDER BY sequence DESC LIMIT 1"
             ).fetchone()
             prev_seq = tip["sequence"] if tip is not None else 0
             previous_hash = tip["event_hash"] if tip is not None else None
@@ -410,10 +394,7 @@ class LedgerBroker:
             ).fetchone()
             if dup is not None:
                 self._conn.rollback()
-                raise DuplicateEventError(
-                    f"duplicate event: producer={producer!r} "
-                    f"idempotency_key={idempotency_key!r}"
-                )
+                raise DuplicateEventError(f"duplicate event: producer={producer!r} idempotency_key={idempotency_key!r}")
 
             row = {
                 "sequence": next_sequence,
@@ -477,8 +458,7 @@ class LedgerBroker:
                 ).fetchone()
                 if dup is not None:
                     raise DuplicateEventError(
-                        f"duplicate event: producer={producer!r} "
-                        f"idempotency_key={idempotency_key!r}"
+                        f"duplicate event: producer={producer!r} idempotency_key={idempotency_key!r}"
                     ) from exc
                 raise LedgerError(f"append failed: {exc}") from exc
             raise
@@ -517,11 +497,7 @@ class LedgerBroker:
         if episode_id is not None:
             clauses.append("episode_id = ?")
             params.append(episode_id)
-        sql = (
-            "SELECT * FROM event_log WHERE "
-            + " AND ".join(clauses)
-            + " ORDER BY sequence ASC"
-        )
+        sql = "SELECT * FROM event_log WHERE " + " AND ".join(clauses) + " ORDER BY sequence ASC"
         if limit is not None:
             sql += " LIMIT ?"
             params.append(int(limit))
@@ -543,9 +519,7 @@ class LedgerBroker:
     # Integrity: hash chain + anchors
     # ------------------------------------------------------------------
 
-    def verify_chain(
-        self, from_sequence: int = 1, to_sequence: int | None = None
-    ) -> dict[str, Any]:
+    def verify_chain(self, from_sequence: int = 1, to_sequence: int | None = None) -> dict[str, Any]:
         """Recompute the hash chain and report the first broken link.
 
         ``from_sequence`` starts a partial verification: the initial
@@ -557,9 +531,7 @@ class LedgerBroker:
         smuggled row cannot hide behind a re-written hash.
         """
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT * FROM event_log ORDER BY sequence ASC"
-            ).fetchall()
+            rows = self._conn.execute("SELECT * FROM event_log ORDER BY sequence ASC").fetchall()
         # Everything below works against this single snapshot: ``total`` and
         # the prior-row lookup must never re-query self._conn, which could
         # observe a concurrent append and make the result internally
@@ -595,9 +567,7 @@ class LedgerBroker:
                 "ok": False,
                 "total": 0,
                 "first_bad_sequence": low,
-                "error": (
-                    f"empty ledger cannot satisfy requested range [{low}, {high}]"
-                ),
+                "error": (f"empty ledger cannot satisfy requested range [{low}, {high}]"),
             }
 
         tail = int(rows[-1]["sequence"])
@@ -628,9 +598,7 @@ class LedgerBroker:
                     "ok": False,
                     "total": total,
                     "first_bad_sequence": low,
-                    "error": (
-                        f"sequence gap: row {low - 1} missing before start {low}"
-                    ),
+                    "error": (f"sequence gap: row {low - 1} missing before start {low}"),
                 }
             previous_hash = prior["event_hash"]
 
@@ -675,10 +643,7 @@ class LedgerBroker:
                 "ok": False,
                 "total": total,
                 "first_bad_sequence": expected_sequence,
-                "error": (
-                    f"sequence gap: chain ends at {expected_sequence - 1}, "
-                    f"requested through {high}"
-                ),
+                "error": (f"sequence gap: chain ends at {expected_sequence - 1}, requested through {high}"),
             }
         return {
             "ok": True,
@@ -705,44 +670,33 @@ class LedgerBroker:
             to_sequence = self.last_sequence()
         if to_sequence < from_sequence:
             if explicit_to:
-                raise LedgerError(
-                    "anchor range empty: "
-                    f"from_sequence={from_sequence} > to_sequence={to_sequence}"
-                )
+                raise LedgerError(f"anchor range empty: from_sequence={from_sequence} > to_sequence={to_sequence}")
             # Defaulted to=tail with from beyond the tail: the chain is shorter
             # than the requested range — that is an integrity problem, not a
             # caller range typo.
-            chain = self.verify_chain(
-                from_sequence=from_sequence, to_sequence=to_sequence
-            )
+            chain = self.verify_chain(from_sequence=from_sequence, to_sequence=to_sequence)
             raise IntegrityViolationError(
-                f"cannot anchor over broken chain [{from_sequence}, {to_sequence}]: "
-                f"{chain['error']}"
+                f"cannot anchor over broken chain [{from_sequence}, {to_sequence}]: {chain['error']}"
             )
         chain = self.verify_chain(from_sequence=from_sequence, to_sequence=to_sequence)
         if not chain["ok"]:
             raise IntegrityViolationError(
-                f"cannot anchor over broken chain [{from_sequence}, {to_sequence}]: "
-                f"{chain['error']}"
+                f"cannot anchor over broken chain [{from_sequence}, {to_sequence}]: {chain['error']}"
             )
         with self._lock:
             rows = self._conn.execute(
-                "SELECT event_hash FROM event_log "
-                "WHERE sequence BETWEEN ? AND ? ORDER BY sequence ASC",
+                "SELECT event_hash FROM event_log WHERE sequence BETWEEN ? AND ? ORDER BY sequence ASC",
                 (from_sequence, to_sequence),
             ).fetchall()
         if not rows:
-            raise LedgerError(
-                f"no events in anchor range [{from_sequence}, {to_sequence}]"
-            )
+            raise LedgerError(f"no events in anchor range [{from_sequence}, {to_sequence}]")
         digest = hashlib.sha256()
         for row in rows:
             digest.update(row["event_hash"].encode("ascii"))
             digest.update(b"\n")
         root_hash = digest.hexdigest()
         anchor = {
-            "anchor_id": anchor_id
-            or f"anchor_{_utc_now().replace(':', '').replace('-', '')}",
+            "anchor_id": anchor_id or f"anchor_{_utc_now().replace(':', '').replace('-', '')}",
             "from_sequence": int(from_sequence),
             "to_sequence": int(to_sequence),
             "root_hash": root_hash,
@@ -772,16 +726,13 @@ class LedgerBroker:
         updated therefore fails here, not just at a later chain walk.
         """
         with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM integrity_anchor WHERE anchor_id = ?", (anchor_id,)
-            ).fetchone()
+            row = self._conn.execute("SELECT * FROM integrity_anchor WHERE anchor_id = ?", (anchor_id,)).fetchone()
         if row is None:
             raise LedgerError(f"no anchor with id {anchor_id!r}")
         low, high = int(row["from_sequence"]), int(row["to_sequence"])
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM event_log "
-                "WHERE sequence BETWEEN ? AND ? ORDER BY sequence ASC",
+                "SELECT * FROM event_log WHERE sequence BETWEEN ? AND ? ORDER BY sequence ASC",
                 (low, high),
             ).fetchall()
         if len(rows) != high - low + 1:
@@ -792,10 +743,7 @@ class LedgerBroker:
                 "to_sequence": high,
                 "expected": row["root_hash"],
                 "actual": None,
-                "error": (
-                    f"range [{low}, {high}] has {len(rows)} rows, "
-                    f"expected {high - low + 1}"
-                ),
+                "error": (f"range [{low}, {high}] has {len(rows)} rows, expected {high - low + 1}"),
             }
         digest = hashlib.sha256()
         for db_row in rows:
@@ -830,9 +778,7 @@ class LedgerBroker:
 
     def anchors(self) -> list[dict[str, Any]]:
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT * FROM integrity_anchor ORDER BY to_sequence ASC"
-            ).fetchall()
+            rows = self._conn.execute("SELECT * FROM integrity_anchor ORDER BY to_sequence ASC").fetchall()
         return [dict(row) for row in rows]
 
     # ------------------------------------------------------------------
@@ -891,9 +837,7 @@ class LedgerBroker:
     # Outbox
     # ------------------------------------------------------------------
 
-    def outbox_pending(
-        self, destination: str | None = None, limit: int = 100
-    ) -> list[dict[str, Any]]:
+    def outbox_pending(self, destination: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
         clauses = ["state = ?"]
         params: list[Any] = [OUTBOX_PENDING]
         if destination is not None:
@@ -910,9 +854,7 @@ class LedgerBroker:
             rows = self._conn.execute(sql, tuple(params)).fetchall()
         return [dict(row) for row in rows]
 
-    def outbox_mark(
-        self, event_id: str, destination: str, *, state: str, attempts: int
-    ) -> None:
+    def outbox_mark(self, event_id: str, destination: str, *, state: str, attempts: int) -> None:
         if state not in (OUTBOX_SENT, OUTBOX_FAILED):
             raise LedgerError(f"invalid outbox state: {state!r}")
         with self._lock:
@@ -925,9 +867,7 @@ class LedgerBroker:
 
     def outbox_entries(self) -> list[dict[str, Any]]:
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT * FROM event_outbox ORDER BY event_id, destination"
-            ).fetchall()
+            rows = self._conn.execute("SELECT * FROM event_outbox ORDER BY event_id, destination").fetchall()
         return [dict(row) for row in rows]
 
     # ------------------------------------------------------------------
@@ -940,8 +880,7 @@ class LedgerBroker:
     def migration_status(self) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT version, applied_at, checksum "
-                "FROM schema_migration ORDER BY version"
+                "SELECT version, applied_at, checksum FROM schema_migration ORDER BY version"
             ).fetchall()
         return [dict(row) for row in rows]
 

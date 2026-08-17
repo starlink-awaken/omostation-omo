@@ -6,6 +6,7 @@ import hashlib
 import json
 
 import pytest
+
 from omo.approval_lifecycle import request_approval
 from omo.approval_timeout_runner import (
     _exclusive_run_lock,
@@ -30,9 +31,7 @@ def _grant(run_id: str, step_run_id: str) -> dict:
         "expires_at": "2026-08-02T01:00:00Z",
     }
     grant["proof"] = hashlib.sha256(
-        json.dumps(
-            grant, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode()
+        json.dumps(grant, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     return grant
 
@@ -42,11 +41,7 @@ def _waiting_approval_run(tmp_path, run_id: str = "run-runner") -> None:
     grant = _grant(run_id, step_run_id)
     store = WorkflowMeshStore(tmp_path)
     store.append(new_workflow_event("WorkflowRequested", run_id))
-    store.append(
-        new_workflow_event(
-            "WorkflowAdmitted", run_id, payload={"admission": grant, **grant}
-        )
-    )
+    store.append(new_workflow_event("WorkflowAdmitted", run_id, payload={"admission": grant, **grant}))
     from omo.worker_lifecycle import record_step_dispatch
 
     record_step_dispatch(

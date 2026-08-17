@@ -12,9 +12,7 @@ SCRIPT_PATH = REPO_ROOT / "scripts" / "check-system-consistency.sh"
 
 def _write_yaml(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
-    )
+    path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
 
 def _seed_active_task(omo: Path) -> None:
@@ -102,14 +100,10 @@ def test_check_system_consistency_script_refreshes_freshness_and_control(
 
     assert result.returncode == 0, result.stdout + result.stderr
     freshness = yaml.safe_load(
-        (omo / "_delivery" / "task-center" / "freshness" / "current.yaml").read_text(
-            encoding="utf-8"
-        )
+        (omo / "_delivery" / "task-center" / "freshness" / "current.yaml").read_text(encoding="utf-8")
     )
     control = yaml.safe_load(
-        (omo / "_delivery" / "task-center" / "control" / "current.yaml").read_text(
-            encoding="utf-8"
-        )
+        (omo / "_delivery" / "task-center" / "control" / "current.yaml").read_text(encoding="utf-8")
     )
     assert freshness["freshness_score"] == 100
     assert freshness["stale_items"] == []
@@ -148,9 +142,7 @@ def test_check_system_consistency_script_fails_when_plans_readme_misses_current_
         },
     )
     (omo / "plans").mkdir(parents=True, exist_ok=True)
-    (omo / "plans" / "README.md").write_text(
-        "phase11-program-plan.md\n", encoding="utf-8"
-    )
+    (omo / "plans" / "README.md").write_text("phase11-program-plan.md\n", encoding="utf-8")
     _seed_active_task(omo)
 
     result = subprocess.run(
@@ -167,9 +159,7 @@ def test_check_system_consistency_script_fails_when_plans_readme_misses_current_
     )
 
     assert result.returncode == 1
-    assert "plans/README.md missing phase11-wave1-execution-plan.md" in (
-        result.stdout + result.stderr
-    )
+    assert "plans/README.md missing phase11-wave1-execution-plan.md" in (result.stdout + result.stderr)
 
 
 def test_check_system_consistency_script_recomputes_state_before_alignment(
@@ -182,9 +172,7 @@ def test_check_system_consistency_script_recomputes_state_before_alignment(
             "phase": 11,
             "status": "active",
             "current_wave": 1,
-            "goals": [
-                {"id": "G11.1", "status": "active", "tasks": ["P11-W1-SSOT-BASELINE"]}
-            ],
+            "goals": [{"id": "G11.1", "status": "active", "tasks": ["P11-W1-SSOT-BASELINE"]}],
         },
     )
     _write_yaml(
@@ -230,9 +218,7 @@ def test_check_system_consistency_script_recomputes_state_before_alignment(
             },
         },
     )
-    (omo / "workers" / "runs" / "phase11-wave1-ssot-baseline-review.md").write_text(
-        "# review\n", encoding="utf-8"
-    )
+    (omo / "workers" / "runs" / "phase11-wave1-ssot-baseline-review.md").write_text("# review\n", encoding="utf-8")
 
     result = subprocess.run(
         ["bash", str(SCRIPT_PATH)],

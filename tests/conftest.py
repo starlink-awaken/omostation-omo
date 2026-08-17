@@ -91,8 +91,7 @@ def pytest_configure(config: pytest.Config) -> None:
     """Register the ``requires_real_omo`` marker."""
     config.addinivalue_line(
         "markers",
-        "requires_real_omo: test requires real workspace .omo state; "
-        "skipped when ~/Workspace/.omo does not exist.",
+        "requires_real_omo: test requires real workspace .omo state; skipped when ~/Workspace/.omo does not exist.",
     )
 
 
@@ -106,9 +105,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
-def pytest_collection_modifyitems(
-    config: pytest.Config, items: list[pytest.Item]
-) -> None:
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Mark tests that depend on real .omo state and skip if unavailable.
 
     Rules
@@ -136,8 +133,7 @@ def pytest_collection_modifyitems(
     # at least one of the well-known sub-structures that real-state tests
     # depend on (state/, plans/, _control/, _truth/, tasks/).
     _omo_present = _omo_root.is_dir() and any(
-        (_omo_root / sub).is_dir()
-        for sub in ("state", "plans", "_control", "_truth", "tasks")
+        (_omo_root / sub).is_dir() for sub in ("state", "plans", "_control", "_truth", "tasks")
     )
 
     # -- Built-in skip-like markers that we should respect -------------------
@@ -191,9 +187,7 @@ def pytest_collection_modifyitems(
 
     # CI-only skip: 这些 test 本地全过 (纯 unit 逻辑), 但依赖 runtime/data log 或
     # time/mock 在 CI fresh 环境缺失/漂移. 仅 CI skip, 本地照跑保覆盖率.
-    _IS_CI = (
-        os.environ.get("GITHUB_ACTIONS") == "true" or os.environ.get("CI") == "true"
-    )
+    _IS_CI = os.environ.get("GITHUB_ACTIONS") == "true" or os.environ.get("CI") == "true"
     _CI_SKIP_MODULES = frozenset(
         {
             "test_observability.py",
@@ -215,21 +209,13 @@ def pytest_collection_modifyitems(
         needs_omo = False
 
         # 1. All tests under tests/archive/
-        if (
-            "/tests/archive/" in fspath
-            or basename in _EXPLICIT_MODULES
-            or fnmatch.fnmatch(basename, "test_phase*.py")
-        ):
+        if "/tests/archive/" in fspath or basename in _EXPLICIT_MODULES or fnmatch.fnmatch(basename, "test_phase*.py"):
             needs_omo = True
 
         # 3.5 CI-only skip: 本地全过的 unit test, CI fresh 环境缺 runtime data/time mock.
         #     独立 skip (不走 needs_omo), 本地照跑保覆盖率.
         elif _IS_CI and basename in _CI_SKIP_MODULES:
-            item.add_marker(
-                pytest.mark.skip(
-                    reason="CI env lacks runtime data/time mock; passes locally"
-                )
-            )
+            item.add_marker(pytest.mark.skip(reason="CI env lacks runtime data/time mock; passes locally"))
             continue
 
         # 4. Specific integration test functions that need real .omo workspace
@@ -271,17 +257,8 @@ def pytest_collection_modifyitems(
         if needs_omo:
             item.add_marker(pytest.mark.requires_real_omo)
             if not _omo_present:
-                item.add_marker(
-                    pytest.mark.skip(
-                        reason="requires real .omo workspace state; workspace .omo not found"
-                    )
-                )
+                item.add_marker(pytest.mark.skip(reason="requires real .omo workspace state; workspace .omo not found"))
             elif not _run_real_omo:
                 item.add_marker(
-                    pytest.mark.skip(
-                        reason=(
-                            "requires real .omo workspace state; "
-                            "pass --run-real-omo to enable"
-                        )
-                    )
+                    pytest.mark.skip(reason=("requires real .omo workspace state; pass --run-real-omo to enable"))
                 )

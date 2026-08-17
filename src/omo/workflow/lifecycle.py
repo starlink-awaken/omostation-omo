@@ -41,7 +41,6 @@ except ImportError:
 
 
 from ..omo_io import write_yaml_atomic
-from .affected_graph_receipt import validate_affected_graph_receipt
 from .core import (
     CLAIM_POLICY_MODES,
     RUN_UPDATE_LOCK_TIMEOUT_SECONDS,
@@ -122,9 +121,7 @@ def run_stage(
             "id": item.get("id"),
             "mode": mode,
             "command": command_display(command),
-            "cwd": str(cwd.relative_to(WORKSPACE))
-            if cwd.is_relative_to(WORKSPACE)
-            else str(cwd),
+            "cwd": str(cwd.relative_to(WORKSPACE)) if cwd.is_relative_to(WORKSPACE) else str(cwd),
             "skipped": skipped,
             "ok": True,
         }
@@ -144,9 +141,7 @@ def run_stage(
         print(json.dumps(report, ensure_ascii=False, indent=2))
     else:
         for result in results:
-            status = (
-                "SKIP" if result["skipped"] else ("PASS" if result["ok"] else "FAIL")
-            )
+            status = "SKIP" if result["skipped"] else ("PASS" if result["ok"] else "FAIL")
             print(f"[{status}] {result['id']} :: {result['command']}")
     return 0 if all(item["ok"] for item in results) else 1
 
@@ -186,18 +181,13 @@ def run_update_lock(registry: dict[str, Any], run_id: str):
             acquired = True
         except FileExistsError:
             try:
-                if (
-                    time.time() - lock_path.stat().st_mtime
-                    > RUN_UPDATE_LOCK_TIMEOUT_SECONDS
-                ):
+                if time.time() - lock_path.stat().st_mtime > RUN_UPDATE_LOCK_TIMEOUT_SECONDS:
                     lock_path.unlink(missing_ok=True)
                     continue
             except FileNotFoundError:
                 continue
             if time.monotonic() >= deadline:
-                raise WorkflowError(
-                    f"timed out waiting for run update lock: {display_path(lock_path)}"
-                )
+                raise WorkflowError(f"timed out waiting for run update lock: {display_path(lock_path)}")
             time.sleep(0.05)
     try:
         yield
@@ -351,19 +341,14 @@ def _heartbeat_run_locked(registry: dict[str, Any], run_id: str) -> dict[str, An
     """
     _, payload = read_run(registry, run_id)
     if payload.get("status") != "active":
-        raise WorkflowError(
-            f"cannot heartbeat non-active run {run_id} "
-            f"(status={payload.get('status', 'unknown')})"
-        )
+        raise WorkflowError(f"cannot heartbeat non-active run {run_id} (status={payload.get('status', 'unknown')})")
 
     lock_dir = lock_state_dir(registry).resolve()
     raw_locks = payload.get("locks")
     if raw_locks is None:
         raw_locks = []
     if not isinstance(raw_locks, list):
-        raise WorkflowError(
-            f"run {run_id} locks must be a list, got {type(raw_locks).__name__}"
-        )
+        raise WorkflowError(f"run {run_id} locks must be a list, got {type(raw_locks).__name__}")
     for entry in raw_locks:
         if not isinstance(entry, str) or not entry:
             raise WorkflowError(f"run {run_id} locks contains invalid entry: {entry!r}")
@@ -394,16 +379,13 @@ def _heartbeat_run_locked(registry: dict[str, Any], run_id: str) -> dict[str, An
         except OSError as exc:
             raise WorkflowError(f"unreadable lock {lock_display}: {exc}")
         except UnicodeError as exc:
-            raise WorkflowError(
-                f"malformed lock (encoding error) {lock_display}: {exc}"
-            )
+            raise WorkflowError(f"malformed lock (encoding error) {lock_display}: {exc}")
         if not isinstance(lock_data, dict):
             raise WorkflowError(f"malformed lock (not a mapping): {lock_display}")
 
         if lock_data.get("run_id") != run_id:
             raise WorkflowError(
-                f"lock run_id mismatch in {lock_display}: "
-                f"expected {run_id}, found {lock_data.get('run_id')}"
+                f"lock run_id mismatch in {lock_display}: expected {run_id}, found {lock_data.get('run_id')}"
             )
 
         validated.append((lock_path, lock_data, lock_display))
@@ -536,9 +518,7 @@ def run_file_for(registry: dict[str, Any], run_id: str) -> Path:
     if len(matches) == 1:
         return matches[0]
     if len(matches) > 1:
-        raise WorkflowError(
-            f"ambiguous run id {run_id}: {', '.join(str(p) for p in matches)}"
-        )
+        raise WorkflowError(f"ambiguous run id {run_id}: {', '.join(str(p) for p in matches)}")
     raise WorkflowError(f"run not found: {run_id}")
 
 
@@ -577,15 +557,9 @@ def start_run(
         record["parent_run_id"] = parent_run_id
     if parent_agent:
         record["parent_agent"] = parent_agent
-    bet_id = str((context or {}).get("bet_id") or "").strip()
-    if bet_id:
-        record["bet_id"] = bet_id
-        record["north_star_ref"] = "docs/STRATEGY-3YEAR-PLAN-2026H2-2029.md"
     if dry_run:
         return record
-    record["locks"] = acquire_locks(
-        registry, plan["lock_scopes"], run_id, context["actor"], force_lock
-    )
+    record["locks"] = acquire_locks(registry, plan["lock_scopes"], run_id, context["actor"], force_lock)
     run_dir = run_state_dir(registry)
     run_dir.mkdir(parents=True, exist_ok=True)
     run_path = run_dir / f"{run_id}.yaml"
@@ -694,24 +668,20 @@ def claim_run(
     paths: list[str],
     surfaces: list[str],
     force_lock: bool,
-    affected_receipt: str | None = None,
+    affected_hash: str | None = None,
 ) -> dict[str, Any]:
-    if not affected_receipt:
-        raise WorkflowError(
-            "Missing affected graph receipt. You must run affected-graph.py first."
-        )
+    heartbeat_run(registry, run_id)  # SR-01: renew before claim
+    if not affected_hash:
+        raise WorkflowError("Missing or invalid affected-hash. You must run affected-graph.py first.")
     if not paths and not surfaces:
         raise WorkflowError("claim requires at least one --path or --surface")
-    normalized_paths = sorted({normalize_repo_path(item) for item in paths})
-    normalized_surfaces = sorted({item.strip() for item in surfaces if item.strip()})
-    affected_graph = validate_affected_graph_receipt(
-        affected_receipt, normalized_paths, WORKSPACE, normalized_surfaces
-    )
-    heartbeat_run(registry, run_id)  # SR-01: renew only after receipt validation
     with run_update_lock(registry, run_id):
         path, payload = read_run(registry, run_id)
         if payload.get("status") != "active":
             raise WorkflowError(f"cannot claim against non-active run: {run_id}")
+        normalized_paths = sorted({normalize_repo_path(item) for item in paths})
+        normalized_surfaces = sorted({item.strip() for item in surfaces if item.strip()})
+
         # Phase 3 A2A Path Locks (Logical Isolation)
         # Check for path hierarchy overlap with other active runs
         run_dir = run_state_dir(registry)
@@ -720,9 +690,7 @@ def claim_run(
                 if other_run_file.name == f"{run_id}.yaml":
                     continue
                 try:
-                    other_payload = (
-                        yaml.safe_load(other_run_file.read_text(encoding="utf-8")) or {}
-                    )
+                    other_payload = yaml.safe_load(other_run_file.read_text(encoding="utf-8")) or {}
                 except Exception:
                     continue
                 if not isinstance(other_payload, dict):
@@ -739,18 +707,12 @@ def claim_run(
                     for op in other_paths:
                         p_norm = p.rstrip("/")
                         op_norm = op.rstrip("/")
-                        if (
-                            p_norm == op_norm
-                            or p_norm.startswith(op_norm + "/")
-                            or op_norm.startswith(p_norm + "/")
-                        ):
+                        if p_norm == op_norm or p_norm.startswith(op_norm + "/") or op_norm.startswith(p_norm + "/"):
                             raise WorkflowError(
                                 f"A2A Path Lock Collision: path '{p}' overlaps with active claim '{op}' in run {other_payload.get('run_id', 'unknown')}"
                             )
 
-        scopes = [f"path:{item}" for item in normalized_paths] + [
-            f"surface:{item}" for item in normalized_surfaces
-        ]
+        scopes = [f"path:{item}" for item in normalized_paths] + [f"surface:{item}" for item in normalized_surfaces]
 
         # Phase L0 MOF Enforce: Trigger pre-check for any projects being claimed
         mof_enforce_script = WORKSPACE / "bin/mof/mof-enforce"
@@ -776,15 +738,6 @@ def claim_run(
             for lock_path in lock_paths:
                 if lock_path not in payload["locks"]:
                     payload["locks"].append(lock_path)
-            # T9-01 ①: 记录 claim 时基线 — verify 对比 diff 基线, 拦「claim 后新变更未认领」漂移
-            # (模式1 教训: worktree A 改 status / worktree B 提交, PR #1518)
-            try:
-                baseline_commit = subprocess.run(
-                    ["git", "rev-parse", "HEAD"],
-                    cwd=str(WORKSPACE), capture_output=True, text=True, check=False,
-                ).stdout.strip() or None
-            except Exception:
-                baseline_commit = None
             claim = {
                 "claimed_at": utc_now(),
                 "actor": actor,
@@ -792,8 +745,6 @@ def claim_run(
                 "surfaces": normalized_surfaces,
                 "scopes": scopes,
                 "locks": lock_paths,
-                "affected_graph": affected_graph,
-                "baseline_commit": baseline_commit,
             }
             payload.setdefault("claims", []).append(claim)
             write_run(path, payload)
@@ -813,7 +764,6 @@ def claim_run(
                 "paths": normalized_paths,
                 "surfaces": normalized_surfaces,
                 "locks": lock_paths,
-                "affected_graph": affected_graph,
             },
         )
         return {**claim, "run_id": run_id}
@@ -891,9 +841,7 @@ def closeout_run(
     if status == "ok" and not verify_report["ok"]:
         raise WorkflowError("closeout blocked: verify failed")
     if status == "ok" and not observe_report["ok"]:
-        raise WorkflowError(
-            f"closeout blocked: observe decision={observe_report['decision']}"
-        )
+        raise WorkflowError(f"closeout blocked: observe decision={observe_report['decision']}")
     closeout_evidence = [
         *evidence,
         f"agent-workflow verify: {verify_report['check_count']} checks ok={verify_report['ok']}",
@@ -950,13 +898,11 @@ def closeout_run(
             )
             # 3. KOS Knowledge Ingress Sync (Incremental + Ontology Rebuild)
             # Refreshes L2 Knowledge Engine dynamically during closeout
-            kos_cli_path = WORKSPACE / "projects/knowledge/kairon/packages/kos/kos-cli.py"
+            kos_cli_path = WORKSPACE / "projects/kairon/packages/kos/kos-cli.py"
             if kos_cli_path.is_file():
                 env_kos = os.environ.copy()
                 env_kos["KOS_HOME"] = str(WORKSPACE / "kos")
-                env_kos["PYTHONPATH"] = str(
-                    WORKSPACE / "projects/knowledge/kairon/packages/kos/src"
-                )
+                env_kos["PYTHONPATH"] = str(WORKSPACE / "projects/kairon/packages/kos/src")
                 subprocess.run(
                     [
                         sys.executable,
@@ -1084,9 +1030,7 @@ def load_lock_records(registry: dict[str, Any]) -> list[tuple[Path, dict[str, An
         records.append(
             (
                 path,
-                payload
-                if isinstance(payload, dict)
-                else {"run_id": None, "parse_error": True},
+                payload if isinstance(payload, dict) else {"run_id": None, "parse_error": True},
             )
         )
     return records
@@ -1103,9 +1047,7 @@ def claim_policy(registry: dict[str, Any]) -> dict[str, Any]:
         return {"mode": "advisory", "required_paths": [], "tiers": []}
     mode = normalize_claim_mode(policy.get("mode"))
     required_paths = policy.get("required_paths") or []
-    normalized_required_paths = [
-        str(item) for item in required_paths if isinstance(item, str)
-    ]
+    normalized_required_paths = [str(item) for item in required_paths if isinstance(item, str)]
     tiers: list[dict[str, Any]] = []
     if normalized_required_paths:
         tiers.append(
@@ -1174,100 +1116,6 @@ def is_read_only_workflow(registry: dict[str, Any], workflow_id: str) -> bool:
     return isinstance(write, list) and len(write) == 0
 
 
-def diff_baseline_report(
-    registry: dict[str, Any],
-    run_id: str | None,
-    changed_files: list[str],
-    *,
-    scope_to_changed: bool = False,
-) -> dict[str, Any]:
-    """T9-01 ①: claim 基线 vs 当前 diff 漂移检查.
-
-    模式 1 教训 (PR #1518): status 变更在 worktree A 做, PR 从 worktree B 提交,
-    squash merge 丢变更。本检查在 verify 时跑:
-      drifted = (claim 后相对基线变更的文件) - (claim 覆盖的文件) - (本轮 diff 已含文件)
-    drifted 非空 → FAIL (有变更绕过 claim, 可能丢失)。
-
-    ``scope_to_changed=True`` (verify --file, not --from-diff): only the
-    files in this invocation are in the universe. A temp-registry or
-    scoped check must not treat the rest of a feature-branch / dirty
-    worktree as unclaimed drift.
-
-    无 claim / 无 baseline_commit / git 失败 → 不阻塞 (向后兼容旧 claim)。
-    """
-    import subprocess as _sp
-
-    if not run_id:
-        return {"ok": True, "checked": False, "reason": "no run_id"}
-    _, payload = read_run(registry, run_id)
-    claims = payload.get("claims") or []
-    baseline = None
-    for c in claims:
-        if isinstance(c, dict) and c.get("baseline_commit"):
-            baseline = c["baseline_commit"]
-            break
-    if not baseline:
-        return {"ok": True, "checked": False, "reason": "no baseline_commit (legacy claim)"}
-    try:
-        git_cmd = [
-            "git",
-            "diff",
-            "--name-only",
-            "--ignore-submodules",
-            baseline,
-        ]
-        # Honor --file: do not ask git about the whole worktree.
-        if scope_to_changed and changed_files:
-            git_cmd.extend(["--", *changed_files])
-        out = _sp.run(
-            # --ignore-submodules: 子模块指针脏 ≠ 本仓漂移 (子模块内部有自己的治理);
-            # 否则任何 worktree 的子模块未提交状态都会误判 drift
-            git_cmd,
-            cwd=str(WORKSPACE), capture_output=True, text=True, check=False,
-        )
-        if out.returncode != 0:
-            return {"ok": True, "checked": False, "reason": f"git diff failed: {out.stderr.strip()[:80]}"}
-        since_baseline = [ln.strip() for ln in out.stdout.splitlines() if ln.strip()]
-    except Exception as exc:
-        return {"ok": True, "checked": False, "reason": f"git error: {exc}"}
-    if not since_baseline:
-        return {"ok": True, "checked": False, "reason": "no changes since baseline"}
-    # 运行时写面不算漂移: daemon/检查器常驻写 (as_of 时间戳/agent-tick state/审计jsonl),
-    # 不是交付物变更 — 不排除会把 CI 环境噪音误判为 drift (T9-01 实测)
-    noise_prefixes = (
-        ".omo/state/",
-        ".omo/_delivery/",
-        ".subtrees/",
-        # daemon 治理投影写面: memory-os as_of 等运行时投影 (SR-06 实测误判漂移补)
-        ".omo/_truth/registry/memory-os.yaml",
-    )
-    signal_changes = [
-        item for item in since_baseline if not item.startswith(noise_prefixes)
-    ]
-    if scope_to_changed and changed_files:
-        allowed = set(changed_files)
-        signal_changes = [item for item in signal_changes if item in allowed]
-    if not signal_changes:
-        return {"ok": True, "checked": False, "reason": "only runtime-plane noise since baseline"}
-    claimed: list[str] = []
-    for c in claims:
-        if isinstance(c, dict):
-            claimed.extend(c.get("paths", []))
-    drift = [
-        item for item in signal_changes
-        if item not in changed_files
-        and not any(claim_covers_path(cp, item) for cp in claimed)
-    ]
-    return {
-        "ok": not drift,
-        "checked": True,
-        "baseline_commit": baseline,
-        "changed_since_baseline": since_baseline,
-        "drifted_files": drift,
-        "warnings": [f"drifted beyond claim since baseline: {item}" for item in drift],
-    }
-
-
 def claim_coverage_report(
     registry: dict[str, Any],
     run_id: str | None,
@@ -1304,22 +1152,14 @@ def claim_coverage_report(
             "missing_files": [],
             "missing_required_files": [],
             "missing_advisory_files": [],
-            "warnings": [
-                "claim_policy skipped: workflow has empty write surfaces (read-only)"
-            ],
+            "warnings": ["claim_policy skipped: workflow has empty write surfaces (read-only)"],
         }
     claimed = claimed_paths(payload)
-    tiers = policy["tiers"] or [
-        {"id": "default", "mode": mode, "paths": policy["required_paths"]}
-    ]
+    tiers = policy["tiers"] or [{"id": "default", "mode": mode, "paths": policy["required_paths"]}]
     missing_required: list[str] = []
     missing_advisory: list[str] = []
     for item in changed_files:
-        matching_tiers = [
-            tier
-            for tier in tiers
-            if not tier.get("paths") or path_matches(tier.get("paths", []), item)
-        ]
+        matching_tiers = [tier for tier in tiers if not tier.get("paths") or path_matches(tier.get("paths", []), item)]
         if not matching_tiers:
             continue
         if any(claim_covers_path(claimed_path, item) for claimed_path in claimed):
@@ -1330,12 +1170,8 @@ def claim_coverage_report(
             missing_advisory.append(item)
     missing = sorted({*missing_required, *missing_advisory})
     ok = not missing_required
-    warnings = [
-        f"unclaimed required file under claim_policy: {item}"
-        for item in missing_required
-    ] + [
-        f"unclaimed advisory file under claim_policy: {item}"
-        for item in missing_advisory
+    warnings = [f"unclaimed required file under claim_policy: {item}" for item in missing_required] + [
+        f"unclaimed advisory file under claim_policy: {item}" for item in missing_advisory
     ]
     return {
         "ok": ok,
@@ -1379,9 +1215,7 @@ def recommended_next(status: dict[str, Any]) -> str:
     claim_coverage = status.get("claim_coverage")
     if isinstance(claim_coverage, dict) and claim_coverage.get("missing_files"):
         run_id = status.get("current_run_id") or "<run-id>"
-        return (
-            f"Claim missing files with `agent-workflow claim {run_id} --path <path>`."
-        )
+        return f"Claim missing files with `agent-workflow claim {run_id} --path <path>`."
     if status["active_runs"]:
         run_id = status["active_runs"][0]
         return f"Continue with `agent-workflow verify {run_id} --from-diff --execute` or closeout."

@@ -64,10 +64,7 @@ def write_handoff_index(root: Path, task_id: str) -> str:
         "",
         "## Dispatch chain",
         "",
-        *(
-            f"- `{dispatch_ref}` → state={dispatch.get('dispatch_state')}"
-            for dispatch_ref, dispatch in dispatch_runs
-        ),
+        *(f"- `{dispatch_ref}` → state={dispatch.get('dispatch_state')}" for dispatch_ref, dispatch in dispatch_runs),
         "",
         "## Prior evidence",
         "",

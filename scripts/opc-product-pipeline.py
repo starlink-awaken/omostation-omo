@@ -13,7 +13,7 @@ import os
 import re
 import sqlite3
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 
 DOCS_ROOT = Path(__file__).resolve().parents[2]
@@ -29,11 +29,9 @@ def process_requirement_file(file_path: Path) -> str | None:
     m = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
     title = m.group(1).strip() if m else file_path.stem
 
-    now_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    now_iso = datetime.now(timezone.utc).isoformat()
-    card_id = (
-        f"IDEA-{now_date}-{int(datetime.now(timezone.utc).timestamp()) % 1000:03d}"
-    )
+    now_date = datetime.now(UTC).strftime("%Y-%m-%d")
+    now_iso = datetime.now(UTC).isoformat()
+    card_id = f"IDEA-{now_date}-{int(datetime.now(UTC).timestamp()) % 1000:03d}"
 
     conn = sqlite3.connect(CARDS_DB)
     with conn:

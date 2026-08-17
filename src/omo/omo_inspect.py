@@ -87,9 +87,7 @@ def cmd_inspect(json_output: bool = False) -> int:
         try:
             results.append(check_fn())
         except Exception as e:
-            results.append(
-                {"id": check_fn.__name__, "status": "error", "detail": str(e)}
-            )
+            results.append({"id": check_fn.__name__, "status": "error", "detail": str(e)})
 
     ok_count = sum(1 for r in results if r["status"] == "ok")
     warn_count = sum(1 for r in results if r["status"] == "warn")
@@ -117,13 +115,9 @@ def cmd_inspect(json_output: bool = False) -> int:
     else:
         print("=== omo inspect ===\n")
         for r in results:
-            icon = {"ok": "OK", "warn": "WARN", "fail": "FAIL", "error": "ERR"}.get(
-                r["status"], "?"
-            )
+            icon = {"ok": "OK", "warn": "WARN", "fail": "FAIL", "error": "ERR"}.get(r["status"], "?")
             print(f"  [{icon}] {r['id']}: {r['detail']}")
-        print(
-            f"\nSummary: {ok_count} ok, {warn_count} warn, {fail_count} fail, {error_count} error"
-        )
+        print(f"\nSummary: {ok_count} ok, {warn_count} warn, {fail_count} fail, {error_count} error")
 
     if fail_count > 0 or error_count > 0:
         return 1

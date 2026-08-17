@@ -70,9 +70,7 @@ def _parse_frontmatter(content: str) -> dict[str, Any] | None:
         return None
 
 
-def _check_doc_referenced(
-    rel_path: str, workspace_root: Path
-) -> tuple[bool, list[str]]:
+def _check_doc_referenced(rel_path: str, workspace_root: Path) -> tuple[bool, list[str]]:
     """检查文档是否被引用 (path 中含 basename).
 
     优先用 ripgrep (rg) 扫描大 workspace, 避免 O(N*M) 的 Python rglob;
@@ -176,9 +174,7 @@ def cmd_lint_doc_lifecycle(workspace_root: str = ".", verbose: bool = False) -> 
 
     md_files = list(omo.rglob("*.md")) + list(omo.rglob("*.yaml"))
     # 排除 _delivery (机器写) + drafts
-    md_files = [
-        f for f in md_files if "_delivery" not in f.parts and "/drafts/" not in str(f)
-    ]
+    md_files = [f for f in md_files if "_delivery" not in f.parts and "/drafts/" not in str(f)]
 
     total = len(md_files)
     by_category: dict[str, int] = {"ssot": 0, "contract": 0, "pattern": 0, "history": 0}

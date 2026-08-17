@@ -40,9 +40,7 @@ def test_build_action_packet_routes_entries_into_primary_lanes() -> None:
         },
         "due_now": [
             _entry("REVALIDATE", stale_evidence=True, overdue_by=1),
-            _entry(
-                "ESCALATE", gate_level="watchlist", stale_evidence=False, overdue_by=4
-            ),
+            _entry("ESCALATE", gate_level="watchlist", stale_evidence=False, overdue_by=4),
             _entry(
                 "MITIGATE",
                 lifecycle_state="in_progress",
@@ -55,9 +53,7 @@ def test_build_action_packet_routes_entries_into_primary_lanes() -> None:
         ],
         "escalation_candidates": [
             _entry("REVALIDATE", stale_evidence=True, overdue_by=1),
-            _entry(
-                "ESCALATE", gate_level="watchlist", stale_evidence=False, overdue_by=4
-            ),
+            _entry("ESCALATE", gate_level="watchlist", stale_evidence=False, overdue_by=4),
         ],
         "unscheduled": [
             _entry("SCHEDULE", next_review_at=None),
@@ -67,14 +63,10 @@ def test_build_action_packet_routes_entries_into_primary_lanes() -> None:
 
     packet = build_action_packet(review_queue, now="2026-06-10T00:00:00Z")
 
-    assert [entry["id"] for entry in packet["lanes"]["revalidate_now"]] == [
-        "REVALIDATE"
-    ]
+    assert [entry["id"] for entry in packet["lanes"]["revalidate_now"]] == ["REVALIDATE"]
     assert [entry["id"] for entry in packet["lanes"]["schedule_now"]] == ["SCHEDULE"]
     assert [entry["id"] for entry in packet["lanes"]["escalate_now"]] == ["ESCALATE"]
-    assert [entry["id"] for entry in packet["lanes"]["continue_mitigation"]] == [
-        "MITIGATE"
-    ]
+    assert [entry["id"] for entry in packet["lanes"]["continue_mitigation"]] == ["MITIGATE"]
     assert [entry["id"] for entry in packet["lanes"]["watch_only"]] == ["WATCH"]
     assert packet["lanes"]["revalidate_now"][0]["command_template"] == (
         "python3 scripts/omo_debt.py revalidate --omo-dir .omo --id REVALIDATE --reviewed-at <RUN_AT>"
@@ -107,15 +99,11 @@ def test_build_action_packet_keeps_revalidate_above_escalate_for_stale_items() -
             "escalation_threshold_days": 3,
         },
         "due_now": [
-            _entry(
-                "STALE_GATE", gate_level="watchlist", stale_evidence=True, overdue_by=5
-            ),
+            _entry("STALE_GATE", gate_level="watchlist", stale_evidence=True, overdue_by=5),
         ],
         "upcoming": [],
         "escalation_candidates": [
-            _entry(
-                "STALE_GATE", gate_level="watchlist", stale_evidence=True, overdue_by=5
-            ),
+            _entry("STALE_GATE", gate_level="watchlist", stale_evidence=True, overdue_by=5),
         ],
         "unscheduled": [],
         "summary": {},
@@ -123,7 +111,5 @@ def test_build_action_packet_keeps_revalidate_above_escalate_for_stale_items() -
 
     packet = build_action_packet(review_queue, now="2026-06-10T00:00:00Z")
 
-    assert [entry["id"] for entry in packet["lanes"]["revalidate_now"]] == [
-        "STALE_GATE"
-    ]
+    assert [entry["id"] for entry in packet["lanes"]["revalidate_now"]] == ["STALE_GATE"]
     assert packet["lanes"]["escalate_now"] == []

@@ -129,9 +129,7 @@ def bos_uri_tool_schema() -> list[dict[str, Any]]:
 # ── 工具实现 (派发器 target) ────────────────────────────────
 
 
-async def invoke_bos_uri_tool(
-    uri: str, args: dict[str, Any] | None = None
-) -> dict[str, Any]:
+async def invoke_bos_uri_tool(uri: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
     """LLM 调 BOS URI 工具入口.
 
     返回: 标准 dict (JSON 序列化友好), 供 LLM 二次 round 解析.

@@ -92,9 +92,7 @@ def check_cross_project_lint() -> dict:
                 if pkg_dir.is_dir() and (pkg_dir / "pyproject.toml").exists():
                     paths_to_check.append(str(pkg_dir))
         exclude_args: list[str] = []
-        if (
-            proj_root / "packages" / "gateway" / "src" / "llm_gateway" / "_legacy"
-        ).exists():
+        if (proj_root / "packages" / "gateway" / "src" / "llm_gateway" / "_legacy").exists():
             exclude_args.append("--exclude=packages/gateway/src/llm_gateway/_legacy")
         if not paths_to_check:
             continue
@@ -201,9 +199,7 @@ def check_mof_version_bump() -> dict:
         }
 
 
-def cmd_freshness(
-    dry_run: bool = False, only: str | None = None, json_output: bool = False
-) -> int:
+def cmd_freshness(dry_run: bool = False, only: str | None = None, json_output: bool = False) -> int:
     checks = [check_debt_evidence, check_cross_project_lint, check_mof_version_bump]
     if only:
         checks = [c for c in checks if c.__name__ == only]
@@ -214,13 +210,9 @@ def cmd_freshness(
         try:
             results.append(check_fn())
             r = results[-1]
-            print(
-                f"   {r['rule_id']}: {r['status'].upper()} ({r['stale']}/{r['total']} stale)"
-            )
+            print(f"   {r['rule_id']}: {r['status'].upper()} ({r['stale']}/{r['total']} stale)")
         except Exception as e:
-            results.append(
-                {"rule_id": check_fn.__name__, "status": "error", "details": str(e)}
-            )
+            results.append({"rule_id": check_fn.__name__, "status": "error", "details": str(e)})
             print(f"   {check_fn.__name__}: ERROR ({e})")
 
     summary = {
@@ -240,9 +232,7 @@ def cmd_freshness(
         DELIVERY_DIR.mkdir(parents=True, exist_ok=True)
         date_slug = datetime.now(UTC).strftime("%Y-%m-%d")
         out_file = DELIVERY_DIR / f"{date_slug}.json"
-        out_file.write_text(
-            json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+        out_file.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"\nAudit written to {out_file.relative_to(WORKSPACE_ROOT)}")
 
     if summary["rules_error"] > 0:

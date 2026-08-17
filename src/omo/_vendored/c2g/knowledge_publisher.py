@@ -17,9 +17,7 @@ import httpx
 logger = logging.getLogger("c2g.knowledge_publisher")
 
 _DEFAULT_AGORA_ENDPOINT = os.environ.get("AGORA_HTTP_ENDPOINT", "http://127.0.0.1:7422")
-_DEFAULT_COCKPIT_KNOWLEDGE_URL = os.environ.get(
-    "COCKPIT_KNOWLEDGE_URL", "http://127.0.0.1:8000/api/knowledge/put"
-)
+_DEFAULT_COCKPIT_KNOWLEDGE_URL = os.environ.get("COCKPIT_KNOWLEDGE_URL", "http://127.0.0.1:8000/api/knowledge/put")
 
 
 def _emit_via_network(

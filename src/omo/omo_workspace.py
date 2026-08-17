@@ -47,9 +47,7 @@ def _sync_system_yaml(dirty_count: int) -> None:
         data["worktree_dirty_count"] = dirty_count
         tmp = STATE_SYSTEM_YAML.with_suffix(".yaml.tmp")
         tmp.write_text(
-            yaml.dump(
-                data, allow_unicode=True, sort_keys=False, default_flow_style=False
-            ),
+            yaml.dump(data, allow_unicode=True, sort_keys=False, default_flow_style=False),
             encoding="utf-8",
         )
         tmp.replace(STATE_SYSTEM_YAML)

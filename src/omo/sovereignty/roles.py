@@ -40,9 +40,10 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Iterable, Mapping
+from typing import Any
 from uuid import uuid4
 
 from omo.event_ledger.broker import LedgerBroker
@@ -69,8 +70,7 @@ _ID_PREFIXES: dict[str, str] = {
     "assignment": "assignment:",
 }
 _ID_PATTERNS: dict[str, re.Pattern[str]] = {
-    kind: re.compile(rf"^{prefix}[A-Za-z0-9][A-Za-z0-9_-]*$")
-    for kind, prefix in _ID_PREFIXES.items()
+    kind: re.compile(rf"^{prefix}[A-Za-z0-9][A-Za-z0-9_-]*$") for kind, prefix in _ID_PREFIXES.items()
 }
 
 # ---------------------------------------------------------------------------
@@ -121,10 +121,7 @@ def validate_id(kind: str, value: Any) -> None:
     if pattern is None:
         raise SovereigntyError(f"unknown id kind {kind!r}")
     if not isinstance(value, str) or not pattern.fullmatch(value):
-        raise InvalidIdError(
-            f"invalid {kind} id {value!r}: must match "
-            f"{_ID_PREFIXES[kind]}<alnum/dash/underscore>"
-        )
+        raise InvalidIdError(f"invalid {kind} id {value!r}: must match {_ID_PREFIXES[kind]}<alnum/dash/underscore>")
 
 
 def generate_id(kind: str) -> str:
@@ -155,9 +152,7 @@ class Responsibility:
     def __post_init__(self) -> None:
         validate_id("responsibility", self.resp_id)
         if self.version < 1:
-            raise SovereigntyError(
-                f"responsibility version must be >= 1, got {self.version}"
-            )
+            raise SovereigntyError(f"responsibility version must be >= 1, got {self.version}")
         object.__setattr__(self, "name", self.name or self.resp_id)
 
     def to_dict(self) -> dict[str, Any]:
@@ -223,9 +218,7 @@ class RoleAssignment:
         validate_id("principal", self.principal_id)
         validate_id("role", self.role_id)
         if self.version < 1:
-            raise SovereigntyError(
-                f"assignment version must be >= 1, got {self.version}"
-            )
+            raise SovereigntyError(f"assignment version must be >= 1, got {self.version}")
         if self.status not in (STATUS_ACTIVE, STATUS_REVOKED):
             raise SovereigntyError(f"invalid assignment status {self.status!r}")
         object.__setattr__(self, "role_name", self.role_name or self.role_id)
@@ -256,12 +249,8 @@ class Principal:
     def __post_init__(self) -> None:
         validate_id("principal", self.principal_id)
         if self.version < 0:
-            raise SovereigntyError(
-                f"principal version must be >= 0, got {self.version}"
-            )
-        object.__setattr__(
-            self, "assignments", MappingProxyType(dict(self.assignments))
-        )
+            raise SovereigntyError(f"principal version must be >= 0, got {self.version}")
+        object.__setattr__(self, "assignments", MappingProxyType(dict(self.assignments)))
 
     @property
     def count(self) -> int:
@@ -271,18 +260,13 @@ class Principal:
     @property
     def role_ids(self) -> list[str]:
         """Sorted ids of active role assignments."""
-        return sorted(
-            a.role_id for a in self.assignments.values() if a.status == STATUS_ACTIVE
-        )
+        return sorted(a.role_id for a in self.assignments.values() if a.status == STATUS_ACTIVE)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "principal_id": self.principal_id,
             "count": self.count,
-            "assignments": [
-                a.to_dict()
-                for a in sorted(self.assignments.values(), key=lambda a: a.role_id)
-            ],
+            "assignments": [a.to_dict() for a in sorted(self.assignments.values(), key=lambda a: a.role_id)],
             "role_ids": self.role_ids,
         }
 
@@ -322,9 +306,7 @@ def _normalize_responsibilities(value: Iterable[Any]) -> list[Responsibility]:
                 name=str(item.get("name", item["resp_id"])),
             )
         elif isinstance(item, str) and item.strip():
-            resp = Responsibility(
-                resp_id=f"responsibility:{_slugify(item)}", name=item.strip()
-            )
+            resp = Responsibility(resp_id=f"responsibility:{_slugify(item)}", name=item.strip())
         else:
             raise SovereigntyError(f"unsupported responsibility item {item!r}")
         if resp.resp_id in seen:
@@ -334,9 +316,7 @@ def _normalize_responsibilities(value: Iterable[Any]) -> list[Responsibility]:
     return result
 
 
-def _with_versions(
-    registry: Mapping[str, Responsibility], resp_list: Iterable[Responsibility]
-) -> list[Responsibility]:
+def _with_versions(registry: Mapping[str, Responsibility], resp_list: Iterable[Responsibility]) -> list[Responsibility]:
     """Return responsibility snapshots with version numbers applied.
 
     A responsibility keeps its version when a same-ID definition (name) is
@@ -418,34 +398,23 @@ class SovereigntyService:
         state = self._replay(principal_id)
         current = state.assignments.get(role_id)
         if current is not None and current.status == STATUS_ACTIVE:
-            raise IllegalTransitionError(
-                f"role {role_id} is already active for {principal_id}; use replace"
-            )
+            raise IllegalTransitionError(f"role {role_id} is already active for {principal_id}; use replace")
 
         base_version = current.version if current is not None else 0
         if expected_version is not None and expected_version != base_version:
             raise StaleVersionError(
-                f"stale version for {principal_id}/{role_id}: expected "
-                f"{expected_version}, current {base_version}"
+                f"stale version for {principal_id}/{role_id}: expected {expected_version}, current {base_version}"
             )
         version = base_version + 1
-        assignment_id = (
-            current.assignment_id if current is not None else generate_id("assignment")
-        )
+        assignment_id = current.assignment_id if current is not None else generate_id("assignment")
 
         if responsibilities is None:
-            resp_list = (
-                _canonicalize(current.responsibilities, state.responsibilities)
-                if current is not None
-                else []
-            )
+            resp_list = _canonicalize(current.responsibilities, state.responsibilities) if current is not None else []
         else:
             resp_list = _normalize_responsibilities(responsibilities)
         resp_snapshots = _with_versions(state.responsibilities, resp_list)
 
-        role_version = (
-            state.roles.get(role_id).version if role_id in state.roles else 0
-        ) + 1
+        role_version = (state.roles.get(role_id).version if role_id in state.roles else 0) + 1
         payload: dict[str, Any] = {
             "kind": "assign",
             "assignment_id": assignment_id,
@@ -487,13 +456,10 @@ class SovereigntyService:
         state = self._replay(principal_id)
         current = state.assignments.get(role_id)
         if current is None or current.status != STATUS_ACTIVE:
-            raise IllegalTransitionError(
-                f"role {role_id} is not active for {principal_id}; cannot replace"
-            )
+            raise IllegalTransitionError(f"role {role_id} is not active for {principal_id}; cannot replace")
         if expected_version is not None and expected_version != current.version:
             raise StaleVersionError(
-                f"stale version for {principal_id}/{role_id}: expected "
-                f"{expected_version}, current {current.version}"
+                f"stale version for {principal_id}/{role_id}: expected {expected_version}, current {current.version}"
             )
 
         resp_list = (
@@ -504,11 +470,7 @@ class SovereigntyService:
         resp_snapshots = _with_versions(state.responsibilities, resp_list)
 
         version = current.version + 1
-        role_version = (
-            state.roles.get(role_id).version
-            if role_id in state.roles
-            else current.version
-        ) + 1
+        role_version = (state.roles.get(role_id).version if role_id in state.roles else current.version) + 1
         payload: dict[str, Any] = {
             "kind": "replace",
             "assignment_id": current.assignment_id,
@@ -546,21 +508,14 @@ class SovereigntyService:
         state = self._replay(principal_id)
         current = state.assignments.get(role_id)
         if current is None or current.status != STATUS_ACTIVE:
-            raise IllegalTransitionError(
-                f"role {role_id} is not active for {principal_id}; cannot revoke"
-            )
+            raise IllegalTransitionError(f"role {role_id} is not active for {principal_id}; cannot revoke")
         if expected_version is not None and expected_version != current.version:
             raise StaleVersionError(
-                f"stale version for {principal_id}/{role_id}: expected "
-                f"{expected_version}, current {current.version}"
+                f"stale version for {principal_id}/{role_id}: expected {expected_version}, current {current.version}"
             )
 
         version = current.version + 1
-        role_version = (
-            state.roles.get(role_id).version
-            if role_id in state.roles
-            else current.version
-        )
+        role_version = state.roles.get(role_id).version if role_id in state.roles else current.version
         payload: dict[str, Any] = {
             "kind": "revoke",
             "assignment_id": current.assignment_id,
@@ -571,10 +526,7 @@ class SovereigntyService:
             "role_name": current.role_name,
             "role_scope": current.role_scope,
             "role_version": role_version,
-            "responsibilities": [
-                r.to_dict()
-                for r in _canonicalize(current.responsibilities, state.responsibilities)
-            ],
+            "responsibilities": [r.to_dict() for r in _canonicalize(current.responsibilities, state.responsibilities)],
             "version": version,
             "prev_version": current.version,
             "status": STATUS_REVOKED,
@@ -594,9 +546,7 @@ class SovereigntyService:
         validate_id("principal", principal_id)
         return self._replay(principal_id)
 
-    def current_assignment(
-        self, principal_id: str, role_id: str
-    ) -> RoleAssignment | None:
+    def current_assignment(self, principal_id: str, role_id: str) -> RoleAssignment | None:
         """Return the current (replayed) assignment, or None when absent."""
         validate_id("principal", principal_id)
         validate_id("role", role_id)
@@ -667,10 +617,7 @@ class SovereigntyService:
                     f"assignment version {event_version} != prev_version + 1 "
                     f"({prev_version + 1}) for {role_id}"
                 )
-            if (
-                previous is not None
-                and payload["assignment_id"] != previous.assignment_id
-            ):
+            if previous is not None and payload["assignment_id"] != previous.assignment_id:
                 raise SovereigntyReplayError(
                     f"malformed sovereignty event at seq {sequence}: "
                     f"assignment_id changed for {role_id} (was "
@@ -681,8 +628,7 @@ class SovereigntyService:
             if kind == "assign":
                 if previous is not None and previous.status == STATUS_ACTIVE:
                     raise SovereigntyReplayError(
-                        f"malformed sovereignty event at seq {sequence}: "
-                        f"assign over active assignment for {role_id}"
+                        f"malformed sovereignty event at seq {sequence}: assign over active assignment for {role_id}"
                     )
                 if status != STATUS_ACTIVE:
                     raise SovereigntyReplayError(
@@ -776,9 +722,7 @@ class SovereigntyService:
         # canonical snapshots from the final registry (Responsibility is a
         # Principal-scoped first-class aggregate, not assignment-scoped).
         for rid, asm in list(assignments.items()):
-            canonical = tuple(
-                responsibilities.get(r.resp_id, r) for r in asm.responsibilities
-            )
+            canonical = tuple(responsibilities.get(r.resp_id, r) for r in asm.responsibilities)
             if canonical != asm.responsibilities:
                 assignments[rid] = RoleAssignment(
                     assignment_id=asm.assignment_id,
@@ -823,18 +767,15 @@ class SovereigntyService:
         version = item.get("version")
         if not isinstance(resp_id, str) or not resp_id:
             raise SovereigntyReplayError(
-                f"malformed sovereignty event at seq {sequence}: "
-                "responsibility missing/invalid resp_id"
+                f"malformed sovereignty event at seq {sequence}: responsibility missing/invalid resp_id"
             )
         if not isinstance(name, str):
             raise SovereigntyReplayError(
-                f"malformed sovereignty event at seq {sequence}: "
-                f"responsibility {resp_id!r} missing/invalid name"
+                f"malformed sovereignty event at seq {sequence}: responsibility {resp_id!r} missing/invalid name"
             )
         if not isinstance(version, int):
             raise SovereigntyReplayError(
-                f"malformed sovereignty event at seq {sequence}: "
-                f"responsibility {resp_id!r} missing/invalid version"
+                f"malformed sovereignty event at seq {sequence}: responsibility {resp_id!r} missing/invalid version"
             )
         if version < 1:
             raise SovereigntyReplayError(
@@ -844,9 +785,7 @@ class SovereigntyService:
         try:
             validate_id("responsibility", resp_id)
         except InvalidIdError as exc:
-            raise SovereigntyReplayError(
-                f"malformed sovereignty event at seq {sequence}: {exc.message}"
-            ) from exc
+            raise SovereigntyReplayError(f"malformed sovereignty event at seq {sequence}: {exc.message}") from exc
         return Responsibility(resp_id=resp_id, name=name, version=version)
 
     def _decode_event(self, row: Mapping[str, Any]) -> dict[str, Any]:
@@ -856,37 +795,21 @@ class SovereigntyService:
             payload = json.loads(row["payload_json"])
         except (TypeError, ValueError, KeyError):
             raise SovereigntyReplayError(
-                f"malformed sovereignty event at seq {sequence}: "
-                "payload is not valid JSON"
+                f"malformed sovereignty event at seq {sequence}: payload is not valid JSON"
             ) from None
         if not isinstance(payload, dict):
             raise SovereigntyReplayError(
-                f"malformed sovereignty event at seq {sequence}: "
-                "payload must be a JSON object"
+                f"malformed sovereignty event at seq {sequence}: payload must be a JSON object"
             )
         kind = payload.get("kind")
         if kind not in ("assign", "replace", "revoke"):
-            raise SovereigntyReplayError(
-                f"malformed sovereignty event at seq {sequence}: unknown kind {kind!r}"
-            )
+            raise SovereigntyReplayError(f"malformed sovereignty event at seq {sequence}: unknown kind {kind!r}")
         if not isinstance(payload.get("role_id"), str) or not payload["role_id"]:
-            raise SovereigntyReplayError(
-                f"malformed sovereignty event at seq {sequence}: missing role_id"
-            )
-        if (
-            not isinstance(payload.get("assignment_id"), str)
-            or not payload["assignment_id"]
-        ):
-            raise SovereigntyReplayError(
-                f"malformed sovereignty event at seq {sequence}: missing assignment_id"
-            )
-        if (
-            not isinstance(payload.get("principal_id"), str)
-            or not payload["principal_id"]
-        ):
-            raise SovereigntyReplayError(
-                f"malformed sovereignty event at seq {sequence}: missing principal_id"
-            )
+            raise SovereigntyReplayError(f"malformed sovereignty event at seq {sequence}: missing role_id")
+        if not isinstance(payload.get("assignment_id"), str) or not payload["assignment_id"]:
+            raise SovereigntyReplayError(f"malformed sovereignty event at seq {sequence}: missing assignment_id")
+        if not isinstance(payload.get("principal_id"), str) or not payload["principal_id"]:
+            raise SovereigntyReplayError(f"malformed sovereignty event at seq {sequence}: missing principal_id")
         for field_name in (
             "version",
             "prev_version",
@@ -896,18 +819,15 @@ class SovereigntyService:
             value = payload.get(field_name)
             if not isinstance(value, int):
                 raise SovereigntyReplayError(
-                    f"malformed sovereignty event at seq {sequence}: "
-                    f"{field_name} must be an integer"
+                    f"malformed sovereignty event at seq {sequence}: {field_name} must be an integer"
                 )
         if payload.get("status") not in (STATUS_ACTIVE, STATUS_REVOKED):
             raise SovereigntyReplayError(
-                f"malformed sovereignty event at seq {sequence}: "
-                f"invalid status {payload.get('status')!r}"
+                f"malformed sovereignty event at seq {sequence}: invalid status {payload.get('status')!r}"
             )
         if not isinstance(payload.get("responsibilities", []), list):
             raise SovereigntyReplayError(
-                f"malformed sovereignty event at seq {sequence}: "
-                "responsibilities must be a list"
+                f"malformed sovereignty event at seq {sequence}: responsibilities must be a list"
             )
         # The payload principal must be the envelope principal.  A mismatched
         # row cannot be deterministically replayed for any principal, and it
@@ -946,18 +866,14 @@ class SovereigntyService:
         )
 
     @staticmethod
-    def _build_assignment(
-        payload: Mapping[str, Any], status: str = STATUS_ACTIVE
-    ) -> RoleAssignment:
+    def _build_assignment(payload: Mapping[str, Any], status: str = STATUS_ACTIVE) -> RoleAssignment:
         return RoleAssignment(
             assignment_id=payload["assignment_id"],
             principal_id=payload["principal_id"],
             role_id=payload["role_id"],
             role_name=payload.get("role_name", payload["role_id"]),
             role_scope=payload.get("role_scope", ""),
-            responsibilities=tuple(
-                Responsibility.from_dict(r) for r in payload.get("responsibilities", [])
-            ),
+            responsibilities=tuple(Responsibility.from_dict(r) for r in payload.get("responsibilities", [])),
             version=int(payload["version"]),
             status=status,
         )

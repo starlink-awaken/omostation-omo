@@ -8,9 +8,7 @@ from omo import omo_worker_promotion
 
 
 @pytest.mark.parametrize("returncode", [0, 1])
-def test_promotion_sync_uses_canonical_omo_state_broker(
-    monkeypatch, tmp_path: Path, returncode: int
-) -> None:
+def test_promotion_sync_uses_canonical_omo_state_broker(monkeypatch, tmp_path: Path, returncode: int) -> None:
     calls: list[tuple[Path, bool, str]] = []
 
     def fake_sync(omo_dir: Path, dry_run: bool, fmt: str) -> int:

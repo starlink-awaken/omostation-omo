@@ -21,9 +21,7 @@ def _stable_task_id(content_digest: str, ordinal: int) -> str:
     return f"IMPORTED-{content_digest[:12]}-{ordinal:03d}"
 
 
-def _resolve_depends_on(
-    depends_on: list[str], title_to_imported: dict[str, str]
-) -> list[str]:
+def _resolve_depends_on(depends_on: list[str], title_to_imported: dict[str, str]) -> list[str]:
     resolved: list[str] = []
     for ref in depends_on:
         ref = ref.strip()
@@ -95,14 +93,9 @@ def _import_bmad(file_path: Path, omo_dir: Path, sequential: bool = False):
                 old_ref = str(old.get("metadata", {}).get("source_ref", ""))
             except Exception:
                 continue
-            if (
-                old_ref.startswith(source_prefix)
-                and f":{content_digest}:" not in old_ref
-            ):
+            if old_ref.startswith(source_prefix) and f":{content_digest}:" not in old_ref:
                 spec_drift = True
-                errors.append(
-                    f"spec_drift: {file_path.name} changed since prior import ({existing.name})"
-                )
+                errors.append(f"spec_drift: {file_path.name} changed since prior import ({existing.name})")
     if not test_plan_parsed:
         errors.append("missing required test plan section (### 7.1)")
     if not evidence_parsed:
@@ -132,9 +125,7 @@ def _import_bmad(file_path: Path, omo_dir: Path, sequential: bool = False):
         if task_title in title_to_imported:
             errors.append(f"line {line_no}: duplicate task title: {task_title}")
             continue
-        title_to_imported[task_title] = _stable_task_id(
-            content_digest, len(parsed_tasks) + 1
-        )
+        title_to_imported[task_title] = _stable_task_id(content_digest, len(parsed_tasks) + 1)
         parsed_tasks.append((task_title, depends_on_raw))
     if not parsed_tasks:
         errors.append("specification contains no importable open tasks")
@@ -212,18 +203,11 @@ def _import_bmad(file_path: Path, omo_dir: Path, sequential: bool = False):
                 errors.append(f"task {task_data['id']}: existing task is unreadable")
             else:
                 metadata = existing.get("metadata", {})
-                if (
-                    not isinstance(metadata, dict)
-                    or metadata.get("source_ref") != source_ref
-                ):
-                    errors.append(
-                        f"task {task_data['id']}: existing task identity conflicts"
-                    )
+                if not isinstance(metadata, dict) or metadata.get("source_ref") != source_ref:
+                    errors.append(f"task {task_data['id']}: existing task identity conflicts")
         mapped_task_id = task_registry["by_source_ref"].get(source_ref)
         if mapped_task_id and mapped_task_id != task_data["id"]:
-            errors.append(
-                f"task {task_data['id']}: source_ref maps to {mapped_task_id}"
-            )
+            errors.append(f"task {task_data['id']}: source_ref maps to {mapped_task_id}")
         registered = task_registry["by_id"].get(task_data["id"])
         if isinstance(registered, dict):
             registered_ref = registered.get("source_ref")
@@ -248,10 +232,7 @@ def _import_bmad(file_path: Path, omo_dir: Path, sequential: bool = False):
             ingress_plane="projects/omo",
             source_ref=source_ref,
         )
-        print(
-            f"  -> 创建了任务: {task_data['id']} "
-            f"(依赖: {task_data['depends_on']}) [M2 Validated]"
-        )
+        print(f"  -> 创建了任务: {task_data['id']} (依赖: {task_data['depends_on']}) [M2 Validated]")
         tasks_created += 1
 
     report = {
@@ -383,9 +364,7 @@ def _import_pitch(source_file: Path, omo_dir: Path):
 
 
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(
-        description="OMO Bridge (Connect external tools like BMAD, OpenSpec, Pitches)"
-    )
+    parser = argparse.ArgumentParser(description="OMO Bridge (Connect external tools like BMAD, OpenSpec, Pitches)")
     parser.add_argument("source_file", type=str, help="The file to import from")
     parser.add_argument(
         "--format",

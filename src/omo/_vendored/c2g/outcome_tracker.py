@@ -49,7 +49,7 @@ class OutcomeTracker:
 
     def _load_outcomes(self):
         if self.outcomes_file.exists():
-            with open(self.outcomes_file, "r", encoding="utf-8") as f:
+            with open(self.outcomes_file, encoding="utf-8") as f:
                 return yaml.safe_load(f) or {}
         return {}
 
@@ -58,9 +58,7 @@ class OutcomeTracker:
             yaml.dump(self._outcomes, f, allow_unicode=True, sort_keys=False)
 
     def track_pitch_creation(self, pitch_id, pitch_path):
-        now = (
-            datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-        )
+        now = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         self._outcomes.setdefault(
             pitch_id,
             {
@@ -101,9 +99,7 @@ class OutcomeTracker:
             completed = len(outcome["completed_tasks"])
             failed = len(outcome["failed_tasks"])
             if total > 0:
-                outcome["success_score"] = max(
-                    0.0, min(1.0, (completed - failed) / total)
-                )
+                outcome["success_score"] = max(0.0, min(1.0, (completed - failed) / total))
 
     def add_lessons_learned(self, pitch_id, lesson):
         if pitch_id in self._outcomes:
@@ -140,9 +136,7 @@ class OutcomeTracker:
     def suggest_pitch_improvements(self, pitch_content):
         suggestions = []
         if "Upstream" not in pitch_content or "待填" in pitch_content:
-            suggestions.append(
-                Suggestion("战略对齐", 1, "建议明确 Upstream", ["提升效率"])
-            )
+            suggestions.append(Suggestion("战略对齐", 1, "建议明确 Upstream", ["提升效率"]))
         if "Appetite" not in pitch_content or "待填" in pitch_content:
             suggestions.append(Suggestion("范围控制", 2, "建议明确时间预算", ["1天"]))
         return suggestions
@@ -211,9 +205,7 @@ class OutcomeTracker:
             "status": "ok",
         }
 
-    def publish_outcome_to_knowledge(
-        self, pitch_id: str, agora_endpoint: str | None = None
-    ) -> dict[str, Any] | None:
+    def publish_outcome_to_knowledge(self, pitch_id: str, agora_endpoint: str | None = None) -> dict[str, Any] | None:
         """Wave 2 Phase C (ADR-0296): publish historical outcome card to Knowledge Graph."""
         if pitch_id not in self._outcomes:
             return None

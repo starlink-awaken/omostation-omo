@@ -12,23 +12,21 @@ from __future__ import annotations
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 
 # 1. 动态加载 Workspace 内置的 AetherForge Gateway SDK
 DOCS_ROOT = Path("/Users/xiamingxing/Documents")
 WS_ROOT = Path("/Users/xiamingxing/Workspace")
-AETHERFORGE_GATEWAY_SRC = (
-    WS_ROOT / "projects" / "aetherforge" / "packages" / "gateway" / "src"
-)
+AETHERFORGE_GATEWAY_SRC = WS_ROOT / "projects" / "aetherforge" / "packages" / "gateway" / "src"
 
 if AETHERFORGE_GATEWAY_SRC.exists() and str(AETHERFORGE_GATEWAY_SRC) not in sys.path:
     sys.path.insert(0, str(AETHERFORGE_GATEWAY_SRC))
 
 # 尝试导入 AetherForge SDK
 try:
-    from llm_gateway.provider import LLMRequest, MockLLMProvider
     from llm_gateway.detection import detect_backends
+    from llm_gateway.provider import LLMRequest, MockLLMProvider
 
     AETHERFORGE_AVAILABLE = True
 except ImportError:
@@ -71,7 +69,7 @@ def run_bdsk_deliberation(file_path: Path) -> Path | None:
     report_md = f"""# 📄 B.D.S.K. 评议书 (AetherForge Gateway 驱动)
 
 > **评估主题**: {title}  
-> **生成时间**: {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}  
+> **生成时间**: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")}  
 > **AetherForge 网关状态**: {provider_info}  
 > **源文件**: [{file_path.name}](file://{file_path})  
 
@@ -90,13 +88,9 @@ def run_bdsk_deliberation(file_path: Path) -> Path | None:
 """
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    out_file = (
-        OUTPUT_DIR / f"BDSK-VERDICT-{re.sub(r'\\W+', '_', title.lower()).strip('_')}.md"
-    )
+    out_file = OUTPUT_DIR / f"BDSK-VERDICT-{re.sub(r'\\W+', '_', title.lower()).strip('_')}.md"
     out_file.write_text(report_md, encoding="utf-8")
-    print(
-        f"✅ AetherForge 驱动评议书已落盘 ──► {out_file.name} (网关: {provider_info})"
-    )
+    print(f"✅ AetherForge 驱动评议书已落盘 ──► {out_file.name} (网关: {provider_info})")
     return out_file
 
 

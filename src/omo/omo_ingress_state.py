@@ -27,10 +27,7 @@ from omo.omo_ingress_paths import (
 from omo.omo_io import fcntl_lock, write_text_if_changed, write_yaml_atomic
 from omo.omo_shared import load_yaml
 
-STATE_SYNC_TARGET = (
-    ".omo/state/health.yaml + .omo/state/system.yaml + "
-    "BRIEF.md + .omo/_control/governance-data.json"
-)
+STATE_SYNC_TARGET = ".omo/state/health.yaml + .omo/state/system.yaml + BRIEF.md + .omo/_control/governance-data.json"
 
 
 def _load_root_module(workspace_root: Path, name: str, relative_path: str):
@@ -82,9 +79,7 @@ def normalize_brief_md(payload: str) -> str:
 
 
 def _build_health_projection(workspace_root: Path) -> tuple[str, dict[str, Any]]:
-    compass_radar = _load_root_module(
-        workspace_root, "compass_radar", "bin/compass_radar.py"
-    )
+    compass_radar = _load_root_module(workspace_root, "compass_radar", "bin/compass_radar.py")
     omo_dir = workspace_root / ".omo"
     output = omo_dir / "state" / "health.yaml"
     with redirect_stdout(io.StringIO()):
@@ -92,18 +87,14 @@ def _build_health_projection(workspace_root: Path) -> tuple[str, dict[str, Any]]
             omo_dir=omo_dir,
             output=output,
         )
-    return compass_radar.render_yaml(
-        report
-    ), compass_radar.build_system_projection_updates(
+    return compass_radar.render_yaml(report), compass_radar.build_system_projection_updates(
         workspace_root=workspace_root,
         report=report,
     )
 
 
 def _build_brief_content(workspace_root: Path) -> str:
-    generate_brief = _load_root_module(
-        workspace_root, "generate-brief", "bin/mof/generate-brief.py"
-    )
+    generate_brief = _load_root_module(workspace_root, "generate-brief", "bin/mof/generate-brief.py")
     return generate_brief.generate_brief_content()
 
 
@@ -166,9 +157,7 @@ def _record_state_sync(
     from omo.omo_ingress import _record_mutation, _record_trail
 
     changed_paths = [
-        _workspace_relative(Path(item["path"]), workspace_root=omo_dir.parent)
-        for item in writes
-        if item.get("changed")
+        _workspace_relative(Path(item["path"]), workspace_root=omo_dir.parent) for item in writes if item.get("changed")
     ]
     artifact = {
         "kind": "state_projection_sync",
@@ -181,18 +170,12 @@ def _record_state_sync(
         "writes": [
             {
                 **item,
-                "path": _workspace_relative(
-                    Path(str(item["path"])), workspace_root=omo_dir.parent
-                ),
+                "path": _workspace_relative(Path(str(item["path"])), workspace_root=omo_dir.parent),
             }
             for item in writes
         ],
     }
-    artifact_path = (
-        _delivery_root(omo_dir)
-        / "state"
-        / f"state-sync-{_timestamp_slug(timestamp)}.yaml"
-    )
+    artifact_path = _delivery_root(omo_dir) / "state" / f"state-sync-{_timestamp_slug(timestamp)}.yaml"
     write_yaml_atomic(artifact_path, artifact)
     artifact_ref = _workspace_relative(artifact_path, workspace_root=omo_dir.parent)
     details = (
@@ -306,12 +289,8 @@ def sync_state_projection(
         # These are shallow copies and are not recorded as separate mutations;
         # the canonical writes above hold the authoritative projection state.
         if not dry_run:
-            _mirror_projection(
-                legacy_health_path, health_content, normalize=normalize_health_yaml
-            )
-            _mirror_projection(
-                legacy_brief_path, brief_content, normalize=normalize_brief_md
-            )
+            _mirror_projection(legacy_health_path, health_content, normalize=normalize_health_yaml)
+            _mirror_projection(legacy_brief_path, brief_content, normalize=normalize_brief_md)
             _mirror_projection(
                 legacy_governance_data_path,
                 serialize_governance_data(governance_data),
@@ -339,9 +318,7 @@ def sync_state_projection(
         "writes": [
             {
                 **item,
-                "path": _workspace_relative(
-                    Path(str(item["path"])), workspace_root=workspace_root
-                ),
+                "path": _workspace_relative(Path(str(item["path"])), workspace_root=workspace_root),
             }
             for item in writes
         ],

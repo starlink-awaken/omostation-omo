@@ -35,9 +35,7 @@ def collect_worker_status(root: Path, omo_dir: str | Path = ".omo") -> dict[str,
                 "task_id": dispatch.get("task_id", task.get("id")),
                 "worker_id": dispatch.get("worker_id"),
                 "dispatch_state": dispatch.get("dispatch_state"),
-                "checkpoint_refs": dispatch.get("execution", {}).get(
-                    "checkpoint_refs", []
-                ),
+                "checkpoint_refs": dispatch.get("execution", {}).get("checkpoint_refs", []),
                 "reclaim_ref": dispatch.get("reclaim", {}).get("note_ref"),
                 "review_ref": dispatch.get("handoff", {}).get("output_summary_ref"),
                 "lease": dispatch.get("lease", {}),
@@ -59,9 +57,7 @@ def update_dispatch_checkpoint(
     now: str | None = None,
     omo_dir: str | Path = ".omo",
 ) -> dict[str, Any]:
-    dispatch_path = _find_dispatch_file(
-        _omo_path(root, omo_dir) / "workers" / "runs", dispatch_id
-    )
+    dispatch_path = _find_dispatch_file(_omo_path(root, omo_dir) / "workers" / "runs", dispatch_id)
     dispatch = _load_yaml(dispatch_path)
     checkpoint_ref = dispatch.get("execution", {}).get("checkpoint_refs", [None])[-1]
     if not checkpoint_ref:
@@ -94,9 +90,7 @@ def update_dispatch_checkpoint(
     return dispatch
 
 
-def scan_runtime_watchdog(
-    root: Path, now: str | None = None, omo_dir: str | Path = ".omo"
-) -> dict[str, Any]:
+def scan_runtime_watchdog(root: Path, now: str | None = None, omo_dir: str | Path = ".omo") -> dict[str, Any]:
     current_time = _parse_iso8601(now) or datetime.now(UTC)
     status = collect_worker_status(root, omo_dir=omo_dir)
     runs: list[dict[str, Any]] = []
@@ -104,12 +98,10 @@ def scan_runtime_watchdog(
 
     for run in status["runs"]:
         lease = run.get("lease", {})
-        last_seen = _parse_iso8601(
-            lease.get("last_material_write_at")
-        ) or _parse_iso8601(lease.get("last_checkpoint_at"))
-        age_seconds = (
-            int((current_time - last_seen).total_seconds()) if last_seen else None
+        last_seen = _parse_iso8601(lease.get("last_material_write_at")) or _parse_iso8601(
+            lease.get("last_checkpoint_at")
         )
+        age_seconds = int((current_time - last_seen).total_seconds()) if last_seen else None
         health = "healthy"
         if age_seconds is not None:
             if age_seconds >= lease.get("reclaim_after_seconds", 0):

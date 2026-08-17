@@ -90,9 +90,7 @@ def _reject_forbidden(value: Any, path: str = "catalog") -> None:
     if isinstance(value, Mapping):
         for key, nested in value.items():
             if str(key).lower() in _FORBIDDEN_KEYS:
-                raise ExternalResourceObservationError(
-                    f"forbidden raw or secret field: {path}.{key}"
-                )
+                raise ExternalResourceObservationError(f"forbidden raw or secret field: {path}.{key}")
             _reject_forbidden(nested, f"{path}.{key}")
     elif isinstance(value, list):
         for index, nested in enumerate(value):
@@ -119,8 +117,7 @@ def _validate_catalog(snapshot: Mapping[str, Any]) -> dict[str, Any]:
         raise ExternalResourceObservationError("catalog summary must be an object")
     changes = snapshot.get("changes")
     if changes is not None and (
-        not isinstance(changes, Mapping)
-        or changes.get("schema") != "external-resource-catalog-diff/v1"
+        not isinstance(changes, Mapping) or changes.get("schema") != "external-resource-catalog-diff/v1"
     ):
         raise ExternalResourceObservationError("catalog changes have an invalid schema")
     return json.loads(_canonical(snapshot))
@@ -169,9 +166,7 @@ def record_external_resource_observation(
     catalog_state.pop("changes", None)
     catalog_digest = _digest(catalog_state)
     observed_at = str(catalog["observed_at"])
-    observation_key = _digest(
-        {"catalog_digest": catalog_digest, "observed_at": observed_at}
-    )
+    observation_key = _digest({"catalog_digest": catalog_digest, "observed_at": observed_at})
 
     previous = read_latest_external_resource_observation(omo_dir)
     if previous and previous.get("observation_key") == observation_key:
@@ -181,27 +176,15 @@ def record_external_resource_observation(
         }
 
     changes = catalog.get("changes")
-    change_summary = (
-        (changes or {}).get("summary", {}) if isinstance(changes, Mapping) else {}
-    )
+    change_summary = (changes or {}).get("summary", {}) if isinstance(changes, Mapping) else {}
     change_count = int(change_summary.get("change_count", 0) or 0)
     error_change_count = int(change_summary.get("error_change_count", 0) or 0)
     review_required = bool(change_summary.get("review_required", False))
     review_required_count = int(change_summary.get("review_required_count", 0) or 0)
-    operational_observation_count = int(
-        change_summary.get("operational_observation_count", 0) or 0
-    )
-    risk_codes = sorted(
-        {
-            str(code).strip()
-            for code in change_summary.get("risk_codes", [])
-            if str(code).strip()
-        }
-    )
+    operational_observation_count = int(change_summary.get("operational_observation_count", 0) or 0)
+    risk_codes = sorted({str(code).strip() for code in change_summary.get("risk_codes", []) if str(code).strip()})
     change_state = (
-        "baseline"
-        if previous is None
-        else ("changed" if change_count or error_change_count else "unchanged")
+        "baseline" if previous is None else ("changed" if change_count or error_change_count else "unchanged")
     )
     observation = {
         "schema": OBSERVATION_SCHEMA,
@@ -224,9 +207,7 @@ def record_external_resource_observation(
         "catalog": catalog,
     }
     log_path, latest_path = _paths(omo_dir)
-    AppendOnlyLog(log_path, lock=fcntl_lock(log_path.with_suffix(".lock"))).append(
-        observation, sort_keys=True
-    )
+    AppendOnlyLog(log_path, lock=fcntl_lock(log_path.with_suffix(".lock"))).append(observation, sort_keys=True)
     write_text_atomic(
         latest_path,
         json.dumps(observation, ensure_ascii=False, indent=2, sort_keys=True),
@@ -251,37 +232,25 @@ def main(argv: list[str] | None = None) -> int:
         description="Governed external resource observations",
     )
     sub = parser.add_subparsers(dest="command")
-    observe = sub.add_parser(
-        "observe", help="validate and persist a catalog observation"
-    )
-    observe.add_argument(
-        "--stdin", action="store_true", help="read catalog JSON from stdin"
-    )
+    observe = sub.add_parser("observe", help="validate and persist a catalog observation")
+    observe.add_argument("--stdin", action="store_true", help="read catalog JSON from stdin")
     observe.add_argument("--actor", default="external-resource-observer")
     observe.add_argument("--source-ref", default="omo:external-resources:observe")
     latest = sub.add_parser("latest", help="read the latest governed observation")
     latest.add_argument("--json", action="store_true", help="emit JSON")
-    record_evaluation = sub.add_parser(
-        "record-evaluation", help="persist one safe selection evaluation"
-    )
+    record_evaluation = sub.add_parser("record-evaluation", help="persist one safe selection evaluation")
     record_evaluation.add_argument("--stdin", action="store_true")
     record_evaluation.add_argument("--workflow-run-id")
     record_evaluation.add_argument("--actor", default="cockpit")
-    record_evaluation.add_argument(
-        "--source-ref", default="omo:external-resources:evaluate"
-    )
+    record_evaluation.add_argument("--source-ref", default="omo:external-resources:evaluate")
     record_evaluation.add_argument("--observed-at")
     record_evaluation.add_argument("--evaluation-id")
-    record_pack_proposal = sub.add_parser(
-        "record-pack-proposal", help="persist one safe external pack review receipt"
-    )
+    record_pack_proposal = sub.add_parser("record-pack-proposal", help="persist one safe external pack review receipt")
     record_pack_proposal.add_argument("--stdin", action="store_true")
     record_pack_proposal.add_argument("--proposal-id", required=True)
     record_pack_proposal.add_argument("--review-action", default="submit")
     record_pack_proposal.add_argument("--actor", default="cockpit")
-    record_pack_proposal.add_argument(
-        "--source-ref", default="omo:external-resources:pack-proposal"
-    )
+    record_pack_proposal.add_argument("--source-ref", default="omo:external-resources:pack-proposal")
     record_pack_proposal.add_argument("--review-ref")
     record_pack_proposal.add_argument("--recorded-at")
     record_pack_proposal.add_argument("--json", action="store_true")
@@ -290,9 +259,7 @@ def main(argv: list[str] | None = None) -> int:
         help="persist one read-only catalog observation run receipt",
     )
     record_observation_run.add_argument("--stdin", action="store_true")
-    record_scene_trial = sub.add_parser(
-        "record-scene-trial", help="persist one proposal-only external scene trial"
-    )
+    record_scene_trial = sub.add_parser("record-scene-trial", help="persist one proposal-only external scene trial")
     record_scene_trial.add_argument("--stdin", action="store_true")
     record_scene_consumer = sub.add_parser(
         "record-scene-consumer",
@@ -304,9 +271,7 @@ def main(argv: list[str] | None = None) -> int:
         help="persist one proposal-only scene trial review",
     )
     record_scene_trial_feedback.add_argument("--stdin", action="store_true")
-    selection_eval = sub.add_parser(
-        "selection-eval", help="build the event-derived selection evaluation dataset"
-    )
+    selection_eval = sub.add_parser("selection-eval", help="build the event-derived selection evaluation dataset")
     selection_eval.add_argument("--scene-id")
     selection_eval.add_argument("--output", type=Path)
     selection_eval.add_argument("--json", action="store_true")
@@ -325,9 +290,7 @@ def main(argv: list[str] | None = None) -> int:
                 json.dumps(
                     {
                         "ok": True,
-                        "observation": read_latest_external_resource_observation(
-                            omo_dir
-                        ),
+                        "observation": read_latest_external_resource_observation(omo_dir),
                     },
                     ensure_ascii=False,
                     indent=2,
@@ -340,9 +303,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "record-evaluation":
         if not args.stdin:
-            print(
-                "external-resources record-evaluation requires --stdin", file=sys.stderr
-            )
+            print("external-resources record-evaluation requires --stdin", file=sys.stderr)
             return 2
         try:
             result = record_external_resource_evaluation(
@@ -357,11 +318,7 @@ def main(argv: list[str] | None = None) -> int:
         except (ExternalResourceEvaluationError, OSError, ValueError) as exc:
             print(f"external-resources record-evaluation: {exc}", file=sys.stderr)
             return 2
-        print(
-            json.dumps(
-                {"ok": True, **result}, ensure_ascii=False, indent=2, sort_keys=True
-            )
-        )
+        print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     if args.command == "record-pack-proposal":
         if not args.stdin:
@@ -384,11 +341,7 @@ def main(argv: list[str] | None = None) -> int:
         except (ExternalResourcePackProposalError, OSError, ValueError) as exc:
             print(f"external-resources record-pack-proposal: {exc}", file=sys.stderr)
             return 2
-        print(
-            json.dumps(
-                {"ok": True, **result}, ensure_ascii=False, indent=2, sort_keys=True
-            )
-        )
+        print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     if args.command == "record-observation-run":
         if not args.stdin:
@@ -402,11 +355,7 @@ def main(argv: list[str] | None = None) -> int:
         except (ExternalObservationRunError, OSError, ValueError) as exc:
             print(f"external-resources record-observation-run: {exc}", file=sys.stderr)
             return 2
-        print(
-            json.dumps(
-                {"ok": True, **result}, ensure_ascii=False, indent=2, sort_keys=True
-            )
-        )
+        print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     if args.command == "record-scene-trial":
         if not args.stdin:
@@ -420,11 +369,7 @@ def main(argv: list[str] | None = None) -> int:
         except (ExternalSceneTrialError, OSError, ValueError) as exc:
             print(f"external-resources record-scene-trial: {exc}", file=sys.stderr)
             return 2
-        print(
-            json.dumps(
-                {"ok": True, **result}, ensure_ascii=False, indent=2, sort_keys=True
-            )
-        )
+        print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     if args.command == "record-scene-consumer":
         if not args.stdin:
@@ -438,11 +383,7 @@ def main(argv: list[str] | None = None) -> int:
         except (ExternalSceneConsumerError, OSError, ValueError) as exc:
             print(f"external-resources record-scene-consumer: {exc}", file=sys.stderr)
             return 2
-        print(
-            json.dumps(
-                {"ok": True, **result}, ensure_ascii=False, indent=2, sort_keys=True
-            )
-        )
+        print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     if args.command == "record-scene-trial-feedback":
         if not args.stdin:
@@ -452,20 +393,14 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
         try:
-            result = record_external_scene_trial_feedback(
-                omo_dir, _payload_from_stdin()
-            )
+            result = record_external_scene_trial_feedback(omo_dir, _payload_from_stdin())
         except (ExternalSceneTrialFeedbackError, OSError, ValueError) as exc:
             print(
                 f"external-resources record-scene-trial-feedback: {exc}",
                 file=sys.stderr,
             )
             return 2
-        print(
-            json.dumps(
-                {"ok": True, **result}, ensure_ascii=False, indent=2, sort_keys=True
-            )
-        )
+        print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     if args.command == "selection-eval":
         try:
@@ -479,9 +414,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "scene-trial-readiness":
         try:
-            projection = build_external_scene_trial_promotion_readiness(
-                omo_dir, scene_id=args.scene_id
-            )
+            projection = build_external_scene_trial_promotion_readiness(omo_dir, scene_id=args.scene_id)
         except (OSError, ValueError, TypeError) as exc:
             print(f"external-resources scene-trial-readiness: {exc}", file=sys.stderr)
             return 2
@@ -503,9 +436,7 @@ def main(argv: list[str] | None = None) -> int:
     except (ExternalResourceObservationError, OSError, ValueError) as exc:
         print(f"external-resources observe: {exc}", file=sys.stderr)
         return 2
-    print(
-        json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2, sort_keys=True)
-    )
+    print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 
 

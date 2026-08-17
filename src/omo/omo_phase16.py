@@ -442,10 +442,7 @@ Pointer:
 
 本文件不维护 repo 的 live phase、active queue 或任何 mutable fact。repo `.omo/` 是 live SSOT；外部 OMO 只做方法复盘与模式抽象，避免 shadow SSOT。
 """,
-        EXTERNAL_OMO_ROOT
-        / "_delivery"
-        / "patterns"
-        / "03-控制面不能替代用户价值.md": f"""# 控制面不能替代用户价值
+        EXTERNAL_OMO_ROOT / "_delivery" / "patterns" / "03-控制面不能替代用户价值.md": f"""# 控制面不能替代用户价值
 
 > 类型：Pattern
 > 边界：Pointer / Pattern only，不是 repo live truth，也不是 shadow SSOT。
@@ -596,11 +593,7 @@ def all_command(args: argparse.Namespace) -> int:
     write_yaml(evidence_dir / "adoption-closeout.yaml", adoption_payload())
     for path, text in external_docs().items():
         write_text(path, text)
-    print(
-        json.dumps(
-            {"status": "ready", "phase": 16, "artifacts": 10}, ensure_ascii=False
-        )
-    )
+    print(json.dumps({"status": "ready", "phase": 16, "artifacts": 10}, ensure_ascii=False))
     return 0
 
 
@@ -609,15 +602,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     baseline = sub.add_parser("baseline")
-    baseline.add_argument(
-        "--output", default=".omo/_delivery/evidence/phase16/journey-baseline.yaml"
-    )
+    baseline.add_argument("--output", default=".omo/_delivery/evidence/phase16/journey-baseline.yaml")
     baseline.set_defaults(func=baseline_command)
 
     scenario = sub.add_parser("scenario")
-    scenario.add_argument(
-        "--output", default=".omo/_delivery/evidence/phase16/scenario-shell.yaml"
-    )
+    scenario.add_argument("--output", default=".omo/_delivery/evidence/phase16/scenario-shell.yaml")
     scenario.set_defaults(func=scenario_command)
 
     walkthrough = sub.add_parser("walkthrough")
@@ -635,9 +624,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_record.set_defaults(func=run_record_command)
 
     recovery = sub.add_parser("recovery")
-    recovery.add_argument(
-        "--output", default=".omo/_delivery/evidence/phase16/recovery-report.yaml"
-    )
+    recovery.add_argument("--output", default=".omo/_delivery/evidence/phase16/recovery-report.yaml")
     recovery.set_defaults(func=recovery_command)
 
     closeout = sub.add_parser("closeout")

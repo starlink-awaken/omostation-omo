@@ -27,8 +27,9 @@ persistence, DDL, checkpoints.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from ecos.ssot.mof.generated.control.mof_control_models import Episode, EventEnvelope
 from pydantic import ValidationError
@@ -41,9 +42,7 @@ EPISODE_SCHEMA_VERSION = "episode/v1"
 
 #: Episode card classes projected into ``inbox`` (and, when carrying a legal
 #: ``episode_id``, into ``episodes``).
-EPISODE_CARD_EVENTS = frozenset(
-    {"Episode.FYI.v1", "Episode.Approval.v1", "Episode.Decision.v1"}
-)
+EPISODE_CARD_EVENTS = frozenset({"Episode.FYI.v1", "Episode.Approval.v1", "Episode.Decision.v1"})
 
 EPISODE_CONFIRMATION_EVENT = "Mandate.Granted.v1"
 
@@ -60,9 +59,7 @@ _CARD_TYPE_BY_EVENT = {
 }
 
 
-def build_episode_projection_snapshot(
-    broker: LedgerBroker, *, principal_id: str
-) -> dict[str, Any]:
+def build_episode_projection_snapshot(broker: LedgerBroker, *, principal_id: str) -> dict[str, Any]:
     """Build the W2-04 read models for ``principal_id`` from ``broker``.
 
     Pure read: only ``broker.read`` / ``broker.count`` / ``broker.verify_chain``
@@ -96,26 +93,16 @@ def build_episode_projection_snapshot(
         try:
             raw_payload = json.loads(row["payload_json"])
         except (KeyError, TypeError, ValueError):
-            blocked.append(
-                _blocked_entry(
-                    row, REASON_MALFORMED_PAYLOAD, "payload is not valid JSON"
-                )
-            )
+            blocked.append(_blocked_entry(row, REASON_MALFORMED_PAYLOAD, "payload is not valid JSON"))
             continue
         if not isinstance(raw_payload, Mapping):
-            blocked.append(
-                _blocked_entry(
-                    row, REASON_MALFORMED_PAYLOAD, "payload must be a JSON object"
-                )
-            )
+            blocked.append(_blocked_entry(row, REASON_MALFORMED_PAYLOAD, "payload must be a JSON object"))
             continue
         payload = raw_payload
 
         episode_id = row.get("episode_id") or payload.get("episode_id")
         if not isinstance(episode_id, str) or not episode_id:
-            blocked.append(
-                _blocked_entry(row, REASON_MISSING_EPISODE_ID, "missing episode_id")
-            )
+            blocked.append(_blocked_entry(row, REASON_MISSING_EPISODE_ID, "missing episode_id"))
             continue
 
         try:
@@ -127,11 +114,7 @@ def build_episode_projection_snapshot(
                 payload=dict(payload),
             )
         except ValidationError as exc:
-            blocked.append(
-                _blocked_entry(
-                    row, REASON_INVALID_EPISODE_M2, _first_validation_error(exc)
-                )
-            )
+            blocked.append(_blocked_entry(row, REASON_INVALID_EPISODE_M2, _first_validation_error(exc)))
             continue
         envelope_dump = envelope.model_dump(mode="json")
 
@@ -144,11 +127,7 @@ def build_episode_projection_snapshot(
                     opened_at=envelope.emitted_at,
                 )
             except ValidationError as exc:
-                blocked.append(
-                    _blocked_entry(
-                        row, REASON_INVALID_EPISODE_M2, _first_validation_error(exc)
-                    )
-                )
+                blocked.append(_blocked_entry(row, REASON_INVALID_EPISODE_M2, _first_validation_error(exc)))
                 continue
             episodes_dump[episode_id] = episode.model_dump(mode="json")
             episode_order.append(episode_id)
@@ -162,10 +141,7 @@ def build_episode_projection_snapshot(
             inbox.append(_inbox_card(event_type, row, payload, episode_id))
 
     for card in inbox:
-        if (
-            card["episode"] in confirmed_episode_ids
-            and card["status"] == "pending_confirmation"
-        ):
+        if card["episode"] in confirmed_episode_ids and card["status"] == "pending_confirmation":
             card["status"] = "confirmed"
 
     episodes = [episodes_dump[episode_id] for episode_id in episode_order]
@@ -188,9 +164,7 @@ def build_episode_projection_snapshot(
             "events_blocked": len(blocked),
             "ledger_count_before": count_before,
             "ledger_count_after": count_after,
-            "ledger_unchanged": (
-                count_before == count_after and chain_before == chain_after
-            ),
+            "ledger_unchanged": (count_before == count_after and chain_before == chain_after),
             "chain_before": {
                 "ok": chain_before["ok"],
                 "total": chain_before["total"],
@@ -200,9 +174,7 @@ def build_episode_projection_snapshot(
     }
 
 
-def build_episode_projection_snapshot_from_path(
-    db_path: Path | str, *, principal_id: str
-) -> dict[str, Any]:
+def build_episode_projection_snapshot_from_path(db_path: Path | str, *, principal_id: str) -> dict[str, Any]:
     """Open ``db_path``, build the snapshot, and always close the broker."""
     broker = LedgerBroker.connect(db_path)
     try:
@@ -275,13 +247,9 @@ def _inbox_card(
         "card_type": _CARD_TYPE_BY_EVENT.get(event_type, event_type),
         "episode": episode_id,
         "principal": row.get("principal_id") or None,
-        "role": payload.get("role")
-        or payload.get("role_id")
-        or row.get("role_context_id"),
+        "role": payload.get("role") or payload.get("role_id") or row.get("role_context_id"),
         "responsibility": (
-            payload.get("responsibility")
-            or payload.get("responsibility_id")
-            or row.get("responsibility_id")
+            payload.get("responsibility") or payload.get("responsibility_id") or row.get("responsibility_id")
         ),
         "why_now": payload.get("why_now"),
         "summary": payload.get("summary"),

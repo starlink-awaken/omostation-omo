@@ -29,9 +29,7 @@ def _require_fields(task: dict, fields: list[str], errors: list[str]) -> None:
             errors.append(f"missing required field: {field}")
 
 
-def _require_list(
-    task: dict, field: str, errors: list[str], allow_empty: bool = True
-) -> None:
+def _require_list(task: dict, field: str, errors: list[str], allow_empty: bool = True) -> None:
     value = task.get(field)
     if not isinstance(value, list):
         errors.append(f"{field} must be a list")
@@ -85,13 +83,8 @@ def validate_task_data(task: dict, group: str | None = None) -> list[str]:
         errors.append(f"invalid status: {task['status']}")
     if "risk_level" in task and task["risk_level"] not in VALID_LEVELS:
         errors.append(f"invalid risk_level: {task['risk_level']}")
-    if (
-        "allowed_operation_level" in task
-        and task["allowed_operation_level"] not in VALID_LEVELS
-    ):
-        errors.append(
-            f"invalid allowed_operation_level: {task['allowed_operation_level']}"
-        )
+    if "allowed_operation_level" in task and task["allowed_operation_level"] not in VALID_LEVELS:
+        errors.append(f"invalid allowed_operation_level: {task['allowed_operation_level']}")
 
     for field in (
         "knowledge_refs",
@@ -150,9 +143,7 @@ def validate_task_data(task: dict, group: str | None = None) -> list[str]:
         evidence_req = task.get("evidence_required", [])
         evidence_paths = task.get("evidence_paths", [])
         if evidence_req and not evidence_paths:
-            errors.append(
-                "status=done requires physical 'evidence_paths' to satisfy 'evidence_required'"
-            )
+            errors.append("status=done requires physical 'evidence_paths' to satisfy 'evidence_required'")
 
     return errors
 

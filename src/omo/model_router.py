@@ -35,9 +35,7 @@ class ModelRouterProtocol(Protocol):
     - HybridRouter (本地优先 + API 升级, 守 F11)
     """
 
-    def route(
-        self, node: str, node_output: dict[str, Any], *, scene_id: str
-    ) -> ModelDecision:
+    def route(self, node: str, node_output: dict[str, Any], *, scene_id: str) -> ModelDecision:
         """评估复杂条件节点, 返回决策 (含置信度 + 成本)."""
         ...
 
@@ -53,9 +51,7 @@ class StubModelRouter:
         self.threshold = threshold
         self.model_used = "local-triage"
 
-    def route(
-        self, node: str, node_output: dict[str, Any], *, scene_id: str
-    ) -> ModelDecision:
+    def route(self, node: str, node_output: dict[str, Any], *, scene_id: str) -> ModelDecision:
         confidence = float(node_output.get("confidence", 0.0))
         if confidence >= self.threshold:
             return ModelDecision(
@@ -63,20 +59,14 @@ class StubModelRouter:
                 confidence=confidence,
                 model_used=self.model_used,
                 cost_estimate=0.0,  # stub 无成本
-                reason=(
-                    f"[{scene_id}/{node}] confidence {confidence:.2f}"
-                    f" >= {self.threshold}"
-                ),
+                reason=(f"[{scene_id}/{node}] confidence {confidence:.2f} >= {self.threshold}"),
             )
         return ModelDecision(
             action="human_veto",
             confidence=confidence,
             model_used=self.model_used,
             cost_estimate=0.0,
-            reason=(
-                f"[{scene_id}/{node}] confidence {confidence:.2f}"
-                f" < {self.threshold} (守 F6: 决策可逆, 升级人工)"
-            ),
+            reason=(f"[{scene_id}/{node}] confidence {confidence:.2f} < {self.threshold} (守 F6: 决策可逆, 升级人工)"),
         )
 
 

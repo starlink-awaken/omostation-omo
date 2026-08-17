@@ -28,21 +28,13 @@ def _phase15_evidence_dir(root: Path) -> Path:
 def _sharedbrain_ref() -> str:
     archived = "projects/_archived/SharedBrain-original/README.md"
     current = "projects/SharedBrain/README.md"
-    return (
-        archived
-        if not (Path(__file__).resolve().parents[3] / current).exists()
-        else current
-    )
+    return archived if not (Path(__file__).resolve().parents[3] / current).exists() else current
 
 
 def _sharedbrain_pyproject_ref() -> str:
     archived = "projects/_archived/SharedBrain-original/pyproject.toml"
     current = "projects/SharedBrain/pyproject.toml"
-    return (
-        archived
-        if not (Path(__file__).resolve().parents[3] / current).exists()
-        else current
-    )
+    return archived if not (Path(__file__).resolve().parents[3] / current).exists() else current
 
 
 def _agentmesh_ref(name: str, *, fallback: str = "src/index.ts") -> str:
@@ -232,9 +224,7 @@ def ledger_payload() -> dict[str, Any]:
         {
             "id": "p15-recovery-drill-entry",
             "type": "recovery-drill",
-            "evidence_refs": [
-                ".omo/_delivery/evidence/phase15/recovery-drill-report.yaml"
-            ],
+            "evidence_refs": [".omo/_delivery/evidence/phase15/recovery-drill-report.yaml"],
             "verification": "Selected rollback drills pass in fixture/dry-run mode.",
             "rollback": "Block mutation-capable promotion until recovery drill passes.",
         },
@@ -558,9 +548,7 @@ def all_command(args: argparse.Namespace) -> int:
     write_yaml(evidence_dir / "policy-test-report.yaml", policy)
     ledger = ledger_payload()
     write_yaml(_omo(root) / "_truth" / "governance-evidence" / "ledger.yaml", ledger)
-    print(
-        json.dumps({"status": "ready", "phase": 15, "artifacts": 6}, ensure_ascii=False)
-    )
+    print(json.dumps({"status": "ready", "phase": 15, "artifacts": 6}, ensure_ascii=False))
     return 0
 
 
@@ -569,15 +557,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     ledger = sub.add_parser("ledger")
-    ledger.add_argument(
-        "--output", default=".omo/_truth/governance-evidence/ledger.yaml"
-    )
+    ledger.add_argument("--output", default=".omo/_truth/governance-evidence/ledger.yaml")
     ledger.set_defaults(func=ledger_command)
 
     policy = sub.add_parser("policy")
-    policy.add_argument(
-        "--output", default=".omo/_delivery/evidence/phase15/policy-test-report.yaml"
-    )
+    policy.add_argument("--output", default=".omo/_delivery/evidence/phase15/policy-test-report.yaml")
     policy.set_defaults(func=policy_command)
 
     compile_parser = sub.add_parser("compile")
@@ -595,15 +579,11 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.set_defaults(func=dashboard_command)
 
     recovery = sub.add_parser("recovery")
-    recovery.add_argument(
-        "--output", default=".omo/_delivery/evidence/phase15/recovery-drill-report.yaml"
-    )
+    recovery.add_argument("--output", default=".omo/_delivery/evidence/phase15/recovery-drill-report.yaml")
     recovery.set_defaults(func=recovery_command)
 
     user_value = sub.add_parser("user-value")
-    user_value.add_argument(
-        "--output", default=".omo/_delivery/evidence/phase15/user-value-loop.yaml"
-    )
+    user_value.add_argument("--output", default=".omo/_delivery/evidence/phase15/user-value-loop.yaml")
     user_value.set_defaults(func=user_value_command)
 
     all_parser = sub.add_parser("all")

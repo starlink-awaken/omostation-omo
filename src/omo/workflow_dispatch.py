@@ -26,9 +26,7 @@ class WorkflowDispatchError(ValueError):
 
 
 def _canonical(value: dict[str, Any]) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
 def _proof(grant: dict[str, Any]) -> str:
@@ -49,16 +47,12 @@ def _parse_health(health: dict[str, Any], required: list[str]) -> dict[str, Any]
         if not isinstance(item, dict) or not item.get("available", False):
             unavailable.append(capability)
     if unavailable:
-        raise WorkflowDispatchError(
-            "required capabilities unavailable: " + ", ".join(unavailable)
-        )
+        raise WorkflowDispatchError("required capabilities unavailable: " + ", ".join(unavailable))
     if status == "unhealthy":
         raise WorkflowDispatchError("capability health is unhealthy")
     return {
         "status": status,
-        "capabilities": {
-            capability: capabilities[capability] for capability in required
-        },
+        "capabilities": {capability: capabilities[capability] for capability in required},
         "observed_at": health.get("observed_at"),
         "source": health.get("source", "agora"),
         "snapshot_digest": hashlib.sha256(_canonical(health)).hexdigest(),
@@ -154,10 +148,7 @@ def _validated_request_identity(
 
 def _requested_event(store: WorkflowMeshStore, workflow_run_id: str) -> dict[str, Any]:
     for event in store.events():
-        if (
-            str(event.get("workflow_run_id")) == workflow_run_id
-            and event.get("event_type") == "WorkflowRequested"
-        ):
+        if str(event.get("workflow_run_id")) == workflow_run_id and event.get("event_type") == "WorkflowRequested":
             return event
     raise WorkflowDispatchError(f"workflow request not found: {workflow_run_id}")
 
@@ -217,9 +208,7 @@ def _validate_admission_inputs(
     return required
 
 
-def _check_scene_binding(
-    event: dict[str, Any], scene_binding: Mapping[str, Any] | None
-) -> None:
+def _check_scene_binding(event: dict[str, Any], scene_binding: Mapping[str, Any] | None) -> None:
     if scene_binding is None:
         return
     payload = event.get("payload")
@@ -244,9 +233,7 @@ def _build_admission_grant(
     issued_at = now or datetime.now(UTC).replace(microsecond=0).isoformat()
     if ttl_seconds <= 0:
         raise WorkflowDispatchError("admission ttl must be positive")
-    expires_at = (
-        datetime.fromisoformat(issued_at) + timedelta(seconds=ttl_seconds)
-    ).isoformat()
+    expires_at = (datetime.fromisoformat(issued_at) + timedelta(seconds=ttl_seconds)).isoformat()
     policy = {
         "task_id": task_id,
         "backend": backend,
@@ -290,18 +277,14 @@ def renew_admission(
     store = WorkflowMeshStore(root / Path(omo_dir))
     snapshot = store.snapshot(workflow_run_id)
     if snapshot.get("state") != "dispatched":
-        raise WorkflowDispatchError(
-            f"admission renewal requires dispatched state, got {snapshot.get('state')}"
-        )
+        raise WorkflowDispatchError(f"admission renewal requires dispatched state, got {snapshot.get('state')}")
     admission = snapshot.get("admission") or {}
     if admission.get("admission_id") != admission_id:
         raise WorkflowDispatchError("admission identity mismatch on renewal")
     issued_at = now or datetime.now(UTC).replace(microsecond=0).isoformat()
     if ttl_seconds <= 0:
         raise WorkflowDispatchError("renewal ttl must be positive")
-    expires_at = (
-        datetime.fromisoformat(issued_at) + timedelta(seconds=ttl_seconds)
-    ).isoformat()
+    expires_at = (datetime.fromisoformat(issued_at) + timedelta(seconds=ttl_seconds)).isoformat()
     event = new_workflow_event(
         "AdmissionRenewed",
         workflow_run_id,
@@ -363,9 +346,7 @@ def preview_requested_workflow(
         remaining_budget=remaining_budget,
     )
     task_id = str(event["payload"]["task_id"])
-    task_file, task = _task_file_for_request(
-        root, task_id, groups=("active", "planned"), omo_dir=omo_dir
-    )
+    task_file, task = _task_file_for_request(root, task_id, groups=("active", "planned"), omo_dir=omo_dir)
     validation_errors = validate_task_file(task_file)
     if validation_errors:
         raise WorkflowDispatchError("; ".join(validation_errors))
@@ -437,9 +418,7 @@ def admit_requested_workflow(
             "worker_launch": False,
         }
     if snapshot.get("state") != "planned":
-        raise WorkflowDispatchError(
-            f"workflow request cannot be admitted from state: {snapshot.get('state')}"
-        )
+        raise WorkflowDispatchError(f"workflow request cannot be admitted from state: {snapshot.get('state')}")
     required = _validate_admission_inputs(
         backend=backend,
         required_capabilities=required_capabilities,
@@ -448,9 +427,7 @@ def admit_requested_workflow(
     )
     task_id = str(event["payload"]["task_id"])
     try:
-        task_file, task = _task_file_for_request(
-            root, task_id, groups=("active",), omo_dir=omo_dir
-        )
+        task_file, task = _task_file_for_request(root, task_id, groups=("active",), omo_dir=omo_dir)
     except WorkflowDispatchError as exc:
         try:
             _task_file_for_request(root, task_id, groups=("planned",), omo_dir=omo_dir)
@@ -542,11 +519,7 @@ def admit_workflow(
     """Validate gates, append request/admission events, and return a packet."""
     omo = root / Path(omo_dir)
     task_file = next(
-        (
-            path
-            for path in (omo / "tasks" / "active").glob("*.yaml")
-            if load_yaml(path).get("id") == task_id
-        ),
+        (path for path in (omo / "tasks" / "active").glob("*.yaml") if load_yaml(path).get("id") == task_id),
         None,
     )
     if task_file is None:
@@ -561,9 +534,7 @@ def admit_workflow(
         task_file=task_file,
         root=root,
     )
-    planned_task_ref = str(
-        (task_file.parent.parent / "planned" / task_file.name).relative_to(root)
-    )
+    planned_task_ref = str((task_file.parent.parent / "planned" / task_file.name).relative_to(root))
     approval = _approval_state(
         root,
         task,
@@ -571,9 +542,7 @@ def admit_workflow(
         accepted_task_refs={planned_task_ref},
         now=now,
     )
-    health = _parse_health(
-        capability_health, list(dict.fromkeys(required_capabilities))
-    )
+    health = _parse_health(capability_health, list(dict.fromkeys(required_capabilities)))
     if requested_budget < 0:
         raise WorkflowDispatchError("requested budget must be non-negative")
     if remaining_budget is not None and requested_budget > remaining_budget:
@@ -583,9 +552,7 @@ def admit_workflow(
     run_id = workflow_run_id or f"mesh-{task_id.lower()}-{uuid4().hex[:12]}"
     trace = trace_id or run_id
     step_run_ids = [f"{run_id}:execute"]
-    expires_at = (
-        datetime.fromisoformat(issued_at) + timedelta(seconds=ttl_seconds)
-    ).isoformat()
+    expires_at = (datetime.fromisoformat(issued_at) + timedelta(seconds=ttl_seconds)).isoformat()
     policy = {
         "task_id": task_id,
         "backend": backend,
@@ -798,8 +765,7 @@ def consume_pending_workflow_requests(
     planned_runs = [
         s
         for s in store.snapshots()
-        if s.get("state") == "planned"
-        and producer_by_run.get(str(s.get("workflow_run_id"))) != "agent-workflow"
+        if s.get("state") == "planned" and producer_by_run.get(str(s.get("workflow_run_id"))) != "agent-workflow"
     ]
     for snapshot in planned_runs[:max_per_tick]:
         run_id = str(snapshot["workflow_run_id"])
@@ -857,9 +823,7 @@ def consume_pending_workflow_requests(
         iris_caps = [c for c in required if str(c).startswith("iris:")]
         try:
             if iris_caps:
-                result = _dispatch_iris_via_executor(
-                    root, packet, iris_caps, omo_dir=omo_dir
-                )
+                result = _dispatch_iris_via_executor(root, packet, iris_caps, omo_dir=omo_dir)
             else:
                 from .omo_worker_dispatch import dispatch_task
 

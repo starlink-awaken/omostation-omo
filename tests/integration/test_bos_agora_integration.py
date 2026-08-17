@@ -14,9 +14,7 @@ from pathlib import Path
 
 import pytest
 
-BOS_REGISTRY = Path(
-    str(Path(__file__).resolve().parents[4]) + "/.omo/_knowledge/bos-registry.json"
-)
+BOS_REGISTRY = Path(str(Path(__file__).resolve().parents[4]) + "/.omo/_knowledge/bos-registry.json")
 OMOSTATION_ROOT = Path(__file__).resolve().parents[4]
 OMO_ROOT = OMOSTATION_ROOT / "projects" / "omo"
 AGORA_ROOT = OMOSTATION_ROOT / "projects" / "agora"
@@ -65,9 +63,7 @@ def test_analysis_12_uris_in_registry():
     """Classic analysis URIs remain present after registry sync."""
     regs = json.loads(BOS_REGISTRY.read_text())
     analysis_uris = [r["uri"] for r in regs if r.get("domain") == "analysis"]
-    assert len(analysis_uris) >= 12, (
-        f"Expected >=12 analysis URIs, got {len(analysis_uris)}"
-    )
+    assert len(analysis_uris) >= 12, f"Expected >=12 analysis URIs, got {len(analysis_uris)}"
     for uri in ANALYSIS_URIS:
         assert uri in analysis_uris, f"Missing: {uri}"
 
@@ -116,12 +112,8 @@ def test_agora_resolver_importable_from_omo_path():
     assert r.returncode == 0, f"Failed: {r.stderr}"
     out = r.stdout
     # POC_SERVICES 动态派生 (>= 静态 42/12). 假阳性见 BOS 鸿沟审计文档.
-    _svc = int(
-        [ln for ln in out.splitlines() if ln.startswith("services:")][0].split(":")[1]
-    )
-    _ana = int(
-        [ln for ln in out.splitlines() if ln.startswith("analysis:")][0].split(":")[1]
-    )
+    _svc = int([ln for ln in out.splitlines() if ln.startswith("services:")][0].split(":")[1])
+    _ana = int([ln for ln in out.splitlines() if ln.startswith("analysis:")][0].split(":")[1])
     assert _svc >= 42, f"services: {_svc} (dynamic, >= 42 static)"
     assert _ana >= 12, f"analysis: {_ana} (dynamic, >= 12 static)"
     assert "bos://analysis/" in out
@@ -205,9 +197,7 @@ def test_cross_process_3_gap_samples_return_error():
         payload = json.loads(last_line)
         assert payload.get("status") == "error", f"{uri} expected error, got {payload}"
         err_msg = payload.get("error", "")
-        assert "unknown_bos_uri" in err_msg or "eof_no_response" in err_msg, (
-            f"{uri} bad error: {payload}"
-        )
+        assert "unknown_bos_uri" in err_msg or "eof_no_response" in err_msg, f"{uri} bad error: {payload}"
 
 
 # ── 摘要 ─────────────────────────────────────────────

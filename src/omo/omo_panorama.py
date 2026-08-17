@@ -48,17 +48,13 @@ class OMOPanoramaEngine:
                 text=True,
                 timeout=5,
             )
-            worktree_count = len(
-                [line for line in res.stdout.strip().split("\n") if line.strip()]
-            )
+            worktree_count = len([line for line in res.stdout.strip().split("\n") if line.strip()])
         except Exception:
             pass
 
         # 任务数
         tasks_dir = self.omo_dir / "tasks"
-        total_tasks = (
-            len(list(tasks_dir.glob("**/*.yaml"))) if tasks_dir.exists() else 0
-        )
+        total_tasks = len(list(tasks_dir.glob("**/*.yaml"))) if tasks_dir.exists() else 0
 
         return {
             "active_workflow_runs": active_runs,
@@ -73,7 +69,7 @@ class OMOPanoramaEngine:
         bos_count = 0
         if bos_path.exists():
             try:
-                with open(bos_path, "r", encoding="utf-8") as f:
+                with open(bos_path, encoding="utf-8") as f:
                     data = yaml.safe_load(f) or []
                     bos_count = len(data)
             except Exception:
@@ -83,7 +79,7 @@ class OMOPanoramaEngine:
         ports_count = 0
         if port_registry_path.exists():
             try:
-                with open(port_registry_path, "r", encoding="utf-8") as f:
+                with open(port_registry_path, encoding="utf-8") as f:
                     pdata = yaml.safe_load(f) or {}
                     ports_count = len(pdata.get("ports", {}))
             except Exception:
@@ -100,15 +96,13 @@ class OMOPanoramaEngine:
     def gather_content_dim(self) -> dict[str, Any]:
         """Dim 3: 内容与产物 (Content & Artifacts)"""
         scene_cards_dir = self.root / "docs" / "scene-cards"
-        scene_cards_count = (
-            len(list(scene_cards_dir.glob("*.yaml"))) if scene_cards_dir.exists() else 0
-        )
+        scene_cards_count = len(list(scene_cards_dir.glob("*.yaml"))) if scene_cards_dir.exists() else 0
 
         ledger_path = self.root / "docs" / "plans" / "3y-bet-ledger.yaml"
         total_bets = 0
         if ledger_path.exists():
             try:
-                with open(ledger_path, "r", encoding="utf-8") as f:
+                with open(ledger_path, encoding="utf-8") as f:
                     ldata = yaml.safe_load(f) or {}
                     total_bets = len(ldata.get("bets", []))
             except Exception:
@@ -126,18 +120,14 @@ class OMOPanoramaEngine:
         beliefs_count = 0
         if beliefs_path.exists():
             try:
-                with open(beliefs_path, "r", encoding="utf-8") as f:
+                with open(beliefs_path, encoding="utf-8") as f:
                     bdata = yaml.safe_load(f) or {}
                     beliefs_count = len(bdata.get("beliefs", []))
             except Exception:
                 pass
 
         skills_dir = self.root / ".agents" / "skills"
-        skills_count = (
-            len([d for d in skills_dir.iterdir() if d.is_dir()])
-            if skills_dir.exists()
-            else 0
-        )
+        skills_count = len([d for d in skills_dir.iterdir() if d.is_dir()]) if skills_dir.exists() else 0
 
         return {
             "mos_agent_beliefs": beliefs_count,
@@ -152,7 +142,7 @@ class OMOPanoramaEngine:
         health_grade = "A+"
         if sys_path.exists():
             try:
-                with open(sys_path, "r", encoding="utf-8") as f:
+                with open(sys_path, encoding="utf-8") as f:
                     sdata = yaml.safe_load(f) or {}
                     xplane_score = sdata.get("xplane_score", 100.0)
                     health_grade = sdata.get("health_grade", "A+")
@@ -163,7 +153,7 @@ class OMOPanoramaEngine:
         metrics_records = 0
         if metrics_store.exists():
             try:
-                with open(metrics_store, "r", encoding="utf-8") as f:
+                with open(metrics_store, encoding="utf-8") as f:
                     metrics_records = sum(1 for _ in f)
             except Exception:
                 pass
@@ -181,7 +171,7 @@ class OMOPanoramaEngine:
         drifts = 0
         if health_path.exists():
             try:
-                with open(health_path, "r", encoding="utf-8") as f:
+                with open(health_path, encoding="utf-8") as f:
                     hdata = yaml.safe_load(f) or {}
                     drifts = hdata.get("drift_count", 0)
             except Exception:
@@ -197,15 +187,13 @@ class OMOPanoramaEngine:
     def gather_debt_and_asset_dim(self) -> dict[str, Any]:
         """Dim 7: 债务与资产 (Debt & Asset)"""
         debt_dir = self.omo_dir / "debt" / "items"
-        debt_items_count = (
-            len(list(debt_dir.glob("*.yaml"))) if debt_dir.exists() else 0
-        )
+        debt_items_count = len(list(debt_dir.glob("*.yaml"))) if debt_dir.exists() else 0
 
         projects_path = self.root / "docs" / "project-registry.yaml"
         total_projects = 17
         if projects_path.exists():
             try:
-                with open(projects_path, "r", encoding="utf-8") as f:
+                with open(projects_path, encoding="utf-8") as f:
                     pdata = yaml.safe_load(f) or {}
                     total_projects = len(pdata.get("projects", {}))
             except Exception:
@@ -239,13 +227,9 @@ def format_panorama_report(data: dict[str, Any]) -> str:
     """格式化渲染 7 维全景立体重构报告"""
     dims = data.get("dimensions", {})
     lines = []
-    lines.append(
-        "========================================================================="
-    )
+    lines.append("=========================================================================")
     lines.append(" 🌐 omostation 7 维全景终极可观测仪表盘 (7D Full-Spectrum Telemetry)")
-    lines.append(
-        "========================================================================="
-    )
+    lines.append("=========================================================================")
 
     e = dims.get("1_execution", {})
     lines.append(
@@ -282,7 +266,5 @@ def format_panorama_report(data: dict[str, Any]) -> str:
         f"🔹 [7. 债务与资产 Debt & Assets]: Debts={da.get('unresolved_debts')} | Projects={da.get('tracked_projects')} | Projects Health Avg={da.get('asset_projects_health')}"
     )
 
-    lines.append(
-        "========================================================================="
-    )
+    lines.append("=========================================================================")
     return "\n".join(lines)

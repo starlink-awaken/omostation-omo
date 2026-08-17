@@ -71,9 +71,7 @@ def _find_dispatch_file(runs_dir: Path, dispatch_id: str) -> Path:
     return path
 
 
-def _require_admitted_worker(
-    registry: dict, worker_id: str, transport: str
-) -> dict[str, Any]:
+def _require_admitted_worker(registry: dict, worker_id: str, transport: str) -> dict[str, Any]:
     """Return an admitted worker or fail before dispatch side effects.
 
     The registry is the admission SSOT.  A worker that is merely declared (or
@@ -90,26 +88,16 @@ def _require_admitted_worker(
         None,
     )
     if worker is None:
-        raise ValueError(
-            f"worker admission denied: worker_id={worker_id} reason=not_registered"
-        )
+        raise ValueError(f"worker admission denied: worker_id={worker_id} reason=not_registered")
     if worker.get("enabled") is not True:
-        raise ValueError(
-            f"worker admission denied: worker_id={worker_id} reason=disabled"
-        )
+        raise ValueError(f"worker admission denied: worker_id={worker_id} reason=disabled")
     if worker.get("admission_state") != "admitted":
-        raise ValueError(
-            f"worker admission denied: worker_id={worker_id} reason=not_admitted"
-        )
+        raise ValueError(f"worker admission denied: worker_id={worker_id} reason=not_admitted")
     transports = worker.get("transports")
     transport_spec = transports.get(transport) if isinstance(transports, dict) else None
-    if (
-        not isinstance(transport_spec, dict)
-        or not str(transport_spec.get("command", "")).strip()
-    ):
+    if not isinstance(transport_spec, dict) or not str(transport_spec.get("command", "")).strip():
         raise ValueError(
-            "worker admission denied: "
-            f"worker_id={worker_id} reason=transport_missing transport={transport}"
+            f"worker admission denied: worker_id={worker_id} reason=transport_missing transport={transport}"
         )
     return worker
 
@@ -180,18 +168,13 @@ def _require_worker_policy(
         )
     ).upper()
     if allowed_level not in _OPERATION_LEVELS:
-        raise ValueError(
-            "worker policy denied: "
-            f"worker_id={worker_id} reason=invalid_worker_operation_level"
-        )
+        raise ValueError(f"worker policy denied: worker_id={worker_id} reason=invalid_worker_operation_level")
     task_levels: list[str] = []
     for field in ("risk_level", "allowed_operation_level"):
         level = str(task.get(field) or "L0").upper()
         if level not in _OPERATION_LEVELS:
             raise ValueError(
-                "worker policy denied: "
-                f"worker_id={worker_id} reason=invalid_task_operation_level "
-                f"field={field}"
+                f"worker policy denied: worker_id={worker_id} reason=invalid_task_operation_level field={field}"
             )
         task_levels.append(level)
     requested_level = max(task_levels, key=_OPERATION_LEVELS.__getitem__)
@@ -205,31 +188,20 @@ def _require_worker_policy(
     write_scope = worker.get("write_scope")
     scope_mode = write_scope.get("mode") if isinstance(write_scope, dict) else None
     if scope_mode == "none" and allowed_write_paths:
-        raise ValueError(
-            "worker policy denied: "
-            f"worker_id={worker_id} reason=write_scope_denied mode=none"
-        )
+        raise ValueError(f"worker policy denied: worker_id={worker_id} reason=write_scope_denied mode=none")
 
     required, explicit_capabilities = _required_capabilities(
         task,
         workflow_packet,
         worker_id=worker_id,
     )
-    if (
-        worker.get("require_explicit_capabilities") is True
-        and not explicit_capabilities
-    ):
-        raise ValueError(
-            "worker policy denied: "
-            f"worker_id={worker_id} reason=capability_requirements_missing"
-        )
+    if worker.get("require_explicit_capabilities") is True and not explicit_capabilities:
+        raise ValueError(f"worker policy denied: worker_id={worker_id} reason=capability_requirements_missing")
     provided = set(_capability_values(worker.get("capabilities")))
     missing = [capability for capability in required if capability not in provided]
     if missing:
         raise ValueError(
-            "worker policy denied: "
-            f"worker_id={worker_id} reason=capability_mismatch "
-            f"missing={','.join(missing)}"
+            f"worker policy denied: worker_id={worker_id} reason=capability_mismatch missing={','.join(missing)}"
         )
     return worker
 
@@ -244,10 +216,7 @@ def _default_enabled_worker_id(registry: dict) -> str:
         ):
             return str(worker["id"])
     for worker in registry.get("workers", []):
-        if (
-            worker.get("enabled") is True
-            and worker.get("admission_state") == "admitted"
-        ):
+        if worker.get("enabled") is True and worker.get("admission_state") == "admitted":
             return str(worker["id"])
     raise ValueError("no admitted worker is registered")
 
@@ -290,23 +259,15 @@ def _launch_worker_from_prompt(
     write_text_atomic(stdout_path, output)
     if result.returncode != 0:
         raise RuntimeError(
-            "worker launch failed: "
-            f"worker_id={worker_id} returncode={result.returncode} log={stdout_path}"
+            f"worker launch failed: worker_id={worker_id} returncode={result.returncode} log={stdout_path}"
         )
     return output
 
 
-def _launch_existing_dispatch(
-    root: Path, dispatch_path: Path, *, omo_dir: str | Path = ".omo"
-) -> dict[str, Any]:
+def _launch_existing_dispatch(root: Path, dispatch_path: Path, *, omo_dir: str | Path = ".omo") -> dict[str, Any]:
     dispatch = _load_yaml(dispatch_path)
-    registry = _load_yaml(
-        _omo_path(root, omo_dir) / "_truth" / "registry" / "workers.yaml"
-    )
-    prompt_ref = (
-        dispatch.get("inputs", {}).get("prompt_file")
-        or dispatch["execution"]["prompt_file"]
-    )
+    registry = _load_yaml(_omo_path(root, omo_dir) / "_truth" / "registry" / "workers.yaml")
+    prompt_ref = dispatch.get("inputs", {}).get("prompt_file") or dispatch["execution"]["prompt_file"]
     prompt_path = root / str(prompt_ref)
     stdout_path = root / dispatch["execution"]["log_ref"]
     _launch_worker_from_prompt(
@@ -380,9 +341,7 @@ def _build_launch_argv(
         if workspace_sentinel in arg:
             if resolved_root is None:
                 raise ValueError("worker command requires a workspace root")
-            workspace_value = (
-                "<workspace_root>" if redact_workspace_root else str(resolved_root)
-            )
+            workspace_value = "<workspace_root>" if redact_workspace_root else str(resolved_root)
             arg = arg.replace(workspace_sentinel, workspace_value)
         resolved_argv.append(arg)
     return resolved_argv

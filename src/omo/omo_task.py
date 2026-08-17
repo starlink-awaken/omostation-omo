@@ -123,9 +123,7 @@ def cmd_task_create(
         source_ref=source_ref or f"omo:task:create:{task_id}",
     )
     print(f"Created governed task: {omo_dir / 'tasks' / 'planned' / f'{task_id}.yaml'}")
-    print(
-        f"Ingress artifact: {omo_dir / '_delivery' / 'ingress' / 'tasks' / f'{task_id}.yaml'}"
-    )
+    print(f"Ingress artifact: {omo_dir / '_delivery' / 'ingress' / 'tasks' / f'{task_id}.yaml'}")
     print(f"Task ID: {created['id']}")
     return 0
 
@@ -231,9 +229,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command")
 
     tl = sub.add_parser("list", help="List tasks")
-    tl.add_argument(
-        "--status", "-s", choices=["active", "planned", "done"], help="Filter by status"
-    )
+    tl.add_argument("--status", "-s", choices=["active", "planned", "done"], help="Filter by status")
 
     tc = sub.add_parser("create", help="Create a new task")
     tc.add_argument("--title", required=True, help="Task title")
@@ -279,9 +275,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Highest allowed operation level",
     )
     tc.add_argument("--context-uri", help="Optional BOS context URI")
-    tc.add_argument(
-        "--source-ref", default="", help="Stable source ref for ingress registry"
-    )
+    tc.add_argument("--source-ref", default="", help="Stable source ref for ingress registry")
 
     td = sub.add_parser("done", help="归档任务为完成 (planned/active → done)")
     td.add_argument("task_id", help="Task ID (如 IMPORTED-64f7c6 / TASK-XXXXXXXX)")
@@ -295,9 +289,7 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="Evidence path ref; repeatable",
     )
-    tr.add_argument(
-        "--source-ref", default="", help="Stable source ref for audit trail"
-    )
+    tr.add_argument("--source-ref", default="", help="Stable source ref for audit trail")
 
     tad = sub.add_parser(
         "add-evidence",
@@ -311,15 +303,11 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="Evidence path ref; repeatable",
     )
-    tad.add_argument(
-        "--source-ref", default="", help="Stable source ref for audit trail"
-    )
+    tad.add_argument("--source-ref", default="", help="Stable source ref for audit trail")
 
     ta = sub.add_parser("repair-approval", help="修复 task 的 promotion approval 工件")
     ta.add_argument("task_id", help="Task ID")
-    ta.add_argument(
-        "--source-ref", default="", help="Stable source ref for audit trail"
-    )
+    ta.add_argument("--source-ref", default="", help="Stable source ref for audit trail")
 
     args = parser.parse_args(argv)
     omo_dir = _find_omo_dir()

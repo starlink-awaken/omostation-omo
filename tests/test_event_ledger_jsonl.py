@@ -21,8 +21,8 @@ OMO_SRC = Path(__file__).resolve().parents[1] / "src"
 if str(OMO_SRC) not in sys.path:
     sys.path.insert(0, str(OMO_SRC))
 
-from omo.event_ledger.broker import DuplicateEventError  # noqa: E402
-from omo.event_ledger.surface import EventLedgerSurface  # noqa: E402
+from omo.event_ledger.broker import DuplicateEventError
+from omo.event_ledger.surface import EventLedgerSurface
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -77,10 +77,7 @@ class SpyBroker:
         )
         key = (producer, idempotency_key)
         if key in self._keys:
-            raise DuplicateEventError(
-                f"duplicate event: producer={producer!r} "
-                f"idempotency_key={idempotency_key!r}"
-            )
+            raise DuplicateEventError(f"duplicate event: producer={producer!r} idempotency_key={idempotency_key!r}")
         self._keys.add(key)
         return len(self.calls)
 
@@ -165,11 +162,7 @@ def test_bad_lines_quarantined_and_healthy_continue(tmp_path: Path) -> None:
         assert reasons == {"parse_error", "not_object", "unknown_version"}
         assert surface.broker.count() == 2
 
-        entries = [
-            json.loads(line)
-            for line in quarantine.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        entries = [json.loads(line) for line in quarantine.read_text(encoding="utf-8").splitlines() if line.strip()]
         assert len(entries) == 3
         assert all(e["source"] == "mixed.jsonl" for e in entries)
         assert all(e["line"] >= 1 for e in entries)
@@ -209,9 +202,7 @@ def test_reverse_write_flags_quarantined(tmp_path: Path) -> None:
         r = import_jsonl(surface.broker, src)
         assert r["imported"] == 1
         assert r["quarantined"] == 4
-        assert all(
-            e["reason"] == "reverse_write_rejected" for e in r["quarantine_entries"]
-        )
+        assert all(e["reason"] == "reverse_write_rejected" for e in r["quarantine_entries"])
         assert surface.broker.count() == 1
         assert surface.broker.verify_chain()["ok"] is True
 
@@ -232,11 +223,7 @@ def test_export_metadata_and_validity(tmp_path: Path) -> None:
         report = export_jsonl(surface.broker, out)
         assert report["exported"] == 3
 
-        lines = [
-            line
-            for line in out.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        lines = [line for line in out.read_text(encoding="utf-8").splitlines() if line.strip()]
         assert len(lines) == 3
         for raw in lines:
             obj = json.loads(raw)
@@ -267,9 +254,7 @@ def test_export_reverse_import_rejected_no_growth(tmp_path: Path) -> None:
         r = import_jsonl(surface.broker, out)
         assert r["imported"] == 0
         assert r["quarantined"] == 2
-        assert all(
-            e["reason"] == "reverse_write_rejected" for e in r["quarantine_entries"]
-        )
+        assert all(e["reason"] == "reverse_write_rejected" for e in r["quarantine_entries"])
         assert surface.broker.count() == 2
         assert surface.broker.verify_chain()["ok"] is True
 
@@ -302,9 +287,7 @@ def test_compare_missing(tmp_path: Path) -> None:
 
     # 相同 basename、不同目录：source 推导一致，ledger 只有 2 条 → missing=1
     imported = _write_jsonl(tmp_path / "a" / "m.jsonl", [_healthy(1), _healthy(2)])
-    full = _write_jsonl(
-        tmp_path / "b" / "m.jsonl", [_healthy(1), _healthy(2), _healthy(3)]
-    )
+    full = _write_jsonl(tmp_path / "b" / "m.jsonl", [_healthy(1), _healthy(2), _healthy(3)])
     db = tmp_path / "m.db"
     with EventLedgerSurface(db_path=db) as surface:
         import_jsonl(surface.broker, imported)
@@ -321,9 +304,7 @@ def test_compare_missing(tmp_path: Path) -> None:
 def test_compare_extra(tmp_path: Path) -> None:
     from omo.event_ledger.jsonl_shadow import compare_jsonl, import_jsonl
 
-    src = _write_jsonl(
-        tmp_path / "extra.jsonl", [_healthy(1), _healthy(2), _healthy(3)]
-    )
+    src = _write_jsonl(tmp_path / "extra.jsonl", [_healthy(1), _healthy(2), _healthy(3)])
     db = tmp_path / "extra.db"
     with EventLedgerSurface(db_path=db) as surface:
         import_jsonl(surface.broker, src)
@@ -423,24 +404,18 @@ def test_cli_import_export_compare(tmp_path: Path) -> None:
     src = _write_jsonl(tmp_path / "cli.jsonl", [_healthy(1), _healthy(2)])
     db = tmp_path / "cli.db"
 
-    p = _run_cli(
-        tmp_path, "import-jsonl", "--db", str(db), "--file", str(src), "--json"
-    )
+    p = _run_cli(tmp_path, "import-jsonl", "--db", str(db), "--file", str(src), "--json")
     assert p.returncode == 0, p.stderr
     r = json.loads(p.stdout)
     assert r["ok"] is True and r["imported"] == 2
 
     out = tmp_path / "cli-out.jsonl"
-    p = _run_cli(
-        tmp_path, "export-jsonl", "--db", str(db), "--output", str(out), "--json"
-    )
+    p = _run_cli(tmp_path, "export-jsonl", "--db", str(db), "--output", str(out), "--json")
     assert p.returncode == 0, p.stderr
     r = json.loads(p.stdout)
     assert r["ok"] is True and r["exported"] == 2
 
-    p = _run_cli(
-        tmp_path, "compare-jsonl", "--db", str(db), "--file", str(src), "--json"
-    )
+    p = _run_cli(tmp_path, "compare-jsonl", "--db", str(db), "--file", str(src), "--json")
     assert p.returncode == 0, p.stderr
     r = json.loads(p.stdout)
     assert r["ok"] is True and r["missing"] == 0 and r["extra"] == 0
@@ -543,11 +518,7 @@ def test_nan_infinity_quarantined_as_parse_error(tmp_path: Path) -> None:
         assert all(e["reason"] == "parse_error" for e in r["quarantine_entries"])
         assert surface.broker.count() == 2
     # quarantine 序列化必须不崩（不得含 NaN 原始值）
-    entries = [
-        json.loads(line)
-        for line in qf.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    entries = [json.loads(line) for line in qf.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert len(entries) == 2
     assert all(entry["reason"] == "parse_error" for entry in entries)
 
@@ -663,13 +634,9 @@ def test_cli_compare_mismatch_nonzero(tmp_path: Path) -> None:
     imported = _write_jsonl(tmp_path / "a" / "cmp.jsonl", [_healthy(1)])
     full = _write_jsonl(tmp_path / "b" / "cmp.jsonl", [_healthy(1), _healthy(2)])
     db = tmp_path / "cmp.db"
-    p = _run_cli(
-        tmp_path, "import-jsonl", "--db", str(db), "--file", str(imported), "--json"
-    )
+    p = _run_cli(tmp_path, "import-jsonl", "--db", str(db), "--file", str(imported), "--json")
     assert p.returncode == 0, p.stderr
-    p = _run_cli(
-        tmp_path, "compare-jsonl", "--db", str(db), "--file", str(full), "--json"
-    )
+    p = _run_cli(tmp_path, "compare-jsonl", "--db", str(db), "--file", str(full), "--json")
     assert p.returncode != 0
     assert "Traceback" not in p.stderr
     r = json.loads(p.stdout)
@@ -695,16 +662,12 @@ def test_cli_missing_source_does_not_create_db(tmp_path: Path) -> None:
 def test_cli_export_rejects_foreign_overwrite(tmp_path: Path) -> None:
     src = _write_jsonl(tmp_path / "e.jsonl", [_healthy(1)])
     db = tmp_path / "e.db"
-    p = _run_cli(
-        tmp_path, "import-jsonl", "--db", str(db), "--file", str(src), "--json"
-    )
+    p = _run_cli(tmp_path, "import-jsonl", "--db", str(db), "--file", str(src), "--json")
     assert p.returncode == 0, p.stderr
     out = tmp_path / "existing.jsonl"
     out_bytes = b'{"legacy": true}\n'
     out.write_bytes(out_bytes)
-    p = _run_cli(
-        tmp_path, "export-jsonl", "--db", str(db), "--output", str(out), "--json"
-    )
+    p = _run_cli(tmp_path, "export-jsonl", "--db", str(db), "--output", str(out), "--json")
     assert p.returncode != 0
     assert "Traceback" not in p.stderr
     r = json.loads(p.stdout)

@@ -241,9 +241,7 @@ class SelfHealingEngine:
         self._rules: list[HealingRule] = rules or DEFAULT_RULES
         self._triggered_count: dict[str, int] = {}
         self._fix_history: list[dict] = []
-        self._agora_event_url = agora_event_url or os.environ.get(
-            "AGORA_EVENT_URL", "http://127.0.0.1:8080/v1/events"
-        )
+        self._agora_event_url = agora_event_url or os.environ.get("AGORA_EVENT_URL", "http://127.0.0.1:8080/v1/events")
         logger.info(
             "self_healing_engine_init rules=%s window_s=%s agora=%s",
             len(self._rules),
@@ -278,9 +276,7 @@ class SelfHealingEngine:
             )
 
             rule.mark_triggered()
-            self._triggered_count[rule.name] = (
-                self._triggered_count.get(rule.name, 0) + 1
-            )
+            self._triggered_count[rule.name] = self._triggered_count.get(rule.name, 0) + 1
 
             actions = []
             if rule.action in ("debt", "both"):
@@ -316,14 +312,9 @@ class SelfHealingEngine:
 
     # ── Debt Creation ──────────────────────────────────────────────────
 
-    async def _create_debt(
-        self, rule: HealingRule, event_type: str, count: int
-    ) -> str | None:
+    async def _create_debt(self, rule: HealingRule, event_type: str, count: int) -> str | None:
         """基于规则和事件创建债务条目。"""
-        event_slug = (
-            str(event_type).strip().lower().replace(" ", "-").replace("/", "-")
-            or "event"
-        )
+        event_slug = str(event_type).strip().lower().replace(" ", "-").replace("/", "-") or "event"
         debt_id = f"auto-{rule.name}-{event_slug}"
         now = datetime.now(UTC).isoformat()
 
@@ -403,9 +394,7 @@ class SelfHealingEngine:
                 "returncode": result.returncode,
             }
         except subprocess.TimeoutExpired:
-            logger.error(
-                "self_healing_workflow_timeout workflow_id=%s", rule.workflow_id
-            )
+            logger.error("self_healing_workflow_timeout workflow_id=%s", rule.workflow_id)
             return {"status": "timeout", "workflow_id": rule.workflow_id}
         except Exception as exc:  # defensive fallback
             logger.error("self_healing_workflow_error error=%s", str(exc))
@@ -440,9 +429,7 @@ class SelfHealingEngine:
 
     # ── Event Publishing ───────────────────────────────────────────────
 
-    async def _publish_healing_event(
-        self, rule: HealingRule, ev_type: str, count: int, actions: list[dict]
-    ) -> None:
+    async def _publish_healing_event(self, rule: HealingRule, ev_type: str, count: int, actions: list[dict]) -> None:
         """向 Agora 发布自愈事件。"""
         try:
             import httpx
@@ -641,9 +628,7 @@ def _fmt_bytes(b: int) -> str:
 
 
 def _severity_weight(severity: str) -> float:
-    return {"critical": 10.0, "high": 7.0, "warning": 4.0, "info": 2.0}.get(
-        severity, 4.0
-    )
+    return {"critical": 10.0, "high": 7.0, "warning": 4.0, "info": 2.0}.get(severity, 4.0)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -775,9 +760,7 @@ def start_http_status_server(engine: SelfHealingEngine | None = None) -> None:
         import threading
 
         server = HTTPServer(("127.0.0.1", _HEALING_HTTP_PORT), _Handler)
-        t = threading.Thread(
-            target=server.serve_forever, daemon=True, name="healing-http"
-        )
+        t = threading.Thread(target=server.serve_forever, daemon=True, name="healing-http")
         t.start()
         logger.info("healing_http_started port=%s", _HEALING_HTTP_PORT)
     except Exception:  # defensive fallback
@@ -811,9 +794,7 @@ def save_rules(rules: list[HealingRule], path: Path | None = None) -> None:
                 "description": r.description,
             }
         )
-    target.write_text(
-        yaml.dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8"
-    )
+    target.write_text(yaml.dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
     logger.info("healing_rules_saved path=%s count=%s", target, len(data))
 
 
@@ -860,9 +841,7 @@ def get_healing_engine() -> SelfHealingEngine:
         custom_rules = load_rules()
         if custom_rules:
             _engine = SelfHealingEngine(rules=custom_rules)
-            logger.info(
-                "healing_engine_loaded_custom_rules count=%s", len(custom_rules)
-            )
+            logger.info("healing_engine_loaded_custom_rules count=%s", len(custom_rules))
         else:
             _engine = SelfHealingEngine()
     return _engine

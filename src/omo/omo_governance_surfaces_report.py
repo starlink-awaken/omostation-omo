@@ -112,28 +112,18 @@ def build_governance_surfaces_report(workspace_root: Path) -> dict[str, Any]:
     registered_top_levels = sorted(
         {
             top
-            for top in (
-                _asset_ref_to_top_level(item.get("ref", ""))
-                for item in registry.get("assets", [])
-            )
+            for top in (_asset_ref_to_top_level(item.get("ref", "")) for item in registry.get("assets", []))
             if top and top not in runtime_top_levels
         }
     )
-    observed_top_levels = sorted(
-        top for top in _top_level_entries(omo_dir) if top not in runtime_top_levels
-    )
+    observed_top_levels = sorted(top for top in _top_level_entries(omo_dir) if top not in runtime_top_levels)
 
-    missing_registered_roots = sorted(
-        top for top in registered_top_levels if not (omo_dir / top).exists()
-    )
-    unregistered_top_levels = sorted(
-        top for top in observed_top_levels if top not in registered_top_levels
-    )
+    missing_registered_roots = sorted(top for top in registered_top_levels if not (omo_dir / top).exists())
+    unregistered_top_levels = sorted(top for top in observed_top_levels if top not in registered_top_levels)
     constrained_present = sorted(
         item.get("ref", "")
         for item in registry.get("assets", [])
-        if item.get("status") == "constrained"
-        and (workspace_root / item.get("ref", "")).exists()
+        if item.get("status") == "constrained" and (workspace_root / item.get("ref", "")).exists()
     )
 
     c2g_refs, c2g_issues = _read_c2g_governance_refs(workspace_root)
@@ -145,78 +135,45 @@ def build_governance_surfaces_report(workspace_root: Path) -> dict[str, Any]:
     direct_io_gate_present = _has_direct_io_gate(workspace_root)
     task_policy_gate_present = _has_task_policy_gate(workspace_root)
     mutation_surface_gate_present = _has_mutation_surface_gate(workspace_root)
-    internal_write_profile_gate_present = _has_internal_write_profile_gate(
-        workspace_root
-    )
+    internal_write_profile_gate_present = _has_internal_write_profile_gate(workspace_root)
     state_plane_asset_gate_present = _has_state_plane_asset_gate(workspace_root)
     c2g_omo_boundary_gate_present = _has_c2g_omo_boundary_gate(workspace_root)
     ingress_artifact_gate_present = _has_ingress_artifact_gate(workspace_root)
     mutation_ledger_gate_present = _has_mutation_ledger_gate(workspace_root)
-    goals_runtime_entry, goals_runtime_entry_issues = _check_goals_runtime_entry(
-        omo_dir
-    )
+    goals_runtime_entry, goals_runtime_entry_issues = _check_goals_runtime_entry(omo_dir)
     ingress_registry, ingress_registry_issues = _check_ingress_registry(workspace_root)
-    ingress_artifacts, ingress_artifact_issues = _check_ingress_artifacts(
-        workspace_root
-    )
-    task_policy_registry, task_policy_registry_issues = _check_task_policy_registry(
-        workspace_root
-    )
+    ingress_artifacts, ingress_artifact_issues = _check_ingress_artifacts(workspace_root)
+    task_policy_registry, task_policy_registry_issues = _check_task_policy_registry(workspace_root)
     c2g_omo_boundary, c2g_omo_boundary_issues = _check_c2g_omo_boundary(workspace_root)
-    state_plane_asset_registry, state_plane_asset_registry_issues = (
-        _check_state_plane_asset_registry(workspace_root)
-    )
-    mutation_surface_registry, mutation_surface_registry_issues = (
-        _check_mutation_surface_registry(workspace_root)
-    )
-    internal_write_profile_registry, internal_write_profile_registry_issues = (
-        _check_internal_write_profile_registry(workspace_root)
+    state_plane_asset_registry, state_plane_asset_registry_issues = _check_state_plane_asset_registry(workspace_root)
+    mutation_surface_registry, mutation_surface_registry_issues = _check_mutation_surface_registry(workspace_root)
+    internal_write_profile_registry, internal_write_profile_registry_issues = _check_internal_write_profile_registry(
+        workspace_root
     )
     worker_internal_write_profiles = _worker_internal_write_profiles_snapshot()
 
     issues: list[str] = []
     if not standard_path.exists():
         issues.append("governance surfaces standard missing")
-    issues.extend(
-        f"unregistered top-level asset: {top}" for top in unregistered_top_levels
-    )
-    issues.extend(
-        f"registered top-level asset missing on disk: {top}"
-        for top in missing_registered_roots
-    )
-    issues.extend(
-        f"c2g governance ref missing from task builder: {ref}"
-        for ref in missing_c2g_refs
-    )
+    issues.extend(f"unregistered top-level asset: {top}" for top in unregistered_top_levels)
+    issues.extend(f"registered top-level asset missing on disk: {top}" for top in missing_registered_roots)
+    issues.extend(f"c2g governance ref missing from task builder: {ref}" for ref in missing_c2g_refs)
     if not direct_io_gate_present:
         issues.append("pre-commit direct io gate missing: omo-direct-io-gate")
     if not task_policy_gate_present:
         issues.append("pre-commit task policy gate missing: omo-task-policy-gate")
     if not mutation_surface_gate_present:
-        issues.append(
-            "pre-commit mutation surface gate missing: omo-mutation-surface-gate"
-        )
+        issues.append("pre-commit mutation surface gate missing: omo-mutation-surface-gate")
     if not internal_write_profile_gate_present:
-        issues.append(
-            "pre-commit internal write profile gate missing: "
-            "omo-internal-write-profile-gate"
-        )
+        issues.append("pre-commit internal write profile gate missing: omo-internal-write-profile-gate")
     if not state_plane_asset_gate_present:
-        issues.append(
-            "pre-commit state plane asset gate missing: omo-state-plane-asset-gate"
-        )
+        issues.append("pre-commit state plane asset gate missing: omo-state-plane-asset-gate")
     if not c2g_omo_boundary_gate_present:
-        issues.append(
-            "pre-commit c2g/omo boundary gate missing: omo-c2g-omo-boundary-gate"
-        )
+        issues.append("pre-commit c2g/omo boundary gate missing: omo-c2g-omo-boundary-gate")
     if not ingress_artifact_gate_present:
-        issues.append(
-            "pre-commit ingress artifact gate missing: omo-ingress-artifact-gate"
-        )
+        issues.append("pre-commit ingress artifact gate missing: omo-ingress-artifact-gate")
     if not mutation_ledger_gate_present:
-        issues.append(
-            "pre-commit mutation ledger gate missing: omo-mutation-ledger-gate"
-        )
+        issues.append("pre-commit mutation ledger gate missing: omo-mutation-ledger-gate")
     issues.extend(goals_runtime_entry_issues)
     issues.extend(c2g_issues)
     issues.extend(c2g_omo_boundary_issues)
@@ -227,9 +184,7 @@ def build_governance_surfaces_report(workspace_root: Path) -> dict[str, Any]:
     issues.extend(mutation_surface_registry_issues)
     issues.extend(internal_write_profile_registry_issues)
 
-    warnings = [
-        f"constrained legacy asset present: {ref}" for ref in constrained_present
-    ]
+    warnings = [f"constrained legacy asset present: {ref}" for ref in constrained_present]
 
     status = "ok"
     if issues:

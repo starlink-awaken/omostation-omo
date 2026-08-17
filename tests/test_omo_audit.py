@@ -34,9 +34,7 @@ def test_governance_check_agora_health_with_active_event_loop(monkeypatch):
 def test_load_yaml_safely_accepts_multi_document_yaml(tmp_path: Path) -> None:
     payload = tmp_path / "audit.yaml"
     payload.write_text(
-        "---\nstatus: active\nowner: governance\n---\n---\n"
-        "current_phase: 42\n"
-        "health_score: 100\n",
+        "---\nstatus: active\nowner: governance\n---\n---\ncurrent_phase: 42\nhealth_score: 100\n",
         encoding="utf-8",
     )
 

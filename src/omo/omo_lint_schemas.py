@@ -174,9 +174,7 @@ def _check_sort_keys_default() -> list[tuple[str, str, str]]:
 
         # 扫 .append() 调用 (含 immediate chain + 临时变量)
         for node in ast.walk(tree):
-            if not (
-                isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-            ):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
                 continue
             if node.func.attr != "append":
                 continue
@@ -187,21 +185,14 @@ def _check_sort_keys_default() -> list[tuple[str, str, str]]:
                 and node.func.value.func.id == "AppendOnlyLog"
             )
             # 模式 2: log.append(...) 临时变量
-            is_temp_var = (
-                isinstance(node.func.value, ast.Name)
-                and node.func.value.id in bound_log_vars
-            )
+            is_temp_var = isinstance(node.func.value, ast.Name) and node.func.value.id in bound_log_vars
             if not (is_immediate_chain or is_temp_var):
                 continue
             # 检查 kwargs: sort_keys= 必须是 True
-            sort_keys_kwarg = next(
-                (kw for kw in node.keywords if kw.arg == "sort_keys"), None
-            )
+            sort_keys_kwarg = next((kw for kw in node.keywords if kw.arg == "sort_keys"), None)
             if sort_keys_kwarg is None:
                 pattern = (
-                    "immediate chain"
-                    if is_immediate_chain
-                    else f"temp var '{node.func.value.id}'"  # type: ignore[union-attr]
+                    "immediate chain" if is_immediate_chain else f"temp var '{node.func.value.id}'"  # type: ignore[union-attr]
                 )
                 issues.append(
                     (
@@ -211,15 +202,9 @@ def _check_sort_keys_default() -> list[tuple[str, str, str]]:
                     )
                 )
             elif sort_keys_kwarg.value is not None:
-                if (
-                    isinstance(sort_keys_kwarg.value, ast.Constant)
-                    and sort_keys_kwarg.value.value is True
-                ):
+                if isinstance(sort_keys_kwarg.value, ast.Constant) and sort_keys_kwarg.value.value is True:
                     continue
-                if (
-                    isinstance(sort_keys_kwarg.value, ast.Name)
-                    and sort_keys_kwarg.value.id == "True"
-                ):
+                if isinstance(sort_keys_kwarg.value, ast.Name) and sort_keys_kwarg.value.id == "True":
                     continue
                 issues.append(
                     (
@@ -254,9 +239,7 @@ def _check_dead_imports() -> list[tuple[str, str, str]]:
         except (SyntaxError, UnicodeDecodeError):
             continue
 
-        imported_names: set[tuple[str, str]] = (
-            set()
-        )  # (module, name) 配对, 用于识别 __future__
+        imported_names: set[tuple[str, str]] = set()  # (module, name) 配对, 用于识别 __future__
         used_names: set[str] = set()
 
         for node in ast.walk(tree):
@@ -322,10 +305,7 @@ def _check_cross_module_srp() -> list[tuple[str, str, str]]:
             # 检查是否 omo.omo_X (X 是 7 consumer 之一)
             if node.module.startswith("omo.omo_"):
                 imported_stem = node.module.removeprefix("omo.omo_")
-                if (
-                    imported_stem in consumer_stems
-                    and imported_stem != Path(module_name).stem
-                ):
+                if imported_stem in consumer_stems and imported_stem != Path(module_name).stem:
                     # 7 consumer 之间互依赖 (非自身)
                     issues.append(
                         (
@@ -388,11 +368,7 @@ def _check_schema_registry_integrity() -> list[tuple[str, str, str]]:
                 )
             )
         # 规则 2: 至少 1 必填字段 (防空架子)
-        required_fields = [
-            name
-            for name, field in schema_cls.model_fields.items()
-            if field.is_required()
-        ]
+        required_fields = [name for name, field in schema_cls.model_fields.items() if field.is_required()]
         if not required_fields:
             issues.append(
                 (
@@ -436,9 +412,7 @@ def cmd_lint_schemas(metrics: bool = False) -> int:
     else:
         from omo.omo_io_schemas import SCHEMA_REGISTRY
 
-        print(
-            f"✅ SCHEMA_REGISTRY 完整性: {len(SCHEMA_REGISTRY)}/{len(SCHEMA_REGISTRY)} schema 守 Z-suffix + 必填字段"
-        )
+        print(f"✅ SCHEMA_REGISTRY 完整性: {len(SCHEMA_REGISTRY)}/{len(SCHEMA_REGISTRY)} schema 守 Z-suffix + 必填字段")
 
     # 规则 3 (Round 29 P0): __all__ 完整性 — 全部 SCHEMA_REGISTRY key 都在 __all__ 暴露
     print()
@@ -451,9 +425,7 @@ def cmd_lint_schemas(metrics: bool = False) -> int:
     else:
         from omo.omo_io_schemas import SCHEMA_REGISTRY
 
-        print(
-            f"✅ omo_io_schemas.__all__ 完整性: {len(SCHEMA_REGISTRY)}/{len(SCHEMA_REGISTRY)} schema 全部 export"
-        )
+        print(f"✅ omo_io_schemas.__all__ 完整性: {len(SCHEMA_REGISTRY)}/{len(SCHEMA_REGISTRY)} schema 全部 export")
 
     # 规则 4 (Round 30 P0): cross-module-srp — 7 consumer 互不依赖
     print()
@@ -484,9 +456,7 @@ def cmd_lint_schemas(metrics: bool = False) -> int:
     sort_issues = _check_sort_keys_default()
     if sort_issues:
         total_violations += len(sort_issues)
-        print(
-            f"❌ sort_keys default (§12.1.4): {len(sort_issues)} 处 .append() 未传 sort_keys=True"
-        )
+        print(f"❌ sort_keys default (§12.1.4): {len(sort_issues)} 处 .append() 未传 sort_keys=True")
         for module_name, issue_type, detail in sort_issues:
             print(f"   - {module_name} [{issue_type}]: {detail}")
     else:

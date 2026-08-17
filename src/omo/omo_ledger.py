@@ -198,9 +198,7 @@ def _legacy_main(argv: list[str]) -> int:
 
 
 def _build_subcommand_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="OMO Causal Event Ledger — append, read, verify, status"
-    )
+    parser = argparse.ArgumentParser(description="OMO Causal Event Ledger — append, read, verify, status")
     sub = parser.add_subparsers(dest="subcommand", required=True)
 
     pa = sub.add_parser("append", help="Append an event to the ledger")
@@ -242,9 +240,7 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
 
     # Local-only JSONL shadow adapter commands (BET-Y1Q2-T1-03).
     # Deliberately do NOT expose --agora: these are local commands.
-    pi = sub.add_parser(
-        "import-jsonl", help="Import a JSONL history file as shadow events"
-    )
+    pi = sub.add_parser("import-jsonl", help="Import a JSONL history file as shadow events")
     pi.add_argument("--file", required=True, help="JSONL source file")
     pi.add_argument(
         "--quarantine",
@@ -258,15 +254,11 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     )
     _add_local_flags(pi)
 
-    pe = sub.add_parser(
-        "export-jsonl", help="Export ledger shadow events as legal JSONL"
-    )
+    pe = sub.add_parser("export-jsonl", help="Export ledger shadow events as legal JSONL")
     pe.add_argument("--output", required=True, help="JSONL output file")
     _add_local_flags(pe)
 
-    pc = sub.add_parser(
-        "compare-jsonl", help="Compare a JSONL file against ledger shadow events"
-    )
+    pc = sub.add_parser("compare-jsonl", help="Compare a JSONL file against ledger shadow events")
     pc.add_argument("--file", required=True, help="JSONL source file")
     pc.add_argument(
         "--source-id",
@@ -280,13 +272,9 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         "sovereignty-assign",
         help="Assign (or replace) a role to a principal (local only)",
     )
-    psa.add_argument(
-        "--principal-id", required=True, help="Principal id (principal:...)"
-    )
+    psa.add_argument("--principal-id", required=True, help="Principal id (principal:...)")
     psa.add_argument("--role-id", required=True, help="Role id (role:...)")
-    psa.add_argument(
-        "--role-name", default=None, help="Display name (default: role-id)"
-    )
+    psa.add_argument("--role-name", default=None, help="Display name (default: role-id)")
     psa.add_argument("--scope", default="", help="Role scope (e.g. family, career)")
     psa.add_argument(
         "--responsibilities",
@@ -302,8 +290,7 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         "--expected-version",
         type=int,
         default=None,
-        help="Expected current assignment version (0 for a fresh assign); "
-        "a mismatch is rejected as stale_version",
+        help="Expected current assignment version (0 for a fresh assign); a mismatch is rejected as stale_version",
     )
     _add_local_flags(psa)
 
@@ -311,9 +298,7 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         "sovereignty-query",
         help="Query a principal's roles by replaying the ledger (local only)",
     )
-    psq.add_argument(
-        "--principal-id", required=True, help="Principal id (principal:...)"
-    )
+    psq.add_argument("--principal-id", required=True, help="Principal id (principal:...)")
     _add_local_flags(psq)
 
     # W2-02 mandate commands — local only, no --agora.
@@ -322,14 +307,10 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         help="Grant a DelegationMandate to an executor (W2-02, local only)",
     )
     pmg.add_argument("--mandate-id", required=True, help="Mandate id (mandate:...)")
-    pmg.add_argument(
-        "--principal-id", required=True, help="Principal id (principal:...)"
-    )
+    pmg.add_argument("--principal-id", required=True, help="Principal id (principal:...)")
     pmg.add_argument("--executor-id", required=True, help="Executor id (agent:...)")
     pmg.add_argument("--episode-id", required=True, help="Episode id")
-    pmg.add_argument(
-        "--role-context-id", required=True, help="Role context id (role:...)"
-    )
+    pmg.add_argument("--role-context-id", required=True, help="Role context id (role:...)")
     pmg.add_argument(
         "--responsibility-id",
         required=True,
@@ -365,12 +346,8 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         ],
         help="Approval mode",
     )
-    pmg.add_argument(
-        "--disclosure-policy", required=True, help="Disclosure policy (disclosure:...)"
-    )
-    pmg.add_argument(
-        "--budget-limit", type=float, required=True, help="Budget limit (>= 0)"
-    )
+    pmg.add_argument("--disclosure-policy", required=True, help="Disclosure policy (disclosure:...)")
+    pmg.add_argument("--budget-limit", type=float, required=True, help="Budget limit (>= 0)")
     pmg.add_argument("--budget-unit", required=True, help="Budget unit (e.g. call)")
     pmg.add_argument(
         "--revocable",
@@ -378,12 +355,8 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         default=False,
         help="Mandate is revocable before expiry",
     )
-    pmg.add_argument(
-        "--purpose", default="Granted via CLI", help="Mandate purpose description"
-    )
-    pmg.add_argument(
-        "--valid-from", default=None, help="Valid from ISO-8601 datetime (default: now)"
-    )
+    pmg.add_argument("--purpose", default="Granted via CLI", help="Mandate purpose description")
+    pmg.add_argument("--valid-from", default=None, help="Valid from ISO-8601 datetime (default: now)")
     pmg.add_argument(
         "--expires-at",
         default=None,
@@ -396,9 +369,7 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         help="Revoke an active DelegationMandate (W2-02, local only)",
     )
     pmr.add_argument("--mandate-id", required=True, help="Mandate id (mandate:...)")
-    pmr.add_argument(
-        "--principal-id", required=True, help="Principal id (principal:...)"
-    )
+    pmr.add_argument("--principal-id", required=True, help="Principal id (principal:...)")
     pmr.add_argument(
         "--expected-version",
         type=int,
@@ -412,35 +383,25 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
         help="Pure admission decision for a DelegationMandate (W2-02, local only)",
     )
     pma.add_argument("--mandate-id", required=True, help="Mandate id (mandate:...)")
-    pma.add_argument(
-        "--principal-id", required=True, help="Principal id (principal:...)"
-    )
+    pma.add_argument("--principal-id", required=True, help="Principal id (principal:...)")
     pma.add_argument("--executor-id", required=True, help="Executor id (agent:...)")
     pma.add_argument("--episode-id", required=True, help="Episode id")
-    pma.add_argument(
-        "--role-context-id", required=True, help="Role context id (role:...)"
-    )
+    pma.add_argument("--role-context-id", required=True, help="Role context id (role:...)")
     pma.add_argument(
         "--responsibility-id",
         required=True,
         help="Responsibility id (responsibility:...)",
     )
-    pma.add_argument(
-        "--capability", required=True, help="Capability URI (exact match required)"
-    )
+    pma.add_argument("--capability", required=True, help="Capability URI (exact match required)")
     pma.add_argument(
         "--risk-level",
         required=True,
         choices=["R0", "R1", "R2", "R3"],
         help="Request risk level (R0-R3)",
     )
-    pma.add_argument(
-        "--requested-budget", type=float, required=True, help="Requested budget amount"
-    )
+    pma.add_argument("--requested-budget", type=float, required=True, help="Requested budget amount")
     pma.add_argument("--budget-unit", required=True, help="Budget unit (e.g. call)")
-    pma.add_argument(
-        "--disclosure-policy", required=True, help="Disclosure policy (disclosure:...)"
-    )
+    pma.add_argument("--disclosure-policy", required=True, help="Disclosure policy (disclosure:...)")
     _add_local_flags(pma)
 
     return parser
@@ -502,13 +463,9 @@ def _load_payload(params: dict[str, Any]) -> dict[str, Any] | None:
         try:
             decoded = json.loads(Path(payload_file).read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
-            raise AgoraValidationError(
-                "payload_file", f"payload file not valid JSON: {exc}"
-            ) from None
+            raise AgoraValidationError("payload_file", f"payload file not valid JSON: {exc}") from None
         except OSError as exc:
-            raise AgoraValidationError(
-                "payload_file", f"cannot read payload file: {exc}"
-            ) from None
+            raise AgoraValidationError("payload_file", f"cannot read payload file: {exc}") from None
         if not isinstance(decoded, dict):
             raise AgoraValidationError(
                 "payload_type",
@@ -524,9 +481,7 @@ def _decode_payload(raw: str, source: str) -> dict[str, Any]:
     try:
         decoded = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise AgoraValidationError(
-            "payload_parse", f"{source} is not valid JSON: {exc}"
-        ) from None
+        raise AgoraValidationError("payload_parse", f"{source} is not valid JSON: {exc}") from None
     if isinstance(decoded, dict):
         return decoded
     if decoded is None:
@@ -542,14 +497,10 @@ def _validate_agora_fields(subcmd: str, incoming: dict[str, Any]) -> None:
     allowed = _AGORA_ALLOWED.get(subcmd, frozenset()) | {"db"}
     for key in incoming:
         if key not in allowed:
-            raise AgoraValidationError(
-                "unknown_field", f"unknown field '{key}' for subcommand '{subcmd}'"
-            )
+            raise AgoraValidationError("unknown_field", f"unknown field '{key}' for subcommand '{subcmd}'")
 
 
-def _validate_and_normalize_agora_values(
-    subcmd: str, incoming: dict[str, Any]
-) -> dict[str, Any]:
+def _validate_and_normalize_agora_values(subcmd: str, incoming: dict[str, Any]) -> dict[str, Any]:
     """Reject invalid types/ranges. Returns normalized dict.
 
     Args are not from argparse — they must be validated explicitly.
@@ -573,13 +524,9 @@ def _validate_and_normalize_agora_values(
         if val is None:
             continue
         if isinstance(val, bool) or not isinstance(val, int):
-            raise AgoraValidationError(
-                "invalid_field", f"'{key}' must be an integer, got {type(val).__name__}"
-            )
+            raise AgoraValidationError("invalid_field", f"'{key}' must be an integer, got {type(val).__name__}")
         if val < 1:
-            raise AgoraValidationError(
-                "invalid_field", f"'{key}' must be >= 1, got {val}"
-            )
+            raise AgoraValidationError("invalid_field", f"'{key}' must be >= 1, got {val}")
         normalized[key] = val
 
     # -- read string-or-null fields --------------------------------------
@@ -801,9 +748,7 @@ def _subcommand_main(argv: list[str]) -> int:
         surface.close()
 
 
-def _cmd_append(
-    surface: EventLedgerSurface, params: dict[str, Any], is_json: bool, is_agora: bool
-) -> int:
+def _cmd_append(surface: EventLedgerSurface, params: dict[str, Any], is_json: bool, is_agora: bool) -> int:
     payload = _load_payload(params)
     if payload is not None:
         params["payload"] = payload
@@ -827,9 +772,7 @@ def _cmd_append(
     return 0
 
 
-def _cmd_read(
-    surface: EventLedgerSurface, params: dict[str, Any], is_json: bool, is_agora: bool
-) -> int:
+def _cmd_read(surface: EventLedgerSurface, params: dict[str, Any], is_json: bool, is_agora: bool) -> int:
     result = surface.read(
         from_sequence=params.get("from_sequence", 1),
         to_sequence=params.get("to_sequence"),
@@ -846,9 +789,7 @@ def _cmd_read(
     return 0
 
 
-def _cmd_verify(
-    surface: EventLedgerSurface, params: dict[str, Any], is_json: bool, is_agora: bool
-) -> int:
+def _cmd_verify(surface: EventLedgerSurface, params: dict[str, Any], is_json: bool, is_agora: bool) -> int:
     result = surface.verify(
         from_sequence=params.get("from_sequence", 1),
         to_sequence=params.get("to_sequence"),
@@ -871,9 +812,7 @@ def _cmd_status(surface: EventLedgerSurface, is_json: bool, is_agora: bool) -> i
     return 0
 
 
-def _cmd_import_jsonl(
-    surface: EventLedgerSurface, params: dict[str, Any], is_json: bool, is_agora: bool
-) -> int:
+def _cmd_import_jsonl(surface: EventLedgerSurface, params: dict[str, Any], is_json: bool, is_agora: bool) -> int:
     from omo.event_ledger.jsonl_shadow import import_jsonl
 
     file_path = params.get("file")
@@ -892,15 +831,11 @@ def _cmd_import_jsonl(
     except OSError as exc:
         raise LedgerError(f"cannot read JSONL source: {exc}") from exc
     receipt = {k: v for k, v in report.items() if k != "quarantine_entries"}
-    _emit_receipt(
-        {"ok": True, **receipt, "db_path": str(surface.db_path)}, is_json, is_agora
-    )
+    _emit_receipt({"ok": True, **receipt, "db_path": str(surface.db_path)}, is_json, is_agora)
     return 0
 
 
-def _cmd_export_jsonl(
-    surface: EventLedgerSurface, params: dict[str, Any], is_json: bool, is_agora: bool
-) -> int:
+def _cmd_export_jsonl(surface: EventLedgerSurface, params: dict[str, Any], is_json: bool, is_agora: bool) -> int:
     from omo.event_ledger.jsonl_shadow import export_jsonl
 
     output = params.get("output")
@@ -910,15 +845,11 @@ def _cmd_export_jsonl(
         report = export_jsonl(surface.broker, output)
     except OSError as exc:
         raise LedgerError(f"cannot write JSONL output: {exc}") from exc
-    _emit_receipt(
-        {"ok": True, **report, "db_path": str(surface.db_path)}, is_json, is_agora
-    )
+    _emit_receipt({"ok": True, **report, "db_path": str(surface.db_path)}, is_json, is_agora)
     return 0
 
 
-def _cmd_compare_jsonl(
-    surface: EventLedgerSurface, params: dict[str, Any], is_json: bool, is_agora: bool
-) -> int:
+def _cmd_compare_jsonl(surface: EventLedgerSurface, params: dict[str, Any], is_json: bool, is_agora: bool) -> int:
     from omo.event_ledger.jsonl_shadow import compare_jsonl
 
     file_path = params.get("file")
@@ -928,9 +859,7 @@ def _cmd_compare_jsonl(
     if not Path(file_path).is_file():
         raise LedgerError(f"JSONL source is not an existing file: {file_path}")
     try:
-        report = compare_jsonl(
-            surface.broker, file_path, source_id=params.get("source_id")
-        )
+        report = compare_jsonl(surface.broker, file_path, source_id=params.get("source_id"))
     except OSError as exc:
         raise LedgerError(f"cannot read JSONL source: {exc}") from exc
     _emit_receipt(
@@ -941,9 +870,7 @@ def _cmd_compare_jsonl(
     return 0 if report["ok"] else 1
 
 
-def _cmd_sovereignty_assign(
-    surface: EventLedgerSurface, params: dict[str, Any], is_json: bool
-) -> int:
+def _cmd_sovereignty_assign(surface: EventLedgerSurface, params: dict[str, Any], is_json: bool) -> int:
     """Assign (or replace) a role for a principal. Local only, writes via broker."""
     from omo.sovereignty import SovereigntyError, SovereigntyService
 
@@ -990,9 +917,7 @@ def _cmd_sovereignty_assign(
     return 0
 
 
-def _cmd_sovereignty_query(
-    surface: EventLedgerSurface, params: dict[str, Any], is_json: bool
-) -> int:
+def _cmd_sovereignty_query(surface: EventLedgerSurface, params: dict[str, Any], is_json: bool) -> int:
     """Query a principal by replaying the ledger. Local only, read-only."""
     from omo.sovereignty import SovereigntyError, SovereigntyService
 
@@ -1024,9 +949,7 @@ def _split_responsibilities(raw: str | None) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def _cmd_mandate_grant(
-    surface: EventLedgerSurface, params: dict[str, Any], is_json: bool
-) -> int:
+def _cmd_mandate_grant(surface: EventLedgerSurface, params: dict[str, Any], is_json: bool) -> int:
     """Grant a DelegationMandate. Local only, writes via broker."""
     from datetime import UTC, datetime, timedelta
 
@@ -1060,11 +983,7 @@ def _cmd_mandate_grant(
         return 1
 
     resp = next(
-        (
-            r
-            for r in assignment.responsibilities
-            if r.resp_id == params["responsibility_id"]
-        ),
+        (r for r in assignment.responsibilities if r.resp_id == params["responsibility_id"]),
         None,
     )
     if resp is None:
@@ -1151,9 +1070,7 @@ def _cmd_mandate_grant(
     return 0
 
 
-def _cmd_mandate_revoke(
-    surface: EventLedgerSurface, params: dict[str, Any], is_json: bool
-) -> int:
+def _cmd_mandate_revoke(surface: EventLedgerSurface, params: dict[str, Any], is_json: bool) -> int:
     """Revoke an active DelegationMandate. Local only, writes via broker."""
     from omo.sovereignty import MandateError, MandateManager
 
@@ -1202,9 +1119,7 @@ def _cmd_mandate_revoke(
     return 0
 
 
-def _cmd_mandate_admit(
-    surface: EventLedgerSurface, params: dict[str, Any], is_json: bool
-) -> int:
+def _cmd_mandate_admit(surface: EventLedgerSurface, params: dict[str, Any], is_json: bool) -> int:
     """Pure admission decision. Local only, read-only — exit 0 only for allow."""
     from omo.sovereignty import MandateError, MandateManager, MandateReplayError
 

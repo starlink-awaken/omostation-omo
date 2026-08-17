@@ -67,9 +67,7 @@ def _run_omo_debt(omo_dir: Path, command: str, debt_id: str, actor: str) -> int:
 
 def test_close_writes_lifecycle_state_and_history(tmp_omo_dir: Path) -> None:
     """omo-debt close 走正路, yaml 真改 lifecycle_state=closed + history append."""
-    rc = _run_omo_debt(
-        tmp_omo_dir, "close", "DEBT-TEST-CLOSE-REOPEN", "test-actor-close"
-    )
+    rc = _run_omo_debt(tmp_omo_dir, "close", "DEBT-TEST-CLOSE-REOPEN", "test-actor-close")
     assert rc == 0, f"close 失败 rc={rc}"
 
     yaml_path = tmp_omo_dir / "debt" / "items" / "DEBT-TEST-CLOSE-REOPEN.yaml"
@@ -88,15 +86,11 @@ def test_close_writes_lifecycle_state_and_history(tmp_omo_dir: Path) -> None:
 def test_reopen_writes_lifecycle_state_and_history(tmp_omo_dir: Path) -> None:
     """omo-debt reopen 走正路, yaml 真改 lifecycle_state=identified + history append."""
     # 先 close 一次
-    rc_close = _run_omo_debt(
-        tmp_omo_dir, "close", "DEBT-TEST-CLOSE-REOPEN", "test-actor-step1"
-    )
+    rc_close = _run_omo_debt(tmp_omo_dir, "close", "DEBT-TEST-CLOSE-REOPEN", "test-actor-step1")
     assert rc_close == 0
 
     # 再 reopen
-    rc_reopen = _run_omo_debt(
-        tmp_omo_dir, "reopen", "DEBT-TEST-CLOSE-REOPEN", "test-actor-step2"
-    )
+    rc_reopen = _run_omo_debt(tmp_omo_dir, "reopen", "DEBT-TEST-CLOSE-REOPEN", "test-actor-step2")
     assert rc_reopen == 0
 
     yaml_path = tmp_omo_dir / "debt" / "items" / "DEBT-TEST-CLOSE-REOPEN.yaml"
@@ -126,9 +120,7 @@ def test_yaml_bypass_lint_accepts_cli_written_yaml(tmp_omo_dir: Path) -> None:
     反向场景 (手工注入 status 字段越权) 在 audit 报告里有真实证据, 不在单测内复现.
     """
     # 1. 用 omo-debt close 走正路改 yaml
-    rc_close = _run_omo_debt(
-        tmp_omo_dir, "close", "DEBT-TEST-CLOSE-REOPEN", "lint-integration-test"
-    )
+    rc_close = _run_omo_debt(tmp_omo_dir, "close", "DEBT-TEST-CLOSE-REOPEN", "lint-integration-test")
     assert rc_close == 0
 
     # 2. 调 omo lint yaml-bypass (通过 _check_yaml_bypass 函数, 显式传 omo_dir)
@@ -136,8 +128,7 @@ def test_yaml_bypass_lint_accepts_cli_written_yaml(tmp_omo_dir: Path) -> None:
 
     issues = _check_yaml_bypass(tmp_omo_dir)
     assert issues == [], (
-        f"omo-debt close 写的 yaml 应 0 issue (合规), got: {issues}. "
-        f"这意味着 lint 工具自身有 bug, 请报修."
+        f"omo-debt close 写的 yaml 应 0 issue (合规), got: {issues}. 这意味着 lint 工具自身有 bug, 请报修."
     )
 
 
@@ -157,9 +148,7 @@ def test_yaml_bypass_lint_detects_status_field_bypass(tmp_omo_dir: Path) -> None
     yaml_path = tmp_omo_dir / "debt" / "items" / "DEBT-TEST-CLOSE-REOPEN.yaml"
     data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
     data["status"] = "closed"  # 越权: OMO 不读 status
-    yaml_path.write_text(
-        yaml.dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8"
-    )
+    yaml_path.write_text(yaml.dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
     # 3. lint 应报 R2 (status=closed 但 lifecycle_state=identified 不一致)
     issues = _check_yaml_bypass(tmp_omo_dir)

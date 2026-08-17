@@ -71,9 +71,7 @@ BOS_URI_PATTERN = re.compile(
 
 # 3-段 legacy URI (P30 时代 mcp_server.py 既有: bos://omo/debt 等)
 # 接受 bos://<package>/<action> 形式, domain 通过 LEGACY_DOMAIN_MAP 推断
-BOS_URI_LEGACY_PATTERN = re.compile(
-    r"^bos://(?P<package>" + _KOS_PART + r")/(?P<action>" + _KOS_PART + r")$"
-)
+BOS_URI_LEGACY_PATTERN = re.compile(r"^bos://(?P<package>" + _KOS_PART + r")/(?P<action>" + _KOS_PART + r")$")
 
 # legacy 3-段 → 4-段 domain 隐含映射
 # 多数 mcp_server.py 的 3-段 URI 属于 governance (omo, alerts, debt 等)
@@ -91,10 +89,7 @@ Protocol = Literal["http", "stdio", "internal"]
 # ── 持久化路径 ────────────────────────────────────────────
 # P33-W1: 战役 2 起步故意走本地 JSON (避开 KOS 写入复杂)
 DEFAULT_REGISTRY_PATH = (
-    Path(os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace")))
-    / ".omo"
-    / "_knowledge"
-    / "bos-registry.json"
+    Path(os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace"))) / ".omo" / "_knowledge" / "bos-registry.json"
 )
 
 
@@ -216,8 +211,7 @@ def load_registry(path: Path = DEFAULT_REGISTRY_PATH) -> list[dict[str, Any]]:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
         print(
-            f"[omo_bos] WARN: registry {path} is malformed JSON ({exc}); "
-            f"treating as empty",
+            f"[omo_bos] WARN: registry {path} is malformed JSON ({exc}); treating as empty",
             file=sys.stderr,
         )
         return []
@@ -242,9 +236,7 @@ def save_registry(
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(registrations, ensure_ascii=False, indent=2)
     # 原子写: 写到同目录临时文件, 然后 rename
-    fd, tmp_path = tempfile.mkstemp(
-        prefix=".bos-registry.", suffix=".json.tmp", dir=path.parent
-    )
+    fd, tmp_path = tempfile.mkstemp(prefix=".bos-registry.", suffix=".json.tmp", dir=path.parent)
     try:
         Path(tmp_path).write_text(payload, encoding="utf-8")
         Path(tmp_path).replace(path)
@@ -653,9 +645,7 @@ def _print_table(regs: list[BosRegistration]) -> None:
     print(f"{'URI':<50} {'DOMAIN':<12} {'PACKAGE':<20} {'ACTION':<10} {'PROTO':<10}")
     print("-" * 102)
     for r in regs:
-        print(
-            f"{r.uri:<50} {r.domain:<12} {r.package:<20} {r.action:<10} {r.protocol:<10}"
-        )
+        print(f"{r.uri:<50} {r.domain:<12} {r.package:<20} {r.action:<10} {r.protocol:<10}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -668,9 +658,7 @@ def main(argv: list[str] | None = None) -> int:
         seed            — bulk-register the 6 SEED_REGISTRATIONS (idempotent)
         register-seeds  — alias for ``seed`` (战役 2 起步命名约定)
     """
-    parser = argparse.ArgumentParser(
-        prog="omo bos", description="BOS (Banyan Object Service) URI 管理"
-    )
+    parser = argparse.ArgumentParser(prog="omo bos", description="BOS (Banyan Object Service) URI 管理")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     # register
@@ -733,9 +721,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # W3: status (metrics) / discover (schema-validated listing) / health (verify + status)
-    st = sub.add_parser(
-        "status", help="显示 invoke metrics 汇总 (总调用/成功率/p95 latency)"
-    )
+    st = sub.add_parser("status", help="显示 invoke metrics 汇总 (总调用/成功率/p95 latency)")
     st.add_argument("--json", action="store_true", help="输出 JSON 格式")
 
     disc = sub.add_parser(
@@ -801,10 +787,7 @@ def main(argv: list[str] | None = None) -> int:
         results = register_seeds()
         ok = sum(1 for r in results if "error" not in r)
         failed = [r for r in results if "error" in r]
-        print(
-            f"[omo bos {args.cmd}] registered {ok}/{len(SEED_REGISTRATIONS)} "
-            f"SEED URIs → {DEFAULT_REGISTRY_PATH}"
-        )
+        print(f"[omo bos {args.cmd}] registered {ok}/{len(SEED_REGISTRATIONS)} SEED URIs → {DEFAULT_REGISTRY_PATH}")
         for r in results:
             if "error" in r:
                 print(f"  FAIL {r['error']}", file=sys.stderr)
@@ -820,11 +803,7 @@ def main(argv: list[str] | None = None) -> int:
         ok = sum(1 for r in results if r.get("module_found"))
         fail = len(results) - ok
         no_ep = sum(1 for r in results if r.get("error") == "no_endpoint")
-        print(
-            f"[omo bos verify] {path}\n"
-            f"  总 {len(results)} / 可达 {ok} / 失败 {fail} "
-            f"(no_endpoint={no_ep})"
-        )
+        print(f"[omo bos verify] {path}\n  总 {len(results)} / 可达 {ok} / 失败 {fail} (no_endpoint={no_ep})")
         for r in results:
             status = "✓" if r.get("module_found") else "✗"
             print(f"  {status} {r['uri']}  →  {r['endpoint']}")
@@ -853,16 +832,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  by_status: {s['by_status']}")
         print("\n  by_domain:")
         for d, st in s["by_domain"].items():
-            print(
-                f"    {d:12s} count={st['count']:5d} success_rate={st['success_rate']:.1%}"
-            )
+            print(f"    {d:12s} count={st['count']:5d} success_rate={st['success_rate']:.1%}")
         if s["by_uri"]:
-            print(
-                f"\n  by_uri (top {min(10, len(s['by_uri']))} of {len(s['by_uri'])}):"
-            )
-            for uri, st in sorted(s["by_uri"].items(), key=lambda kv: -kv[1]["count"])[
-                :10
-            ]:
+            print(f"\n  by_uri (top {min(10, len(s['by_uri']))} of {len(s['by_uri'])}):")
+            for uri, st in sorted(s["by_uri"].items(), key=lambda kv: -kv[1]["count"])[:10]:
                 print(
                     f"    {uri:48s} n={st['count']:4d} "
                     f"success={st['success_rate']:.0%} "
@@ -891,9 +864,7 @@ def main(argv: list[str] | None = None) -> int:
                         "version": registry.version,
                         "generated_at": registry.generated_at,
                         "count": registry.count,
-                        "registrations": [
-                            r.to_legacy_dict() for r in registry.registrations
-                        ],
+                        "registrations": [r.to_legacy_dict() for r in registry.registrations],
                     },
                     ensure_ascii=False,
                     indent=2,
@@ -938,9 +909,7 @@ def main(argv: list[str] | None = None) -> int:
         if total_inv == 0:
             print("\n  STATUS: 🟡 no traffic yet (endpoints informational only)")
             return 0
-        failed = sum(
-            v for k, v in metrics.get("by_status", {}).items() if k != "resolved"
-        )
+        failed = sum(v for k, v in metrics.get("by_status", {}).items() if k != "resolved")
         fail_rate = failed / total_inv if total_inv else 0.0
         if fail_rate > 0.25:
             print(f"\n  STATUS: ⚠️  failure rate {fail_rate:.1%} > 25% (over threshold)")

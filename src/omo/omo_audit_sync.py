@@ -90,9 +90,7 @@ class FieldDiff:
     reason: str
 
     def __str__(self) -> str:
-        return (
-            f"  {self.field}: {self.old_value!r} -> {self.new_value!r}  ({self.reason})"
-        )
+        return f"  {self.field}: {self.old_value!r} -> {self.new_value!r}  ({self.reason})"
 
 
 # ── 真实状态收集 ─────────────────────────────────────────────
@@ -155,11 +153,7 @@ def _collect_task_state() -> dict[str, Any]:
     max_phase = max(phases) if phases else 0
     current_wave = "W0"
     if tasks:
-        phase_tasks = [
-            t
-            for t in tasks
-            if t.get("phase", "").isdigit() and int(t["phase"]) == max_phase
-        ]
+        phase_tasks = [t for t in tasks if t.get("phase", "").isdigit() and int(t["phase"]) == max_phase]
         waves = [t.get("wave", "W0") for t in phase_tasks]
         if waves:
 
@@ -244,11 +238,7 @@ def _collect_audit_data() -> dict[str, Any]:
         )
         if watch_section:
             for line in watch_section.group(0).splitlines():
-                if (
-                    re.match(r"^\s*-\s+", line)
-                    and "无" not in line
-                    and "_(" not in line
-                ):
+                if re.match(r"^\s*-\s+", line) and "无" not in line and "_(" not in line:
                     watchlist_count += 1
         return {"score": score, "watchlist_count": watchlist_count}
     return {"score": None, "watchlist_count": 0}
@@ -258,20 +248,14 @@ def _count_adrs() -> int:
     """ADR 文件数(不含 README/INDEX)."""
     if not DECISIONS_DIR.exists():
         return 0
-    return sum(
-        1 for f in DECISIONS_DIR.glob("*.md") if f.stem not in {"README", "INDEX"}
-    )
+    return sum(1 for f in DECISIONS_DIR.glob("*.md") if f.stem not in {"README", "INDEX"})
 
 
 def _count_packages() -> int:
     """kairon 活跃包数."""
     if not KAIRON_PACKAGES.exists():
         return 0
-    return sum(
-        1
-        for p in KAIRON_PACKAGES.iterdir()
-        if p.is_dir() and not p.name.startswith(".")
-    )
+    return sum(1 for p in KAIRON_PACKAGES.iterdir() if p.is_dir() and not p.name.startswith("."))
 
 
 def _find_next_pending_task() -> str | None:
@@ -344,9 +328,7 @@ def collect_actual_state() -> dict[str, Any]:
         "completed_tasks": tasks["completed"],
         "total_tasks": tasks["total"],
         "active_tasks": tasks["in_progress"] + tasks["pending"],
-        "blocked_tasks": sum(
-            1 for t in tasks["tasks"] if t.get("status") in {"blocked", "pending"}
-        ),
+        "blocked_tasks": sum(1 for t in tasks["tasks"] if t.get("status") in {"blocked", "pending"}),
         "planned_tasks": tasks["planned"],
         "debt_watchlist_count": audit["watchlist_count"],
         "debt_gate_count": audit["watchlist_count"],
@@ -512,9 +494,7 @@ def apply_diff(
         text = _replace_top_level_key(text, d.field, formatted)
     if not apply:
         return text
-    backup = system_path.with_suffix(
-        f".yaml.bak-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
-    )
+    backup = system_path.with_suffix(f".yaml.bak-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}")
     shutil.copy2(system_path, backup)
     omo_dir = system_path.parent.parent
     write_system_projection_fields(
@@ -566,9 +546,7 @@ def render_report(
         lines.append("| 字段 | 旧值 | 新值 | 理由 |")
         lines.append("|------|------|------|------|")
         for d in diffs:
-            lines.append(
-                f"| {d.field} | `{d.old_value}` | `{d.new_value}` | {d.reason} |"
-            )
+            lines.append(f"| {d.field} | `{d.old_value}` | `{d.new_value}` | {d.reason} |")
     lines.extend(["", "## 3. 白名单", "", "同步器**只**改以下字段:", ""])
     for f in sorted(ALLOWED_FIELDS):
         lines.append(f"- `{f}`")

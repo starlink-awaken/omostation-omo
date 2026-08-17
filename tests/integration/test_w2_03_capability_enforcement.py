@@ -14,7 +14,7 @@ enforcement events).  No real external side effects.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from ecos.ssot.mof.generated.control.mof_control_models import DelegationMandate
@@ -71,7 +71,7 @@ def pdp(broker):
 
 @pytest.fixture()
 def now():
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # ---------------------------------------------------------------------------

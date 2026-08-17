@@ -55,10 +55,7 @@ def _is_exempt(path: Path) -> bool:
 
 def _has_forbidden_prefix(value: str) -> bool:
     """Check whether a string literal starts with a forbidden path prefix."""
-    return any(
-        value.startswith(p) or ("/" + p) in value or ("\\" + p) in value
-        for p in FORBIDDEN_PREFIXES
-    )
+    return any(value.startswith(p) or ("/" + p) in value or ("\\" + p) in value for p in FORBIDDEN_PREFIXES)
 
 
 class _GatekeeperVisitor(ast.NodeVisitor):
@@ -76,11 +73,7 @@ class _GatekeeperVisitor(ast.NodeVisitor):
         """If the call's positional arg[arg_index] is a forbidden string literal, record."""
         if isinstance(node, ast.Call) and node.args:
             arg = node.args[arg_index]
-            if (
-                isinstance(arg, ast.Constant)
-                and isinstance(arg.value, str)
-                and _has_forbidden_prefix(arg.value)
-            ):
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and _has_forbidden_prefix(arg.value):
                 self._add(arg, f"forbidden path in call arg: {arg.value!r}")
 
     # ── open(...) ──────────────────────────────────────────────
@@ -177,9 +170,7 @@ def _git_diff_files() -> list[Path]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="OMO Contract Gatekeeper")
     parser.add_argument("paths", nargs="*", help="Files or directories to check")
-    parser.add_argument(
-        "--diff", action="store_true", help="Only check Python files in git diff"
-    )
+    parser.add_argument("--diff", action="store_true", help="Only check Python files in git diff")
     args = parser.parse_args(argv)
 
     if args.diff:

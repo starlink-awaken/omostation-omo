@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+
 from omo.omo_task_policy import (
     ACTIVE_EXECUTION_LINKS_POLICY,
     ACTIVE_REVIEW_REF_POLICY,
@@ -109,20 +110,13 @@ def test_active_execution_links_policy_flags_missing_fields(tmp_path: Path) -> N
     active_dir = tmp_path / ".omo" / "tasks" / "active"
     active_dir.mkdir(parents=True)
     (active_dir / "TASK-A.yaml").write_text(
-        "id: TASK-A\n"
-        "status: review\n"
-        "assigned_to: system\n"
-        "dispatch_id: null\n"
-        "run_ref: null\n"
-        "review_ref: null\n",
+        "id: TASK-A\nstatus: review\nassigned_to: system\ndispatch_id: null\nrun_ref: null\nreview_ref: null\n",
         encoding="utf-8",
     )
 
     issues = check_task_policy(tmp_path, ACTIVE_EXECUTION_LINKS_POLICY)
 
-    assert any(
-        "dispatch_id must be set when status=review" in issue for issue in issues
-    )
+    assert any("dispatch_id must be set when status=review" in issue for issue in issues)
     assert any("run_ref must be set when status=review" in issue for issue in issues)
     assert any("review_ref must be set when status=review" in issue for issue in issues)
 
@@ -137,9 +131,7 @@ def test_active_review_ref_policy_flags_missing_artifact(tmp_path: Path) -> None
 
     issues = check_task_policy(tmp_path, ACTIVE_REVIEW_REF_POLICY)
 
-    assert issues == [
-        "TASK-RV.yaml: review_ref target missing: .omo/_delivery/reviews/missing.md"
-    ]
+    assert issues == ["TASK-RV.yaml: review_ref target missing: .omo/_delivery/reviews/missing.md"]
 
 
 def test_done_directory_status_policy_flags_non_done_status(tmp_path: Path) -> None:
@@ -174,9 +166,7 @@ def test_modern_done_completion_marker_policy_flags_missing_marker(
 
     issues = check_task_policy(tmp_path, MODERN_DONE_COMPLETION_MARKER_POLICY)
 
-    assert issues == [
-        "TASK-M.yaml: modern done packet must carry completed_at or completed marker"
-    ]
+    assert issues == ["TASK-M.yaml: modern done packet must carry completed_at or completed marker"]
 
 
 def test_remediation_review_note_policy_flags_missing_note(tmp_path: Path) -> None:
@@ -212,6 +202,4 @@ def test_modern_done_evidence_paths_policy_flags_missing_artifact(
 
     issues = check_task_policy(tmp_path, MODERN_DONE_EVIDENCE_PATHS_POLICY)
 
-    assert issues == [
-        "TASK-E.yaml: evidence_path target missing: .omo/_delivery/reports/missing.md"
-    ]
+    assert issues == ["TASK-E.yaml: evidence_path target missing: .omo/_delivery/reports/missing.md"]

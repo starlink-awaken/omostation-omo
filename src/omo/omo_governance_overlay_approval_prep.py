@@ -38,9 +38,7 @@ def _history_sort_key(entry: dict[str, Any]) -> tuple[datetime, str]:
     return (_parse_iso8601(str(entry["started_at"])), str(entry["event_id"]))
 
 
-def _approval_ref_for_target(
-    root: Path, omo_ref: Path, target: dict[str, Any]
-) -> str | None:
+def _approval_ref_for_target(root: Path, omo_ref: Path, target: dict[str, Any]) -> str | None:
     target_ref = str(target["target_ref"])
     if not target_ref.startswith(str(omo_ref / "tasks" / "planned")):
         return None
@@ -55,9 +53,7 @@ def build_governance_overlay_approval_prep_status(
     root: Path, *, omo_dir: str | Path = ".omo", now: str
 ) -> dict[str, Any]:
     omo_ref = Path(omo_dir)
-    current = _load_yaml_required(
-        root / omo_ref / "workers" / "governance-overlay" / "current.yaml"
-    )
+    current = _load_yaml_required(root / omo_ref / "workers" / "governance-overlay" / "current.yaml")
     tasks: list[dict[str, Any]] = []
     for target in current.get("active_target_states", []):
         if str(target.get("state")) not in _PREP_STATES:
@@ -81,12 +77,8 @@ def build_governance_overlay_approval_prep_status(
         "current_milestone": current.get("current_milestone"),
         "next_action": current.get("next_action"),
         "prep_task_count": len(tasks),
-        "request_now_count": sum(
-            1 for entry in tasks if entry["action"] == "request_approval"
-        ),
-        "awaiting_approval_count": sum(
-            1 for entry in tasks if entry["action"] == "await_approval"
-        ),
+        "request_now_count": sum(1 for entry in tasks if entry["action"] == "request_approval"),
+        "awaiting_approval_count": sum(1 for entry in tasks if entry["action"] == "await_approval"),
         "tasks": tasks,
     }
     markdown_lines = [
@@ -124,10 +116,7 @@ def build_governance_overlay_approval_prep_history(
         run = _load_yaml_required(run_path)
         run_id = str(run["run_id"])
         for target in run.get("target_results", []):
-            if (
-                str(target.get("state")) not in _PREP_STATES
-                and str(target.get("result")) not in _PREP_RESULTS
-            ):
+            if str(target.get("state")) not in _PREP_STATES and str(target.get("result")) not in _PREP_RESULTS:
                 continue
             task_id = str(target["task_id"])
             events.append(
@@ -252,9 +241,7 @@ def _point(event: dict[str, Any]) -> dict[str, Any]:
 
 
 def _interval(previous: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
-    elapsed = _parse_iso8601(str(current["started_at"])) - _parse_iso8601(
-        str(previous["started_at"])
-    )
+    elapsed = _parse_iso8601(str(current["started_at"])) - _parse_iso8601(str(previous["started_at"]))
     return {
         "from_event_id": previous["event_id"],
         "to_event_id": current["event_id"],
@@ -267,13 +254,7 @@ def build_governance_overlay_approval_prep_aging(
 ) -> dict[str, Any]:
     omo_ref = Path(omo_dir)
     analytics = _load_yaml_required(
-        root
-        / omo_ref
-        / "workers"
-        / "governance-overlay"
-        / "approval-prep"
-        / "analytics"
-        / "current.yaml"
+        root / omo_ref / "workers" / "governance-overlay" / "approval-prep" / "analytics" / "current.yaml"
     )
 
     tasks: list[dict[str, Any]] = []
@@ -296,22 +277,12 @@ def build_governance_overlay_approval_prep_aging(
         attention_summary[f"{attention_level}_count"] += 1
 
     tasks.sort(key=_task_sort_key)
-    followup_task_ids = [
-        str(entry["task_id"])
-        for entry in tasks
-        if entry["attention_level"] in {"watch", "escalate"}
-    ]
-    escalation_task_ids = [
-        str(entry["task_id"])
-        for entry in tasks
-        if entry["attention_level"] == "escalate"
-    ]
+    followup_task_ids = [str(entry["task_id"]) for entry in tasks if entry["attention_level"] in {"watch", "escalate"}]
+    escalation_task_ids = [str(entry["task_id"]) for entry in tasks if entry["attention_level"] == "escalate"]
 
     yaml_packet = {
         "generated_at": now,
-        "aging_status": "aging_available"
-        if int(analytics.get("prep_task_count", 0))
-        else "no_prep_tasks",
+        "aging_status": "aging_available" if int(analytics.get("prep_task_count", 0)) else "no_prep_tasks",
         "prep_task_count": int(analytics.get("prep_task_count", 0)),
         "attention_summary": attention_summary,
         "followup_task_ids": followup_task_ids,
@@ -328,19 +299,11 @@ def build_governance_overlay_approval_prep_aging(
         "",
         "## Escalation Candidates",
         "",
-        *(
-            ["none"]
-            if not escalation_task_ids
-            else [f"- {task_id}" for task_id in escalation_task_ids]
-        ),
+        *(["none"] if not escalation_task_ids else [f"- {task_id}" for task_id in escalation_task_ids]),
         "",
         "## Follow-up Queue",
         "",
-        *(
-            ["none"]
-            if not followup_task_ids
-            else [f"- {task_id}" for task_id in followup_task_ids]
-        ),
+        *(["none"] if not followup_task_ids else [f"- {task_id}" for task_id in followup_task_ids]),
     ]
     for entry in tasks:
         markdown_lines.extend(
@@ -361,22 +324,9 @@ def build_governance_overlay_approval_prep_analytics(
     root: Path, *, omo_dir: str | Path = ".omo", now: str
 ) -> dict[str, Any]:
     omo_ref = Path(omo_dir)
-    current = _load_yaml_required(
-        root
-        / omo_ref
-        / "workers"
-        / "governance-overlay"
-        / "approval-prep"
-        / "current.yaml"
-    )
+    current = _load_yaml_required(root / omo_ref / "workers" / "governance-overlay" / "approval-prep" / "current.yaml")
     history = _load_yaml_required(
-        root
-        / omo_ref
-        / "workers"
-        / "governance-overlay"
-        / "approval-prep"
-        / "history"
-        / "current.yaml"
+        root / omo_ref / "workers" / "governance-overlay" / "approval-prep" / "history" / "current.yaml"
     )
     generated_at = _parse_iso8601(now)
 
@@ -464,22 +414,9 @@ def build_governance_overlay_approval_prep_diff(
     root: Path, *, omo_dir: str | Path = ".omo", now: str
 ) -> dict[str, Any]:
     omo_ref = Path(omo_dir)
-    current = _load_yaml_required(
-        root
-        / omo_ref
-        / "workers"
-        / "governance-overlay"
-        / "approval-prep"
-        / "current.yaml"
-    )
+    current = _load_yaml_required(root / omo_ref / "workers" / "governance-overlay" / "approval-prep" / "current.yaml")
     history = _load_yaml_required(
-        root
-        / omo_ref
-        / "workers"
-        / "governance-overlay"
-        / "approval-prep"
-        / "history"
-        / "current.yaml"
+        root / omo_ref / "workers" / "governance-overlay" / "approval-prep" / "history" / "current.yaml"
     )
 
     task_events = _events_by_task(history)
@@ -497,9 +434,9 @@ def build_governance_overlay_approval_prep_diff(
         latest_event = events[0] if events else None
         previous_event = None
         if latest_event is not None:
-            latest_matches_current = latest_event.get("state") == entry.get(
-                "state"
-            ) and latest_event.get("action") == entry.get("action")
+            latest_matches_current = latest_event.get("state") == entry.get("state") and latest_event.get(
+                "action"
+            ) == entry.get("action")
             if latest_matches_current:
                 previous_event = events[1] if len(events) > 1 else None
             else:
@@ -508,9 +445,7 @@ def build_governance_overlay_approval_prep_diff(
         if previous_event is None:
             change_kind = "entered"
             new_current_task_ids.append(task_id)
-        elif previous_event.get("state") != entry.get("state") or previous_event.get(
-            "action"
-        ) != entry.get("action"):
+        elif previous_event.get("state") != entry.get("state") or previous_event.get("action") != entry.get("action"):
             change_kind = "transitioned"
             changed_current_task_ids.append(task_id)
         else:
@@ -525,18 +460,10 @@ def build_governance_overlay_approval_prep_diff(
                 "current_action": entry.get("action"),
                 "current_result": entry.get("result"),
                 "current_approval_ref": entry.get("approval_ref"),
-                "previous_state": None
-                if previous_event is None
-                else previous_event.get("state"),
-                "previous_action": None
-                if previous_event is None
-                else previous_event.get("action"),
-                "previous_result": None
-                if previous_event is None
-                else previous_event.get("result"),
-                "previous_started_at": None
-                if previous_event is None
-                else previous_event.get("started_at"),
+                "previous_state": None if previous_event is None else previous_event.get("state"),
+                "previous_action": None if previous_event is None else previous_event.get("action"),
+                "previous_result": None if previous_event is None else previous_event.get("result"),
+                "previous_started_at": None if previous_event is None else previous_event.get("started_at"),
                 "blockers": list(entry.get("blockers", [])),
             }
         )
@@ -571,27 +498,15 @@ def build_governance_overlay_approval_prep_diff(
         "",
         "## Entered",
         "",
-        *(
-            ["none"]
-            if not new_current_task_ids
-            else [f"- {task_id}" for task_id in new_current_task_ids]
-        ),
+        *(["none"] if not new_current_task_ids else [f"- {task_id}" for task_id in new_current_task_ids]),
         "",
         "## Transitioned",
         "",
-        *(
-            ["none"]
-            if not changed_current_task_ids
-            else [f"- {task_id}" for task_id in changed_current_task_ids]
-        ),
+        *(["none"] if not changed_current_task_ids else [f"- {task_id}" for task_id in changed_current_task_ids]),
         "",
         "## Exited",
         "",
-        *(
-            ["none"]
-            if not no_longer_current_task_ids
-            else [f"- {task_id}" for task_id in no_longer_current_task_ids]
-        ),
+        *(["none"] if not no_longer_current_task_ids else [f"- {task_id}" for task_id in no_longer_current_task_ids]),
     ]
     for entry in task_changes:
         markdown_lines.extend(
@@ -613,29 +528,15 @@ def build_governance_overlay_approval_prep_trend(
 ) -> dict[str, Any]:
     omo_ref = Path(omo_dir)
     analytics = _load_yaml_required(
-        root
-        / omo_ref
-        / "workers"
-        / "governance-overlay"
-        / "approval-prep"
-        / "analytics"
-        / "current.yaml"
+        root / omo_ref / "workers" / "governance-overlay" / "approval-prep" / "analytics" / "current.yaml"
     )
     history = _load_yaml_required(
-        root
-        / omo_ref
-        / "workers"
-        / "governance-overlay"
-        / "approval-prep"
-        / "history"
-        / "current.yaml"
+        root / omo_ref / "workers" / "governance-overlay" / "approval-prep" / "history" / "current.yaml"
     )
 
     events_desc = list(history.get("events", []))
     points = [_point(event) for event in reversed(events_desc)]
-    intervals = [
-        _interval(points[index], points[index + 1]) for index in range(len(points) - 1)
-    ]
+    intervals = [_interval(points[index], points[index + 1]) for index in range(len(points) - 1)]
     action_histogram: dict[str, int] = {}
     task_ids_seen: list[str] = []
     for point in points:
@@ -645,9 +546,7 @@ def build_governance_overlay_approval_prep_trend(
         if task_id not in task_ids_seen:
             task_ids_seen.append(task_id)
 
-    peak_backlog_estimate = max(
-        int(analytics.get("prep_task_count", 0)), len(task_ids_seen)
-    )
+    peak_backlog_estimate = max(int(analytics.get("prep_task_count", 0)), len(task_ids_seen))
     current_backlog = int(analytics.get("prep_task_count", 0))
     burndown = {
         "current_backlog": current_backlog,
@@ -657,9 +556,7 @@ def build_governance_overlay_approval_prep_trend(
     }
     yaml_packet = {
         "generated_at": now,
-        "trend_status": "trend_available"
-        if len(points) >= 2
-        else "insufficient_history",
+        "trend_status": "trend_available" if len(points) >= 2 else "insufficient_history",
         "window_event_count": len(points),
         "oldest_started_at": None if not points else points[0]["started_at"],
         "latest_started_at": None if not points else points[-1]["started_at"],

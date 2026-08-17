@@ -22,9 +22,7 @@ def _render_section(title: str, item_ids: list[str]) -> str:
     return "\n".join(lines)
 
 
-def _render_queue_section(
-    title: str, entries: list[dict[str, Any]], reason_key: str
-) -> str:
+def _render_queue_section(title: str, entries: list[dict[str, Any]], reason_key: str) -> str:
     lines = [f"## {title}", ""]
     if entries:
         for entry in entries:
@@ -63,13 +61,7 @@ def _write_debt_sidecar(
     payload: dict[str, Any],
     _write_yaml,
 ) -> None:
-    artifact_path = (
-        omo_dir
-        / "_delivery"
-        / "debt"
-        / lane
-        / f"{name}-{timestamp.replace(':', '-')}.yaml"
-    )
+    artifact_path = omo_dir / "_delivery" / "debt" / lane / f"{name}-{timestamp.replace(':', '-')}.yaml"
     sidecar = {
         "kind": f"debt_{lane}_artifact",
         "carrier_ref": carrier_ref,
@@ -87,9 +79,7 @@ def _write_debt_sidecar(
     _write_yaml(artifact_path, sidecar)
 
 
-def write_dashboard(
-    omo_dir: Path, metrics, review_queue: dict[str, Any], now: str, _write_yaml
-) -> None:
+def write_dashboard(omo_dir: Path, metrics, review_queue: dict[str, Any], now: str, _write_yaml) -> None:
     due_now = review_queue["due_now"]
     upcoming = review_queue["upcoming"]
     payload = {
@@ -107,17 +97,12 @@ def write_dashboard(
         "gate_item_ids": list(metrics.gate_item_ids),
         "overdue_review_count": len(due_now),
         "overdue_review_item_ids": [entry["id"] for entry in due_now],
-        "next_review_queue": [
-            {"id": entry["id"], "next_review_at": entry["next_review_at"]}
-            for entry in upcoming
-        ],
+        "next_review_queue": [{"id": entry["id"], "next_review_at": entry["next_review_at"]} for entry in upcoming],
     }
     _write_yaml(omo_dir / "debt" / "dashboard" / "current.yaml", payload)
 
 
-def write_review_queue(
-    omo_dir: Path, review_queue: dict[str, Any], _write_yaml
-) -> None:
+def write_review_queue(omo_dir: Path, review_queue: dict[str, Any], _write_yaml) -> None:
     _write_yaml(omo_dir / "debt" / "review-queue" / "current.yaml", review_queue)
 
 
@@ -125,18 +110,14 @@ def _render_action_packet_section(title: str, entries: list[dict[str, Any]]) -> 
     lines = [f"## {title}", ""]
     if entries:
         for entry in entries:
-            lines.append(
-                f"- `{entry['id']}` — {entry['reason']} — `{entry['suggested_command']}`"
-            )
+            lines.append(f"- `{entry['id']}` — {entry['reason']} — `{entry['suggested_command']}`")
     else:
         lines.append("- none")
     lines.append("")
     return "\n".join(lines)
 
 
-def write_action_packet(
-    omo_dir: Path, action_packet: dict[str, Any], _write_yaml
-) -> None:
+def write_action_packet(omo_dir: Path, action_packet: dict[str, Any], _write_yaml) -> None:
     payload = dict(action_packet)
     payload["artifact_meta"] = _artifact_meta(
         artifact_kind="debt_action_packet",
@@ -161,9 +142,7 @@ def write_action_packet(
             _render_action_packet_section("Revalidate Now", lanes["revalidate_now"]),
             _render_action_packet_section("Schedule Now", lanes["schedule_now"]),
             _render_action_packet_section("Escalate Now", lanes["escalate_now"]),
-            _render_action_packet_section(
-                "Continue Mitigation", lanes["continue_mitigation"]
-            ),
+            _render_action_packet_section("Continue Mitigation", lanes["continue_mitigation"]),
             _render_action_packet_section("Watch Only", lanes["watch_only"]),
         ]
     )
@@ -190,26 +169,18 @@ def _render_owner_routing_section(owner_packet: dict[str, Any]) -> str:
         ("Continue Mitigation", "continue_mitigation"),
         ("Watch Only", "watch_only"),
     ]:
-        lane_entries = [
-            entry
-            for entry in owner_packet["entries"]
-            if entry["primary_lane"] == lane_name
-        ]
+        lane_entries = [entry for entry in owner_packet["entries"] if entry["primary_lane"] == lane_name]
         if not lane_entries:
             continue
         lines.extend([f"### {lane_title}", ""])
         for entry in lane_entries:
             flags = ", ".join(entry["priority_flags"]) or "none"
-            lines.append(
-                f"- `{entry['id']}` — {entry['reason']} — flags: {flags} — `{entry['shell_command']}`"
-            )
+            lines.append(f"- `{entry['id']}` — {entry['reason']} — flags: {flags} — `{entry['shell_command']}`")
         lines.append("")
     return "\n".join(lines)
 
 
-def write_owner_routing(
-    omo_dir: Path, owner_routing: dict[str, Any], _write_yaml
-) -> None:
+def write_owner_routing(omo_dir: Path, owner_routing: dict[str, Any], _write_yaml) -> None:
     payload = dict(owner_routing)
     payload["artifact_meta"] = _artifact_meta(
         artifact_kind="debt_owner_routing",
@@ -239,10 +210,7 @@ def write_owner_routing(
                 f"continue_mitigation={owner_routing['summary']['lane_counts']['continue_mitigation']}, "
                 f"watch_only={owner_routing['summary']['lane_counts']['watch_only']}\n"
             ),
-            *[
-                _render_owner_routing_section(owner)
-                for owner in owner_routing["owners"]
-            ],
+            *[_render_owner_routing_section(owner) for owner in owner_routing["owners"]],
         ]
     )
     path = omo_dir / "debt" / "owner-routing" / "current.md"
@@ -265,9 +233,7 @@ def _render_dispatch_owner_section(owner_packet: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def write_dispatch_packet(
-    omo_dir: Path, dispatch_packet: dict[str, Any], _write_yaml
-) -> None:
+def write_dispatch_packet(omo_dir: Path, dispatch_packet: dict[str, Any], _write_yaml) -> None:
     payload = dict(dispatch_packet)
     payload["artifact_meta"] = _artifact_meta(
         artifact_kind="debt_dispatch_packet",
@@ -315,9 +281,7 @@ def write_dispatch_packet(
     run_md_path.write_text(markdown, encoding="utf-8")
 
 
-def write_campaign_packet(
-    omo_dir: Path, campaign_packet: dict[str, Any], _write_yaml
-) -> None:
+def write_campaign_packet(omo_dir: Path, campaign_packet: dict[str, Any], _write_yaml) -> None:
     markdown = render_campaign_markdown(campaign_packet)
     run_dir = omo_dir / "debt" / "campaign" / "runs" / campaign_packet["run_stamp"]
     _write_yaml(run_dir / "current.yaml", campaign_packet)
@@ -330,9 +294,7 @@ def write_campaign_packet(
     current_md_path.write_text(markdown, encoding="utf-8")
 
 
-def write_reporting_packet(
-    omo_dir: Path, reporting_packet: dict[str, Any], _write_yaml
-) -> None:
+def write_reporting_packet(omo_dir: Path, reporting_packet: dict[str, Any], _write_yaml) -> None:
     markdown = render_reporting_markdown(reporting_packet)
     run_dir = omo_dir / "debt" / "reporting" / "runs" / reporting_packet["run_stamp"]
     _write_yaml(run_dir / "current.yaml", reporting_packet)
@@ -345,9 +307,7 @@ def write_reporting_packet(
     current_md_path.write_text(markdown, encoding="utf-8")
 
 
-def write_reporting_history_packet(
-    omo_dir: Path, history_packet: dict[str, Any], _write_yaml
-) -> None:
+def write_reporting_history_packet(omo_dir: Path, history_packet: dict[str, Any], _write_yaml) -> None:
     history_dir = omo_dir / "debt" / "reporting" / "history"
     markdown = render_reporting_history_markdown(history_packet)
     _write_yaml(history_dir / "current.yaml", history_packet)
@@ -356,9 +316,7 @@ def write_reporting_history_packet(
     current_md_path.write_text(markdown, encoding="utf-8")
 
 
-def write_reporting_diff_packet(
-    omo_dir: Path, diff_packet: dict[str, Any], _write_yaml
-) -> None:
+def write_reporting_diff_packet(omo_dir: Path, diff_packet: dict[str, Any], _write_yaml) -> None:
     diff_dir = omo_dir / "debt" / "reporting" / "diff"
     markdown = render_reporting_diff_markdown(diff_packet)
     _write_yaml(diff_dir / "current.yaml", diff_packet)
@@ -367,9 +325,7 @@ def write_reporting_diff_packet(
     current_md_path.write_text(markdown, encoding="utf-8")
 
 
-def write_reporting_trend_packet(
-    omo_dir: Path, trend_packet: dict[str, Any], _write_yaml
-) -> None:
+def write_reporting_trend_packet(omo_dir: Path, trend_packet: dict[str, Any], _write_yaml) -> None:
     trend_dir = omo_dir / "debt" / "reporting" / "trend"
     markdown = render_reporting_trend_markdown(trend_packet)
     _write_yaml(trend_dir / "current.yaml", trend_packet)

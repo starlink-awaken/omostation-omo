@@ -40,9 +40,7 @@ SCRIPTS = WORKSPACE / "scripts"
 def _worker_init(worker_id: int, tmp_path_str: str, mode: str) -> dict:
     """multiprocessing 顶层 worker: 加载 daemon + 跑一次 main."""
     tmp_path = Path(tmp_path_str)
-    spec = importlib.util.spec_from_file_location(
-        "daemon_worker", SCRIPTS / "opc_p7_audit_rollout_daemon.py"
-    )
+    spec = importlib.util.spec_from_file_location("daemon_worker", SCRIPTS / "opc_p7_audit_rollout_daemon.py")
     daemon = importlib.util.module_from_spec(spec)  # type: ignore[reportArgumentType]
     spec.loader.exec_module(daemon)  # type: ignore[reportOptionalMemberAccess]
     daemon.ROOT = tmp_path  # type: ignore[reportAttributeAccessIssue]
@@ -60,14 +58,7 @@ def _worker_init(worker_id: int, tmp_path_str: str, mode: str) -> dict:
         }
 
     def fake_fallback() -> dict:
-        out_path = (
-            tmp_path
-            / "runtime"
-            / "omo"
-            / "_delivery"
-            / "audit-rollout"
-            / "2026-06-12-5repos.json"
-        )
+        out_path = tmp_path / "runtime" / "omo" / "_delivery" / "audit-rollout" / "2026-06-12-5repos.json"
         out_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "repos": {
@@ -78,9 +69,7 @@ def _worker_init(worker_id: int, tmp_path_str: str, mode: str) -> dict:
                 }
             }
         }
-        out_path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
+        out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return {
             "returncode": 0,
             "stdout_tail": ["fallback ok"],
@@ -111,9 +100,7 @@ class T01RaceConditionLock(unittest.TestCase):
                 [(i, str(tmp_path), "weekly") for i in range(6)],
             )
 
-        index_path = (
-            tmp_path / "runtime" / "omo" / "_delivery" / "audit-rollout" / "index.json"
-        )
+        index_path = tmp_path / "runtime" / "omo" / "_delivery" / "audit-rollout" / "index.json"
         self.assertTrue(index_path.exists(), "index.json 必须存在")
         index = json.loads(index_path.read_text(encoding="utf-8"))
         self.assertEqual(
@@ -123,9 +110,7 @@ class T01RaceConditionLock(unittest.TestCase):
         )
         for r in results:
             self.assertNotIn("error", r, f"worker 出错: {r}")
-            self.assertEqual(
-                r["rc"], 0, f"worker {r['worker']} rc 应为 0 (fallback 成功)"
-            )
+            self.assertEqual(r["rc"], 0, f"worker {r['worker']} rc 应为 0 (fallback 成功)")
 
 
 class T02ModePassthrough(unittest.TestCase):
@@ -134,9 +119,7 @@ class T02ModePassthrough(unittest.TestCase):
     def _run_5repos(self, mode: str) -> subprocess.CompletedProcess:
         env = os.environ.copy()
         env["OPC_MODE"] = mode
-        env["OPC_GENERATED_AT"] = (
-            "2026-06-12"  # 注入语义时间点 (T3 设计, 匹配硬编码期望)
-        )
+        env["OPC_GENERATED_AT"] = "2026-06-12"  # 注入语义时间点 (T3 设计, 匹配硬编码期望)
         return subprocess.run(
             [sys.executable, str(SCRIPTS / "opc_audit_rollout_5repos.py")],
             cwd=str(WORKSPACE),
@@ -154,35 +137,15 @@ class T02ModePassthrough(unittest.TestCase):
             result.stderr,
             f"应打印 mode-specific 路径: {result.stderr}",
         )
-        self.assertIn(
-            "mode=weekly", result.stderr, f"应标 mode=weekly: {result.stderr}"
-        )
-        weekly_file = (
-            WORKSPACE
-            / "runtime"
-            / "omo"
-            / "_delivery"
-            / "audit-rollout"
-            / "2026-06-12-weekly.json"
-        )
+        self.assertIn("mode=weekly", result.stderr, f"应标 mode=weekly: {result.stderr}")
+        weekly_file = WORKSPACE / "runtime" / "omo" / "_delivery" / "audit-rollout" / "2026-06-12-weekly.json"
         self.assertTrue(weekly_file.exists(), f"{weekly_file} 应存在 (mode 透传)")
 
     def test_monthly_mode_creates_monthly_file(self) -> None:
         result = self._run_5repos("monthly")
-        self.assertEqual(
-            result.returncode, 0, f"5repos monthly failed: {result.stderr}"
-        )
-        self.assertIn(
-            "mode=monthly", result.stderr, f"应标 mode=monthly: {result.stderr}"
-        )
-        monthly_file = (
-            WORKSPACE
-            / "runtime"
-            / "omo"
-            / "_delivery"
-            / "audit-rollout"
-            / "2026-06-12-monthly.json"
-        )
+        self.assertEqual(result.returncode, 0, f"5repos monthly failed: {result.stderr}")
+        self.assertIn("mode=monthly", result.stderr, f"应标 mode=monthly: {result.stderr}")
+        monthly_file = WORKSPACE / "runtime" / "omo" / "_delivery" / "audit-rollout" / "2026-06-12-monthly.json"
         self.assertTrue(
             monthly_file.exists(),
             f"{monthly_file} 应存在 (修复前 5repos.py 写死 weekly, monthly 不可分辨)",
@@ -190,27 +153,14 @@ class T02ModePassthrough(unittest.TestCase):
 
     def test_pre_release_mode_creates_pre_release_file(self) -> None:
         result = self._run_5repos("pre-release")
-        self.assertEqual(
-            result.returncode, 0, f"5repos pre-release failed: {result.stderr}"
-        )
+        self.assertEqual(result.returncode, 0, f"5repos pre-release failed: {result.stderr}")
         self.assertIn("mode=pre-release", result.stderr)
-        pre_release_file = (
-            WORKSPACE
-            / "runtime"
-            / "omo"
-            / "_delivery"
-            / "audit-rollout"
-            / "2026-06-12-pre-release.json"
-        )
-        self.assertTrue(
-            pre_release_file.exists(), f"{pre_release_file} 应存在 (mode 透传修复)"
-        )
+        pre_release_file = WORKSPACE / "runtime" / "omo" / "_delivery" / "audit-rollout" / "2026-06-12-pre-release.json"
+        self.assertTrue(pre_release_file.exists(), f"{pre_release_file} 应存在 (mode 透传修复)")
 
     def test_write_outputs_isolated_and_mode_aware(self) -> None:
         """独立验证 5repos.py 自身写盘契约, 不依赖 daemon/fallback/workspace 实盘."""
-        spec = importlib.util.spec_from_file_location(
-            "audit_5repos_worker", SCRIPTS / "opc_audit_rollout_5repos.py"
-        )
+        spec = importlib.util.spec_from_file_location("audit_5repos_worker", SCRIPTS / "opc_audit_rollout_5repos.py")
         module = importlib.util.module_from_spec(spec)  # type: ignore[reportArgumentType]
         assert spec.loader is not None  # type: ignore[reportOptionalMemberAccess]
         spec.loader.exec_module(module)  # type: ignore[reportOptionalMemberAccess]
@@ -277,15 +227,9 @@ class T03ReleaseCycleGeneratedAtOverride(unittest.TestCase):
                 text=True,
                 timeout=60,
             )
-            self.assertEqual(
-                result.returncode, 0, f"release cycle failed: {result.stderr}"
-            )
+            self.assertEqual(result.returncode, 0, f"release cycle failed: {result.stderr}")
 
-        index = json.loads(
-            (WORKSPACE / ".omo" / "_delivery" / "release" / "index.json").read_text(
-                encoding="utf-8"
-            )
-        )
+        index = json.loads((WORKSPACE / ".omo" / "_delivery" / "release" / "index.json").read_text(encoding="utf-8"))
         all_gens = [r["generated_at"] for r in index["releases"]]
         self.assertIn(
             "2026-06-08T23:00:00Z",
@@ -328,11 +272,7 @@ class T03ReleaseCycleGeneratedAtOverride(unittest.TestCase):
             timeout=60,
         )
         self.assertEqual(result.returncode, 0, f"release cycle failed: {result.stderr}")
-        index = json.loads(
-            (WORKSPACE / ".omo" / "_delivery" / "release" / "index.json").read_text(
-                encoding="utf-8"
-            )
-        )
+        index = json.loads((WORKSPACE / ".omo" / "_delivery" / "release" / "index.json").read_text(encoding="utf-8"))
         found = any(r["version"] == f"v{unique_today}-r1" for r in index["releases"])
         self.assertTrue(found, f"应有 v{unique_today}-r1 entry (OPC_TODAY override)")
 

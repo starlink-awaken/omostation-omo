@@ -54,9 +54,7 @@ def _workspace(tmp_path: Path) -> tuple[dict, dict]:
     }
     ledger = tmp_path / "docs" / "plans" / "3y-bet-ledger.yaml"
     ledger.parent.mkdir(parents=True)
-    ledger.write_text(
-        yaml.safe_dump({"bets": [bet]}, sort_keys=False), encoding="utf-8"
-    )
+    ledger.write_text(yaml.safe_dump({"bets": [bet]}, sort_keys=False), encoding="utf-8")
 
     approval_ref = ".omo/workers/runs/approval.yaml"
     task = {
@@ -110,8 +108,7 @@ def _dispatch_authority(
                         "allowed_operation_level": "L1",
                         "write_scope": {"mode": "bounded"},
                         "transports": {"cli_prompt": {"command": "worker-a"}},
-                        "capabilities": worker_capabilities
-                        or ["workflow.execute", "python"],
+                        "capabilities": worker_capabilities or ["workflow.execute", "python"],
                     }
                 ]
             },
@@ -152,7 +149,7 @@ def _health() -> dict:
     }
 
 
-def _compile(tmp_path: Path):  # noqa: ANN202
+def _compile(tmp_path: Path):
     return BlueprintControlService(tmp_path).compile_packet(
         bet_id=BET_ID,
         task_id=TASK_ID,
@@ -162,9 +159,7 @@ def _compile(tmp_path: Path):  # noqa: ANN202
     )
 
 
-def _git(
-    tmp_path: Path, *args: str, input_bytes: bytes | None = None
-) -> subprocess.CompletedProcess:
+def _git(tmp_path: Path, *args: str, input_bytes: bytes | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", *args],
         cwd=tmp_path,
@@ -205,11 +200,7 @@ def _adapter_receipt(
     targets = paths or ["src/omo/blueprint_control.py"]
     _git(tmp_path, "add", "-N", "--", *targets)
     patch = _git(tmp_path, "diff", "--binary", "HEAD", "--", *targets).stdout
-    changed = (
-        _git(tmp_path, "diff", "--name-only", "HEAD", "--", *targets)
-        .stdout.decode()
-        .splitlines()
-    )
+    changed = _git(tmp_path, "diff", "--name-only", "HEAD", "--", *targets).stdout.decode().splitlines()
     _git(tmp_path, "reset", "-q", "--", *targets)
     receipt = {
         "baseline_digest": "sha256:" + "1" * 64,
@@ -232,7 +223,7 @@ def _adapter_receipt(
     return receipt
 
 
-def _dispatched_repo(tmp_path: Path, *, now: str | None = None):  # noqa: ANN202
+def _dispatched_repo(tmp_path: Path, *, now: str | None = None):
     _workspace(tmp_path)
     _dispatch_authority(tmp_path)
     _commit_baseline(tmp_path)
@@ -250,15 +241,11 @@ def _dispatched_repo(tmp_path: Path, *, now: str | None = None):  # noqa: ANN202
 def _supervisor_start_receipt(
     tmp_path: Path,
     compiled,
-    dispatched,  # noqa: ANN001
-):  # noqa: ANN202
+    dispatched,
+):
     prompt_ref = str(dispatched["prompt_path"])
-    prompt_digest = (
-        "sha256:" + hashlib.sha256((tmp_path / prompt_ref).read_bytes()).hexdigest()
-    )
-    canonical_root_digest = (
-        "sha256:" + hashlib.sha256(str(tmp_path.resolve()).encode()).hexdigest()
-    )
+    prompt_digest = "sha256:" + hashlib.sha256((tmp_path / prompt_ref).read_bytes()).hexdigest()
+    canonical_root_digest = "sha256:" + hashlib.sha256(str(tmp_path.resolve()).encode()).hexdigest()
     placement = {
         "clone_agent_id": CLONE_AGENT_ID,
         "canonical_root_digest": canonical_root_digest,
@@ -300,8 +287,8 @@ def _supervisor_start_receipt(
 def _supervisor_collect_receipt(
     tmp_path: Path,
     compiled,
-    dispatched,  # noqa: ANN001
-):  # noqa: ANN202
+    dispatched,
+):
     receipt = _supervisor_start_receipt(tmp_path, compiled, dispatched)
     return {
         **receipt,
@@ -316,8 +303,8 @@ def _supervisor_collect_receipt(
 def _supervisor_terminal_collect_receipt(
     tmp_path: Path,
     compiled,
-    dispatched,  # noqa: ANN001
-):  # noqa: ANN202
+    dispatched,
+):
     receipt = _supervisor_start_receipt(tmp_path, compiled, dispatched)
     return {
         **receipt,
@@ -346,14 +333,9 @@ def test_compile_is_deterministic_and_contains_governed_contract(
     assert first.packet["authority"]["human_gate"] is True
     assert first.packet["scope"]["read_surfaces"] == task["read_surfaces"]
     assert first.packet["scope"]["write_surfaces"] == task["write_surfaces"]
-    assert (
-        first.packet["assignment"]["required_capabilities"]
-        == task["required_capabilities"]
-    )
+    assert first.packet["assignment"]["required_capabilities"] == task["required_capabilities"]
     assert first.packet["scope"]["non_goals"] == bet["non_goals"]
-    assert (
-        first.packet["acceptance"]["evidence_requirements"] == task["evidence_required"]
-    )
+    assert first.packet["acceptance"]["evidence_requirements"] == task["evidence_required"]
     assert first.packet["acceptance"]["done_when"] == [
         {
             "id": "AC1",
@@ -448,9 +430,7 @@ def test_dispatch_records_exact_mesh_order_and_transport_only_state(
     assert "ready" not in result["state"]
     assert "succeeded" not in result["state"]
 
-    dispatch = yaml.safe_load(
-        (tmp_path / result["dispatch_path"]).read_text(encoding="utf-8")
-    )
+    dispatch = yaml.safe_load((tmp_path / result["dispatch_path"]).read_text(encoding="utf-8"))
     assert dispatch["blueprint"] == {
         "packet_id": result["packet_id"],
         "packet_hash": result["packet_hash"],
@@ -472,9 +452,7 @@ def test_dispatch_records_exact_mesh_order_and_transport_only_state(
         ("mismatched", "mismatch"),
     ],
 )
-def test_dispatch_fails_closed_for_invalid_approval(
-    tmp_path: Path, approval_mode: str, message: str
-) -> None:
+def test_dispatch_fails_closed_for_invalid_approval(tmp_path: Path, approval_mode: str, message: str) -> None:
     _workspace(tmp_path)
     if approval_mode == "expired":
         _dispatch_authority(tmp_path, expires_at="2026-08-14T09:59:59+00:00")
@@ -516,7 +494,7 @@ def test_mesh_append_failure_propagates_without_transport_acceptance(
     original_append = WorkflowMeshStore.append
     calls = 0
 
-    def fail_step_append(self, event):  # noqa: ANN001, ANN202
+    def fail_step_append(self, event):
         nonlocal calls
         calls += 1
         if calls == 3:
@@ -559,9 +537,7 @@ def test_observe_does_not_promote_exit_zero_to_readiness(tmp_path: Path) -> None
         now="2026-08-14T10:00:00+00:00",
     )
     dispatch_path = tmp_path / result["dispatch_path"]
-    receipt_path = dispatch_path.with_name(
-        dispatch_path.name.removesuffix("-dispatch.yaml") + "-receipt.yaml"
-    )
+    receipt_path = dispatch_path.with_name(dispatch_path.name.removesuffix("-dispatch.yaml") + "-receipt.yaml")
     receipt_path.write_text(
         yaml.safe_dump({"returncode": 0, "transport": "accepted"}),
         encoding="utf-8",
@@ -581,7 +557,7 @@ def test_supervised_start_freezes_baseline_then_pauses_for_human(
     target = tmp_path / "src" / "omo" / "blueprint_control.py"
     calls: list[dict] = []
 
-    def supervisor(**kwargs):  # noqa: ANN003, ANN202
+    def supervisor(**kwargs):
         calls.append(kwargs)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 1\n", encoding="utf-8")
@@ -631,9 +607,7 @@ def test_supervised_start_freezes_baseline_then_pauses_for_human(
     assert persisted["canonical_root_digest"] == started["canonical_root_digest"]
     assert persisted["guard_receipt_digest"] == started["guard_receipt_digest"]
     assert persisted["orca_worktree_id"] == started["orca_worktree_id"]
-    event_types = [
-        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
-    ]
+    event_types = [event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()]
     assert event_types[-2:] == ["StepStarted", "ApprovalRequested"]
     assert "WorkflowSucceeded" not in event_types
     assert "EvidenceRecorded" not in event_types
@@ -642,9 +616,7 @@ def test_supervised_start_freezes_baseline_then_pauses_for_human(
 def test_supervised_start_rejects_expired_admission_before_supervisor(
     tmp_path: Path,
 ) -> None:
-    service, compiled, dispatched = _dispatched_repo(
-        tmp_path, now="2026-08-14T10:00:00+00:00"
-    )
+    service, compiled, dispatched = _dispatched_repo(tmp_path, now="2026-08-14T10:00:00+00:00")
 
     with pytest.raises(BlueprintControlError, match="admission expired"):
         service.start_supervised_execution(
@@ -655,27 +627,21 @@ def test_supervised_start_rejects_expired_admission_before_supervisor(
             now="2026-08-14T10:16:00+00:00",
         )
 
-    event_types = [
-        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
-    ]
+    event_types = [event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()]
     assert event_types == ["WorkflowRequested", "WorkflowAdmitted", "StepDispatched"]
-    assert not service._execution_projection_path(dispatched).exists()  # noqa: SLF001
+    assert not service._execution_projection_path(dispatched).exists()
 
 
 def test_supervised_start_records_durable_provider_approval_wait(
     tmp_path: Path,
 ) -> None:
-    service, compiled, dispatched = _dispatched_repo(
-        tmp_path, now="2026-08-14T09:50:00+00:00"
-    )
+    service, compiled, dispatched = _dispatched_repo(tmp_path, now="2026-08-14T09:50:00+00:00")
 
     started = service.start_supervised_execution(
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(
-            tmp_path, compiled, dispatched
-        ),
+        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
         now="2026-08-14T10:00:00+00:00",
     )
 
@@ -691,24 +657,18 @@ def test_supervised_start_records_durable_provider_approval_wait(
     ]
     snapshot = store.snapshot(dispatched["workflow_run_id"])
     assert snapshot["state"] == "waiting_approval"
-    assert snapshot["approvals"][started["approval_wait"]["approval_id"]]["state"] == (
-        "requested"
-    )
+    assert snapshot["approvals"][started["approval_wait"]["approval_id"]]["state"] == ("requested")
 
 
 def test_supervised_collect_expires_wait_without_calling_supervisor(
     tmp_path: Path,
 ) -> None:
-    service, compiled, dispatched = _dispatched_repo(
-        tmp_path, now="2026-08-14T09:50:00+00:00"
-    )
+    service, compiled, dispatched = _dispatched_repo(tmp_path, now="2026-08-14T09:50:00+00:00")
     service.start_supervised_execution(
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(
-            tmp_path, compiled, dispatched
-        ),
+        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
         now="2026-08-14T10:00:00+00:00",
     )
 
@@ -724,11 +684,9 @@ def test_supervised_collect_expires_wait_without_calling_supervisor(
     snapshot = store.snapshot(dispatched["workflow_run_id"])
     assert snapshot["state"] == "failed"
     assert next(iter(snapshot["approvals"].values()))["state"] == "timed_out"
-    execution = json.loads(
-        service._execution_projection_path(dispatched).read_text(encoding="utf-8")  # noqa: SLF001
-    )
+    execution = json.loads(service._execution_projection_path(dispatched).read_text(encoding="utf-8"))
     assert execution["state"] == "approval_timed_out"
-    assert not service._candidate_projection_path(dispatched).exists()  # noqa: SLF001
+    assert not service._candidate_projection_path(dispatched).exists()
 
 
 def test_supervised_collect_rejects_legacy_projection_without_approval_wait(
@@ -739,15 +697,13 @@ def test_supervised_collect_rejects_legacy_projection_without_approval_wait(
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(
-            tmp_path, compiled, dispatched
-        ),
+        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
     )
-    execution_path = service._execution_projection_path(dispatched)  # noqa: SLF001
+    execution_path = service._execution_projection_path(dispatched)
     execution = json.loads(execution_path.read_text(encoding="utf-8"))
     execution["schema"] = "blueprint-supervised-execution/v1"
     execution.pop("approval_wait", None)
-    execution["projection_digest"] = service._projection_digest(execution)  # noqa: SLF001
+    execution["projection_digest"] = service._projection_digest(execution)
     execution_path.write_text(
         json.dumps(execution, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
@@ -764,22 +720,18 @@ def test_supervised_collect_rejects_legacy_projection_without_approval_wait(
 def test_supervised_start_recovers_wait_projection_from_durable_mesh(
     tmp_path: Path,
 ) -> None:
-    service, compiled, dispatched = _dispatched_repo(
-        tmp_path, now="2026-08-14T09:50:00+00:00"
-    )
+    service, compiled, dispatched = _dispatched_repo(tmp_path, now="2026-08-14T09:50:00+00:00")
     started = service.start_supervised_execution(
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(
-            tmp_path, compiled, dispatched
-        ),
+        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
         now="2026-08-14T10:00:00+00:00",
     )
-    execution_path = service._execution_projection_path(dispatched)  # noqa: SLF001
+    execution_path = service._execution_projection_path(dispatched)
     execution = json.loads(execution_path.read_text(encoding="utf-8"))
     execution.pop("approval_wait")
-    execution["projection_digest"] = service._projection_digest(execution)  # noqa: SLF001
+    execution["projection_digest"] = service._projection_digest(execution)
     execution_path.write_text(
         json.dumps(execution, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
@@ -798,40 +750,33 @@ def test_supervised_start_recovers_wait_projection_from_durable_mesh(
     )
 
     assert replay["approval_wait"] == started["approval_wait"]
-    assert [
-        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
-    ].count("ApprovalRequested") == 1
+    assert [event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()].count(
+        "ApprovalRequested"
+    ) == 1
 
 
 def test_supervised_start_recovers_request_after_step_started_crash(
     tmp_path: Path,
 ) -> None:
-    service, compiled, dispatched = _dispatched_repo(
-        tmp_path, now="2026-08-14T09:50:00+00:00"
-    )
+    service, compiled, dispatched = _dispatched_repo(tmp_path, now="2026-08-14T09:50:00+00:00")
     service.start_supervised_execution(
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(
-            tmp_path, compiled, dispatched
-        ),
+        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
         now="2026-08-14T10:00:00+00:00",
     )
     store = WorkflowMeshStore(tmp_path / ".omo")
     events = store.events()
     assert events[-1]["event_type"] == "ApprovalRequested"
     store.log_path.write_text(
-        "".join(
-            json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n"
-            for event in events[:-1]
-        ),
+        "".join(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n" for event in events[:-1]),
         encoding="utf-8",
     )
-    execution_path = service._execution_projection_path(dispatched)  # noqa: SLF001
+    execution_path = service._execution_projection_path(dispatched)
     execution = json.loads(execution_path.read_text(encoding="utf-8"))
     execution.pop("approval_wait")
-    execution["projection_digest"] = service._projection_digest(execution)  # noqa: SLF001
+    execution["projection_digest"] = service._projection_digest(execution)
     execution_path.write_text(
         json.dumps(execution, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
@@ -851,12 +796,7 @@ def test_supervised_start_recovers_request_after_step_started_crash(
 
     assert replay["approval_wait"]["requested_at"] == "2026-08-14T10:05:00Z"
     assert replay["approval_wait"]["timeout_at"] == "2026-08-21T10:05:00Z"
-    assert (
-        WorkflowMeshStore(tmp_path / ".omo").snapshot(dispatched["workflow_run_id"])[
-            "state"
-        ]
-        == "waiting_approval"
-    )
+    assert WorkflowMeshStore(tmp_path / ".omo").snapshot(dispatched["workflow_run_id"])["state"] == "waiting_approval"
 
 
 def test_supervised_start_approval_request_failure_records_step_failure(
@@ -864,7 +804,7 @@ def test_supervised_start_approval_request_failure_records_step_failure(
 ) -> None:
     service, compiled, dispatched = _dispatched_repo(tmp_path)
 
-    def fail_request(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+    def fail_request(*_args, **_kwargs):
         raise RuntimeError("approval store unavailable")
 
     monkeypatch.setattr("omo.blueprint_control.request_approval", fail_request)
@@ -873,9 +813,7 @@ def test_supervised_start_approval_request_failure_records_step_failure(
             compiled,
             dispatched,
             clone_agent_id=CLONE_AGENT_ID,
-            supervisor=lambda **_kwargs: _supervisor_start_receipt(
-                tmp_path, compiled, dispatched
-            ),
+            supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
         )
 
     store = WorkflowMeshStore(tmp_path / ".omo")
@@ -884,9 +822,7 @@ def test_supervised_start_approval_request_failure_records_step_failure(
         "StepFailed",
     ]
     assert store.snapshot(dispatched["workflow_run_id"])["state"] == "failed"
-    execution = json.loads(
-        service._execution_projection_path(dispatched).read_text(encoding="utf-8")  # noqa: SLF001
-    )
+    execution = json.loads(service._execution_projection_path(dispatched).read_text(encoding="utf-8"))
     assert execution["state"] == "control_projection_failed"
     assert execution["control_failure"] == {
         "reason": "approval_request_failed",
@@ -901,14 +837,14 @@ def test_supervised_start_recovers_when_request_and_step_failure_writes_fail_onc
     original_append = WorkflowMeshStore.append
     attempts = 0
 
-    def fail_request_once(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+    def fail_request_once(*args, **kwargs):
         nonlocal attempts
         attempts += 1
         if attempts == 1:
             raise RuntimeError("approval store unavailable")
         return durable_request_approval(*args, **kwargs)
 
-    def fail_step_failure(self, event):  # noqa: ANN001, ANN202
+    def fail_step_failure(self, event):
         if event.get("event_type") == "StepFailed":
             raise RuntimeError("mesh terminal write unavailable")
         return original_append(self, event)
@@ -920,21 +856,14 @@ def test_supervised_start_recovers_when_request_and_step_failure_writes_fail_onc
             compiled,
             dispatched,
             clone_agent_id=CLONE_AGENT_ID,
-            supervisor=lambda **_kwargs: _supervisor_start_receipt(
-                tmp_path, compiled, dispatched
-            ),
+            supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
         )
 
-    execution_path = service._execution_projection_path(dispatched)  # noqa: SLF001
+    execution_path = service._execution_projection_path(dispatched)
     pending = json.loads(execution_path.read_text(encoding="utf-8"))
     assert pending["state"] == "approval_request_pending"
     assert pending["control_failure"]["step_failure_recorded"] is False
-    assert (
-        WorkflowMeshStore(tmp_path / ".omo").snapshot(dispatched["workflow_run_id"])[
-            "state"
-        ]
-        == "running"
-    )
+    assert WorkflowMeshStore(tmp_path / ".omo").snapshot(dispatched["workflow_run_id"])["state"] == "running"
 
     replay = service.start_supervised_execution(
         compiled,
@@ -948,15 +877,8 @@ def test_supervised_start_recovers_when_request_and_step_failure_writes_fail_onc
     )
 
     assert replay["state"] == "awaiting_human_action"
-    assert replay["approval_wait"]["approval_id"] == (
-        f"provider:{dispatched['dispatch_id']}"
-    )
-    assert (
-        WorkflowMeshStore(tmp_path / ".omo").snapshot(dispatched["workflow_run_id"])[
-            "state"
-        ]
-        == "waiting_approval"
-    )
+    assert replay["approval_wait"]["approval_id"] == (f"provider:{dispatched['dispatch_id']}")
+    assert WorkflowMeshStore(tmp_path / ".omo").snapshot(dispatched["workflow_run_id"])["state"] == "waiting_approval"
 
 
 def test_supervised_collect_rejects_forged_approval_wait_binding(
@@ -967,14 +889,12 @@ def test_supervised_collect_rejects_forged_approval_wait_binding(
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(
-            tmp_path, compiled, dispatched
-        ),
+        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
     )
-    execution_path = service._execution_projection_path(dispatched)  # noqa: SLF001
+    execution_path = service._execution_projection_path(dispatched)
     execution = json.loads(execution_path.read_text(encoding="utf-8"))
     execution["approval_wait"]["approval_id"] = "provider:forged"
-    execution["projection_digest"] = service._projection_digest(execution)  # noqa: SLF001
+    execution["projection_digest"] = service._projection_digest(execution)
     execution_path.write_text(
         json.dumps(execution, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
@@ -996,9 +916,7 @@ def test_supervised_recovery_rejects_forged_external_facts_without_mesh_write(
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(
-            tmp_path, compiled, dispatched
-        ),
+        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
     )
     store = WorkflowMeshStore(tmp_path / ".omo")
     events = store.events()
@@ -1010,11 +928,11 @@ def test_supervised_recovery_rejects_forged_external_facts_without_mesh_write(
         ),
         encoding="utf-8",
     )
-    execution_path = service._execution_projection_path(dispatched)  # noqa: SLF001
+    execution_path = service._execution_projection_path(dispatched)
     execution = json.loads(execution_path.read_text(encoding="utf-8"))
     execution.pop("approval_wait")
     execution["orca"]["terminal_handle"] = "terminal-forged"
-    execution["projection_digest"] = service._projection_digest(execution)  # noqa: SLF001
+    execution["projection_digest"] = service._projection_digest(execution)
     execution_path.write_text(
         json.dumps(execution, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
@@ -1042,7 +960,7 @@ def test_supervised_start_marks_projection_failed_when_mesh_start_is_not_durable
 ) -> None:
     service, compiled, dispatched = _dispatched_repo(tmp_path)
 
-    def fail_append(_self, _event):  # noqa: ANN001, ANN202
+    def fail_append(_self, _event):
         raise RuntimeError("mesh write unavailable")
 
     monkeypatch.setattr(WorkflowMeshStore, "append", fail_append)
@@ -1051,11 +969,9 @@ def test_supervised_start_marks_projection_failed_when_mesh_start_is_not_durable
             compiled,
             dispatched,
             clone_agent_id=CLONE_AGENT_ID,
-            supervisor=lambda **_kwargs: _supervisor_start_receipt(
-                tmp_path, compiled, dispatched
-            ),
+            supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
         )
-    execution_path = service._execution_projection_path(dispatched)  # noqa: SLF001
+    execution_path = service._execution_projection_path(dispatched)
     persisted = json.loads(execution_path.read_text(encoding="utf-8"))
     assert persisted["state"] == "control_projection_failed"
     assert persisted["candidate_collected"] is False
@@ -1075,9 +991,9 @@ def test_supervised_start_crash_leaves_stable_startup_unknown_and_never_relaunch
     service, compiled, dispatched = _dispatched_repo(tmp_path)
     seen: list[dict] = []
 
-    def crash_after_external_start(**kwargs):  # noqa: ANN003, ANN202
+    def crash_after_external_start(**kwargs):
         seen.append(kwargs)
-        projection_path = service._execution_projection_path(dispatched)  # noqa: SLF001
+        projection_path = service._execution_projection_path(dispatched)
         persisted = json.loads(projection_path.read_text(encoding="utf-8"))
         assert persisted["state"] == "starting"
         assert persisted["baseline_tree"]
@@ -1092,7 +1008,7 @@ def test_supervised_start_crash_leaves_stable_startup_unknown_and_never_relaunch
             supervisor=crash_after_external_start,
         )
 
-    execution_path = service._execution_projection_path(dispatched)  # noqa: SLF001
+    execution_path = service._execution_projection_path(dispatched)
     persisted = json.loads(execution_path.read_text(encoding="utf-8"))
     assert persisted["state"] == "startup_outcome_unknown"
     assert persisted["idempotency_key"] == seen[0]["idempotency_key"]
@@ -1113,9 +1029,7 @@ def test_supervised_start_replay_rejects_cross_clone_agent_identity(
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(
-            tmp_path, compiled, dispatched
-        ),
+        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
     )
 
     with pytest.raises(BlueprintControlError, match="clone agent identity mismatch"):
@@ -1150,7 +1064,7 @@ def test_supervised_start_invalid_receipt_preserves_safe_recovery_facts(
             },
         )
 
-    execution_path = service._execution_projection_path(dispatched)  # noqa: SLF001
+    execution_path = service._execution_projection_path(dispatched)
     persisted = json.loads(execution_path.read_text(encoding="utf-8"))
     assert persisted["state"] == "startup_outcome_unknown"
     failure = persisted["supervisor_failure"]
@@ -1175,9 +1089,7 @@ def test_supervised_collect_keeps_active_worker_paused_without_candidate(
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(
-            tmp_path, compiled, dispatched
-        ),
+        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
     )
 
     active = service.collect_supervised_execution(
@@ -1196,17 +1108,13 @@ def test_supervised_collect_keeps_active_worker_paused_without_candidate(
     assert active["candidate_collected"] is False
     assert active["binding"]["packet_hash"] == compiled.packet_hash
     assert active["orca"]["terminal_handle"] == "terminal-001"
-    projection = service._candidate_projection_path(dispatched)  # noqa: SLF001
+    projection = service._candidate_projection_path(dispatched)
     assert not projection.exists()
-    event_types = [
-        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
-    ]
+    event_types = [event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()]
     assert "WorkflowSucceeded" not in event_types
     assert "EvidenceRecorded" not in event_types
     assert "StepFailed" not in event_types
-    snapshot = WorkflowMeshStore(tmp_path / ".omo").snapshot(
-        dispatched["workflow_run_id"]
-    )
+    snapshot = WorkflowMeshStore(tmp_path / ".omo").snapshot(dispatched["workflow_run_id"])
     assert snapshot["state"] == "waiting_approval"
     assert next(iter(snapshot["approvals"].values()))["state"] == "requested"
 
@@ -1219,13 +1127,11 @@ def test_supervised_collect_passes_frozen_clone_attestation_back_to_supervisor(
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(
-            tmp_path, compiled, dispatched
-        ),
+        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
     )
     seen: list[dict] = []
 
-    def active_supervisor(**kwargs):  # noqa: ANN003, ANN202
+    def active_supervisor(**kwargs):
         seen.append(kwargs)
         return {
             **_supervisor_start_receipt(tmp_path, compiled, dispatched),
@@ -1235,9 +1141,7 @@ def test_supervised_collect_passes_frozen_clone_attestation_back_to_supervisor(
             "residual_resources": ["terminal-001"],
         }
 
-    active = service.collect_supervised_execution(
-        compiled, dispatched, supervisor=active_supervisor
-    )
+    active = service.collect_supervised_execution(compiled, dispatched, supervisor=active_supervisor)
 
     assert active["candidate_collected"] is False
     assert seen == [
@@ -1281,7 +1185,7 @@ def test_supervised_collect_rejects_clone_or_terminal_reattestation_drift(
     service, compiled, dispatched = _dispatched_repo(tmp_path)
     target = tmp_path / "src" / "omo" / "blueprint_control.py"
 
-    def start_supervisor(**_kwargs):  # noqa: ANN003, ANN202
+    def start_supervisor(**_kwargs):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 20\n", encoding="utf-8")
         return _supervisor_start_receipt(tmp_path, compiled, dispatched)
@@ -1305,10 +1209,8 @@ def test_supervised_collect_rejects_clone_or_terminal_reattestation_drift(
             supervisor=lambda **_kwargs: receipt,
         )
 
-    assert not service._candidate_projection_path(dispatched).exists()  # noqa: SLF001
-    event_types = [
-        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
-    ]
+    assert not service._candidate_projection_path(dispatched).exists()
+    event_types = [event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()]
     assert "WorkflowSucceeded" not in event_types
     assert "EvidenceRecorded" not in event_types
     assert "StepFailed" not in event_types
@@ -1320,7 +1222,7 @@ def test_supervised_collect_settled_worker_builds_independent_candidate(
     service, compiled, dispatched = _dispatched_repo(tmp_path)
     target = tmp_path / "src" / "omo" / "blueprint_control.py"
 
-    def start_supervisor(**_kwargs):  # noqa: ANN003, ANN202
+    def start_supervisor(**_kwargs):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 2\n", encoding="utf-8")
         return _supervisor_start_receipt(tmp_path, compiled, dispatched)
@@ -1333,16 +1235,14 @@ def test_supervised_collect_settled_worker_builds_independent_candidate(
     )
     measured: list[list[str]] = []
 
-    def measurer(*, argv, **_kwargs):  # noqa: ANN001, ANN202
+    def measurer(*, argv, **_kwargs):
         measured.append(argv)
         return {"returncode": 0, "stdout": b"directly measured"}
 
     collected = service.collect_supervised_execution(
         compiled,
         dispatched,
-        supervisor=lambda **_kwargs: _supervisor_collect_receipt(
-            tmp_path, compiled, dispatched
-        ),
+        supervisor=lambda **_kwargs: _supervisor_collect_receipt(tmp_path, compiled, dispatched),
         acceptance_runner=measurer,
     )
 
@@ -1350,13 +1250,9 @@ def test_supervised_collect_settled_worker_builds_independent_candidate(
     assert collected["manifest"]["changed_paths"] == ["src/omo/blueprint_control.py"]
     assert collected["transport_receipt"]["output_digest"] == "7" * 64
     assert collected["transport_receipt"]["orca_dispatch_id"] == "orca-dispatch-001"
-    assert collected["acceptance_measurements"][0]["source"] == (
-        "deterministic-command"
-    )
+    assert collected["acceptance_measurements"][0]["source"] == ("deterministic-command")
     assert measured == [["/usr/bin/true"]]
-    event_types = [
-        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
-    ]
+    event_types = [event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()]
     assert "WorkflowSucceeded" in event_types
     assert "EvidenceRecorded" in event_types
     assert "ApprovalGranted" in event_types
@@ -1375,7 +1271,7 @@ def test_supervised_collect_accepts_explicit_bounded_terminal_fallback(
     service, compiled, dispatched = _dispatched_repo(tmp_path)
     target = tmp_path / "src" / "omo" / "blueprint_control.py"
 
-    def start_supervisor(**_kwargs):  # noqa: ANN003, ANN202
+    def start_supervisor(**_kwargs):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 2\n", encoding="utf-8")
         return _supervisor_start_receipt(tmp_path, compiled, dispatched)
@@ -1390,17 +1286,13 @@ def test_supervised_collect_accepts_explicit_bounded_terminal_fallback(
     collected = service.collect_supervised_execution(
         compiled,
         dispatched,
-        supervisor=lambda **_kwargs: _supervisor_terminal_collect_receipt(
-            tmp_path, compiled, dispatched
-        ),
+        supervisor=lambda **_kwargs: _supervisor_terminal_collect_receipt(tmp_path, compiled, dispatched),
         acceptance_runner=lambda **_kwargs: {"returncode": 0, "stdout": b"measured"},
     )
 
     assert collected["state"] == "candidate_collected"
     assert collected["transport_receipt"]["output_digest"] == "8" * 64
-    assert collected["transport_receipt"]["model_output_source"] == (
-        "bounded_terminal_fallback"
-    )
+    assert collected["transport_receipt"]["model_output_source"] == ("bounded_terminal_fallback")
     assert collected["transport_receipt"]["fallback_reason"] == ("session_not_reported")
 
 
@@ -1410,7 +1302,7 @@ def test_supervised_collect_evidence_failure_transitions_to_auditable_failure(
     service, compiled, dispatched = _dispatched_repo(tmp_path)
     target = tmp_path / "src" / "omo" / "blueprint_control.py"
 
-    def start_supervisor(**_kwargs):  # noqa: ANN003, ANN202
+    def start_supervisor(**_kwargs):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 3\n", encoding="utf-8")
         return _supervisor_start_receipt(tmp_path, compiled, dispatched)
@@ -1422,34 +1314,26 @@ def test_supervised_collect_evidence_failure_transitions_to_auditable_failure(
         supervisor=start_supervisor,
     )
 
-    def fail_evidence(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+    def fail_evidence(*_args, **_kwargs):
         raise RuntimeError("evidence store unavailable")
 
-    monkeypatch.setattr(
-        OrchestrationContractCoordinator, "record_candidate", fail_evidence
-    )
+    monkeypatch.setattr(OrchestrationContractCoordinator, "record_candidate", fail_evidence)
     with pytest.raises(RuntimeError, match="evidence store unavailable"):
         service.collect_supervised_execution(
             compiled,
             dispatched,
-            supervisor=lambda **_kwargs: _supervisor_collect_receipt(
-                tmp_path, compiled, dispatched
-            ),
+            supervisor=lambda **_kwargs: _supervisor_collect_receipt(tmp_path, compiled, dispatched),
         )
 
-    snapshot = WorkflowMeshStore(tmp_path / ".omo").snapshot(
-        dispatched["workflow_run_id"]
-    )
+    snapshot = WorkflowMeshStore(tmp_path / ".omo").snapshot(dispatched["workflow_run_id"])
     assert snapshot["state"] == "failed"
-    event_types = [
-        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
-    ]
+    event_types = [event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()]
     assert event_types[-3:] == [
         "WorkflowSucceeded",
         "CompensationStarted",
         "StepFailed",
     ]
-    failed_path = service._candidate_projection_path(dispatched)  # noqa: SLF001
+    failed_path = service._candidate_projection_path(dispatched)
     failed = json.loads(failed_path.read_text(encoding="utf-8"))
     assert failed["state"] == "candidate_collection_failed"
     with pytest.raises(BlueprintControlError, match="candidate collection failed"):
@@ -1472,9 +1356,7 @@ def test_supervised_collect_rejects_execution_projection_not_backed_by_external_
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(
-            tmp_path, compiled, dispatched
-        ),
+        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
     )
     execution_path = tmp_path / started["execution_projection"]
     projection = json.loads(execution_path.read_text(encoding="utf-8"))
@@ -1486,9 +1368,7 @@ def test_supervised_collect_rejects_execution_projection_not_backed_by_external_
         projection[mutation] = ["src/other.py"]
     else:
         projection[mutation] = "other-worker"
-    projection["projection_digest"] = BlueprintControlService._projection_digest(  # noqa: SLF001
-        projection
-    )
+    projection["projection_digest"] = BlueprintControlService._projection_digest(projection)
     execution_path.write_text(json.dumps(projection), encoding="utf-8")
 
     with pytest.raises(BlueprintControlError, match="execution external fact mismatch"):
@@ -1505,7 +1385,7 @@ def test_supervised_candidate_replay_rejects_forged_projection_and_cross_dispatc
     service, compiled, dispatched = _dispatched_repo(tmp_path)
     target = tmp_path / "src" / "omo" / "blueprint_control.py"
 
-    def start_supervisor(**_kwargs):  # noqa: ANN003, ANN202
+    def start_supervisor(**_kwargs):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 4\n", encoding="utf-8")
         return _supervisor_start_receipt(tmp_path, compiled, dispatched)
@@ -1519,22 +1399,16 @@ def test_supervised_candidate_replay_rejects_forged_projection_and_cross_dispatc
     collected = service.collect_supervised_execution(
         compiled,
         dispatched,
-        supervisor=lambda **_kwargs: _supervisor_collect_receipt(
-            tmp_path, compiled, dispatched
-        ),
+        supervisor=lambda **_kwargs: _supervisor_collect_receipt(tmp_path, compiled, dispatched),
     )
-    candidate_path = service._candidate_projection_path(dispatched)  # noqa: SLF001
+    candidate_path = service._candidate_projection_path(dispatched)
     forged = json.loads(candidate_path.read_text(encoding="utf-8"))
     forged["transport_receipt"]["dispatch_id"] = "cross-run-dispatch"
     receipt = forged["transport_receipt"]
     receipt["receipt_digest"] = compute_packet_hash(
-        canonicalize(
-            {key: value for key, value in receipt.items() if key != "receipt_digest"}
-        )
+        canonicalize({key: value for key, value in receipt.items() if key != "receipt_digest"})
     )
-    forged["projection_digest"] = BlueprintControlService._projection_digest(  # noqa: SLF001
-        forged
-    )
+    forged["projection_digest"] = BlueprintControlService._projection_digest(forged)
     candidate_path.write_text(json.dumps(forged), encoding="utf-8")
 
     with pytest.raises(BlueprintControlError, match="candidate projection invalid"):
@@ -1564,9 +1438,7 @@ def test_supervised_collect_rejects_live_clone_branch_identity_drift_before_orca
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(
-            tmp_path, compiled, dispatched
-        ),
+        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
     )
     identity_path = tmp_path / ".git" / "agent-clone-identity.json"
     identity = json.loads(identity_path.read_text(encoding="utf-8"))
@@ -1580,10 +1452,8 @@ def test_supervised_collect_rejects_live_clone_branch_identity_drift_before_orca
             supervisor=lambda **_kwargs: pytest.fail("must fail before Orca collect"),
         )
 
-    assert not service._candidate_projection_path(dispatched).exists()  # noqa: SLF001
-    event_types = [
-        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
-    ]
+    assert not service._candidate_projection_path(dispatched).exists()
+    event_types = [event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()]
     assert "WorkflowSucceeded" not in event_types
     assert "EvidenceRecorded" not in event_types
     assert "StepFailed" not in event_types
@@ -1603,7 +1473,7 @@ def test_supervised_candidate_replay_rejects_rehashed_clone_attestation_tamper(
     service, compiled, dispatched = _dispatched_repo(tmp_path)
     target = tmp_path / "src" / "omo" / "blueprint_control.py"
 
-    def start_supervisor(**_kwargs):  # noqa: ANN003, ANN202
+    def start_supervisor(**_kwargs):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 21\n", encoding="utf-8")
         return _supervisor_start_receipt(tmp_path, compiled, dispatched)
@@ -1617,21 +1487,15 @@ def test_supervised_candidate_replay_rejects_rehashed_clone_attestation_tamper(
     service.collect_supervised_execution(
         compiled,
         dispatched,
-        supervisor=lambda **_kwargs: _supervisor_collect_receipt(
-            tmp_path, compiled, dispatched
-        ),
+        supervisor=lambda **_kwargs: _supervisor_collect_receipt(tmp_path, compiled, dispatched),
     )
-    execution_path = service._execution_projection_path(dispatched)  # noqa: SLF001
+    execution_path = service._execution_projection_path(dispatched)
     execution = json.loads(execution_path.read_text(encoding="utf-8"))
     execution[field] = drifted
-    execution["projection_digest"] = BlueprintControlService._projection_digest(  # noqa: SLF001
-        execution
-    )
+    execution["projection_digest"] = BlueprintControlService._projection_digest(execution)
     execution_path.write_text(json.dumps(execution), encoding="utf-8")
 
-    with pytest.raises(
-        BlueprintControlError, match="mismatch|candidate projection invalid"
-    ):
+    with pytest.raises(BlueprintControlError, match="mismatch|candidate projection invalid"):
         service.collect_supervised_execution(
             compiled,
             dispatched,
@@ -1645,7 +1509,7 @@ def test_supervised_candidate_replay_rejects_fully_rehashed_cross_clone_forgery(
     service, compiled, dispatched = _dispatched_repo(tmp_path)
     target = tmp_path / "src" / "omo" / "blueprint_control.py"
 
-    def start_supervisor(**_kwargs):  # noqa: ANN003, ANN202
+    def start_supervisor(**_kwargs):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 22\n", encoding="utf-8")
         return _supervisor_start_receipt(tmp_path, compiled, dispatched)
@@ -1659,9 +1523,7 @@ def test_supervised_candidate_replay_rejects_fully_rehashed_cross_clone_forgery(
     service.collect_supervised_execution(
         compiled,
         dispatched,
-        supervisor=lambda **_kwargs: _supervisor_collect_receipt(
-            tmp_path, compiled, dispatched
-        ),
+        supervisor=lambda **_kwargs: _supervisor_collect_receipt(tmp_path, compiled, dispatched),
     )
     forged = {
         "clone_agent_id": "cross-clone-agent",
@@ -1669,26 +1531,20 @@ def test_supervised_candidate_replay_rejects_fully_rehashed_cross_clone_forgery(
         "guard_receipt_digest": "sha256:" + "5" * 64,
         "orca_worktree_id": "repo-cross::/tmp/cross-clone",
     }
-    execution_path = service._execution_projection_path(dispatched)  # noqa: SLF001
+    execution_path = service._execution_projection_path(dispatched)
     execution = json.loads(execution_path.read_text(encoding="utf-8"))
     execution.update(forged)
-    execution["projection_digest"] = BlueprintControlService._projection_digest(  # noqa: SLF001
-        execution
-    )
+    execution["projection_digest"] = BlueprintControlService._projection_digest(execution)
     execution_path.write_text(json.dumps(execution), encoding="utf-8")
-    candidate_path = service._candidate_projection_path(dispatched)  # noqa: SLF001
+    candidate_path = service._candidate_projection_path(dispatched)
     candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
     candidate.update(forged)
     candidate["transport_receipt"].update(forged)
     receipt = candidate["transport_receipt"]
     receipt["receipt_digest"] = compute_packet_hash(
-        canonicalize(
-            {key: value for key, value in receipt.items() if key != "receipt_digest"}
-        )
+        canonicalize({key: value for key, value in receipt.items() if key != "receipt_digest"})
     )
-    candidate["projection_digest"] = BlueprintControlService._projection_digest(  # noqa: SLF001
-        candidate
-    )
+    candidate["projection_digest"] = BlueprintControlService._projection_digest(candidate)
     candidate_path.write_text(json.dumps(candidate), encoding="utf-8")
 
     with pytest.raises(BlueprintControlError, match="external fact mismatch"):
@@ -1707,24 +1563,18 @@ def test_supervised_collect_rejects_rehashed_binding_tamper_before_orca_call(
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(
-            tmp_path, compiled, dispatched
-        ),
+        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
     )
     execution_path = tmp_path / started["execution_projection"]
     projection = json.loads(execution_path.read_text(encoding="utf-8"))
     projection["binding"]["packet_hash"] = "sha256:" + "0" * 64
-    projected = {
-        key: value for key, value in projection.items() if key != "projection_digest"
-    }
+    projected = {key: value for key, value in projection.items() if key != "projection_digest"}
     canonical = json.dumps(projected, sort_keys=True, separators=(",", ":"))
-    projection["projection_digest"] = (
-        "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
-    )
+    projection["projection_digest"] = "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
     execution_path.write_text(json.dumps(projection), encoding="utf-8")
     called = False
 
-    def supervisor(**_kwargs):  # noqa: ANN003, ANN202
+    def supervisor(**_kwargs):
         nonlocal called
         called = True
         return _supervisor_collect_receipt(tmp_path, compiled, dispatched)
@@ -1737,10 +1587,8 @@ def test_supervised_collect_rejects_rehashed_binding_tamper_before_orca_call(
         )
 
     assert called is False
-    assert not service._candidate_projection_path(dispatched).exists()  # noqa: SLF001
-    event_types = [
-        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
-    ]
+    assert not service._candidate_projection_path(dispatched).exists()
+    event_types = [event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()]
     assert "WorkflowSucceeded" not in event_types
     assert "EvidenceRecorded" not in event_types
 
@@ -1750,19 +1598,17 @@ def test_execute_collect_and_independent_verify_use_real_git_delta(
 ) -> None:
     service, compiled, dispatched = _dispatched_repo(tmp_path)
 
-    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
+    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):
         on_process_started()
         target = workspace_root / "src" / "omo" / "blueprint_control.py"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 1\n", encoding="utf-8")
-        receipt_path.write_text(
-            json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8"
-        )
+        receipt_path.write_text(json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8")
         return {"returncode": 0}
 
     measured_commands: list[list[str]] = []
 
-    def measurer(*, argv, **_kwargs):  # noqa: ANN001, ANN202
+    def measurer(*, argv, **_kwargs):
         measured_commands.append(argv)
         return {"returncode": 0, "stdout": b"measured"}
 
@@ -1810,14 +1656,12 @@ def test_collect_refuses_to_invent_acceptance_claims_without_direct_measurement(
 ) -> None:
     service, compiled, dispatched = _dispatched_repo(tmp_path)
 
-    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
+    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):
         on_process_started()
         target = workspace_root / "src" / "omo" / "blueprint_control.py"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 1\n", encoding="utf-8")
-        receipt_path.write_text(
-            json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8"
-        )
+        receipt_path.write_text(json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8")
         return {"returncode": 0}
 
     with pytest.raises(BlueprintControlError, match="acceptance measurement failed"):
@@ -1831,9 +1675,7 @@ def test_collect_refuses_to_invent_acceptance_claims_without_direct_measurement(
             },
         )
 
-    event_types = [
-        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
-    ]
+    event_types = [event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()]
     assert "WorkflowSucceeded" not in event_types
     assert "EvidenceRecorded" not in event_types
 
@@ -1841,15 +1683,13 @@ def test_collect_refuses_to_invent_acceptance_claims_without_direct_measurement(
 def test_baseline_is_frozen_before_runner_can_modify_workspace(tmp_path: Path) -> None:
     service, compiled, dispatched = _dispatched_repo(tmp_path)
 
-    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
+    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):
         target = workspace_root / "src" / "omo" / "blueprint_control.py"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("PRE_CALLBACK = True\n", encoding="utf-8")
         on_process_started()
         target.write_text("FINAL = True\n", encoding="utf-8")
-        receipt_path.write_text(
-            json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8"
-        )
+        receipt_path.write_text(json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8")
         return {"returncode": 0}
 
     collected = service.execute_and_collect(compiled, dispatched, runner=runner)
@@ -1870,16 +1710,14 @@ def test_collect_replay_returns_persisted_candidate_without_rerunning(
     service, compiled, dispatched = _dispatched_repo(tmp_path)
     calls = 0
 
-    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
+    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):
         nonlocal calls
         calls += 1
         on_process_started()
         target = workspace_root / "src" / "omo" / "blueprint_control.py"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 1\n", encoding="utf-8")
-        receipt_path.write_text(
-            json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8"
-        )
+        receipt_path.write_text(json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8")
         return {"returncode": 0}
 
     first = service.execute_and_collect(compiled, dispatched, runner=runner)
@@ -1887,9 +1725,9 @@ def test_collect_replay_returns_persisted_candidate_without_rerunning(
 
     assert replay == first
     assert calls == 1
-    assert [
-        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
-    ].count("EvidenceRecorded") == 1
+    assert [event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()].count(
+        "EvidenceRecorded"
+    ) == 1
 
 
 @pytest.mark.parametrize(
@@ -1905,7 +1743,7 @@ def test_collect_rejects_untrusted_adapter_receipt_without_evidence(
 ) -> None:
     service, compiled, dispatched = _dispatched_repo(tmp_path)
 
-    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
+    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):
         on_process_started()
         target = workspace_root / "src" / "omo" / "blueprint_control.py"
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -1935,9 +1773,7 @@ def test_collect_rejects_untrusted_adapter_receipt_without_evidence(
     with pytest.raises(BlueprintControlError, match=message):
         service.execute_and_collect(compiled, dispatched, runner=runner)
 
-    event_types = [
-        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
-    ]
+    event_types = [event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()]
     assert "EvidenceRecorded" not in event_types
     assert "WorkflowVerified" not in event_types
 
@@ -1947,15 +1783,13 @@ def test_runner_prelaunch_rejection_has_no_step_started_or_candidate(
 ) -> None:
     service, compiled, dispatched = _dispatched_repo(tmp_path)
 
-    def runner(**_kwargs):  # noqa: ANN003, ANN202
+    def runner(**_kwargs):
         raise BlueprintControlError("runner prelaunch rejection")
 
     with pytest.raises(BlueprintControlError, match="prelaunch rejection"):
         service.execute_and_collect(compiled, dispatched, runner=runner)
 
-    event_types = [
-        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
-    ]
+    event_types = [event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()]
     assert "StepStarted" not in event_types
     assert "StepFailed" not in event_types
     assert "WorkflowSucceeded" not in event_types
@@ -1967,7 +1801,7 @@ def test_started_provider_human_review_fails_step_without_candidate(
 ) -> None:
     service, compiled, dispatched = _dispatched_repo(tmp_path)
 
-    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
+    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):
         on_process_started()
         target = workspace_root / "src" / "omo" / "blueprint_control.py"
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -1986,9 +1820,7 @@ def test_started_provider_human_review_fails_step_without_candidate(
     with pytest.raises(BlueprintControlError, match="human approval"):
         service.execute_and_collect(compiled, dispatched, runner=runner)
 
-    event_types = [
-        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
-    ]
+    event_types = [event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()]
     assert event_types[-2:] == ["StepStarted", "StepFailed"]
     assert "WorkflowSucceeded" not in event_types
     assert "EvidenceRecorded" not in event_types
@@ -1999,16 +1831,14 @@ def test_transport_ack_without_receipt_fails_started_step_without_evidence(
 ) -> None:
     service, compiled, dispatched = _dispatched_repo(tmp_path)
 
-    def runner(*, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
+    def runner(*, on_process_started, **_kwargs):
         on_process_started()
         return {"returncode": 0, "transport": "accepted"}
 
     with pytest.raises(BlueprintControlError, match="receipt is missing"):
         service.execute_and_collect(compiled, dispatched, runner=runner)
 
-    event_types = [
-        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
-    ]
+    event_types = [event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()]
     assert event_types[-2:] == ["StepStarted", "StepFailed"]
     assert "EvidenceRecorded" not in event_types
 
@@ -2016,7 +1846,7 @@ def test_transport_ack_without_receipt_fails_started_step_without_evidence(
 def test_out_of_scope_git_delta_is_measured_and_rejected(tmp_path: Path) -> None:
     service, compiled, dispatched = _dispatched_repo(tmp_path)
 
-    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
+    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):
         on_process_started()
         allowed = workspace_root / "src" / "omo" / "blueprint_control.py"
         allowed.parent.mkdir(parents=True, exist_ok=True)
@@ -2037,9 +1867,7 @@ def test_out_of_scope_git_delta_is_measured_and_rejected(tmp_path: Path) -> None
     with pytest.raises(BlueprintControlError, match="out-of-scope"):
         service.execute_and_collect(compiled, dispatched, runner=runner)
 
-    event_types = [
-        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
-    ]
+    event_types = [event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()]
     assert event_types[-1] == "StepFailed"
     assert "EvidenceRecorded" not in event_types
 
@@ -2050,14 +1878,12 @@ def test_failed_verifier_compensates_and_restores_exact_baseline(
     service, compiled, dispatched = _dispatched_repo(tmp_path)
     baseline = _git(tmp_path, "status", "--porcelain=v1", "-z").stdout
 
-    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
+    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):
         on_process_started()
         target = workspace_root / "src" / "omo" / "blueprint_control.py"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 1\n", encoding="utf-8")
-        receipt_path.write_text(
-            json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8"
-        )
+        receipt_path.write_text(json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8")
         return {"returncode": 0}
 
     collected = service.execute_and_collect(compiled, dispatched, runner=runner)
@@ -2071,9 +1897,7 @@ def test_failed_verifier_compensates_and_restores_exact_baseline(
     assert result["state"] == "closed"
     assert result["baseline_digest"] == collected["baseline_digest"]
     assert _git(tmp_path, "status", "--porcelain=v1", "-z").stdout == baseline
-    event_types = [
-        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
-    ]
+    event_types = [event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()]
     assert "WorkflowVerified" not in event_types
     assert event_types[-4:] == [
         "CompensationStarted",
@@ -2086,14 +1910,12 @@ def test_failed_verifier_compensates_and_restores_exact_baseline(
 def test_tampered_patch_leaves_rejected_run_unclosed(tmp_path: Path) -> None:
     service, compiled, dispatched = _dispatched_repo(tmp_path)
 
-    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
+    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):
         on_process_started()
         target = workspace_root / "src" / "omo" / "blueprint_control.py"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 1\n", encoding="utf-8")
-        receipt_path.write_text(
-            json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8"
-        )
+        receipt_path.write_text(json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8")
         return {"returncode": 0}
 
     collected = service.execute_and_collect(compiled, dispatched, runner=runner)
@@ -2101,12 +1923,7 @@ def test_tampered_patch_leaves_rejected_run_unclosed(tmp_path: Path) -> None:
     result = service.rollback_candidate(dispatched, collected)
 
     assert result["state"] == "rollback_unconfirmed"
-    assert (
-        WorkflowMeshStore(tmp_path / ".omo").snapshot(dispatched["workflow_run_id"])[
-            "state"
-        ]
-        == "compensating"
-    )
+    assert WorkflowMeshStore(tmp_path / ".omo").snapshot(dispatched["workflow_run_id"])["state"] == "compensating"
 
 
 def test_candidate_from_other_run_cannot_compensate_or_close_current_run(
@@ -2117,18 +1934,14 @@ def test_candidate_from_other_run_cannot_compensate_or_close_current_run(
     root_a.mkdir()
     root_b.mkdir()
     service_a, compiled_a, dispatched_a = _dispatched_repo(root_a)
-    service_b, compiled_b, dispatched_b = _dispatched_repo(
-        root_b, now="2026-08-14T10:01:00+00:00"
-    )
+    service_b, compiled_b, dispatched_b = _dispatched_repo(root_b, now="2026-08-14T10:01:00+00:00")
 
-    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
+    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):
         on_process_started()
         target = workspace_root / "src" / "omo" / "blueprint_control.py"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(f"VALUE = {workspace_root.name!r}\n", encoding="utf-8")
-        receipt_path.write_text(
-            json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8"
-        )
+        receipt_path.write_text(json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8")
         return {"returncode": 0}
 
     candidate_a = service_a.execute_and_collect(compiled_a, dispatched_a, runner=runner)
@@ -2139,11 +1952,7 @@ def test_candidate_from_other_run_cannot_compensate_or_close_current_run(
         "blob",
         candidate_b["patch_ref"].removeprefix("git-object://"),
     ).stdout
-    imported_oid = (
-        _git(root_a, "hash-object", "-w", "--stdin", input_bytes=blob_b)
-        .stdout.decode()
-        .strip()
-    )
+    imported_oid = _git(root_a, "hash-object", "-w", "--stdin", input_bytes=blob_b).stdout.decode().strip()
     candidate_b["patch_ref"] = f"git-object://{imported_oid}"
     candidate_b["manifest"]["artifact_refs"] = [f"git-object://{imported_oid}"]
     before = WorkflowMeshStore(root_a / ".omo").events()
@@ -2158,19 +1967,11 @@ def test_candidate_from_other_run_cannot_compensate_or_close_current_run(
     assert after == before
     assert "CompensationStarted" not in [event["event_type"] for event in after]
     assert "WorkflowClosed" not in [event["event_type"] for event in after]
-    assert (
-        WorkflowMeshStore(root_a / ".omo").snapshot(dispatched_a["workflow_run_id"])[
-            "state"
-        ]
-        == "succeeded"
-    )
-    assert (
-        candidate_a["transport_receipt"]["dispatch_id"]
-        != candidate_b["transport_receipt"]["dispatch_id"]
-    )
+    assert WorkflowMeshStore(root_a / ".omo").snapshot(dispatched_a["workflow_run_id"])["state"] == "succeeded"
+    assert candidate_a["transport_receipt"]["dispatch_id"] != candidate_b["transport_receipt"]["dispatch_id"]
 
 
-def _write_cli_packet(tmp_path: Path, compiled) -> str:  # noqa: ANN001
+def _write_cli_packet(tmp_path: Path, compiled) -> str:
     packet_ref = ".omo/workers/runs/blueprint-packet.json"
     path = tmp_path / packet_ref
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -2192,7 +1993,7 @@ def test_default_supervisor_forwards_deterministic_start_idempotency_key(
     script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
     observed: list[list[str]] = []
 
-    def run(command, **_kwargs):  # noqa: ANN001, ANN003, ANN202
+    def run(command, **_kwargs):
         observed.append(command)
         return subprocess.CompletedProcess(
             command,
@@ -2226,15 +2027,13 @@ def test_default_supervisor_forwards_deterministic_start_idempotency_key(
     assert observed[0][observed[0].index("--agent-id") + 1] == CLONE_AGENT_ID
 
 
-def test_default_supervisor_forwards_collect_clone_attestation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_default_supervisor_forwards_collect_clone_attestation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     script = tmp_path / "bin" / "gac" / "orca-codex-supervisor.py"
     script.parent.mkdir(parents=True)
     script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
     observed: list[list[str]] = []
 
-    def run(command, **_kwargs):  # noqa: ANN001, ANN003, ANN202
+    def run(command, **_kwargs):
         observed.append(command)
         return subprocess.CompletedProcess(
             command,
@@ -2263,9 +2062,7 @@ def test_default_supervisor_forwards_collect_clone_attestation(
         "terminal_handle": "terminal-001",
     }
 
-    BlueprintControlService(tmp_path)._default_supervisor(
-        action="collect", timeout_seconds=12, **values
-    )
+    BlueprintControlService(tmp_path)._default_supervisor(action="collect", timeout_seconds=12, **values)
 
     command = observed[0]
     for field, option in (
@@ -2316,9 +2113,7 @@ def test_cli_dispatch_missing_approval_is_json_error_without_traceback(
     _workspace(tmp_path)
     _dispatch_authority(tmp_path)
     (tmp_path / ".omo" / "workers" / "runs" / "approval.yaml").unlink()
-    (tmp_path / ".omo" / "workers" / "runs" / "health.json").write_text(
-        json.dumps(_health()), encoding="utf-8"
-    )
+    (tmp_path / ".omo" / "workers" / "runs" / "health.json").write_text(json.dumps(_health()), encoding="utf-8")
     packet_ref = _write_cli_packet(tmp_path, _compile(tmp_path))
 
     result = cli_main(
@@ -2394,9 +2189,7 @@ def test_cli_observe_and_execute_input_ack_never_claim_model_success(
     registry_path = tmp_path / ".omo" / "_truth" / "registry" / "workers.yaml"
     registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
     registry["workers"][0]["transports"]["cli_prompt"]["command"] = str(runner)
-    registry_path.write_text(
-        yaml.safe_dump(registry, sort_keys=False), encoding="utf-8"
-    )
+    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
     _commit_baseline(tmp_path)
     compiled = _compile(tmp_path)
     packet_ref = _write_cli_packet(tmp_path, compiled)
@@ -2421,7 +2214,7 @@ def test_cli_observe_and_execute_input_ack_never_claim_model_success(
     assert observed == 0
     assert observed_output["state"] == "transport_accepted"
 
-    def supervisor(self, *, action, **_kwargs):  # noqa: ANN001, ANN003, ANN202
+    def supervisor(self, *, action, **_kwargs):
         if action == "start":
             return _supervisor_start_receipt(tmp_path, compiled, dispatched)
         return {
@@ -2461,9 +2254,7 @@ def test_cli_observe_and_execute_input_ack_never_claim_model_success(
     assert executed_output["state"] == "awaiting_human_action"
     assert executed_output["human_action_required"] is True
     assert not (tmp_path / ".omo/workers/runs/blueprint-candidate.json").exists()
-    assert "EvidenceRecorded" not in [
-        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
-    ]
+    assert "EvidenceRecorded" not in [event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()]
 
     collected = cli_main(
         [
@@ -2497,14 +2288,12 @@ def test_cli_verifier_reject_and_rollback_mismatch_never_report_success(
     service, compiled, dispatched = _dispatched_repo(tmp_path)
     packet_ref = _write_cli_packet(tmp_path, compiled)
 
-    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):  # noqa: ANN001, ANN202
+    def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):
         on_process_started()
         target = workspace_root / "src" / "omo" / "blueprint_control.py"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 1\n", encoding="utf-8")
-        receipt_path.write_text(
-            json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8"
-        )
+        receipt_path.write_text(json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8")
         return {"returncode": 0}
 
     projection = service.execute_and_collect(compiled, dispatched, runner=runner)
@@ -2516,9 +2305,7 @@ def test_cli_verifier_reject_and_rollback_mismatch_never_report_success(
         reject_context.setattr(
             BlueprintControlService,
             "_default_verifier",
-            staticmethod(
-                lambda **_kwargs: {"returncode": 1, "stdout": b"explicit reject"}
-            ),
+            staticmethod(lambda **_kwargs: {"returncode": 1, "stdout": b"explicit reject"}),
         )
         rejected = cli_main(
             [
@@ -2540,17 +2327,13 @@ def test_cli_verifier_reject_and_rollback_mismatch_never_report_success(
     assert rejected != 0
     assert rejected_output["ok"] is False
     assert rejected_output["error"] == "verification_rejected"
-    assert "WorkflowVerified" not in [
-        event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()
-    ]
+    assert "WorkflowVerified" not in [event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()]
 
     # A fresh candidate with a tampered rollback digest must remain a non-success.
     mismatch_root = tmp_path / "mismatch"
     mismatch_root.mkdir()
     service, compiled, dispatched = _dispatched_repo(mismatch_root)
-    mismatch_projection = service.execute_and_collect(
-        compiled, dispatched, runner=runner
-    )
+    mismatch_projection = service.execute_and_collect(compiled, dispatched, runner=runner)
     mismatch_candidate_ref = ".omo/workers/runs/blueprint-candidate.json"
     projection_path = mismatch_root / mismatch_candidate_ref
     projection_path.write_text(json.dumps(mismatch_projection), encoding="utf-8")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+
 from omo.omo_debt_owner_routing import build_owner_routing_packet
 
 
@@ -89,9 +90,7 @@ def test_build_owner_routing_groups_entries_by_owner_and_sets_flags() -> None:
         "gate_attention",
         "escalation_watch",
     ]
-    assert packet["owners"][1]["entries"][0]["priority_flags"] == [
-        "initial_review_required"
-    ]
+    assert packet["owners"][1]["entries"][0]["priority_flags"] == ["initial_review_required"]
     assert packet["owners"][1]["entries"][1]["priority_flags"] == ["active_mitigation"]
     assert packet["summary"] == {
         "owner_count": 3,
@@ -106,9 +105,7 @@ def test_build_owner_routing_groups_entries_by_owner_and_sets_flags() -> None:
     }
 
 
-def test_build_owner_routing_normalizes_ownerless_entries_and_rejects_unknown_lanes() -> (
-    None
-):
+def test_build_owner_routing_normalizes_ownerless_entries_and_rejects_unknown_lanes() -> None:
     action_packet = {
         "generated_at": "2026-06-10T00:00:00Z",
         "defaults": {"review_window_days": 7, "escalation_threshold_days": 3},

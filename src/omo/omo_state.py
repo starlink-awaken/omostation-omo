@@ -62,9 +62,7 @@ def cmd_state_show(omo_dir: Path, fmt: str) -> int:
 def cmd_state_health(omo_dir: Path) -> int:
     canonical_health_file = omo_dir / "state" / "runtime" / "system_health.yaml"
     legacy_health_file = omo_dir / "state" / "system_health.yaml"
-    health_file = (
-        canonical_health_file if canonical_health_file.exists() else legacy_health_file
-    )
+    health_file = canonical_health_file if canonical_health_file.exists() else legacy_health_file
     if not health_file.exists():
         print("⚠️  state/system_health.yaml not found")
         return 0
@@ -74,11 +72,7 @@ def cmd_state_health(omo_dir: Path) -> int:
     failed = 0
     for name, svc in svc_dict.items():
         if isinstance(svc, dict):
-            st = (
-                svc.get("health_check")
-                or svc.get("runtime", {}).get("status", "")
-                or ""
-            )
+            st = svc.get("health_check") or svc.get("runtime", {}).get("status", "") or ""
             if st == "healthy":
                 running += 1
             elif st in ("failed", "stopped"):
@@ -117,13 +111,9 @@ def cmd_state_refresh(omo_dir: Path, dry_run: bool) -> int:
 
     canonical_health_file = omo_dir / "state" / "runtime" / "system_health.yaml"
     legacy_health_file = omo_dir / "state" / "system_health.yaml"
-    health_file = (
-        canonical_health_file if canonical_health_file.exists() else legacy_health_file
-    )
+    health_file = canonical_health_file if canonical_health_file.exists() else legacy_health_file
     current_data = load_yaml(health_file) if health_file.exists() else {"services": {}}
-    services = (
-        current_data.get("services", {}) if isinstance(current_data, dict) else {}
-    )
+    services = current_data.get("services", {}) if isinstance(current_data, dict) else {}
     now = time.time()
 
     updates = 0
@@ -249,9 +239,7 @@ def _rebuild_tasks_registry_index(
         tid, _, rest = item.partition(" (")
         title = rest.rstrip(")").replace("|", "/").replace("\n", " ").strip()[:80]
         rows.append(f"| {tid} | {title} | candidate |")
-    table = (
-        "| ID | Title | Status |\n|----|-------|--------|\n" + "\n".join(rows) + "\n\n"
-    )
+    table = "| ID | Title | Status |\n|----|-------|--------|\n" + "\n".join(rows) + "\n\n"
 
     # 1. Planned Tasks 段 (## 标题 → 补充规划注释前, 表格整段重建)
     text, n1 = re.subn(
@@ -289,9 +277,7 @@ def _rebuild_tasks_registry_index(
     )
     if not (n1 and n3):
         return False  # INDEX 结构不符预期, 跳过 (n2/n4 可能为 0 若已是正确数, 不卡)
-    write_text_atomic(
-        index_file, text
-    )  # sensitive-governed-writes: atomic helper 豁免 (P1 CI 修复)
+    write_text_atomic(index_file, text)  # sensitive-governed-writes: atomic helper 豁免 (P1 CI 修复)
     return True
 
 
@@ -332,9 +318,7 @@ def cmd_state_sync_tasks(omo_dir: Path, dry_run: bool, *, quiet: bool = False) -
 
     # Align with ssot-guardian: include archived/done in completed tasks count
     archived_done = omo_dir / "tasks" / "archived" / "done"
-    archived_count = (
-        len(list(archived_done.glob("*.yaml"))) if archived_done.exists() else 0
-    )
+    archived_count = len(list(archived_done.glob("*.yaml"))) if archived_done.exists() else 0
     counts["done"] += archived_count
 
     active_n, planned_n, done_n = counts["active"], counts["planned"], counts["done"]
@@ -348,12 +332,7 @@ def cmd_state_sync_tasks(omo_dir: Path, dry_run: bool, *, quiet: bool = False) -
         "active_tasks": data.get("active_tasks"),
         "total_tasks": data.get("total_tasks"),
     }
-    updated_at = (
-        _dt.datetime.now(_dt.UTC)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    updated_at = _dt.datetime.now(_dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     updates = {
         "completed_tasks": done_n,
         "planned_tasks": planned_n,
@@ -415,8 +394,7 @@ def cmd_state_sync_tasks(omo_dir: Path, dry_run: bool, *, quiet: bool = False) -
     )
     if index_ok:
         _emit(
-            f"  tasks/registry/INDEX.md: Planned 表+计数+Updated 已重建 "
-            f"(planned={planned_n}, done={done_n})",
+            f"  tasks/registry/INDEX.md: Planned 表+计数+Updated 已重建 (planned={planned_n}, done={done_n})",
             quiet=quiet,
         )
     else:
@@ -508,9 +486,7 @@ def cmd_state_set(omo_dir: Path, key: str, value: str, fmt: str) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="omo state", description="OMO system state viewer"
-    )
+    parser = argparse.ArgumentParser(prog="omo state", description="OMO system state viewer")
     sub = parser.add_subparsers(dest="command")
     sp = sub.add_parser("show", help="Show system state")
     sp.add_argument("--format", "-f", choices=["text", "json"], default="text")
@@ -519,26 +495,18 @@ def main(argv: list[str] | None = None) -> int:
     setp.add_argument("key", help="Field name (e.g. current_phase)")
     setp.add_argument("value", help="Field value (auto-parsed as int/float/str)")
     setp.add_argument("--format", "-f", choices=["text", "json"], default="text")
-    rp = sub.add_parser(
-        "refresh", help="Scan runtime Matrix and refresh system_health.yaml"
-    )
-    rp.add_argument(
-        "--dry-run", action="store_true", help="Preview changes without writing"
-    )
+    rp = sub.add_parser("refresh", help="Scan runtime Matrix and refresh system_health.yaml")
+    rp.add_argument("--dry-run", action="store_true", help="Preview changes without writing")
     stp = sub.add_parser(
         "sync-tasks",
         help="从 tasks/ 真实文件数重算 system.yaml 计数 (治本手动维护漂移)",
     )
-    stp.add_argument(
-        "--dry-run", action="store_true", help="Preview changes without writing"
-    )
+    stp.add_argument("--dry-run", action="store_true", help="Preview changes without writing")
     syncp = sub.add_parser(
         "sync",
         help="Sync runtime projections through the OMO state broker",
     )
-    syncp.add_argument(
-        "--dry-run", action="store_true", help="Preview changes without writing"
-    )
+    syncp.add_argument("--dry-run", action="store_true", help="Preview changes without writing")
     syncp.add_argument("--json", action="store_true", help="Print JSON report")
     args = parser.parse_args(argv)
     omo_dir = _find_omo_dir()

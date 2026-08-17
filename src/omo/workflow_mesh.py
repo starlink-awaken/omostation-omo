@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -209,9 +209,7 @@ def _scene_binding(payload: Mapping[str, Any]) -> dict[str, str] | None:
 
 
 def _canonical_admission(value: dict[str, Any]) -> bytes:
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
 def _validate_admission_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -246,13 +244,12 @@ def _validate_admission_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _step_is_admitted(step_run_id: str, admission: dict[str, Any]) -> bool:
     return any(
-        step_run_id == admitted or step_run_id.startswith(f"{admitted}:")
-        for admitted in admission["step_run_ids"]
+        step_run_id == admitted or step_run_id.startswith(f"{admitted}:") for admitted in admission["step_run_ids"]
     )
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def new_workflow_event(
@@ -289,30 +286,22 @@ def new_workflow_event(
 def validate_workflow_event(event: dict[str, Any]) -> dict[str, Any]:
     missing = REQUIRED_EVENT_FIELDS - event.keys()
     if missing:
-        raise WorkflowMeshEventError(
-            f"Workflow Mesh event missing fields: {sorted(missing)}"
-        )
+        raise WorkflowMeshEventError(f"Workflow Mesh event missing fields: {sorted(missing)}")
     if event["schema_version"] != "workflow-mesh/v1":
         raise WorkflowMeshEventError("Unsupported Workflow Mesh event schema")
     if event["event_type"] not in EVENT_STATE:
-        raise WorkflowMeshEventError(
-            f"Unknown Workflow Mesh event: {event['event_type']}"
-        )
+        raise WorkflowMeshEventError(f"Unknown Workflow Mesh event: {event['event_type']}")
     if not isinstance(event["payload"], dict):
         raise WorkflowMeshEventError("Workflow Mesh event payload must be an object")
     _scene_binding(event["payload"])
     return event
 
 
-def project_workflow_run(
-    events: list[dict[str, Any]], workflow_run_id: str
-) -> dict[str, Any]:
+def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> dict[str, Any]:
     """从事件重建一个运行快照，拒绝终态后的幽灵事件。"""
     # Append-only 文件顺序是状态机顺序；不能按调用方时间戳重排，否则迟到事件
     # 可能被插入历史位置，绕过终态和恢复检查。
-    relevant = [
-        event for event in events if event.get("workflow_run_id") == workflow_run_id
-    ]
+    relevant = [event for event in events if event.get("workflow_run_id") == workflow_run_id]
     snapshot: dict[str, Any] = {
         "workflow_run_id": workflow_run_id,
         "trace_id": None,
@@ -352,9 +341,7 @@ def project_workflow_run(
         }:
             next_state = snapshot["state"]
         if snapshot["state"] in TERMINAL_STATES:
-            raise WorkflowMeshEventError(
-                f"Workflow run is terminal; event is not allowed: {event['event_type']}"
-            )
+            raise WorkflowMeshEventError(f"Workflow run is terminal; event is not allowed: {event['event_type']}")
         if event_type not in _ALLOWED_EVENTS.get(
             snapshot["state"], set()
         ) or next_state not in _ALLOWED_TRANSITIONS.get(snapshot["state"], set()):
@@ -375,9 +362,7 @@ def project_workflow_run(
             snapshot["scene_binding"] = scene_binding
         elif scene_binding is not None:
             if snapshot["scene_binding"] is None:
-                raise WorkflowMeshEventError(
-                    "scene_binding requires a prior WorkflowRequested event"
-                )
+                raise WorkflowMeshEventError("scene_binding requires a prior WorkflowRequested event")
             if scene_binding != snapshot["scene_binding"]:
                 raise WorkflowMeshEventError("scene_binding cannot change within a run")
         if (
@@ -397,20 +382,13 @@ def project_workflow_run(
             step_run_id = event["payload"].get("step_run_id")
             admission = snapshot.get("admission")
             if not step_run_id or not isinstance(admission, dict):
-                raise WorkflowMeshEventError(
-                    f"{event_type} requires an admitted StepRun"
-                )
+                raise WorkflowMeshEventError(f"{event_type} requires an admitted StepRun")
             if event["payload"].get("admission_id") != admission["admission_id"]:
                 raise WorkflowMeshEventError(f"{event_type} admission_id mismatch")
             if not _step_is_admitted(step_run_id, admission):
                 raise WorkflowMeshEventError(f"StepRun is not admitted: {step_run_id}")
-            if (
-                event_type != "StepDispatched"
-                and step_run_id not in snapshot["step_runs"]
-            ):
-                raise WorkflowMeshEventError(
-                    f"{event_type} requires prior StepDispatched"
-                )
+            if event_type != "StepDispatched" and step_run_id not in snapshot["step_runs"]:
+                raise WorkflowMeshEventError(f"{event_type} requires prior StepDispatched")
         if event_type in _WORKER_EVENTS:
             required_worker_fields = {
                 "dispatch_id",
@@ -418,13 +396,9 @@ def project_workflow_run(
                 "step_run_id",
                 "admission_id",
             }
-            missing_worker_fields = sorted(
-                required_worker_fields - event["payload"].keys()
-            )
+            missing_worker_fields = sorted(required_worker_fields - event["payload"].keys())
             if missing_worker_fields:
-                raise WorkflowMeshEventError(
-                    f"{event_type} missing worker fields: {missing_worker_fields}"
-                )
+                raise WorkflowMeshEventError(f"{event_type} missing worker fields: {missing_worker_fields}")
             event_specific_fields = {
                 "WorkerAcknowledged": {"acknowledged_at", "lease_expires_at"},
                 "WorkerLeaseRenewed": {
@@ -444,49 +418,33 @@ def project_workflow_run(
                     "reason",
                 },
             }[event_type]
-            missing_specific_fields = sorted(
-                event_specific_fields - event["payload"].keys()
-            )
+            missing_specific_fields = sorted(event_specific_fields - event["payload"].keys())
             if missing_specific_fields:
-                raise WorkflowMeshEventError(
-                    f"{event_type} missing fields: {missing_specific_fields}"
-                )
+                raise WorkflowMeshEventError(f"{event_type} missing fields: {missing_specific_fields}")
             current_worker = snapshot.get("worker")
             if not isinstance(current_worker, dict):
-                raise WorkflowMeshEventError(
-                    f"{event_type} requires prior StepDispatched worker context"
-                )
+                raise WorkflowMeshEventError(f"{event_type} requires prior StepDispatched worker context")
             for key in ("dispatch_id", "worker_id", "step_run_id", "admission_id"):
                 if current_worker.get(key) != event["payload"].get(key):
-                    raise WorkflowMeshEventError(
-                        f"{event_type} worker context mismatch: {key}"
-                    )
+                    raise WorkflowMeshEventError(f"{event_type} worker context mismatch: {key}")
             worker_state = current_worker.get("state")
             if event_type == "WorkerAcknowledged" and worker_state not in {
                 "dispatched",
                 "acknowledged",
             }:
-                raise WorkflowMeshEventError(
-                    "WorkerAcknowledged requires a dispatched worker"
-                )
+                raise WorkflowMeshEventError("WorkerAcknowledged requires a dispatched worker")
             if event_type == "WorkerLeaseRenewed" and worker_state not in {
                 "acknowledged",
                 "active",
             }:
-                raise WorkflowMeshEventError(
-                    "WorkerLeaseRenewed requires an acknowledged worker"
-                )
+                raise WorkflowMeshEventError("WorkerLeaseRenewed requires an acknowledged worker")
             if event_type == "WorkerLeaseExpired" and worker_state not in {
                 "acknowledged",
                 "active",
             }:
-                raise WorkflowMeshEventError(
-                    "WorkerLeaseExpired requires a live worker lease"
-                )
+                raise WorkflowMeshEventError("WorkerLeaseExpired requires a live worker lease")
             if event_type == "WorkerReclaimed" and worker_state != "lease_expired":
-                raise WorkflowMeshEventError(
-                    "WorkerReclaimed requires an expired worker lease"
-                )
+                raise WorkflowMeshEventError("WorkerReclaimed requires an expired worker lease")
         if event_type == "ToolInvocationRecorded":
             required_tool_fields = {
                 "invocation_id",
@@ -503,25 +461,15 @@ def project_workflow_run(
             }
             missing_tool_fields = sorted(required_tool_fields - event["payload"].keys())
             if missing_tool_fields:
-                raise WorkflowMeshEventError(
-                    f"ToolInvocationRecorded missing fields: {missing_tool_fields}"
-                )
+                raise WorkflowMeshEventError(f"ToolInvocationRecorded missing fields: {missing_tool_fields}")
             if event["payload"].get("activation") != "sandbox":
-                raise WorkflowMeshEventError(
-                    "ToolInvocationRecorded activation must be sandbox"
-                )
+                raise WorkflowMeshEventError("ToolInvocationRecorded activation must be sandbox")
             if event["payload"].get("external_side_effects") != "disabled":
-                raise WorkflowMeshEventError(
-                    "ToolInvocationRecorded external_side_effects must be disabled"
-                )
+                raise WorkflowMeshEventError("ToolInvocationRecorded external_side_effects must be disabled")
             if event["payload"].get("outcome") not in TOOL_OUTCOMES:
-                raise WorkflowMeshEventError(
-                    "ToolInvocationRecorded outcome must be succeeded, failed, or unavailable"
-                )
+                raise WorkflowMeshEventError("ToolInvocationRecorded outcome must be succeeded, failed, or unavailable")
         if event_type == "WorkflowVerified" and not snapshot["evidence"]:
-            raise WorkflowMeshEventError(
-                "WorkflowVerified requires at least one EvidenceRecorded event"
-            )
+            raise WorkflowMeshEventError("WorkflowVerified requires at least one EvidenceRecorded event")
         snapshot["trace_id"] = snapshot["trace_id"] or event["trace_id"]
         snapshot["state"] = next_state
         snapshot["event_count"] += 1
@@ -552,9 +500,7 @@ def project_workflow_run(
                     "admission_id": event["payload"].get("admission_id"),
                 },
             )
-            step_projection["step_name"] = step_projection.get("step_name") or event[
-                "payload"
-            ].get("step_name")
+            step_projection["step_name"] = step_projection.get("step_name") or event["payload"].get("step_name")
             step_projection["state"] = {
                 "StepDispatched": "dispatched",
                 "StepStarted": "running",
@@ -573,13 +519,10 @@ def project_workflow_run(
             if event_type == "ToolInvocationRecorded":
                 step_projection["tool_outcome"] = event["payload"].get("outcome")
             step_projection["last_event_type"] = event_type
-            step_projection["admission_id"] = event["payload"].get(
-                "admission_id", step_projection.get("admission_id")
-            )
+            step_projection["admission_id"] = event["payload"].get("admission_id", step_projection.get("admission_id"))
             if event_type == "CheckpointSaved":
                 checkpoint = {
-                    "checkpoint_id": event["payload"].get("checkpoint_id")
-                    or event["event_id"],
+                    "checkpoint_id": event["payload"].get("checkpoint_id") or event["event_id"],
                     "step_run_id": step_run_id,
                     "attempt": event["payload"].get("attempt", 1),
                     "next_turn": event["payload"].get("next_turn"),
@@ -715,9 +658,7 @@ class WorkflowMeshStore:
     def __init__(self, omo_dir: Path | str) -> None:
         self.omo_dir = Path(omo_dir)
         self.log_path = self.omo_dir / WORKFLOW_MESH_LOG
-        self._lock = fcntl_lock(
-            self.log_path.with_suffix(self.log_path.suffix + ".lock")
-        )
+        self._lock = fcntl_lock(self.log_path.with_suffix(self.log_path.suffix + ".lock"))
         self._log = AppendOnlyLog(
             self.log_path,
             lock=self._lock,
@@ -740,8 +681,7 @@ class WorkflowMeshStore:
                 if existing == event:
                     return existing
                 raise WorkflowMeshEventError(
-                    "Conflicting duplicate Workflow Mesh event: "
-                    f"{event['event_id']} / {event['idempotency_key']}"
+                    f"Conflicting duplicate Workflow Mesh event: {event['event_id']} / {event['idempotency_key']}"
                 )
             run_id = event["workflow_run_id"]
             candidate = [*current, event]
@@ -751,15 +691,11 @@ class WorkflowMeshStore:
     def snapshot(self, workflow_run_id: str) -> dict[str, Any]:
         return project_workflow_run(self.events(), workflow_run_id)
 
-    def step_snapshot(
-        self, workflow_run_id: str, step_run_id: str
-    ) -> dict[str, Any] | None:
+    def step_snapshot(self, workflow_run_id: str, step_run_id: str) -> dict[str, Any] | None:
         """Return the projected StepRun owned by a WorkflowRun."""
         return self.snapshot(workflow_run_id)["step_runs"].get(step_run_id)
 
-    def evidence_snapshot(
-        self, workflow_run_id: str, evidence_id: str
-    ) -> dict[str, Any] | None:
+    def evidence_snapshot(self, workflow_run_id: str, evidence_id: str) -> dict[str, Any] | None:
         """Return one evidence projection owned by a WorkflowRun."""
         return self.snapshot(workflow_run_id)["evidence"].get(evidence_id)
 
@@ -770,13 +706,7 @@ class WorkflowMeshStore:
     def snapshots(self) -> list[dict[str, Any]]:
         """返回所有运行快照，顺序按事件日志中最后一次出现的顺序。"""
         events = self.events()
-        run_ids = list(
-            dict.fromkeys(
-                event.get("workflow_run_id")
-                for event in events
-                if event.get("workflow_run_id")
-            )
-        )
+        run_ids = list(dict.fromkeys(event.get("workflow_run_id") for event in events if event.get("workflow_run_id")))
         last_indexes = {
             str(run_id): index
             for index, event in enumerate(events)

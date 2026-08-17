@@ -13,17 +13,9 @@ from omo.workflow.core import WorkflowError
 def _write_contract(workspace: Path, projects: dict[str, list[str]]) -> Path:
     contract = workspace / "docs" / "layer-contract.yaml"
     contract.parent.mkdir(parents=True)
-    layers = "\n".join(
-        f"  {layer}:\n    projects: {json.dumps(names)}"
-        for layer, names in projects.items()
-    )
+    layers = "\n".join(f"  {layer}:\n    projects: {json.dumps(names)}" for layer, names in projects.items())
     contract.write_text(
-        "layers:\n"
-        f"{layers}\n"
-        "dependency_rules:\n"
-        "  allowed_directions:\n"
-        "    - from: [L3]\n"
-        "      to: [L2]\n",
+        f"layers:\n{layers}\ndependency_rules:\n  allowed_directions:\n    - from: [L3]\n      to: [L2]\n",
         encoding="utf-8",
     )
     return contract
@@ -37,9 +29,7 @@ def _receipt(workspace: Path, changed: list[str], affected: list[str]) -> Path:
         "affected_projects": affected,
         "layer_contract_digest": hashlib.sha256(contract.read_bytes()).hexdigest(),
     }
-    canonical = json.dumps(
-        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    )
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     payload["receipt_hash"] = hashlib.sha256(canonical.encode()).hexdigest()
     path = workspace / "receipt.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
@@ -50,9 +40,7 @@ def test_valid_receipt_binds_projects_omo_claim(tmp_path: Path) -> None:
     _write_contract(tmp_path, {"L2": ["omo"], "L3": ["cockpit"]})
     receipt = _receipt(tmp_path, ["omo"], ["cockpit", "omo"])
 
-    result = validate_affected_graph_receipt(
-        receipt.name, ["projects/omo/src/omo/workflow/cli.py"], tmp_path
-    )
+    result = validate_affected_graph_receipt(receipt.name, ["projects/omo/src/omo/workflow/cli.py"], tmp_path)
 
     assert result["receipt_hash"]
     assert result["affected_projects"] == ["cockpit", "omo"]
@@ -61,9 +49,7 @@ def test_valid_receipt_binds_projects_omo_claim(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("reference", ["dummy", "f" * 64, "missing.json"])
-def test_dummy_or_nonexistent_reference_fails_closed(
-    tmp_path: Path, reference: str
-) -> None:
+def test_dummy_or_nonexistent_reference_fails_closed(tmp_path: Path, reference: str) -> None:
     _write_contract(tmp_path, {"L2": ["omo"]})
 
     with pytest.raises(WorkflowError, match="receipt file does not exist"):
@@ -95,9 +81,7 @@ def test_missing_claimed_project_fails_closed(tmp_path: Path) -> None:
     receipt = _receipt(tmp_path, ["omo"], ["cockpit", "omo"])
 
     with pytest.raises(WorkflowError, match="claimed projects missing"):
-        validate_affected_graph_receipt(
-            receipt.name, ["projects/gbrain/src/gbrain/api.py"], tmp_path
-        )
+        validate_affected_graph_receipt(receipt.name, ["projects/gbrain/src/gbrain/api.py"], tmp_path)
 
 
 def test_root_path_requires_explicit_workspace_root_project(tmp_path: Path) -> None:
@@ -119,9 +103,7 @@ def test_ambiguous_projects_prefix_is_not_a_workspace_root_claim(
 
 
 @pytest.mark.parametrize("reference", ["../receipt.json", "nested//receipt.json"])
-def test_noncanonical_receipt_reference_fails_closed(
-    tmp_path: Path, reference: str
-) -> None:
+def test_noncanonical_receipt_reference_fails_closed(tmp_path: Path, reference: str) -> None:
     _write_contract(tmp_path, {"L2": ["omo"]})
 
     with pytest.raises(WorkflowError, match="canonical workspace-relative"):
@@ -151,17 +133,13 @@ def test_surface_only_claim_requires_workspace_root_coverage(tmp_path: Path) -> 
     receipt = _receipt(tmp_path, ["omo"], ["omo"])
 
     with pytest.raises(WorkflowError, match="workspace-root"):
-        validate_affected_graph_receipt(
-            receipt.name, [], tmp_path, claimed_surfaces=["doc-ssot"]
-        )
+        validate_affected_graph_receipt(receipt.name, [], tmp_path, claimed_surfaces=["doc-ssot"])
 
 
 def test_surface_only_claim_accepts_workspace_root_receipt(tmp_path: Path) -> None:
     _write_contract(tmp_path, {"L2": ["omo"]})
     receipt = _receipt(tmp_path, ["workspace-root"], ["workspace-root"])
 
-    result = validate_affected_graph_receipt(
-        receipt.name, [], tmp_path, claimed_surfaces=["doc-ssot"]
-    )
+    result = validate_affected_graph_receipt(receipt.name, [], tmp_path, claimed_surfaces=["doc-ssot"])
 
     assert result["affected_projects"] == ["workspace-root"]

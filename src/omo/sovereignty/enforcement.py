@@ -37,10 +37,11 @@ import hashlib
 import json
 import math
 import re
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any
 from uuid import uuid4
 
 from ecos.ssot.mof.generated.control.mof_control_models import (
@@ -64,9 +65,7 @@ EVT_ACTION_STARTED = "Action.Started.v1"
 EVT_ACTION_SUCCEEDED = "Action.Succeeded.v1"
 EVT_ACTION_FAILED = "Action.Failed.v1"
 
-_RECEIPT_EVENT_TYPES = frozenset(
-    {EVT_ACTION_STARTED, EVT_ACTION_SUCCEEDED, EVT_ACTION_FAILED}
-)
+_RECEIPT_EVENT_TYPES = frozenset({EVT_ACTION_STARTED, EVT_ACTION_SUCCEEDED, EVT_ACTION_FAILED})
 
 # ---------------------------------------------------------------------------
 # Frozen stable reason vocabulary (BET-Y1Q2-T1-06 done_when)
@@ -192,9 +191,7 @@ class ActionRequest:
         ):
             errors.append("requested_budget must be a finite number >= 0")
         check("budget_unit", self.budget_unit, r"^[a-z][a-z0-9_-]*$")
-        if not isinstance(self.disclosure_policy, str) or not self.disclosure_policy.startswith(
-            "disclosure:"
-        ):
+        if not isinstance(self.disclosure_policy, str) or not self.disclosure_policy.startswith("disclosure:"):
             errors.append("disclosure_policy must start with 'disclosure:'")
         if self.request_hash is not None and _HASH_RE.match(self.request_hash) is None:
             errors.append("request_hash must match '^[A-Za-z0-9_-]{8,}$'")
@@ -325,10 +322,7 @@ class PolicyEnforcementService:
                     trace_id,
                     decision="deny",
                     reason=REASON_POLICY_DENIED,
-                    description=(
-                        f"request_hash_mismatch: {request.action_id} already "
-                        "decided under a different hash"
-                    ),
+                    description=(f"request_hash_mismatch: {request.action_id} already decided under a different hash"),
                 )
                 return DecisionResult(deny, persisted=self._persist_decision(deny))
 
@@ -345,7 +339,7 @@ class PolicyEnforcementService:
                 budget_unit=request.budget_unit,
                 disclosure_policy=request.disclosure_policy,
             )
-        except Exception as exc:  # noqa: BLE001 - fail-closed boundary
+        except Exception as exc:
             deny = self._build_decision(
                 request,
                 request_hash,
@@ -417,9 +411,7 @@ class PolicyEnforcementService:
     ) -> ActionReceipt:
         """Durably append the terminal succeeded|failed receipt."""
         if status not in (OUTCOME_SUCCEEDED, OUTCOME_FAILED):
-            raise PolicyEnforcementError(
-                f"terminal status must be succeeded or failed, got {status!r}"
-            )
+            raise PolicyEnforcementError(f"terminal status must be succeeded or failed, got {status!r}")
         if status == OUTCOME_FAILED and reason in (None, "", REASON_ALLOWED):
             raise PolicyEnforcementError("failed receipt requires a stable failure reason")
         terminal = self._build_receipt(
@@ -448,9 +440,7 @@ class PolicyEnforcementService:
         try:
             result = self.decide(request)
         except InvalidActionRequestError as exc:
-            return ExecutionOutcome(
-                None, OUTCOME_DENIED, REASON_PDP_UNAVAILABLE, 0, detail=str(exc)
-            )
+            return ExecutionOutcome(None, OUTCOME_DENIED, REASON_PDP_UNAVAILABLE, 0, detail=str(exc))
         decision = result.decision
         if decision.decision == "deny":
             return ExecutionOutcome(
@@ -477,10 +467,8 @@ class PolicyEnforcementService:
         try:
             provider_result = provider(request)
             if not isinstance(provider_result, dict):
-                raise TypeError(
-                    f"provider must return a dict, got {type(provider_result).__name__}"
-                )
-        except Exception as exc:  # noqa: BLE001 - provider boundary
+                raise TypeError(f"provider must return a dict, got {type(provider_result).__name__}")
+        except Exception as exc:
             try:
                 terminal = self.persist_terminal(
                     decision,
@@ -571,13 +559,9 @@ class PolicyEnforcementService:
         try:
             dt = datetime.fromisoformat(ts)
         except (ValueError, TypeError) as exc:
-            raise PolicyEnforcementError(
-                f"clock returned invalid ISO datetime {ts!r}: {exc}"
-            ) from exc
+            raise PolicyEnforcementError(f"clock returned invalid ISO datetime {ts!r}: {exc}") from exc
         if dt.tzinfo is None:
-            raise PolicyEnforcementError(
-                f"clock returned naive (non-timezone-aware) datetime {ts!r}"
-            )
+            raise PolicyEnforcementError(f"clock returned naive (non-timezone-aware) datetime {ts!r}")
         return dt
 
     def _build_decision(
@@ -697,9 +681,7 @@ class PolicyEnforcementService:
             producer=PDP_PRODUCER,
             principal_id=receipt.principal_id,
             space_id=PDP_SPACE_ID,
-            correlation_id=(
-                f"action|{receipt.action_id}|{receipt.request_hash}|{receipt.status}"
-            ),
+            correlation_id=(f"action|{receipt.action_id}|{receipt.request_hash}|{receipt.status}"),
             idempotency_key=f"{receipt.action_id}|{receipt.request_hash}|{key_suffix}",
             payload=receipt.model_dump(mode="json"),
             episode_id=receipt.episode_id,
@@ -734,11 +716,7 @@ class PolicyEnforcementService:
             return False
 
     def _prior_outcome(self, decision: PolicyDecision) -> ExecutionOutcome:
-        receipts = [
-            r
-            for r in self.replay_receipts(decision.action_id)
-            if r.decision_id == decision.decision_id
-        ]
+        receipts = [r for r in self.replay_receipts(decision.action_id) if r.decision_id == decision.decision_id]
         started = next((r for r in receipts if r.status == "started"), None)
         terminal = next(
             (r for r in receipts if r.status in (OUTCOME_SUCCEEDED, OUTCOME_FAILED)),
@@ -746,9 +724,7 @@ class PolicyEnforcementService:
         )
         if terminal is not None:
             reason = (
-                REASON_ALLOWED
-                if terminal.status == OUTCOME_SUCCEEDED
-                else (terminal.reason or REASON_PROVIDER_FAILED)
+                REASON_ALLOWED if terminal.status == OUTCOME_SUCCEEDED else (terminal.reason or REASON_PROVIDER_FAILED)
             )
             return ExecutionOutcome(
                 decision.decision_id,
@@ -766,9 +742,7 @@ class PolicyEnforcementService:
                 0,
                 started_receipt_id=started.receipt_id,
             )
-        return ExecutionOutcome(
-            decision.decision_id, OUTCOME_UNCONFIRMED, REASON_RECEIPT_UNCONFIRMED, 0
-        )
+        return ExecutionOutcome(decision.decision_id, OUTCOME_UNCONFIRMED, REASON_RECEIPT_UNCONFIRMED, 0)
 
     def _replay_started(self, decision: PolicyDecision) -> ActionReceipt:
         for receipt in self.replay_receipts(decision.action_id):
@@ -783,9 +757,7 @@ class PolicyEnforcementService:
                 OUTCOME_FAILED,
             ):
                 return receipt
-        raise PolicyEnforcementError(
-            f"terminal receipt missing for {decision.decision_id}"
-        )
+        raise PolicyEnforcementError(f"terminal receipt missing for {decision.decision_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -818,9 +790,7 @@ class AgoraPepProvider:
         *,
         service: PolicyEnforcementService | None = None,
     ) -> None:
-        self._service = service or PolicyEnforcementService.open(
-            db_path or _default_db_path()
-        )
+        self._service = service or PolicyEnforcementService.open(db_path or _default_db_path())
         # decision_id -> OMO decision context for confirm_receipt.
         self._decisions: dict[str, PolicyDecision] = {}
 
@@ -835,9 +805,7 @@ class AgoraPepProvider:
         """
         request_hash = request_dict.get("request_hash")
         if not isinstance(request_hash, str) or _HASH_RE.match(request_hash) is None:
-            raise InvalidActionRequestError(
-                "missing trusted top-level request_hash in request_dict"
-            )
+            raise InvalidActionRequestError("missing trusted top-level request_hash in request_dict")
         request = self._to_action_request(request_dict, request_hash)
         result = self._service.decide(request)
         self._decisions[result.decision.decision_id] = result.decision
@@ -865,9 +833,7 @@ class AgoraPepProvider:
             decision = self._find_decision(receipt)
             if decision is None:
                 return False
-        failure_reason = (
-            reason if reason in _FAILURE_REASONS else REASON_PROVIDER_FAILED
-        )
+        failure_reason = reason if reason in _FAILURE_REASONS else REASON_PROVIDER_FAILED
         try:
             self._service.persist_terminal(
                 decision,
@@ -888,9 +854,7 @@ class AgoraPepProvider:
                 return decision
         return None
 
-    def _to_action_request(
-        self, request_dict: Mapping[str, Any], request_hash: str
-    ) -> ActionRequest:
+    def _to_action_request(self, request_dict: Mapping[str, Any], request_hash: str) -> ActionRequest:
         """Map the effectful request to an ActionRequest.
 
         The OMO authorization context comes exclusively from
@@ -902,9 +866,7 @@ class AgoraPepProvider:
         arguments = request_dict.get("arguments")
         envelope = arguments.get("_omo_policy") if isinstance(arguments, dict) else None
         if not isinstance(envelope, dict) or not envelope:
-            raise InvalidActionRequestError(
-                "missing _omo_policy authorization context in request arguments"
-            )
+            raise InvalidActionRequestError("missing _omo_policy authorization context in request arguments")
         try:
             return ActionRequest(
                 action_id=envelope.get("action_id", ""),
@@ -924,6 +886,4 @@ class AgoraPepProvider:
                 mandate_version=int(envelope.get("mandate_version", 1)),
             )
         except (TypeError, ValueError) as exc:
-            raise InvalidActionRequestError(
-                f"malformed _omo_policy context: {exc}"
-            ) from exc
+            raise InvalidActionRequestError(f"malformed _omo_policy context: {exc}") from exc

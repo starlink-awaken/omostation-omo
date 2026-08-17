@@ -17,7 +17,7 @@ import os
 import sqlite3
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -289,7 +289,7 @@ def test_hash_chain_detects_tampering(tmp_path):
                 "omo-sovereignty",
                 "forged|tamper|1",
                 "2026-01-01T00:00:00Z",
-                datetime.now(timezone.utc).isoformat(),
+                datetime.now(UTC).isoformat(),
                 "internal",
                 json.dumps(
                     {
@@ -595,9 +595,7 @@ def test_cli_query_output_shape(tmp_path):
         "--role-name",
         "Tenant",
     )
-    proc, _ = run_cli(
-        tmp_path, "sovereignty-query", "--principal-id", "principal:alice", "--json"
-    )
+    proc, _ = run_cli(tmp_path, "sovereignty-query", "--principal-id", "principal:alice", "--json")
     assert proc.returncode == 0, proc.stderr
     body = json.loads(proc.stdout)
     assert set(body) == {"ok", "principal_id", "count", "assignments", "role_ids"}
@@ -609,9 +607,7 @@ def test_cli_query_output_shape(tmp_path):
 
 
 def test_cli_query_unknown_principal_is_empty(tmp_path):
-    proc, _ = run_cli(
-        tmp_path, "sovereignty-query", "--principal-id", "principal:ghost", "--json"
-    )
+    proc, _ = run_cli(tmp_path, "sovereignty-query", "--principal-id", "principal:ghost", "--json")
     assert proc.returncode == 0, proc.stderr
     body = json.loads(proc.stdout)
     assert body == {
@@ -624,9 +620,7 @@ def test_cli_query_unknown_principal_is_empty(tmp_path):
 
 
 def test_cli_query_invalid_principal_id(tmp_path):
-    proc, _ = run_cli(
-        tmp_path, "sovereignty-query", "--principal-id", "ghost", "--json"
-    )
+    proc, _ = run_cli(tmp_path, "sovereignty-query", "--principal-id", "ghost", "--json")
     assert proc.returncode == 1
     body = json.loads(proc.stdout)
     assert body["ok"] is False
@@ -649,9 +643,7 @@ def test_cli_query_after_revoke(tmp_path):
         svc.revoke("principal:alice", "role:family-steward")
     finally:
         svc._broker.close()
-    proc, _ = run_cli(
-        tmp_path, "sovereignty-query", "--principal-id", "principal:alice", "--json"
-    )
+    proc, _ = run_cli(tmp_path, "sovereignty-query", "--principal-id", "principal:alice", "--json")
     body = json.loads(proc.stdout)
     assert body["count"] == 0
     assert body["role_ids"] == []
@@ -695,9 +687,7 @@ def test_registered_smoke_exact(tmp_path):
         assert proc.returncode == 0, proc.stderr
         assert json.loads(proc.stdout)["ok"] is True
 
-    proc, _ = run_cli(
-        tmp_path, "sovereignty-query", "--principal-id", "principal:alice", "--json"
-    )
+    proc, _ = run_cli(tmp_path, "sovereignty-query", "--principal-id", "principal:alice", "--json")
     assert proc.returncode == 0, proc.stderr
     q = json.loads(proc.stdout)
     assert q["ok"] is True and q["count"] == 2
@@ -787,8 +777,7 @@ def test_ledger_commands_see_sovereignty_events(tmp_path):
     rows = json.loads(proc_read.stdout)
     events = rows if isinstance(rows, list) else rows.get("events", [])
     assert any(
-        e.get("event_type") == "Sovereignty.RoleAssigned.v1"
-        and e.get("principal_id") == "principal:alice"
+        e.get("event_type") == "Sovereignty.RoleAssigned.v1" and e.get("principal_id") == "principal:alice"
         for e in events
     )
 

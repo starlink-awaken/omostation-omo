@@ -21,22 +21,14 @@ def _grant(run_id: str) -> dict[str, object]:
         "issued_at": datetime.now(UTC).isoformat(),
         "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
     }
-    grant["proof"] = hashlib.sha256(
-        json.dumps(grant, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    grant["proof"] = hashlib.sha256(json.dumps(grant, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return grant
 
 
-def _admit(
-    store: WorkflowMeshStore, run_id: str, *, scene: dict[str, str] | None
-) -> dict[str, object]:
+def _admit(store: WorkflowMeshStore, run_id: str, *, scene: dict[str, str] | None) -> dict[str, object]:
     grant = _grant(run_id)
     store.append(new_workflow_event("WorkflowRequested", run_id, scene_binding=scene))
-    store.append(
-        new_workflow_event(
-            "WorkflowAdmitted", run_id, payload={"admission": grant, **grant}
-        )
-    )
+    store.append(new_workflow_event("WorkflowAdmitted", run_id, payload={"admission": grant, **grant}))
     return grant
 
 
@@ -122,7 +114,4 @@ def test_operations_snapshot_reports_milestones_review_queue_and_unknown_consump
 
     filtered = build_operations_snapshot(tmp_path, scene_id="engineering-delivery")
     assert filtered["summary"]["run_count"] == 4
-    assert all(
-        item["scene_binding"]["scene_id"] == "engineering-delivery"
-        for item in filtered["by_scene"]
-    )
+    assert all(item["scene_binding"]["scene_id"] == "engineering-delivery" for item in filtered["by_scene"])

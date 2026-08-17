@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
+
 from omo.omo_audit_sync import FieldDiff, apply_diff
 
 
@@ -31,7 +32,4 @@ def test_apply_diff_uses_system_projection_broker(tmp_path: Path) -> None:
     assert data["completed_tasks"] == 5
     assert "completed_tasks: 5" in rendered
     artifact_dir = tmp_path / "runtime" / "omo" / "_delivery" / "ingress" / "state"
-    assert any(
-        path.name.startswith("system-projection-")
-        for path in artifact_dir.glob("*.yaml")
-    )
+    assert any(path.name.startswith("system-projection-") for path in artifact_dir.glob("*.yaml"))

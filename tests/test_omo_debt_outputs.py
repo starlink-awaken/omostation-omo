@@ -46,35 +46,17 @@ def test_debt_refresh_writes_dashboard_review_queue_and_action_packet(
     )
 
     assert result.returncode == 0, result.stderr
-    dashboard = yaml.safe_load(
-        (tmp_path / ".omo" / "debt" / "dashboard" / "current.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
-    queue = yaml.safe_load(
-        (tmp_path / ".omo" / "debt" / "review-queue" / "current.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
-    review = (tmp_path / ".omo" / "debt" / "reviews" / "current.md").read_text(
-        encoding="utf-8"
-    )
+    dashboard = yaml.safe_load((tmp_path / ".omo" / "debt" / "dashboard" / "current.yaml").read_text(encoding="utf-8"))
+    queue = yaml.safe_load((tmp_path / ".omo" / "debt" / "review-queue" / "current.yaml").read_text(encoding="utf-8"))
+    review = (tmp_path / ".omo" / "debt" / "reviews" / "current.md").read_text(encoding="utf-8")
     action_yaml = yaml.safe_load(
-        (tmp_path / ".omo" / "debt" / "action-packet" / "current.yaml").read_text(
-            encoding="utf-8"
-        )
+        (tmp_path / ".omo" / "debt" / "action-packet" / "current.yaml").read_text(encoding="utf-8")
     )
-    action_md = (tmp_path / ".omo" / "debt" / "action-packet" / "current.md").read_text(
-        encoding="utf-8"
-    )
+    action_md = (tmp_path / ".omo" / "debt" / "action-packet" / "current.md").read_text(encoding="utf-8")
     owner_yaml = yaml.safe_load(
-        (tmp_path / ".omo" / "debt" / "owner-routing" / "current.yaml").read_text(
-            encoding="utf-8"
-        )
+        (tmp_path / ".omo" / "debt" / "owner-routing" / "current.yaml").read_text(encoding="utf-8")
     )
-    owner_md = (tmp_path / ".omo" / "debt" / "owner-routing" / "current.md").read_text(
-        encoding="utf-8"
-    )
+    owner_md = (tmp_path / ".omo" / "debt" / "owner-routing" / "current.md").read_text(encoding="utf-8")
     assert dashboard["debt_metrics"]["debt_health"] < 100
     assert dashboard["overdue_review_count"] == 4
     assert dashboard["overdue_review_item_ids"] == [
@@ -122,20 +104,13 @@ def test_debt_refresh_writes_dashboard_review_queue_and_action_packet(
         "SB_PROJECTS_YAML",
         "SB_PHASE17_PLAN",
     ]
-    assert [entry["id"] for entry in action_yaml["lanes"]["watch_only"]] == [
-        "SB_UNTESTED_PKGS"
-    ]
+    assert [entry["id"] for entry in action_yaml["lanes"]["watch_only"]] == ["SB_UNTESTED_PKGS"]
     assert action_yaml["artifact_meta"]["artifact_kind"] == "debt_action_packet"
     assert action_yaml["artifact_meta"]["retention_mode"] == "until_replaced"
     assert action_yaml["artifact_meta"]["lifecycle_state"] == "active"
     action_sidecar = yaml.safe_load(
         (
-            tmp_path
-            / ".omo"
-            / "_delivery"
-            / "debt"
-            / "routing"
-            / "action-packet-current-2026-06-10T00-00-00Z.yaml"
+            tmp_path / ".omo" / "_delivery" / "debt" / "routing" / "action-packet-current-2026-06-10T00-00-00Z.yaml"
         ).read_text(encoding="utf-8")
     )
     assert action_sidecar["carrier_ref"] == ".omo/debt/action-packet/current.yaml"
@@ -146,22 +121,13 @@ def test_debt_refresh_writes_dashboard_review_queue_and_action_packet(
         "sharedbrain-governance",
         "omo-governance",
     ]
-    omo_owner = next(
-        owner for owner in owner_yaml["owners"] if owner["owner"] == "omo-governance"
-    )
-    assert "initial_review_required" in {
-        flag for entry in omo_owner["entries"] for flag in entry["priority_flags"]
-    }
+    omo_owner = next(owner for owner in owner_yaml["owners"] if owner["owner"] == "omo-governance")
+    assert "initial_review_required" in {flag for entry in omo_owner["entries"] for flag in entry["priority_flags"]}
     assert owner_yaml["artifact_meta"]["artifact_kind"] == "debt_owner_routing"
     assert owner_yaml["artifact_meta"]["retention_mode"] == "until_replaced"
     owner_sidecar = yaml.safe_load(
         (
-            tmp_path
-            / ".omo"
-            / "_delivery"
-            / "debt"
-            / "routing"
-            / "owner-routing-current-2026-06-10T00-00-00Z.yaml"
+            tmp_path / ".omo" / "_delivery" / "debt" / "routing" / "owner-routing-current-2026-06-10T00-00-00Z.yaml"
         ).read_text(encoding="utf-8")
     )
     assert owner_sidecar["carrier_ref"] == ".omo/debt/owner-routing/current.yaml"
@@ -169,8 +135,7 @@ def test_debt_refresh_writes_dashboard_review_queue_and_action_packet(
     assert "Owners: 2" in owner_md
     assert "Total routed items: 7" in owner_md
     assert (
-        "Lane counts: revalidate_now=4, schedule_now=2, escalate_now=0, continue_mitigation=0, watch_only=1"
-        in owner_md
+        "Lane counts: revalidate_now=4, schedule_now=2, escalate_now=0, continue_mitigation=0, watch_only=1" in owner_md
     )
     assert "## Owner: sharedbrain-governance" in owner_md
     assert "## Owner: omo-governance" in owner_md
@@ -204,12 +169,8 @@ def test_debt_dispatch_writes_current_and_immutable_run_artifacts(
     assert result.returncode == 0, result.stderr
     current_yaml_path = tmp_path / ".omo" / "debt" / "dispatch" / "current.yaml"
     current_md_path = tmp_path / ".omo" / "debt" / "dispatch" / "current.md"
-    run_yaml_path = (
-        tmp_path / ".omo" / "debt" / "dispatch" / "runs" / "2026-06-10T00-00-00Z.yaml"
-    )
-    run_md_path = (
-        tmp_path / ".omo" / "debt" / "dispatch" / "runs" / "2026-06-10T00-00-00Z.md"
-    )
+    run_yaml_path = tmp_path / ".omo" / "debt" / "dispatch" / "runs" / "2026-06-10T00-00-00Z.yaml"
+    run_md_path = tmp_path / ".omo" / "debt" / "dispatch" / "runs" / "2026-06-10T00-00-00Z.md"
 
     current_yaml = yaml.safe_load(current_yaml_path.read_text(encoding="utf-8"))
     run_yaml = yaml.safe_load(run_yaml_path.read_text(encoding="utf-8"))
@@ -221,36 +182,20 @@ def test_debt_dispatch_writes_current_and_immutable_run_artifacts(
     assert current_yaml["artifact_meta"]["retention_mode"] == "manual_archive"
     assert current_yaml["artifact_meta"]["lifecycle_state"] == "active"
     current_sidecar = yaml.safe_load(
-        (
-            tmp_path
-            / ".omo"
-            / "_delivery"
-            / "debt"
-            / "dispatch"
-            / "current-2026-06-10T00-00-00Z.yaml"
-        ).read_text(encoding="utf-8")
+        (tmp_path / ".omo" / "_delivery" / "debt" / "dispatch" / "current-2026-06-10T00-00-00Z.yaml").read_text(
+            encoding="utf-8"
+        )
     )
     run_sidecar = yaml.safe_load(
         (
-            tmp_path
-            / ".omo"
-            / "_delivery"
-            / "debt"
-            / "dispatch"
-            / "run-2026-06-10T00-00-00Z-2026-06-10T00-00-00Z.yaml"
+            tmp_path / ".omo" / "_delivery" / "debt" / "dispatch" / "run-2026-06-10T00-00-00Z-2026-06-10T00-00-00Z.yaml"
         ).read_text(encoding="utf-8")
     )
     assert current_sidecar["carrier_ref"] == ".omo/debt/dispatch/current.yaml"
-    assert (
-        run_sidecar["carrier_ref"]
-        == ".omo/debt/dispatch/runs/2026-06-10T00-00-00Z.yaml"
-    )
+    assert run_sidecar["carrier_ref"] == ".omo/debt/dispatch/runs/2026-06-10T00-00-00Z.yaml"
     assert run_sidecar["artifact_meta"]["retention_mode"] == "manual_archive"
     assert current_yaml["dispatched_at"] == "2026-06-10T00:00:00Z"
-    assert (
-        current_yaml["latest_run_ref"]
-        == ".omo/debt/dispatch/runs/2026-06-10T00-00-00Z.yaml"
-    )
+    assert current_yaml["latest_run_ref"] == ".omo/debt/dispatch/runs/2026-06-10T00-00-00Z.yaml"
     assert current_yaml["summary"]["owner_count"] == 2
     assert current_yaml["summary"]["total_dispatched_items"] == 7
     first_entry = current_yaml["owners"][0]["entries"][0]

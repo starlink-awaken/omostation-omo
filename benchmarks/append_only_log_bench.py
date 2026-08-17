@@ -16,18 +16,18 @@
 from __future__ import annotations
 
 import statistics
-from typing import Any
 import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Any
 
 # 把 src 加入 path
 OMO_SRC = Path(__file__).resolve().parents[1] / "src"
 if str(OMO_SRC) not in sys.path:
     sys.path.insert(0, str(OMO_SRC))
 
-from omo.omo_io import AppendOnlyLog  # noqa: E402
+from omo.omo_io import AppendOnlyLog
 
 N = 100_000  # 默认 100K records
 
@@ -105,14 +105,10 @@ def print_report(result: dict[str, float]) -> None:
     print(f"AppendOnlyLog Benchmark (Round 8 P1) — {result['n_records']:,} records")
     print("=" * 60)
     print(f"  File size:           {result['file_size_mb']:>8.2f} MB")
-    print(
-        f"  Append throughput:   {result['append_records_per_sec']:>8,.0f} records/sec"
-    )
+    print(f"  Append throughput:   {result['append_records_per_sec']:>8,.0f} records/sec")
     print(f"                       {result['append_mb_per_sec']:>8.2f} MB/sec")
     print()
-    print(
-        f"  tail(10) p50:        {result['tail_p50_ms']:>8.2f} ms  (Round 7 reverse-seek)"
-    )
+    print(f"  tail(10) p50:        {result['tail_p50_ms']:>8.2f} ms  (Round 7 reverse-seek)")
     print(f"  read_all() p50:      {result['read_all_p50_ms']:>8.1f} ms")
     print(f"  group_by() p50:      {result['group_by_p50_ms']:>8.1f} ms")
     print("=" * 60)

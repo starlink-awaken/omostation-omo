@@ -69,9 +69,7 @@ def _run_inspect() -> dict:
             }
         )
     else:
-        results.append(
-            {"id": "references", "status": "ok", "detail": "all key files present"}
-        )
+        results.append({"id": "references", "status": "ok", "detail": "all key files present"})
 
     ok_count = sum(1 for r in results if r["status"] == "ok")
     warn_count = sum(1 for r in results if r["status"] == "warn")
@@ -106,9 +104,7 @@ def _run_audit_freshness() -> dict:
         try:
             results.append(check_fn())
         except Exception as e:
-            results.append(
-                {"rule_id": check_fn.__name__, "status": "error", "details": str(e)}
-            )
+            results.append({"rule_id": check_fn.__name__, "status": "error", "details": str(e)})
 
     ok_count = sum(1 for r in results if r.get("status") == "ok")
     warn_count = sum(1 for r in results if r.get("status") == "warning")
@@ -174,18 +170,14 @@ def cmd_report(output: str | None = None, json_output: bool = False) -> int:
             else:
                 print(f"  [OK] {name}: completed")
 
-        print(
-            f"\nSummary: {report['summary']['total_sections']} sections, {report['summary']['errors']} errors"
-        )
+        print(f"\nSummary: {report['summary']['total_sections']} sections, {report['summary']['errors']} errors")
 
     if output:
         out_path = Path(output)
         if not out_path.is_absolute():
             out_path = Path.cwd() / out_path
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(
-            json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+        out_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
         if not json_output:
             print(f"\nReport written to {out_path}")
 

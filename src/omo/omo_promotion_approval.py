@@ -81,22 +81,14 @@ def _analytics_task_sort_key(item: dict[str, Any]) -> tuple[int, int, str]:
     )
 
 
-def build_promotion_approval_analytics_packet(
-    root: Path, *, omo_dir: str | Path = ".omo", now: str
-) -> dict[str, Any]:
+def build_promotion_approval_analytics_packet(root: Path, *, omo_dir: str | Path = ".omo", now: str) -> dict[str, Any]:
     omo = Path(omo_dir)
-    current = _load_yaml_required(
-        root / omo / "workers" / "promotion" / "approvals" / "current.yaml"
-    )
-    history = _load_yaml_required(
-        root / omo / "workers" / "promotion" / "approvals" / "history" / "current.yaml"
-    )
+    current = _load_yaml_required(root / omo / "workers" / "promotion" / "approvals" / "current.yaml")
+    history = _load_yaml_required(root / omo / "workers" / "promotion" / "approvals" / "history" / "current.yaml")
     _load_yaml_required(root / omo / "workers" / "promotion" / "readiness.yaml")
     generated_at = _parse_iso8601(now)
 
-    history_by_task = {
-        entry["task_id"]: entry for entry in history.get("approvals", [])
-    }
+    history_by_task = {entry["task_id"]: entry for entry in history.get("approvals", [])}
     proposal_status_histogram = {
         "proposed": 0,
         "approved": 0,
@@ -117,9 +109,7 @@ def build_promotion_approval_analytics_packet(
             proposal_status = "invalid"
         proposal_status_histogram[proposal_status] += 1
 
-        age_bucket = _age_bucket(
-            generated_at, requested_at, str(entry["approval_status"])
-        )
+        age_bucket = _age_bucket(generated_at, requested_at, str(entry["approval_status"]))
         if age_bucket is not None:
             approval_age_buckets[age_bucket] += 1
 
@@ -165,14 +155,10 @@ def build_promotion_approval_analytics_packet(
         "granted_count": current.get("granted_count", 0),
         "missing_proposal_count": proposal_status_histogram["missing"],
         "eligible_after_approval_count": sum(
-            1
-            for entry in tasks
-            if entry["next_action"] == "check_readiness" and entry["eligible"]
+            1 for entry in tasks if entry["next_action"] == "check_readiness" and entry["eligible"]
         ),
         "blocked_after_approval_count": sum(
-            1
-            for entry in tasks
-            if entry["next_action"] == "check_readiness" and not entry["eligible"]
+            1 for entry in tasks if entry["next_action"] == "check_readiness" and not entry["eligible"]
         ),
         "action_queues": action_queues,
         "blocker_histogram": blocker_histogram,
@@ -239,9 +225,7 @@ def _history_entry(root: Path, omo_ref: Path, approval_path: Path) -> dict[str, 
             raise ValueError(f"missing required promotion approval field: {field_name}")
 
     proposal_id = f"{approval['approval_id']}-proposal"
-    proposal_ref = (
-        omo_ref / "_truth" / "task-center" / "proposals" / f"{proposal_id}.yaml"
-    )
+    proposal_ref = omo_ref / "_truth" / "task-center" / "proposals" / f"{proposal_id}.yaml"
     proposal = _proposal_payload(root, proposal_ref)
     return {
         "approval_id": approval["approval_id"],
@@ -252,9 +236,7 @@ def _history_entry(root: Path, omo_ref: Path, approval_path: Path) -> dict[str, 
         "approval_status": approval["approval_status"],
         "proposal_id": proposal_id,
         "proposal_ref": str(proposal_ref),
-        "proposal_status": "missing"
-        if proposal is None
-        else str(proposal.get("status", "missing")),
+        "proposal_status": "missing" if proposal is None else str(proposal.get("status", "missing")),
         "approver": approval.get("approver"),
         "approved_at": approval.get("approved_at"),
         "applied_at": None if proposal is None else proposal.get("applied_at"),
@@ -287,20 +269,12 @@ def build_promotion_approval_history(
         "prior_approval_ref": prior["approval_ref"] if prior else None,
         "approval_count": len(entries),
         "requested_count": sum(
-            1
-            for entry in entries
-            if entry["approval_status"] == "requested"
-            and entry["proposal_status"] == "proposed"
+            1 for entry in entries if entry["approval_status"] == "requested" and entry["proposal_status"] == "proposed"
         ),
         "approved_pending_apply_count": sum(
-            1
-            for entry in entries
-            if entry["approval_status"] == "requested"
-            and entry["proposal_status"] == "approved"
+            1 for entry in entries if entry["approval_status"] == "requested" and entry["proposal_status"] == "approved"
         ),
-        "granted_count": sum(
-            1 for entry in entries if entry["approval_status"] == "granted"
-        ),
+        "granted_count": sum(1 for entry in entries if entry["approval_status"] == "granted"),
         "approvals": entries,
     }
     markdown_lines = [
@@ -340,28 +314,18 @@ def _ordered_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
-def build_promotion_approval_status_packet(
-    *, generated_at: str, tasks: list[dict[str, Any]]
-) -> dict[str, Any]:
+def build_promotion_approval_status_packet(*, generated_at: str, tasks: list[dict[str, Any]]) -> dict[str, Any]:
     ordered = _ordered_tasks(tasks)
     return {
         "generated_at": generated_at,
         "approval_task_count": len(ordered),
         "requested_count": sum(
-            1
-            for entry in ordered
-            if entry["approval_status"] == "requested"
-            and entry["proposal_status"] == "proposed"
+            1 for entry in ordered if entry["approval_status"] == "requested" and entry["proposal_status"] == "proposed"
         ),
         "approved_pending_apply_count": sum(
-            1
-            for entry in ordered
-            if entry["approval_status"] == "requested"
-            and entry["proposal_status"] == "approved"
+            1 for entry in ordered if entry["approval_status"] == "requested" and entry["proposal_status"] == "approved"
         ),
-        "granted_count": sum(
-            1 for entry in ordered if entry["approval_status"] == "granted"
-        ),
+        "granted_count": sum(1 for entry in ordered if entry["approval_status"] == "granted"),
         "tasks": ordered,
     }
 

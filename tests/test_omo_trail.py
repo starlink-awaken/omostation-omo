@@ -51,11 +51,7 @@ def test_record_step_writes_seven_fields(tmp_path):
     assert rec["ts"].endswith("Z"), "ts must end with Z (omo_audit convention)"
 
     # 落盘: 1 行 JSONL
-    lines = [
-        line_
-        for line_ in log_path.read_text(encoding="utf-8").splitlines()
-        if line_.strip()
-    ]
+    lines = [line_ for line_ in log_path.read_text(encoding="utf-8").splitlines() if line_.strip()]
     assert len(lines) == 1
     on_disk = json.loads(lines[0])
     assert on_disk == rec, "落盘内容与返回 record 一致"
@@ -72,9 +68,7 @@ def test_read_trail_reverse_and_filters(tmp_path):
 
     # 写 5 条 (混合 actor/action)
     record_step(actor="user", action="edit", target="a.py", log_path=log_path)
-    record_step(
-        actor="agent:foo", action="exec", target="git status", log_path=log_path
-    )
+    record_step(actor="agent:foo", action="exec", target="git status", log_path=log_path)
     record_step(actor="user", action="read", target="b.py", log_path=log_path)
     record_step(actor="agent:foo", action="edit", target="c.py", log_path=log_path)
     record_step(actor="user", action="edit", target="d.py", log_path=log_path)
@@ -153,6 +147,7 @@ def test_pydantic_schema_in_registry_and_validates():
 def test_append_only_log_writes_via_schema_rejects_drift(tmp_path):
     """AppendOnlyLog.append(..., schema=OmoTrailRecord) 拒 drift record."""
     import pydantic
+
     from omo.omo_io import AppendOnlyLog
     from omo.omo_io_schemas import OmoTrailRecord
 
@@ -185,11 +180,7 @@ def test_append_only_log_writes_via_schema_rejects_drift(tmp_path):
         log.append(bad, schema=OmoTrailRecord)
 
     # 落盘: 仅 1 条 (good)
-    lines = [
-        line_
-        for line_ in log_path.read_text(encoding="utf-8").splitlines()
-        if line_.strip()
-    ]
+    lines = [line_ for line_ in log_path.read_text(encoding="utf-8").splitlines() if line_.strip()]
     assert len(lines) == 1
 
 
@@ -227,11 +218,7 @@ def test_cli_record_subprocess(tmp_path):
     assert "✅ trail step recorded" in r.stdout
 
     # 验证 log 写 1 条 7-字段 record
-    lines = [
-        line_
-        for line_ in log_path.read_text(encoding="utf-8").splitlines()
-        if line_.strip()
-    ]
+    lines = [line_ for line_ in log_path.read_text(encoding="utf-8").splitlines() if line_.strip()]
     assert len(lines) == 1
     rec = json.loads(lines[0])
     assert rec["actor"] == "user"
@@ -329,9 +316,7 @@ def test_trail_uses_append_only_log():
 
     src = inspect.getsource(record_step)
     assert "AppendOnlyLog" in src, "record_step should use AppendOnlyLog abstraction"
-    assert "schema=OmoTrailRecord" in src, (
-        "record_step should pass schema= for Pydantic 校验"
-    )
+    assert "schema=OmoTrailRecord" in src, "record_step should pass schema= for Pydantic 校验"
 
 
 def test_seventh_consumer_registered():
@@ -348,9 +333,5 @@ def test_seventh_consumer_registered():
         "omo_trail",
     }
     actual_keys = set(SCHEMA_REGISTRY.keys())
-    assert expected_keys.issubset(actual_keys), (
-        f"missing: {expected_keys - actual_keys}"
-    )
-    assert len(SCHEMA_REGISTRY) >= 7, (
-        f"expected ≥ 7 consumers, got {len(SCHEMA_REGISTRY)}"
-    )
+    assert expected_keys.issubset(actual_keys), f"missing: {expected_keys - actual_keys}"
+    assert len(SCHEMA_REGISTRY) >= 7, f"expected ≥ 7 consumers, got {len(SCHEMA_REGISTRY)}"

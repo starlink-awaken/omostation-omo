@@ -61,18 +61,12 @@ def record_task_contract_request(
         if isinstance(handoff_refs, list) and request_ref not in handoff_refs:
             handoff_refs.append(request_ref)
         request_deliverables = request_record.get("deliverables")
-        if (
-            isinstance(request_deliverables, list)
-            and request_deliverables
-            and not payload.get("deliverables")
-        ):
+        if isinstance(request_deliverables, list) and request_deliverables and not payload.get("deliverables"):
             payload["deliverables"] = list(request_deliverables)
 
         errors = validate_task_data(payload, group="active")
         if errors:
-            raise ValueError(
-                "invalid active task after contract request: " + "; ".join(errors)
-            )
+            raise ValueError("invalid active task after contract request: " + "; ".join(errors))
 
         write_yaml_atomic(request_path, request_record)
         write_yaml_atomic(task_path, payload)
@@ -88,9 +82,7 @@ def record_task_contract_request(
             "recorded_at": timestamp,
         }
         artifact_path = (
-            _delivery_root(omo_dir)
-            / "tasks"
-            / f"{task_id}-contract-request-{_timestamp_slug(timestamp)}.yaml"
+            _delivery_root(omo_dir) / "tasks" / f"{task_id}-contract-request-{_timestamp_slug(timestamp)}.yaml"
         )
         write_yaml_atomic(artifact_path, artifact)
 
@@ -107,14 +99,14 @@ def record_task_contract_request(
             details=details,
             audit_file=_audit_log_path(omo_dir),
         )
-        _record_trail(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_trail(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=f"broker:{actor}",
             action="record_task_contract_request",
             target=f".omo/tasks/active/{task_id}.yaml",
             parent_step_id=parent_step_id,
         )
-        _record_mutation(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_mutation(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=actor,
             action="record_task_contract_request",
@@ -144,9 +136,7 @@ def route_self_evolution_to_remediation(
     timestamp = now or _utc_now()
     planned_path = omo_dir / "tasks" / "planned" / f"{task_id}.yaml"
     remediation_path = omo_dir / "tasks" / "remediation" / f"{task_id}.yaml"
-    review_note_rel = (
-        Path(".omo") / "tasks" / "remediation-notes" / f"{task_id}-review.md"
-    )
+    review_note_rel = Path(".omo") / "tasks" / "remediation-notes" / f"{task_id}-review.md"
     review_note_path = omo_dir.parent / review_note_rel
     artifact_rel = (
         Path("runtime")
@@ -169,17 +159,13 @@ def route_self_evolution_to_remediation(
         payload = _load_yaml(planned_path)
         payload["status"] = "review"
         payload["assigned_to"] = actor
-        payload["dispatch_id"] = (
-            f"self-evolution-remediation-{_timestamp_slug(timestamp)}"
-        )
+        payload["dispatch_id"] = f"self-evolution-remediation-{_timestamp_slug(timestamp)}"
         payload["run_ref"] = str(artifact_rel)
         payload["review_ref"] = str(review_note_rel)
         payload["review_note"] = str(review_note_rel)
         payload["started_at"] = timestamp
         payload["approval_state"] = "granted"
-        payload["approval_ref"] = (
-            f"self-evolution-remediation-approval-{_timestamp_slug(timestamp)}"
-        )
+        payload["approval_ref"] = f"self-evolution-remediation-approval-{_timestamp_slug(timestamp)}"
 
         metadata = payload.setdefault("metadata", {})
         if isinstance(metadata, dict):
@@ -223,14 +209,14 @@ def route_self_evolution_to_remediation(
             details=details,
             audit_file=_audit_log_path(omo_dir),
         )
-        _record_trail(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_trail(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=f"broker:{actor}",
             action="route_self_evolution_to_remediation",
             target=f".omo/tasks/remediation/{task_id}.yaml",
             parent_step_id=parent_step_id,
         )
-        _record_mutation(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_mutation(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=actor,
             action="route_self_evolution_to_remediation",

@@ -9,9 +9,9 @@ import pytest
 
 from omo.omo_autonomy_level import (
     AUTONOMY_LEVELS,
+    PROMOTION_CRITERIA,
     AutonomyLadder,
     CapabilityAutonomy,
-    PROMOTION_CRITERIA,
 )
 
 
@@ -54,9 +54,7 @@ class TestPromotion:
             ladder.record_adjudication("cap-b", "accepted")
         assert ladder.get("cap-b").level == "L0"
 
-    def test_l1_to_l2_with_calibration_and_consecutive(
-        self, ladder: AutonomyLadder
-    ) -> None:
+    def test_l1_to_l2_with_calibration_and_consecutive(self, ladder: AutonomyLadder) -> None:
         ladder._data["capabilities"]["cap-c"] = {
             "level": "L1",
             "observations": 35,
@@ -235,7 +233,8 @@ def test_promotion_emits_level_change_event(ladder: AutonomyLadder, monkeypatch)
 
     events: list[tuple[str, str, str]] = []
     monkeypatch.setattr(
-        mod, "_emit_event",
+        mod,
+        "_emit_event",
         lambda cap, frm, to, reason: events.append((cap, frm, to)),
     )
 
@@ -251,7 +250,8 @@ def test_demotion_emits_level_change_event(ladder: AutonomyLadder, monkeypatch) 
 
     events: list[tuple[str, str, str]] = []
     monkeypatch.setattr(
-        mod, "_emit_event",
+        mod,
+        "_emit_event",
         lambda cap, frm, to, reason: events.append((cap, frm, to)),
     )
 

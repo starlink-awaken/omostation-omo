@@ -38,9 +38,7 @@ def _priority_reason(item: DebtItem, stale_ids: set[str], overdue_by: int) -> st
     return "upcoming"
 
 
-def _entry_payload(
-    item: DebtItem, *, stale_ids: set[str], overdue_by: int
-) -> dict[str, Any]:
+def _entry_payload(item: DebtItem, *, stale_ids: set[str], overdue_by: int) -> dict[str, Any]:
     return {
         "id": item.id,
         "title": item.title,
@@ -59,9 +57,7 @@ def _entry_payload(
     }
 
 
-def build_review_queue(
-    items: tuple[DebtItem, ...], now: str, repo_root: Path
-) -> dict[str, Any]:
+def build_review_queue(items: tuple[DebtItem, ...], now: str, repo_root: Path) -> dict[str, Any]:
     current = _parse_iso8601(now)
     upcoming_cutoff = current + timedelta(days=REVIEW_WINDOW_DAYS)
     stale_ids = collect_stale_evidence_item_ids(items, repo_root=repo_root)
@@ -92,9 +88,7 @@ def build_review_queue(
             or (item.id in stale_ids and overdue_by > 0)
             or (item.severity == "critical" and overdue_by > 0)
         ):
-            escalation_candidates.append(
-                {**entry, "escalation_reason": entry["priority_reason"]}
-            )
+            escalation_candidates.append({**entry, "escalation_reason": entry["priority_reason"]})
 
     def severity_rank(severity):
         return SEVERITY_ORDER.get(str(severity), 99)
@@ -149,19 +143,13 @@ def build_review_queue(
                 if any(item.severity == severity for item in open_items)
             },
             "by_gate_level": {
-                gate_level: sum(
-                    1 for item in open_items if item.gate_level == gate_level
-                )
+                gate_level: sum(1 for item in open_items if item.gate_level == gate_level)
                 for gate_level in ("gate", "watchlist", "none")
                 if any(item.gate_level == gate_level for item in open_items)
             },
             "by_owner": {
-                owner: sum(
-                    1 for item in open_items if _normalize_owner(item.owner) == owner
-                )
-                for owner in sorted(
-                    {_normalize_owner(item.owner) for item in open_items}
-                )
+                owner: sum(1 for item in open_items if _normalize_owner(item.owner) == owner)
+                for owner in sorted({_normalize_owner(item.owner) for item in open_items})
             },
         },
     }

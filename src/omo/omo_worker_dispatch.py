@@ -99,9 +99,7 @@ def _bridge_dispatch_to_mesh(
             "issued_at": issued_at,
             "expires_at": expires_at,
         }
-        grant["proof"] = hashlib.sha256(
-            json.dumps(grant, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
+        grant["proof"] = hashlib.sha256(json.dumps(grant, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
         store.append(
             new_workflow_event(
@@ -177,15 +175,8 @@ def dispatch_task(
         workflow_packet=workflow_packet,
     )
     supervision = worker.get("supervision")
-    if (
-        launch
-        and isinstance(supervision, dict)
-        and supervision.get("controller_direct_start_required") is True
-    ):
-        raise ValueError(
-            "worker launch denied: controller direct start is required "
-            f"for worker_id={worker_id}"
-        )
+    if launch and isinstance(supervision, dict) and supervision.get("controller_direct_start_required") is True:
+        raise ValueError(f"worker launch denied: controller direct start is required for worker_id={worker_id}")
 
     dispatch_now = now or _utc_now()
     dispatch_id = f"{task_id.lower()}-{worker_id}-{_timestamp_slug(dispatch_now)}"
@@ -205,12 +196,10 @@ def dispatch_task(
     if depends_on:
         for dep_id in depends_on:
             # Check if dependency is still planned or active
-            if _find_task_file_safe(
-                omo / "tasks" / "planned", dep_id
-            ) or _find_task_file_safe(omo / "tasks" / "active", dep_id):
-                raise ValueError(
-                    f"Task Gate Blocked: Dependency '{dep_id}' is not yet completed."
-                )
+            if _find_task_file_safe(omo / "tasks" / "planned", dep_id) or _find_task_file_safe(
+                omo / "tasks" / "active", dep_id
+            ):
+                raise ValueError(f"Task Gate Blocked: Dependency '{dep_id}' is not yet completed.")
 
     dispatch_path = omo_ref / "workers" / "runs" / f"{dispatch_id}-dispatch.yaml"
     envelope_path = omo_ref / "workers" / "runs" / f"{dispatch_id}-envelope.yaml"
@@ -219,11 +208,7 @@ def dispatch_task(
     reclaim_path = omo_ref / "workers" / "runs" / f"{dispatch_id}-reclaim.md"
     review_path = omo_ref / "workers" / "runs" / f"{dispatch_id}-review.md"
     stdout_path = omo_ref / "workers" / "runs" / f"{dispatch_id}-stdout.log"
-    request_identity = (
-        workflow_packet.get("request_identity")
-        if isinstance(workflow_packet, dict)
-        else None
-    )
+    request_identity = workflow_packet.get("request_identity") if isinstance(workflow_packet, dict) else None
     blueprint = (
         {
             "packet_id": request_identity["packet_id"],
@@ -270,9 +255,7 @@ def dispatch_task(
     deliverables = task.get("deliverables", [])
     allowed_paths = list(allowed_write_paths)
     write_scope = worker.get("write_scope")
-    no_worker_writes = (
-        isinstance(write_scope, dict) and write_scope.get("mode") == "none"
-    )
+    no_worker_writes = isinstance(write_scope, dict) and write_scope.get("mode") == "none"
     write_constraints = (
         [
             "- No repository writes are permitted.",
@@ -300,11 +283,7 @@ def dispatch_task(
             "  as unproven and the candidate will not be collected.",
         ]
     )
-    deliverables_heading = (
-        "## Expected output references"
-        if no_worker_writes
-        else "## Required deliverables"
-    )
+    deliverables_heading = "## Expected output references" if no_worker_writes else "## Required deliverables"
     recovery_lines = list(prompt_addendum or [])
     prompt = "\n".join(
         [
@@ -330,9 +309,7 @@ def dispatch_task(
             "- Do not modify global state files.",
             "- Do not mark the task `done`.",
             *(
-                "- Workflow Mesh admission: `"
-                + str(workflow_packet.get("admission", {}).get("admission_id"))
-                + "`"
+                "- Workflow Mesh admission: `" + str(workflow_packet.get("admission", {}).get("admission_id")) + "`"
                 for _ in [0]
                 if workflow_packet
             ),
@@ -423,9 +400,7 @@ def dispatch_task(
     }
     _write_yaml(root / envelope_path, envelope)
 
-    launch_command = " ".join(
-        shlex.quote(argument) for argument in persisted_launch_argv
-    )
+    launch_command = " ".join(shlex.quote(argument) for argument in persisted_launch_argv)
     dispatch = {
         "version": 1,
         "dispatch_id": dispatch_id,
@@ -472,11 +447,7 @@ def dispatch_task(
             "successor_dispatch_id": None,
             "note_ref": str(reclaim_path),
         },
-        **(
-            {"blueprint": blueprint, "control_state": control_state}
-            if blueprint
-            else {}
-        ),
+        **({"blueprint": blueprint, "control_state": control_state} if blueprint else {}),
     }
     _write_yaml(root / dispatch_path, dispatch)
 
@@ -514,14 +485,11 @@ def dispatch_task(
             workspace_root=root,
         )
         result = subprocess.run(argv, cwd=root, capture_output=True, text=True)
-        log_content = redact_sensitive_text(
-            (result.stdout or "") + (result.stderr or "")
-        )
+        log_content = redact_sensitive_text((result.stdout or "") + (result.stderr or ""))
         write_text_atomic(root / stdout_path, log_content)
         if result.returncode != 0:
             raise RuntimeError(
-                "worker launch failed: "
-                f"worker_id={worker_id} returncode={result.returncode} log={stdout_path}"
+                f"worker launch failed: worker_id={worker_id} returncode={result.returncode} log={stdout_path}"
             )
 
         # Phase 28 Step 3: Tri-Plane Bus - Broadcast event to Agora EventBus
@@ -583,11 +551,7 @@ def dispatch_task(
         "checkpoint_path": str(checkpoint_path),
         "reclaim_path": str(reclaim_path),
         "review_path": str(review_path),
-        **(
-            {"blueprint": blueprint, "control_state": control_state}
-            if blueprint
-            else {}
-        ),
+        **({"blueprint": blueprint, "control_state": control_state} if blueprint else {}),
     }
 
 
@@ -610,9 +574,7 @@ def reclaim_task(
 
     prior_dispatch_path = root / run_ref
     prior_dispatch = _load_yaml(prior_dispatch_path)
-    checkpoint_refs = list(
-        prior_dispatch.get("execution", {}).get("checkpoint_refs", [])
-    )
+    checkpoint_refs = list(prior_dispatch.get("execution", {}).get("checkpoint_refs", []))
     reclaim_ref = prior_dispatch.get("reclaim", {}).get("note_ref")
     reclaim_note_path = root / reclaim_ref if reclaim_ref else None
 
@@ -630,11 +592,7 @@ def reclaim_task(
                     "## Required successor context",
                     "",
                     *(f"- Review checkpoint: `{ref}`" for ref in checkpoint_refs),
-                    *(
-                        f"- Review reclaim note: `{reclaim_ref}`"
-                        for _ in [0]
-                        if reclaim_ref
-                    ),
+                    *(f"- Review reclaim note: `{reclaim_ref}`" for _ in [0] if reclaim_ref),
                     "",
                     "## Successor worker",
                     "",
@@ -680,9 +638,7 @@ def reclaim_task(
     return successor
 
 
-def yield_task(
-    root: Path, task_id: str, reason: str, omo_dir: str | Path = ".omo"
-) -> int:
+def yield_task(root: Path, task_id: str, reason: str, omo_dir: str | Path = ".omo") -> int:
     """[C2G v2] Agent Autonomous Yielding Mechanism"""
     omo_path = _omo_path(root, omo_dir)
     active_dir = omo_path / "tasks" / "active"
@@ -713,9 +669,7 @@ def yield_task(
     return 0
 
 
-def _worker_gc(
-    root: Path, dry_run: bool = False, retain: int = 50, omo_dir: str | Path = ".omo"
-) -> int:
+def _worker_gc(root: Path, dry_run: bool = False, retain: int = 50, omo_dir: str | Path = ".omo") -> int:
     """清理旧的 worker dispatch 运行文件。
 
     Args:
@@ -759,9 +713,7 @@ def _worker_gc(
     sorted_groups = sorted(dispatch_files.keys())
 
     if len(sorted_groups) <= retain:
-        print(
-            f"Total dispatch runs: {len(sorted_groups)} (≤ retain={retain}, nothing to clean)"
-        )
+        print(f"Total dispatch runs: {len(sorted_groups)} (≤ retain={retain}, nothing to clean)")
         return 0
 
     to_delete = sorted_groups[:-retain]
@@ -770,9 +722,7 @@ def _worker_gc(
         files = dispatch_files[group_key]
         total_files += len(files)
         if dry_run:
-            print(
-                f"[DRY-RUN] Would delete {len(files)} file(s) for dispatch {group_key}:"
-            )
+            print(f"[DRY-RUN] Would delete {len(files)} file(s) for dispatch {group_key}:")
             for f in files:
                 print(f"  {f}")
         else:
@@ -780,10 +730,7 @@ def _worker_gc(
                 f.unlink()
             print(f"Deleted {len(files)} file(s) for dispatch {group_key}")
 
-    print(
-        f"GC complete: retained {retain} dispatch runs, "
-        f"cleaned {len(to_delete)} old runs ({total_files} files)"
-    )
+    print(f"GC complete: retained {retain} dispatch runs, cleaned {len(to_delete)} old runs ({total_files} files)")
 
     if not dry_run:
         _fast_track_compaction(root, omo_dir=omo_dir)
@@ -824,9 +771,7 @@ def _fast_track_compaction(root: Path, omo_dir: str | Path = ".omo"):
             task = _load_yaml(task_file)
             title = task.get("title", "Unknown")
             context_uri = task.get("context_uri", "N/A")
-            report_lines.append(
-                f"| {task_file.stem} | {title} | `{context_uri}` | {_utc_now()} |"
-            )
+            report_lines.append(f"| {task_file.stem} | {title} | `{context_uri}` | {_utc_now()} |")
 
             archive_done_task(
                 omo_path,
@@ -846,6 +791,4 @@ def _fast_track_compaction(root: Path, omo_dir: str | Path = ".omo"):
             actor="projects/omo/src/omo/omo_worker_dispatch.py:_fast_track_compaction",
             source_ref="omo:worker-dispatch:fast-track-compaction",
         )
-        print(
-            f"✅ Fast-Track 微观碎片已聚变: 归档了 {len(fast_tasks)} 个任务，生成报告 {report_name}.md"
-        )
+        print(f"✅ Fast-Track 微观碎片已聚变: 归档了 {len(fast_tasks)} 个任务，生成报告 {report_name}.md")

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import yaml
+
 from omo.omo_governance import main as omo_governance_main
 from omo.omo_governance_surfaces import build_governance_surfaces_report
 
@@ -973,13 +974,7 @@ def build_ecos_task(*args, **kwargs):
         },
     )
     _write_yaml(
-        omo.parent
-        / "runtime"
-        / "omo"
-        / "_delivery"
-        / "ingress"
-        / "goals"
-        / "BET-1.yaml",
+        omo.parent / "runtime" / "omo" / "_delivery" / "ingress" / "goals" / "BET-1.yaml",
         {
             "kind": "goal_created",
             "goal_id": "BET-1",
@@ -991,13 +986,7 @@ def build_ecos_task(*args, **kwargs):
         },
     )
     _write_yaml(
-        omo.parent
-        / "runtime"
-        / "omo"
-        / "_delivery"
-        / "ingress"
-        / "tasks"
-        / "TASK-1.yaml",
+        omo.parent / "runtime" / "omo" / "_delivery" / "ingress" / "tasks" / "TASK-1.yaml",
         {
             "kind": "planned_task_created",
             "task_id": "TASK-1",
@@ -1038,13 +1027,7 @@ def build_ecos_task(*args, **kwargs):
         },
     )
     _write_yaml(
-        omo.parent
-        / "runtime"
-        / "omo"
-        / "_delivery"
-        / "ingress"
-        / "debts"
-        / "DEBT-1.yaml",
+        omo.parent / "runtime" / "omo" / "_delivery" / "ingress" / "debts" / "DEBT-1.yaml",
         {
             "kind": "debt_upserted",
             "debt_id": "DEBT-1",
@@ -1059,13 +1042,7 @@ def build_ecos_task(*args, **kwargs):
         },
     )
     _write_yaml(
-        omo.parent
-        / "runtime"
-        / "omo"
-        / "_delivery"
-        / "ingress"
-        / "capabilities"
-        / "bundle-2026-06-18T00-03-00Z.yaml",
+        omo.parent / "runtime" / "omo" / "_delivery" / "ingress" / "capabilities" / "bundle-2026-06-18T00-03-00Z.yaml",
         {
             "kind": "capability_registry_bundle_written",
             "capability_registry_id": "bundle",
@@ -1333,9 +1310,7 @@ def test_build_governance_surfaces_report_flags_unregistered_top_level(
     assert "mystery" in report["unregistered_top_levels"]
 
 
-def test_omo_governance_surfaces_cli_json(
-    tmp_path: Path, capsys, monkeypatch: object
-) -> None:
+def test_omo_governance_surfaces_cli_json(tmp_path: Path, capsys, monkeypatch: object) -> None:
     _seed_workspace(tmp_path)
     monkeypatch.chdir(tmp_path)  # type: ignore[reportAttributeAccessIssue]
 
@@ -1383,9 +1358,7 @@ def test_build_governance_surfaces_report_requires_direct_io_gate(
     report = build_governance_surfaces_report(tmp_path)
 
     assert report["status"] == "error"
-    assert any(
-        "pre-commit direct io gate missing" in issue for issue in report["issues"]
-    )
+    assert any("pre-commit direct io gate missing" in issue for issue in report["issues"])
 
 
 def test_build_governance_surfaces_report_requires_mutation_surface_gate(
@@ -1408,10 +1381,7 @@ def test_build_governance_surfaces_report_requires_mutation_surface_gate(
     report = build_governance_surfaces_report(tmp_path)
 
     assert report["status"] == "error"
-    assert any(
-        "pre-commit mutation surface gate missing" in issue
-        for issue in report["issues"]
-    )
+    assert any("pre-commit mutation surface gate missing" in issue for issue in report["issues"])
 
 
 def test_build_governance_surfaces_report_requires_internal_write_profile_gate(
@@ -1436,10 +1406,7 @@ def test_build_governance_surfaces_report_requires_internal_write_profile_gate(
     report = build_governance_surfaces_report(tmp_path)
 
     assert report["status"] == "error"
-    assert any(
-        "pre-commit internal write profile gate missing" in issue
-        for issue in report["issues"]
-    )
+    assert any("pre-commit internal write profile gate missing" in issue for issue in report["issues"])
 
 
 def test_build_governance_surfaces_report_requires_state_plane_asset_gate(
@@ -1466,10 +1433,7 @@ def test_build_governance_surfaces_report_requires_state_plane_asset_gate(
     report = build_governance_surfaces_report(tmp_path)
 
     assert report["status"] == "error"
-    assert any(
-        "pre-commit state plane asset gate missing" in issue
-        for issue in report["issues"]
-    )
+    assert any("pre-commit state plane asset gate missing" in issue for issue in report["issues"])
 
 
 def test_build_governance_surfaces_report_requires_c2g_omo_boundary_gate(
@@ -1498,10 +1462,7 @@ def test_build_governance_surfaces_report_requires_c2g_omo_boundary_gate(
     report = build_governance_surfaces_report(tmp_path)
 
     assert report["status"] == "error"
-    assert any(
-        "pre-commit c2g/omo boundary gate missing" in issue
-        for issue in report["issues"]
-    )
+    assert any("pre-commit c2g/omo boundary gate missing" in issue for issue in report["issues"])
 
 
 def test_build_governance_surfaces_report_requires_ingress_artifact_gate(
@@ -1532,10 +1493,7 @@ def test_build_governance_surfaces_report_requires_ingress_artifact_gate(
     report = build_governance_surfaces_report(tmp_path)
 
     assert report["status"] == "error"
-    assert any(
-        "pre-commit ingress artifact gate missing" in issue
-        for issue in report["issues"]
-    )
+    assert any("pre-commit ingress artifact gate missing" in issue for issue in report["issues"])
 
 
 def test_build_governance_surfaces_report_requires_mutation_ledger_gate(
@@ -1568,9 +1526,7 @@ def test_build_governance_surfaces_report_requires_mutation_ledger_gate(
     report = build_governance_surfaces_report(tmp_path)
 
     assert report["status"] == "error"
-    assert any(
-        "pre-commit mutation ledger gate missing" in issue for issue in report["issues"]
-    )
+    assert any("pre-commit mutation ledger gate missing" in issue for issue in report["issues"])
 
 
 def test_build_governance_surfaces_report_flags_ingress_artifact_created_at_drift(
@@ -1578,13 +1534,7 @@ def test_build_governance_surfaces_report_flags_ingress_artifact_created_at_drif
 ) -> None:
     _seed_workspace(tmp_path)
     _write_yaml(
-        tmp_path
-        / "runtime"
-        / "omo"
-        / "_delivery"
-        / "ingress"
-        / "tasks"
-        / "TASK-1.yaml",
+        tmp_path / "runtime" / "omo" / "_delivery" / "ingress" / "tasks" / "TASK-1.yaml",
         {
             "kind": "planned_task_created",
             "task_id": "TASK-1",
@@ -1599,8 +1549,7 @@ def test_build_governance_surfaces_report_flags_ingress_artifact_created_at_drif
 
     assert report["status"] == "error"
     assert any(
-        "ingress artifacts: runtime/omo/_delivery/ingress/tasks/TASK-1.yaml missing created_at"
-        in issue
+        "ingress artifacts: runtime/omo/_delivery/ingress/tasks/TASK-1.yaml missing created_at" in issue
         for issue in report["issues"]
     )
 
@@ -1615,13 +1564,11 @@ def test_build_governance_surfaces_report_requires_ingress_registry(
 
     assert report["status"] == "error"
     assert any(
-        "ingress registry: required file missing: runtime/omo/_delivery/ingress/registry.yaml"
-        in issue
+        "ingress registry: required file missing: runtime/omo/_delivery/ingress/registry.yaml" in issue
         for issue in report["issues"]
     )
     assert any(
-        "ingress artifacts: required registry missing: runtime/omo/_delivery/ingress/registry.yaml"
-        in issue
+        "ingress artifacts: required registry missing: runtime/omo/_delivery/ingress/registry.yaml" in issue
         for issue in report["issues"]
     )
 
@@ -1641,13 +1588,8 @@ from omo.omo_ingress import create_planned_task
     report = build_governance_surfaces_report(tmp_path)
 
     assert report["status"] == "error"
-    assert (
-        "projects/c2g/src/c2g/adapters.py" in report["c2g_omo_boundary"]["violations"]
-    )
-    assert any(
-        "c2g direct omo import forbidden outside facade" in issue
-        for issue in report["issues"]
-    )
+    assert "projects/c2g/src/c2g/adapters.py" in report["c2g_omo_boundary"]["violations"]
+    assert any("c2g direct omo import forbidden outside facade" in issue for issue in report["issues"])
 
 
 def test_build_governance_surfaces_report_requires_goals_runtime_symlink(
@@ -1663,9 +1605,7 @@ def test_build_governance_surfaces_report_requires_goals_runtime_symlink(
 
     assert report["status"] == "error"
     assert report["goals_runtime_entry"]["is_symlink"] is False
-    assert any(
-        "goals runtime entry must be a symlink" in issue for issue in report["issues"]
-    )
+    assert any("goals runtime entry must be a symlink" in issue for issue in report["issues"])
 
 
 def test_build_governance_surfaces_report_flags_task_policy_registry_drift(
@@ -1698,14 +1638,8 @@ def test_build_governance_surfaces_report_flags_task_policy_registry_drift(
     report = build_governance_surfaces_report(tmp_path)
 
     assert report["status"] == "error"
-    assert any(
-        "task policy registry drift for self-evolution-approval" in issue
-        for issue in report["issues"]
-    )
-    assert any(
-        "task policy registry missing runtime policy: human-approval-ref" in issue
-        for issue in report["issues"]
-    )
+    assert any("task policy registry drift for self-evolution-approval" in issue for issue in report["issues"])
+    assert any("task policy registry missing runtime policy: human-approval-ref" in issue for issue in report["issues"])
 
 
 def test_build_governance_surfaces_report_flags_mutation_surface_registry_drift(
@@ -1732,13 +1666,9 @@ def test_build_governance_surfaces_report_flags_mutation_surface_registry_drift(
     report = build_governance_surfaces_report(tmp_path)
 
     assert report["status"] == "error"
+    assert any("mutation surface registry drift for omo-goal-create" in issue for issue in report["issues"])
     assert any(
-        "mutation surface registry drift for omo-goal-create" in issue
-        for issue in report["issues"]
-    )
-    assert any(
-        "mutation surface registry missing runtime surface: omo-task-create" in issue
-        for issue in report["issues"]
+        "mutation surface registry missing runtime surface: omo-task-create" in issue for issue in report["issues"]
     )
 
 
@@ -1853,9 +1783,7 @@ def test_build_governance_surfaces_report_tracks_debt_ingress(tmp_path: Path) ->
 
     assert report["status"] == "ok"
     assert report["ingress_registry"]["debt_ids"] == ["DEBT-1"]
-    assert report["ingress_registry"]["debt_source_refs"] == [
-        "aetherforge:budget:DEBT-1"
-    ]
+    assert report["ingress_registry"]["debt_source_refs"] == ["aetherforge:budget:DEBT-1"]
 
 
 def test_build_governance_surfaces_report_accepts_archived_ingress_task_carrier(

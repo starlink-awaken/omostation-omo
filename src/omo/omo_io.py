@@ -60,13 +60,9 @@ def _warn_if_volatile_omo_path(path: Path) -> None:
         rel = str(path.relative_to(path.anchor))
     except ValueError:
         rel = str(path)
-    if any(
-        rel.startswith(prefix) or rel == prefix.rstrip("/")
-        for prefix in _VOLATILE_OMO_PATHS
-    ):
+    if any(rel.startswith(prefix) or rel == prefix.rstrip("/") for prefix in _VOLATILE_OMO_PATHS):
         warnings.warn(
-            f"Volatile OMO path written directly: {rel}. "
-            "Use runtime/omo/ mirror helpers instead.",
+            f"Volatile OMO path written directly: {rel}. Use runtime/omo/ mirror helpers instead.",
             stacklevel=3,
         )
 
@@ -97,9 +93,7 @@ def write_text_if_changed(
     """Atomically write text only when the comparable payload changed."""
     if path.exists():
         current = path.read_text(encoding="utf-8")
-        if text_fingerprint(current, normalize=normalize) == text_fingerprint(
-            payload, normalize=normalize
-        ):
+        if text_fingerprint(current, normalize=normalize) == text_fingerprint(payload, normalize=normalize):
             return False
     write_text_atomic(path, payload)
     return True

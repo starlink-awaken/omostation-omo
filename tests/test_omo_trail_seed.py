@@ -82,9 +82,7 @@ def test_seed_steps_action_diversity():
     from omo.omo_trail_seed import SEED_STEPS
 
     actions = {step["action"] for step in SEED_STEPS}
-    assert actions == {"edit", "exec", "test", "commit", "audit"}, (
-        f"action 集合应覆盖老王工作流 5 种, got {actions}"
-    )
+    assert actions == {"edit", "exec", "test", "commit", "audit"}, f"action 集合应覆盖老王工作流 5 种, got {actions}"
 
 
 # ── 4. CLI 集成: omo.cli trail seed 退出码 0 ──────────
@@ -104,11 +102,7 @@ def test_cli_trail_seed_subprocess(tmp_path):
     assert "✅ trail seed 写入 5 条 step" in r.stdout
 
     # log 文件 5 条
-    lines = [
-        line_
-        for line_ in log_path.read_text(encoding="utf-8").splitlines()
-        if line_.strip()
-    ]
+    lines = [line_ for line_ in log_path.read_text(encoding="utf-8").splitlines() if line_.strip()]
     assert len(lines) == 5
     for line in lines:
         rec = json.loads(line)
@@ -127,6 +121,4 @@ def test_seed_uses_append_only_log_via_omo_trail():
     # cmd_trail_seed 内部用 record_step (走 AppendOnlyLog)
     src = inspect.getsource(cmd_trail_seed)
     assert "record_step" in src
-    assert "AppendOnlyLog" not in src, (
-        "seed 不应直接 AppendOnlyLog (应走 record_step wrapper)"
-    )
+    assert "AppendOnlyLog" not in src, "seed 不应直接 AppendOnlyLog (应走 record_step wrapper)"

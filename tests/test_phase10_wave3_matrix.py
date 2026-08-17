@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
+
 from omo.omo_rules import evaluate_rule_bundle
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,8 +22,7 @@ def test_phase10_wave3_live_runtime_observe_bundle_uses_normalized_contracts() -
 
     assert bundle["action"] == "runtime.observe"
     assert (
-        bundle["delivery_contract_ref"]
-        == ".omo/_delivery/task-center/contracts/runtime-observe-delivery-contract.yaml"
+        bundle["delivery_contract_ref"] == ".omo/_delivery/task-center/contracts/runtime-observe-delivery-contract.yaml"
     )
     assert bundle["delivery_contract"] == {
         "proposal_ref": ".omo/workers/runs/phase9-wave3-identity-admission-approval.yaml",
@@ -52,9 +52,7 @@ def test_phase10_wave3_project_dispatch_bundle_uses_normalized_contracts_without
                     },
                     "data": {"policy_ref": "data/data-policy.yaml"},
                     "runtime": {"boundary_ref": "runtime/runtime-boundary.yaml"},
-                    "delivery": {
-                        "contract_ref": ".omo/_delivery/task-center/contracts/delivery.yaml"
-                    },
+                    "delivery": {"contract_ref": ".omo/_delivery/task-center/contracts/delivery.yaml"},
                 }
             ]
         },
@@ -102,10 +100,7 @@ def test_phase10_wave3_project_dispatch_bundle_uses_normalized_contracts_without
         Path(".omo/workers/runs/example-envelope.yaml"),
     )
 
-    assert (
-        bundle["delivery_contract_ref"]
-        == ".omo/_delivery/task-center/contracts/delivery.yaml"
-    )
+    assert bundle["delivery_contract_ref"] == ".omo/_delivery/task-center/contracts/delivery.yaml"
     assert bundle["delivery_contract"] == {
         "proposal_ref": ".omo/workers/runs/example-approval.yaml",
         "apply_ref": ".omo/_delivery/task-center/proposals/example/apply.yaml",

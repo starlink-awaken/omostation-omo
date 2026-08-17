@@ -28,9 +28,7 @@ from .omo_shared import load_yaml
 logger = logging.getLogger("omo.mesh_event_handler")
 
 # M1 compute engine YAML 目录
-_M1_COMPUTE_ENGINE_DIR = Path(
-    "~/Workspace/projects/ecos/src/ecos/ssot/mof/m1/compute_engine"
-).expanduser()
+_M1_COMPUTE_ENGINE_DIR = Path("~/Workspace/projects/ecos/src/ecos/ssot/mof/m1/compute_engine").expanduser()
 
 # 事件处理全局锁（防止并发竞态写）
 _write_lock = threading.Lock()
@@ -98,9 +96,7 @@ def register_mesh_event_handlers() -> None:
                 },
             )
 
-    logger.info(
-        "Mesh event handlers registered (topics: mesh:node:status_changed, swarm:worker:*)"
-    )
+    logger.info("Mesh event handlers registered (topics: mesh:node:status_changed, swarm:worker:*)")
 
 
 # ─────────────────────────────────────────────────────────────────

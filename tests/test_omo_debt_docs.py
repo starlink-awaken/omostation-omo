@@ -77,9 +77,7 @@ def test_omo_agent_documents_debt_refresh_flow() -> None:
     assert "added owners" in content.lower()
     assert "removed owners" in content.lower()
     assert "python3 scripts/omo_debt.py report-trend --omo-dir .omo" in content
-    assert (
-        "python3 scripts/omo_debt.py report-trend --omo-dir .omo --last <N>" in content
-    )
+    assert "python3 scripts/omo_debt.py report-trend --omo-dir .omo --last <N>" in content
     assert (
         "python3 scripts/omo_debt.py report-trend --omo-dir .omo --from-run-stamp <STAMP> --to-run-stamp <STAMP>"
         in content
@@ -137,9 +135,7 @@ def test_omo_agent_documents_debt_refresh_flow() -> None:
     assert "scope growth" in content.lower()
     assert "sparse gaps" in content.lower()
     assert "slope math" in content.lower()
-    assert (
-        "refresh -> dispatch -> campaign -> report -> sync -> verify" in content.lower()
-    )
+    assert "refresh -> dispatch -> campaign -> report -> sync -> verify" in content.lower()
     assert "drift" in content.lower()
     assert "silent success" in content.lower()
     assert "state_progress" in content

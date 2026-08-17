@@ -7,9 +7,7 @@ from .bridge_utils import get_c2g_data_dir, get_omo_dir
 
 
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(
-        description="OMO Bridge (Connect external tools like BMAD, OpenSpec, Pitches)"
-    )
+    parser = argparse.ArgumentParser(description="OMO Bridge (Connect external tools like BMAD, OpenSpec, Pitches)")
     parser.add_argument("source_file", type=str, help="The file to import from")
     parser.add_argument(
         "--format",

@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+
 from omo.omo_promotion_approval import (
     build_promotion_approval_analytics_packet,
 )
@@ -11,9 +12,7 @@ from omo.omo_promotion_approval import (
 
 def _write_yaml(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
-    )
+    path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
 
 def test_build_promotion_approval_analytics_packet_returns_zero_rollup_when_no_tasks_exist(
@@ -31,13 +30,7 @@ def test_build_promotion_approval_analytics_packet_returns_zero_rollup_when_no_t
         },
     )
     _write_yaml(
-        tmp_path
-        / ".omo"
-        / "workers"
-        / "promotion"
-        / "approvals"
-        / "history"
-        / "current.yaml",
+        tmp_path / ".omo" / "workers" / "promotion" / "approvals" / "history" / "current.yaml",
         {
             "generated_at": "2026-06-03T06:00:00Z",
             "approval_count": 0,
@@ -54,9 +47,7 @@ def test_build_promotion_approval_analytics_packet_returns_zero_rollup_when_no_t
         },
     )
 
-    packet = build_promotion_approval_analytics_packet(
-        tmp_path, omo_dir=".omo", now="2026-06-03T06:00:00Z"
-    )
+    packet = build_promotion_approval_analytics_packet(tmp_path, omo_dir=".omo", now="2026-06-03T06:00:00Z")
 
     assert packet["yaml"]["approval_task_count"] == 0
     assert packet["yaml"]["history_approval_count"] == 0
@@ -118,13 +109,7 @@ def test_build_promotion_approval_analytics_packet_classifies_action_queues_and_
         },
     )
     _write_yaml(
-        tmp_path
-        / ".omo"
-        / "workers"
-        / "promotion"
-        / "approvals"
-        / "history"
-        / "current.yaml",
+        tmp_path / ".omo" / "workers" / "promotion" / "approvals" / "history" / "current.yaml",
         {
             "generated_at": "2026-06-03T06:00:00Z",
             "approval_count": 3,
@@ -170,19 +155,11 @@ def test_build_promotion_approval_analytics_packet_classifies_action_queues_and_
         },
     )
 
-    packet = build_promotion_approval_analytics_packet(
-        tmp_path, omo_dir=".omo", now="2026-06-03T06:00:00Z"
-    )
+    packet = build_promotion_approval_analytics_packet(tmp_path, omo_dir=".omo", now="2026-06-03T06:00:00Z")
 
-    assert [
-        item["task_id"] for item in packet["yaml"]["action_queues"]["approve_now"]
-    ] == ["TASK-A"]
-    assert [
-        item["task_id"] for item in packet["yaml"]["action_queues"]["apply_now"]
-    ] == ["TASK-B"]
-    assert [
-        item["task_id"] for item in packet["yaml"]["action_queues"]["check_readiness"]
-    ] == ["TASK-C"]
+    assert [item["task_id"] for item in packet["yaml"]["action_queues"]["approve_now"]] == ["TASK-A"]
+    assert [item["task_id"] for item in packet["yaml"]["action_queues"]["apply_now"]] == ["TASK-B"]
+    assert [item["task_id"] for item in packet["yaml"]["action_queues"]["check_readiness"]] == ["TASK-C"]
     assert packet["yaml"]["blocker_histogram"] == {
         "approval_invalid": 2,
         "phase_mismatch": 2,
@@ -239,13 +216,7 @@ def test_build_promotion_approval_analytics_packet_assigns_age_buckets_for_open_
         },
     )
     _write_yaml(
-        tmp_path
-        / ".omo"
-        / "workers"
-        / "promotion"
-        / "approvals"
-        / "history"
-        / "current.yaml",
+        tmp_path / ".omo" / "workers" / "promotion" / "approvals" / "history" / "current.yaml",
         {
             "generated_at": "2026-06-03T06:00:00Z",
             "approval_count": 3,
@@ -288,9 +259,7 @@ def test_build_promotion_approval_analytics_packet_assigns_age_buckets_for_open_
         },
     )
 
-    packet = build_promotion_approval_analytics_packet(
-        tmp_path, omo_dir=".omo", now="2026-06-03T06:00:00Z"
-    )
+    packet = build_promotion_approval_analytics_packet(tmp_path, omo_dir=".omo", now="2026-06-03T06:00:00Z")
 
     assert packet["yaml"]["approval_age_buckets"] == {
         "lt_1d": 1,
@@ -308,6 +277,4 @@ def test_build_promotion_approval_analytics_packet_requires_all_canonical_inputs
     tmp_path: Path,
 ):
     with pytest.raises(FileNotFoundError, match="approvals/current.yaml"):
-        build_promotion_approval_analytics_packet(
-            tmp_path, omo_dir=".omo", now="2026-06-03T06:00:00Z"
-        )
+        build_promotion_approval_analytics_packet(tmp_path, omo_dir=".omo", now="2026-06-03T06:00:00Z")

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
+
 from omo.omo_external_evaluation import (
     ExternalResourceEvaluationError,
     read_external_resource_evaluations,
@@ -85,12 +86,8 @@ def test_evaluation_observation_rejects_raw_fields_and_invalid_boundary(tmp_path
 
 
 def test_evaluation_id_conflict_fails_closed(tmp_path):
-    record_external_resource_evaluation(
-        tmp_path, _evaluation(), evaluation_id="evaluation-fixed"
-    )
+    record_external_resource_evaluation(tmp_path, _evaluation(), evaluation_id="evaluation-fixed")
     changed = _evaluation()
     changed["selected_resource_id"] = None
     with pytest.raises(ExternalResourceEvaluationError, match="conflicting"):
-        record_external_resource_evaluation(
-            tmp_path, changed, evaluation_id="evaluation-fixed"
-        )
+        record_external_resource_evaluation(tmp_path, changed, evaluation_id="evaluation-fixed")

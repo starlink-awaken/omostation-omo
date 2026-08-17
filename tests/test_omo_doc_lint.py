@@ -44,9 +44,7 @@ def test_run_doc_lint_executes_full_check(tmp_path: Path) -> None:
         (docs / name).write_text("> Status: passed\n", encoding="utf-8")
     planned = tmp_path / ".omo" / "tasks" / "planned"
     planned.mkdir(parents=True)
-    (planned / "OPC-P4-MODEL-COMPUTE.yaml").write_text(
-        "gate: Gate E\ngate_status: passed\n", encoding="utf-8"
-    )
+    (planned / "OPC-P4-MODEL-COMPUTE.yaml").write_text("gate: Gate E\ngate_status: passed\n", encoding="utf-8")
     findings, json_path, md_path = run_doc_lint(
         tmp_path,
         key_docs=[
@@ -57,9 +55,7 @@ def test_run_doc_lint_executes_full_check(tmp_path: Path) -> None:
             "docs/OPC-MASTER-EXECUTION-PLAYBOOK.md",
             "docs/OPC-GOVERNANCE-CARRIERS-INDEX.md",
         ],
-        phase_plan_docs=[
-            ("P4", "OPC-P4-MODEL-COMPUTE", "docs/OPC-PHASE4-MODEL-COMPUTE.md")
-        ],
+        phase_plan_docs=[("P4", "OPC-P4-MODEL-COMPUTE", "docs/OPC-PHASE4-MODEL-COMPUTE.md")],
         generated_at="2026-06-21T00:00:00Z",
         today="2026-06-21",
     )
@@ -84,9 +80,7 @@ def test_run_doc_lint_accepts_multi_document_phase_plan_yaml(tmp_path: Path) -> 
     planned = tmp_path / ".omo" / "tasks" / "planned"
     planned.mkdir(parents=True)
     (planned / "OPC-P4-MODEL-COMPUTE.yaml").write_text(
-        "---\nstatus: active\nowner: governance\n---\n---\n"
-        "gate: Gate E\n"
-        "gate_status: passed\n",
+        "---\nstatus: active\nowner: governance\n---\n---\ngate: Gate E\ngate_status: passed\n",
         encoding="utf-8",
     )
 
@@ -100,9 +94,7 @@ def test_run_doc_lint_accepts_multi_document_phase_plan_yaml(tmp_path: Path) -> 
             "docs/OPC-MASTER-EXECUTION-PLAYBOOK.md",
             "docs/OPC-GOVERNANCE-CARRIERS-INDEX.md",
         ],
-        phase_plan_docs=[
-            ("P4", "OPC-P4-MODEL-COMPUTE", "docs/OPC-PHASE4-MODEL-COMPUTE.md")
-        ],
+        phase_plan_docs=[("P4", "OPC-P4-MODEL-COMPUTE", "docs/OPC-PHASE4-MODEL-COMPUTE.md")],
         generated_at="2026-06-21T01:00:00Z",
         today="2026-06-21",
     )

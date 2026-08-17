@@ -11,9 +11,10 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Any, Callable, Mapping
+from typing import Any
 
 from ecos.ssot.mof.generated.control.mof_control_models import (
     DelegationMandate,
@@ -275,16 +276,12 @@ def _utc_now() -> str:
 class PersonalEpisodeService:
     """A deterministic, ledger-backed personal draft episode service."""
 
-    def __init__(
-        self, broker: LedgerBroker, *, clock: Callable[[], str] = _utc_now
-    ) -> None:
+    def __init__(self, broker: LedgerBroker, *, clock: Callable[[], str] = _utc_now) -> None:
         self._broker = broker
         self._clock = clock
 
     @classmethod
-    def open(
-        cls, db_path: str | Any, *, clock: Callable[[], str] = _utc_now
-    ) -> PersonalEpisodeService:
+    def open(cls, db_path: str | Any, *, clock: Callable[[], str] = _utc_now) -> PersonalEpisodeService:
         return cls(LedgerBroker.connect(db_path), clock=clock)
 
     def start(
@@ -314,9 +311,7 @@ class PersonalEpisodeService:
             )
 
         self._active_assignment(principal_id, role_id, responsibility_id)
-        episode_id = _deterministic(
-            "episode_", principal_id, role_id, responsibility_id, request_id
-        )
+        episode_id = _deterministic("episode_", principal_id, role_id, responsibility_id, request_id)
         payload = {
             "episode_id": episode_id,
             "request_id": request_id,
@@ -343,13 +338,9 @@ class PersonalEpisodeService:
             payload=payload,
             occurred_at=self._clock_ts(),
         )
-        return PersonalEpisodeCard(
-            episode_id=episode_id, request_id=request_id, summary=summary
-        )
+        return PersonalEpisodeCard(episode_id=episode_id, request_id=request_id, summary=summary)
 
-    def ingest_local_signal(
-        self, signal: PersonalLocalSignal
-    ) -> PersonalSignalIngestResult:
+    def ingest_local_signal(self, signal: PersonalLocalSignal) -> PersonalSignalIngestResult:
         """Turn one trusted Iris-resolved local item into a causal draft card.
 
         This is deliberately a thin, single-user ingress: validation is
@@ -372,9 +363,7 @@ class PersonalEpisodeService:
         existing = self._find_local_signal(signal.principal_id, source_key)
         if existing is not None:
             existing_payload = _payload(existing)
-            existing_episode = self._episode_for_signal(
-                str(existing["event_id"]), signal.principal_id
-            )
+            existing_episode = self._episode_for_signal(str(existing["event_id"]), signal.principal_id)
             episode_payload = _payload(existing_episode)
             return PersonalSignalIngestResult(
                 signal_event_id=str(existing["event_id"]),
@@ -390,9 +379,7 @@ class PersonalEpisodeService:
 
         # Validate authority only for a new mutation.  A durably completed
         # item remains replayable even if the role later changes.
-        self._active_assignment(
-            signal.principal_id, signal.role_id, signal.responsibility_id
-        )
+        self._active_assignment(signal.principal_id, signal.role_id, signal.responsibility_id)
         episode_id = _deterministic(
             "episode_",
             "local-signal",
@@ -497,15 +484,11 @@ class PersonalEpisodeService:
     ) -> PersonalEpisodeConfirmation:
         """Grant one revocable A2/R0 local-draft mandate after human confirmation."""
         if human_confirmed is not True:
-            raise PersonalEpisodeError(
-                "human_confirmation_required", "human_confirmed must be true"
-            )
+            raise PersonalEpisodeError("human_confirmation_required", "human_confirmed must be true")
         start_row = self._start_for_episode(episode_id, principal_id)
         payload = _payload(start_row)
         if payload.get("executor_id") != executor_id:
-            raise PersonalEpisodeError(
-                "executor_mismatch", "executor does not match episode"
-            )
+            raise PersonalEpisodeError("executor_mismatch", "executor does not match episode")
         role_id = _required_payload(payload, "role_id")
         responsibility_id = _required_payload(payload, "responsibility_id")
         assignment = self._active_assignment(principal_id, role_id, responsibility_id)
@@ -514,16 +497,10 @@ class PersonalEpisodeService:
         current = manager.get(mandate_id, principal_id)
         if current is not None:
             if current.status != STATUS_ACTIVE:
-                raise PersonalEpisodeError(
-                    "mandate_not_active", "episode mandate is revoked"
-                )
+                raise PersonalEpisodeError("mandate_not_active", "episode mandate is revoked")
             return PersonalEpisodeConfirmation(episode_id, mandate_id, reused=True)
 
-        responsibility = next(
-            item
-            for item in assignment.responsibilities
-            if item.resp_id == responsibility_id
-        )
+        responsibility = next(item for item in assignment.responsibilities if item.resp_id == responsibility_id)
         now = self._clock_datetime()
         mandate = DelegationMandate(
             mandate_id=mandate_id,
@@ -557,9 +534,7 @@ class PersonalEpisodeService:
             raise PersonalEpisodeError("mandate_grant_failed", str(exc)) from exc
         return PersonalEpisodeConfirmation(episode_id, mandate_id)
 
-    def reload_execution_context(
-        self, episode_id: str, principal_id: str
-    ) -> PersonalExecutionContext:
+    def reload_execution_context(self, episode_id: str, principal_id: str) -> PersonalExecutionContext:
         """Rebuild the PEP envelope exclusively from persisted ledger events."""
         start_row = self._start_for_episode(episode_id, principal_id)
         payload = _payload(start_row)
@@ -567,13 +542,9 @@ class PersonalEpisodeService:
         role_id = _required_payload(payload, "role_id")
         responsibility_id = _required_payload(payload, "responsibility_id")
         mandate_id = _deterministic("mandate:personal-", episode_id)
-        mandate = MandateManager(self._broker, clock=self._clock).get(
-            mandate_id, principal_id
-        )
+        mandate = MandateManager(self._broker, clock=self._clock).get(mandate_id, principal_id)
         if mandate is None or mandate.status != STATUS_ACTIVE:
-            raise PersonalEpisodeError(
-                "episode_not_confirmed", "episode has no active mandate"
-            )
+            raise PersonalEpisodeError("episode_not_confirmed", "episode has no active mandate")
         return PersonalExecutionContext(
             episode_id=episode_id,
             mandate_id=mandate_id,
@@ -585,9 +556,7 @@ class PersonalEpisodeService:
             trace_id=mandate.trace_id,
         )
 
-    def get_draft_snapshot(
-        self, episode_id: str, principal_id: str
-    ) -> EpisodeDraftSnapshot:
+    def get_draft_snapshot(self, episode_id: str, principal_id: str) -> EpisodeDraftSnapshot:
         """Return safe persisted Episode fields for a deterministic local draft.
 
         Reads only the ``Episode.Decision.v1`` event from the ledger.
@@ -627,9 +596,7 @@ class PersonalEpisodeService:
                 "invalid_output_origin",
                 "output_origin must be system/user_provided/unknown",
             )
-        existing = self._find_event(
-            context.episode_id, EVT_EVIDENCE_LOCAL_DRAFT, "evidence_uri", evidence_uri
-        )
+        existing = self._find_event(context.episode_id, EVT_EVIDENCE_LOCAL_DRAFT, "evidence_uri", evidence_uri)
         if existing is not None:
             return int(existing["sequence"])
         return self._broker.append(
@@ -680,15 +647,11 @@ class PersonalEpisodeService:
         _validate_burden("estimated_time_saved_seconds", estimated_time_saved_seconds)
         if feedback_id is None:
             identity_key = verdict
-            existing = self._find_event(
-                context.episode_id, EVT_OUTCOME_HUMAN, "verdict", verdict
-            )
+            existing = self._find_event(context.episode_id, EVT_OUTCOME_HUMAN, "verdict", verdict)
         else:
             self._required("feedback_id", feedback_id)
             identity_key = f"feedback|{_short_hash(feedback_id)}"
-            existing = self._find_event(
-                context.episode_id, EVT_OUTCOME_HUMAN, "feedback_id", feedback_id
-            )
+            existing = self._find_event(context.episode_id, EVT_OUTCOME_HUMAN, "feedback_id", feedback_id)
         if existing is not None:
             return int(existing["sequence"])
         return self._broker.append(
@@ -750,9 +713,7 @@ class PersonalEpisodeService:
             if prow.get("principal_id") != principal_id:
                 continue
             pp = _payload(prow)
-            succeeded_keys.add(
-                (str(prow.get("episode_id", "")), str(pp.get("action_id", "")))
-            )
+            succeeded_keys.add((str(prow.get("episode_id", "")), str(pp.get("action_id", ""))))
 
         # Index signal events by event_id for latency/source lookup.
         signal_lookup: dict[str, Mapping[str, Any]] = {}
@@ -816,9 +777,7 @@ class PersonalEpisodeService:
                     "decision_dt": decision_dt,
                     "has_signal_source": has_signal_source,
                     "has_action_succeeded": has_action_succeeded,
-                    "evidence_origins": [
-                        ep.get("output_origin", "unknown") for ep in evidence_payloads
-                    ],
+                    "evidence_origins": [ep.get("output_origin", "unknown") for ep in evidence_payloads],
                     "effective_outcome": effective_outcome,
                     "effective_outcome_dt": effective_outcome_dt,
                 }
@@ -826,22 +785,14 @@ class PersonalEpisodeService:
 
         return _build_observation(principal_id, observations)
 
-    def _active_assignment(
-        self, principal_id: str, role_id: str, responsibility_id: str
-    ):
+    def _active_assignment(self, principal_id: str, role_id: str, responsibility_id: str):
         try:
-            assignment = SovereigntyService(self._broker).current_assignment(
-                principal_id, role_id
-            )
+            assignment = SovereigntyService(self._broker).current_assignment(principal_id, role_id)
         except SovereigntyError as exc:
             raise PersonalEpisodeError("role_not_active", str(exc)) from exc
         if assignment is None or assignment.status != STATUS_ACTIVE:
-            raise PersonalEpisodeError(
-                "role_not_active", "role assignment is not active"
-            )
-        if not any(
-            item.resp_id == responsibility_id for item in assignment.responsibilities
-        ):
+            raise PersonalEpisodeError("role_not_active", "role assignment is not active")
+        if not any(item.resp_id == responsibility_id for item in assignment.responsibilities):
             raise PersonalEpisodeError(
                 "responsibility_not_active",
                 "responsibility is not assigned to active role",
@@ -850,9 +801,7 @@ class PersonalEpisodeService:
 
     def _validate_local_signal(self, signal: PersonalLocalSignal) -> None:
         if not isinstance(signal, PersonalLocalSignal):
-            raise PersonalEpisodeError(
-                "invalid_signal_descriptor", "signal must be a PersonalLocalSignal"
-            )
+            raise PersonalEpisodeError("invalid_signal_descriptor", "signal must be a PersonalLocalSignal")
         for name in (
             "source_id",
             "item_id",
@@ -873,25 +822,18 @@ class PersonalEpisodeService:
         if len(signal.content_sha256) != 64 or any(
             char not in "0123456789abcdef" for char in signal.content_sha256.lower()
         ):
-            raise PersonalEpisodeError(
-                "invalid_signal_digest", "content_sha256 must be a SHA-256 hex digest"
-            )
+            raise PersonalEpisodeError("invalid_signal_digest", "content_sha256 must be a SHA-256 hex digest")
         if not all(char.isalnum() or char in "._:-" for char in signal.source_id):
-            raise PersonalEpisodeError(
-                "invalid_signal_source", "source_id must be a stable source identifier"
-            )
+            raise PersonalEpisodeError("invalid_signal_source", "source_id must be a stable source identifier")
         source_prefix = "iris://local-files/"
         source_item_id = (
-            signal.source_uri.removeprefix(source_prefix)
-            if signal.source_uri.startswith(source_prefix)
-            else ""
+            signal.source_uri.removeprefix(source_prefix) if signal.source_uri.startswith(source_prefix) else ""
         )
         if (
             not source_item_id
             or source_item_id != signal.item_id
             or any(
-                char
-                not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-="
+                char not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-="
                 for char in source_item_id
             )
         ):
@@ -900,22 +842,15 @@ class PersonalEpisodeService:
                 "source_uri must be a safe Iris local-files URI",
             )
 
-    def _find_start(
-        self, principal_id: str, request_id: str
-    ) -> Mapping[str, Any] | None:
+    def _find_start(self, principal_id: str, request_id: str) -> Mapping[str, Any] | None:
         for row in self._broker.read(producer=PERSONAL_EPISODE_PRODUCER):
-            if (
-                row.get("event_type") != EVT_EPISODE_DECISION
-                or row.get("principal_id") != principal_id
-            ):
+            if row.get("event_type") != EVT_EPISODE_DECISION or row.get("principal_id") != principal_id:
                 continue
             if _payload(row).get("request_id") == request_id:
                 return row
         return None
 
-    def _find_local_signal(
-        self, principal_id: str, source_key: str
-    ) -> Mapping[str, Any] | None:
+    def _find_local_signal(self, principal_id: str, source_key: str) -> Mapping[str, Any] | None:
         for row in self._broker.read(producer=PERSONAL_EPISODE_PRODUCER):
             if row.get("event_type") != EVT_SIGNAL_OBSERVED:
                 continue
@@ -925,9 +860,7 @@ class PersonalEpisodeService:
                 return row
         return None
 
-    def _episode_for_signal(
-        self, signal_event_id: str, principal_id: str
-    ) -> Mapping[str, Any]:
+    def _episode_for_signal(self, signal_event_id: str, principal_id: str) -> Mapping[str, Any]:
         for row in self._broker.read(producer=PERSONAL_EPISODE_PRODUCER):
             if row.get("event_type") != EVT_EPISODE_DECISION:
                 continue
@@ -937,31 +870,19 @@ class PersonalEpisodeService:
                 return row
             if _payload(row).get("source_signal_ref") == signal_event_id:
                 return row
-        raise PersonalEpisodeError(
-            "malformed_signal", "local signal has no causal episode decision"
-        )
+        raise PersonalEpisodeError("malformed_signal", "local signal has no causal episode decision")
 
-    def _start_for_episode(
-        self, episode_id: str, principal_id: str
-    ) -> Mapping[str, Any]:
+    def _start_for_episode(self, episode_id: str, principal_id: str) -> Mapping[str, Any]:
         for row in self._broker.read(episode_id=episode_id):
-            if (
-                row.get("event_type") == EVT_EPISODE_DECISION
-                and row.get("principal_id") == principal_id
-            ):
+            if row.get("event_type") == EVT_EPISODE_DECISION and row.get("principal_id") == principal_id:
                 return row
-        raise PersonalEpisodeError(
-            "episode_not_found", "personal episode decision was not found"
-        )
+        raise PersonalEpisodeError("episode_not_found", "personal episode decision was not found")
 
     def _find_event(
         self, episode_id: str, event_type: str, payload_key: str, payload_value: str
     ) -> Mapping[str, Any] | None:
         for row in self._broker.read(episode_id=episode_id):
-            if (
-                row.get("event_type") == event_type
-                and _payload(row).get(payload_key) == payload_value
-            ):
+            if row.get("event_type") == event_type and _payload(row).get(payload_key) == payload_value:
                 return row
         return None
 
@@ -972,9 +893,7 @@ class PersonalEpisodeService:
         try:
             value = datetime.fromisoformat(self._clock())
         except (TypeError, ValueError) as exc:
-            raise PersonalEpisodeError(
-                "invalid_clock", "clock must return ISO-8601"
-            ) from exc
+            raise PersonalEpisodeError("invalid_clock", "clock must return ISO-8601") from exc
         if value.tzinfo is None:
             raise PersonalEpisodeError("invalid_clock", "clock must be timezone-aware")
         return value
@@ -989,22 +908,16 @@ def _payload(row: Mapping[str, Any]) -> Mapping[str, Any]:
     try:
         value = json.loads(str(row["payload_json"]))
     except (KeyError, TypeError, ValueError) as exc:
-        raise PersonalEpisodeError(
-            "malformed_episode", "episode payload is invalid"
-        ) from exc
+        raise PersonalEpisodeError("malformed_episode", "episode payload is invalid") from exc
     if not isinstance(value, Mapping):
-        raise PersonalEpisodeError(
-            "malformed_episode", "episode payload must be an object"
-        )
+        raise PersonalEpisodeError("malformed_episode", "episode payload must be an object")
     return value
 
 
 def _required_payload(payload: Mapping[str, Any], key: str) -> str:
     value = payload.get(key)
     if not isinstance(value, str) or not value:
-        raise PersonalEpisodeError(
-            "malformed_episode", f"episode payload missing {key}"
-        )
+        raise PersonalEpisodeError("malformed_episode", f"episode payload missing {key}")
     return value
 
 
@@ -1024,9 +937,7 @@ def _validate_burden(name: str, value: float | None) -> None:
         raise PersonalEpisodeError("invalid_burden", f"{name} must be a number")
     v = float(value)
     if v < 0 or not math.isfinite(v):
-        raise PersonalEpisodeError(
-            "invalid_burden", f"{name} must be non-negative and finite"
-        )
+        raise PersonalEpisodeError("invalid_burden", f"{name} must be non-negative and finite")
 
 
 def _iso_week_key(dt: datetime) -> str:
@@ -1091,18 +1002,9 @@ def _build_observation(
                 verdict_dist[v] = verdict_dist.get(v, 0) + 1
 
     # Global evidence origin counts.
-    system_ev = sum(
-        1 for ep in observations for o in ep["evidence_origins"] if o == "system"
-    )
-    user_ev = sum(
-        1 for ep in observations for o in ep["evidence_origins"] if o == "user_provided"
-    )
-    unknown_ev = sum(
-        1
-        for ep in observations
-        for o in ep["evidence_origins"]
-        if o not in ("system", "user_provided")
-    )
+    system_ev = sum(1 for ep in observations for o in ep["evidence_origins"] if o == "system")
+    user_ev = sum(1 for ep in observations for o in ep["evidence_origins"] if o == "user_provided")
+    unknown_ev = sum(1 for ep in observations for o in ep["evidence_origins"] if o not in ("system", "user_provided"))
 
     # Signal-to-effective-outcome latency (median).
     latencies: list[float] = []
@@ -1252,9 +1154,7 @@ def _evaluate_readiness_gate(
     met_weeks = [s for s in weekly_samples if s.gate_met]
     if not met_weeks:
         gaps.append(
-            "no qualifying weeks yet "
-            "(need >=3 system-accept episodes with complete burden "
-            "and review<saved per week)"
+            "no qualifying weeks yet (need >=3 system-accept episodes with complete burden and review<saved per week)"
         )
     else:
         gaps.append(f"only {len(met_weeks)} qualifying week(s), need 4 consecutive")
@@ -1264,16 +1164,11 @@ def _evaluate_readiness_gate(
             monday_a = _week_monday(wk_a.week_key)
             monday_b = _week_monday(wk_b.week_key)
             if (monday_b - monday_a).days != 7:
-                gaps.append(
-                    f"non-consecutive gap between {wk_a.week_key} and {wk_b.week_key}"
-                )
+                gaps.append(f"non-consecutive gap between {wk_a.week_key} and {wk_b.week_key}")
         # Weeks below threshold.
         below = [s for s in weekly_samples if not s.gate_met]
         if below:
-            gaps.append(
-                f"{len(below)} week(s) below threshold "
-                f"(need >=3 qualifying episodes each)"
-            )
+            gaps.append(f"{len(below)} week(s) below threshold (need >=3 qualifying episodes each)")
 
     return "collecting", gaps
 

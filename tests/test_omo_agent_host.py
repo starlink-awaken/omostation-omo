@@ -23,9 +23,7 @@ from omo.omo_agent_host import AgentHost, HealthMonitorAgent, JourneyRunnerAgent
 def _write_health(tmp_path: Path, services: dict) -> Path:
     """写临时 system_health.yaml (JSON 是 YAML 子集), 返回路径."""
     health_yaml = tmp_path / "system_health.yaml"
-    health_yaml.write_text(
-        json.dumps({"services": services}, ensure_ascii=False), encoding="utf-8"
-    )
+    health_yaml.write_text(json.dumps({"services": services}, ensure_ascii=False), encoding="utf-8")
     return health_yaml
 
 
@@ -98,18 +96,14 @@ def test_non_dict_service_skipped(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
         HealthMonitorAgent,
         "_HEALTH_YAML",
-        _write_health(
-            tmp_path, {"weird": "not-a-dict", "good": {"health_check": "healthy"}}
-        ),
+        _write_health(tmp_path, {"weird": "not-a-dict", "good": {"health_check": "healthy"}}),
     )
     assert HealthMonitorAgent().tick()["action"] == "noop"
 
 
 def test_snapshot_missing_returns_noop(tmp_path: Path, monkeypatch) -> None:
     """快照缺失 → noop (note)."""
-    monkeypatch.setattr(
-        HealthMonitorAgent, "_HEALTH_YAML", tmp_path / "nonexistent.yaml"
-    )
+    monkeypatch.setattr(HealthMonitorAgent, "_HEALTH_YAML", tmp_path / "nonexistent.yaml")
     r = HealthMonitorAgent().tick()
     assert r["action"] == "noop"
     assert "note" in r["details"]
@@ -150,20 +144,11 @@ def test_agent_host_error_isolation() -> None:
     assert ok_result["ok"] is True
 
 
-def test_journey_runner_executes_code_root_and_reads_runtime_root(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_journey_runner_executes_code_root_and_reads_runtime_root(tmp_path: Path, monkeypatch) -> None:
     """Runtime state may live elsewhere, but executable code must come from code root."""
     runtime_root = tmp_path / "runtime"
     code_root = tmp_path / "code"
-    state_dir = (
-        runtime_root
-        / ".omo"
-        / "_knowledge"
-        / "workflow-mesh"
-        / "journey-states"
-        / "journey-1"
-    )
+    state_dir = runtime_root / ".omo" / "_knowledge" / "workflow-mesh" / "journey-states" / "journey-1"
     state_dir.mkdir(parents=True)
     (state_dir / "run-1.jsonl").write_text(
         json.dumps(

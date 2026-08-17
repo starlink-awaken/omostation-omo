@@ -39,9 +39,7 @@ def build_campaign_packet(
         for entry in owner_packet["entries"]:
             item_id = str(entry["id"])
             execution_record_ref = execution_lookup.get(item_id)
-            campaign_state = _campaign_state(
-                entry, approval_lookup.get(item_id, False), execution_record_ref
-            )
+            campaign_state = _campaign_state(entry, approval_lookup.get(item_id, False), execution_record_ref)
             owner_counts[campaign_state] += 1
             summary_counts[campaign_state] += 1
             packet_entry = dict(entry)
@@ -94,9 +92,7 @@ def render_campaign_markdown(packet: dict[str, Any]) -> str:
             ("ready_to_execute", "Ready To Execute"),
             ("executed", "Executed"),
         ]:
-            state_entries = [
-                entry for entry in owner["entries"] if entry["campaign_state"] == state
-            ]
+            state_entries = [entry for entry in owner["entries"] if entry["campaign_state"] == state]
             if not state_entries:
                 continue
             lines.extend([f"### {title}", ""])

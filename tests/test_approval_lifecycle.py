@@ -6,6 +6,7 @@ import hashlib
 import json
 
 import pytest
+
 from omo.approval_lifecycle import (
     ApprovalLifecycleError,
     expire_approval_timeout,
@@ -30,9 +31,7 @@ def _grant(run_id: str, step_run_id: str) -> dict:
         "expires_at": "2026-08-02T01:00:00Z",
     }
     grant["proof"] = hashlib.sha256(
-        json.dumps(
-            grant, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode()
+        json.dumps(grant, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     return grant
 
@@ -42,11 +41,7 @@ def _running_run(tmp_path, run_id: str = "run-approval") -> None:
     grant = _grant(run_id, step_run_id)
     store = WorkflowMeshStore(tmp_path)
     store.append(new_workflow_event("WorkflowRequested", run_id))
-    store.append(
-        new_workflow_event(
-            "WorkflowAdmitted", run_id, payload={"admission": grant, **grant}
-        )
-    )
+    store.append(new_workflow_event("WorkflowAdmitted", run_id, payload={"admission": grant, **grant}))
     from omo.worker_lifecycle import record_step_dispatch
 
     record_step_dispatch(
@@ -126,9 +121,7 @@ class TestRequestApproval:
 
     def test_request_rejects_zero_timeout(self, tmp_path):
         _running_run(tmp_path)
-        with pytest.raises(
-            ApprovalLifecycleError, match="timeout_seconds must be positive"
-        ):
+        with pytest.raises(ApprovalLifecycleError, match="timeout_seconds must be positive"):
             request_approval(
                 tmp_path,
                 workflow_run_id="run-approval",
@@ -245,9 +238,7 @@ class TestScanApprovalTimeouts:
             timeout_seconds=86400,
             now="2026-08-01T00:00:00Z",
         )
-        result = scan_approval_timeouts(
-            tmp_path, now="2026-08-03T00:00:00Z", apply=True
-        )
+        result = scan_approval_timeouts(tmp_path, now="2026-08-03T00:00:00Z", apply=True)
         assert result["expired_count"] == 1
         assert result["expired"][0]["workflow_run_id"] == "run-approval"
         snapshot = WorkflowMeshStore(tmp_path).snapshot("run-approval")
@@ -264,9 +255,7 @@ class TestScanApprovalTimeouts:
         result_before = scan_approval_timeouts(tmp_path, now="2026-08-07T23:59:59Z")
         assert result_before["due_count"] == 0
 
-        result_after = scan_approval_timeouts(
-            tmp_path, now="2026-08-08T00:00:00Z", apply=True
-        )
+        result_after = scan_approval_timeouts(tmp_path, now="2026-08-08T00:00:00Z", apply=True)
         assert result_after["expired_count"] == 1
 
     def test_process_restart_survival(self, tmp_path):
@@ -283,9 +272,7 @@ class TestScanApprovalTimeouts:
         assert snapshot["state"] == "waiting_approval"
         assert snapshot["approvals"]["workflow"]["timeout_at"] == "2026-08-02T00:00:00Z"
 
-        result = scan_approval_timeouts(
-            tmp_path, now="2026-08-03T00:00:00Z", apply=True
-        )
+        result = scan_approval_timeouts(tmp_path, now="2026-08-03T00:00:00Z", apply=True)
         assert result["expired_count"] == 1
 
     def test_skips_non_waiting(self, tmp_path):

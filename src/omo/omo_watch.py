@@ -54,9 +54,7 @@ def cmd_watch(interval: int = 60, max_iterations: int | None = None) -> int:
 
                 # Detect changes
                 current_status = f"{ok}/{warn}/{fail}"
-                status_changed = (
-                    last_status is not None and current_status != last_status
-                )
+                status_changed = last_status is not None and current_status != last_status
                 last_status = current_status
 
                 if status_changed:

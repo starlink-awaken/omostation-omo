@@ -43,9 +43,7 @@ def _write_yaml(rel_path: str, data: object) -> Path:
     """Write ``data`` as YAML under ``OMO_DIR / rel_path``."""
     full = OMO_DIR / rel_path
     full.parent.mkdir(parents=True, exist_ok=True)
-    full.write_text(
-        yaml.dump(data, allow_unicode=True, sort_keys=False, default_flow_style=False)
-    )
+    full.write_text(yaml.dump(data, allow_unicode=True, sort_keys=False, default_flow_style=False))
     return full
 
 
@@ -240,9 +238,7 @@ def generate() -> Path:
 
     # -- minimal placeholders for refs that tests check exist ----------------
     _write_yaml("debt/dashboard/current.yaml", {"dashboard": "placeholder"})
-    OMO_DIR.joinpath("debt/reviews/current.md").write_text(
-        "# Debt Reviews\n\nPlaceholder"
-    )
+    OMO_DIR.joinpath("debt/reviews/current.md").write_text("# Debt Reviews\n\nPlaceholder")
     _write_yaml("debt/review-queue/current.yaml", {"queue": []})
     _write_yaml("debt/action-packet/current.yaml", {"actions": []})
     _write_yaml("debt/owner-routing/current.yaml", {"routes": []})

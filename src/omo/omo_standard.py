@@ -32,9 +32,7 @@ def cmd_standard_list(omo_dir: Path) -> int:
     return 0
 
 
-def cmd_standard_add(
-    omo_dir: Path, title: str, content: str | None, stdin: bool
-) -> int:
+def cmd_standard_add(omo_dir: Path, title: str, content: str | None, stdin: bool) -> int:
     """Add a new standard document through governed ingress."""
     if stdin:
         content = sys.stdin.read()
@@ -57,9 +55,7 @@ def cmd_standard_add(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="omo standard", description="OMO standards browser"
-    )
+    parser = argparse.ArgumentParser(prog="omo standard", description="OMO standards browser")
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("list", help="List all standards")
     sa = sub.add_parser("add", help="Add a new standard")

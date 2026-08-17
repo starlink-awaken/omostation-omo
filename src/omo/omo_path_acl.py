@@ -218,11 +218,7 @@ def run_path_acl_doctor(
         "true",
         "yes",
     )
-    is_strict = (
-        bool(strict)
-        if strict is not None
-        else (env_strict or bool(profile.get("strict")))
-    )
+    is_strict = bool(strict) if strict is not None else (env_strict or bool(profile.get("strict")))
 
     findings: list[dict[str, Any]] = []
     for surface in profile.get("surfaces") or []:
@@ -282,10 +278,7 @@ def cmd_lint_path_acl(
         for f in report["findings"]:
             if f.get("kind") == "ok" and not os.environ.get("OMO_PATH_ACL_VERBOSE"):
                 continue
-            print(
-                f"  [{f.get('severity')}] {f.get('kind')}: "
-                f"{f.get('path')} {f.get('detail', '')}"
-            )
+            print(f"  [{f.get('severity')}] {f.get('kind')}: {f.get('path')} {f.get('detail', '')}")
             if f.get("recommend"):
                 print(f"    recommend: {f['recommend']}")
     return 0 if report["ok"] else 1
@@ -308,9 +301,7 @@ def plan_acl_actions(
 
     Never executes. Actions are limited to mode bits; no chown/setfacl.
     """
-    doctor = run_path_acl_doctor(
-        workspace_root, profile_path=profile_path, strict=False
-    )
+    doctor = run_path_acl_doctor(workspace_root, profile_path=profile_path, strict=False)
     root = Path(doctor["workspace_root"])
     actions: list[dict[str, Any]] = []
 
@@ -388,14 +379,9 @@ def plan_named_acl_script(
     profile: dict[str, Any] = load_profile(profile_path)
     _acl_raw = profile.get("acl")
     acl_cfg: dict[str, Any] = _acl_raw if isinstance(_acl_raw, dict) else {}
-    group = str(
-        os.environ.get("OMO_ACL_GROUP") or acl_cfg.get("group") or "omo-writers"
-    )
+    group = str(os.environ.get("OMO_ACL_GROUP") or acl_cfg.get("group") or "omo-writers")
     broker_user = str(
-        os.environ.get("OMO_BROKER_USER")
-        or acl_cfg.get("broker_user")
-        or os.environ.get("USER")
-        or "omo"
+        os.environ.get("OMO_BROKER_USER") or acl_cfg.get("broker_user") or os.environ.get("USER") or "omo"
     )
     raw = (platform or os.environ.get("OMO_ACL_PLATFORM") or _platform.system()).lower()
     if raw in ("macos", "darwin") or raw.startswith("darwin"):
@@ -468,16 +454,12 @@ def plan_named_acl_script(
                 u_exp = u.replace("$BROKER_USER", '"$BROKER_USER"')
                 cmd = f"setfacl -m u:{u_exp}:{mask} {target}"
                 lines.append(cmd)
-                commands.append(
-                    {"path": rel, "op": "setfacl", "shell": cmd, "subject": u}
-                )
+                commands.append({"path": rel, "op": "setfacl", "shell": cmd, "subject": u})
             for g in groups:
                 g_exp = g.replace("$OMO_WRITERS", '"$OMO_WRITERS"')
                 cmd = f"setfacl -m g:{g_exp}:{mask} {target}"
                 lines.append(cmd)
-                commands.append(
-                    {"path": rel, "op": "setfacl", "shell": cmd, "subject": g}
-                )
+                commands.append({"path": rel, "op": "setfacl", "shell": cmd, "subject": g})
             # default: remove other write via chmod (align L2)
             cmd = f"chmod o-w {target} 2>/dev/null || true"
             lines.append(cmd)
@@ -487,15 +469,11 @@ def plan_named_acl_script(
                 # macOS ACL allow write for broker user
                 cmd = f'chmod +a "{u.replace("$BROKER_USER", "$BROKER_USER")} allow read,write,execute,delete,add_file,add_subdirectory,file_inherit,directory_inherit" {target}'
                 lines.append(cmd)
-                commands.append(
-                    {"path": rel, "op": "chmod+a", "shell": cmd, "subject": u}
-                )
+                commands.append({"path": rel, "op": "chmod+a", "shell": cmd, "subject": u})
             for g in groups:
                 cmd = f'chmod +a "group:{g.replace("$OMO_WRITERS", "$OMO_WRITERS")} allow read,write,execute,delete,add_file,add_subdirectory,file_inherit,directory_inherit" {target}'
                 lines.append(cmd)
-                commands.append(
-                    {"path": rel, "op": "chmod+a", "shell": cmd, "subject": g}
-                )
+                commands.append({"path": rel, "op": "chmod+a", "shell": cmd, "subject": g})
             cmd = f"chmod o-w {target} 2>/dev/null || true"
             lines.append(cmd)
             commands.append({"path": rel, "op": "chmod", "shell": cmd})
@@ -544,9 +522,7 @@ def apply_named_acl_actions(
     import shutil
     import subprocess
 
-    plan = plan_named_acl_script(
-        workspace_root, profile_path=profile_path, platform=platform
-    )
+    plan = plan_named_acl_script(workspace_root, profile_path=profile_path, platform=platform)
     root = Path(plan["workspace_root"])
     enabled = os_acl_enabled() or force
     if not enabled:
@@ -613,14 +589,8 @@ def apply_named_acl_actions(
             continue
 
         mask = str(ent.get("mask") or "rwx")
-        users = [
-            _expand_acl_subject(str(u), broker_user, group)
-            for u in (ent.get("users") or [])
-        ]
-        groups = [
-            _expand_acl_subject(str(g), broker_user, group)
-            for g in (ent.get("groups") or [])
-        ]
+        users = [_expand_acl_subject(str(u), broker_user, group) for u in (ent.get("users") or [])]
+        groups = [_expand_acl_subject(str(g), broker_user, group) for g in (ent.get("groups") or [])]
 
         # 1) named ACE
         if plat == "linux":
@@ -700,19 +670,14 @@ def apply_named_acl_actions(
                             }
                         )
         elif plat == "macos":
-            rights = (
-                "allow read,write,execute,delete,add_file,"
-                "add_subdirectory,file_inherit,directory_inherit"
-            )
+            rights = "allow read,write,execute,delete,add_file,add_subdirectory,file_inherit,directory_inherit"
             for u in users:
                 if not u:
                     continue
                 # chmod +a "user allow …" path
                 argv = ["chmod", "+a", f"{u} {rights}", str(target)]
                 try:
-                    r = subprocess.run(
-                        argv, capture_output=True, text=True, timeout=10, check=False
-                    )
+                    r = subprocess.run(argv, capture_output=True, text=True, timeout=10, check=False)
                     results.append(
                         {
                             "path": rel,
@@ -738,9 +703,7 @@ def apply_named_acl_actions(
                     continue
                 argv = ["chmod", "+a", f"group:{g} {rights}", str(target)]
                 try:
-                    r = subprocess.run(
-                        argv, capture_output=True, text=True, timeout=10, check=False
-                    )
+                    r = subprocess.run(argv, capture_output=True, text=True, timeout=10, check=False)
                     results.append(
                         {
                             "path": rel,

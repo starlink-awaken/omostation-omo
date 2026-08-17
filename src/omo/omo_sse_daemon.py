@@ -59,9 +59,7 @@ async def listen_to_sse(stop_event: asyncio.Event, logger: logging.Logger):
     logger.info(f"Connecting to Agora SSE bus at {AGORA_SSE_URL}...")
     healing = get_healing_engine() if ENABLE_SELF_HEALING else None
     if healing:
-        logger.info(
-            f"Self-healing engine enabled: {len(healing._rules)} rules configured"
-        )
+        logger.info(f"Self-healing engine enabled: {len(healing._rules)} rules configured")
 
     timeout = httpx.Timeout(None)
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -69,9 +67,7 @@ async def listen_to_sse(stop_event: asyncio.Event, logger: logging.Logger):
             try:
                 async with client.stream("GET", AGORA_SSE_URL) as response:
                     if response.status_code != 200:
-                        logger.error(
-                            f"Failed to connect to SSE: HTTP {response.status_code}"
-                        )
+                        logger.error(f"Failed to connect to SSE: HTTP {response.status_code}")
                         await asyncio.sleep(5)
                         continue
 
@@ -105,13 +101,9 @@ async def listen_to_sse(stop_event: asyncio.Event, logger: logging.Logger):
                                     "debt:created",
                                     "debt:reviewed",
                                 )
-                                if ev_type in _governance_types or ev_type.startswith(
-                                    ("pipeline:", "debt:")
-                                ):
+                                if ev_type in _governance_types or ev_type.startswith(("pipeline:", "debt:")):
                                     loop = asyncio.get_running_loop()
-                                    tick_result = await loop.run_in_executor(
-                                        None, run_once
-                                    )
+                                    tick_result = await loop.run_in_executor(None, run_once)
                                     if tick_result.error:
                                         logger.error(f"tick_error: {tick_result.error}")
                                     else:
@@ -125,19 +117,14 @@ async def listen_to_sse(stop_event: asyncio.Event, logger: logging.Logger):
                                     if healing_actions:
                                         logger.warning(
                                             "self_healing_triggered actions=%s",
-                                            json.dumps(healing_actions, default=str)[
-                                                :500
-                                            ],
+                                            json.dumps(healing_actions, default=str)[:500],
                                         )
                                         # 通知
                                         for ha in healing_actions:
                                             if ha.get("severity") in (
                                                 "critical",
                                                 "high",
-                                            ) or any(
-                                                a.get("type") == "debt_created"
-                                                for a in ha.get("actions", [])
-                                            ):
+                                            ) or any(a.get("type") == "debt_created" for a in ha.get("actions", [])):
                                                 _send_notification(
                                                     f"OMO Self-Healing: {ha['rule']}",
                                                     f"事件 {ha['event_type']} × {ha['count']} 触发 {ha['rule']}",
@@ -161,9 +148,7 @@ async def listen_to_sse(stop_event: asyncio.Event, logger: logging.Logger):
                     await asyncio.sleep(5)
             except Exception as e:  # defensive fallback
                 if not stop_event.is_set():
-                    logger.exception(
-                        f"Unexpected error in SSE loop: {e}. Retrying in 5s..."
-                    )
+                    logger.exception(f"Unexpected error in SSE loop: {e}. Retrying in 5s...")
                     await asyncio.sleep(5)
 
 

@@ -4,6 +4,7 @@ import hashlib
 import json
 
 import pytest
+
 from omo.cli import main as cli_main
 from omo.omo_external_receipt import ExternalReceiptError, record_external_receipt
 from omo.workflow_mesh import (
@@ -28,25 +29,17 @@ def _grant(run_id: str, step_run_id: str) -> dict[str, object]:
         "issued_at": NOW,
         "expires_at": "2026-08-02T10:00:00Z",
     }
-    unsigned = json.dumps(
-        grant, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode()
+    unsigned = json.dumps(grant, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     grant["proof"] = hashlib.sha256(unsigned).hexdigest()
     return grant
 
 
-def _seed_succeeded_run(
-    tmp_path, run_id: str = "run-receipt"
-) -> tuple[WorkflowMeshStore, str]:
+def _seed_succeeded_run(tmp_path, run_id: str = "run-receipt") -> tuple[WorkflowMeshStore, str]:
     step_run_id = f"{run_id}:step-1"
     grant = _grant(run_id, step_run_id)
     store = WorkflowMeshStore(tmp_path)
     store.append(new_workflow_event("WorkflowRequested", run_id))
-    store.append(
-        new_workflow_event(
-            "WorkflowAdmitted", run_id, payload={"admission": grant, **grant}
-        )
-    )
+    store.append(new_workflow_event("WorkflowAdmitted", run_id, payload={"admission": grant, **grant}))
     context = {"step_run_id": step_run_id, "admission_id": grant["admission_id"]}
     store.append(new_workflow_event("StepDispatched", run_id, payload=context))
     store.append(new_workflow_event("StepStarted", run_id, payload=context))
@@ -98,9 +91,7 @@ def test_receipt_broker_rejects_failed_and_raw_receipts(tmp_path):
     _seed_succeeded_run(tmp_path)
 
     with pytest.raises(ExternalReceiptError, match="only succeeded/degraded"):
-        record_external_receipt(
-            tmp_path, _receipt("failed"), workflow_run_id="run-receipt"
-        )
+        record_external_receipt(tmp_path, _receipt("failed"), workflow_run_id="run-receipt")
 
     raw = _receipt()
     raw["raw_output"] = "must never enter the event"

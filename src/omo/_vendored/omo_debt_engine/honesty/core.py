@@ -5,6 +5,7 @@ Implements Pattern 09 v2.1 honesty dimension.
 """
 
 from dataclasses import dataclass
+from datetime import UTC
 from typing import Optional
 
 
@@ -108,7 +109,7 @@ def calculate_honesty_score(
     if assessed_at is None:
         from datetime import datetime, timezone
 
-        assessed_at = datetime.now(timezone.utc).isoformat()
+        assessed_at = datetime.now(UTC).isoformat()
 
     return HonestyScore(
         score=overall_score,

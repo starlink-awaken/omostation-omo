@@ -142,17 +142,11 @@ def _extract_failures(stdout: str, stderr: str) -> list[Failure]:
             test_name = m.group(1)
             # Extract traceback section for this test
             # Heuristic: find the block between "FAILED <name>" and next "FAILED" or "=" line
-            failures.append(
-                Failure(test_name=test_name, error_type="AssertionError", raw_output="")
-            )
+            failures.append(Failure(test_name=test_name, error_type="AssertionError", raw_output=""))
 
     # If we can't parse individual failures, create a single catch-all
     if not failures and ("FAILED" in combined or "ERROR" in combined):
-        failures.append(
-            Failure(
-                test_name="<unknown>", error_type="Unknown", raw_output=combined[-2000:]
-            )
-        )
+        failures.append(Failure(test_name="<unknown>", error_type="Unknown", raw_output=combined[-2000:]))
 
     return failures
 
@@ -171,17 +165,11 @@ def _diagnose(failure: Failure) -> None:
                 pkg = match.group("package")
                 failure.suggested_fix = f"Add [tool.uv.sources] entry for '{pkg}'"
             elif pat["id"] == "hardcoded-localhost":
-                failure.suggested_fix = (
-                    "Replace hard-coded endpoint with os.environ.get(...) fallback"
-                )
+                failure.suggested_fix = "Replace hard-coded endpoint with os.environ.get(...) fallback"
             elif pat["id"] == "stderr-mismatch":
-                failure.suggested_fix = (
-                    "Change captured.out to captured.err in test assertion"
-                )
+                failure.suggested_fix = "Change captured.out to captured.err in test assertion"
             elif pat["id"] == "import-cycle":
-                failure.suggested_fix = (
-                    "Create backward-compat shim __init__.py or fix import order"
-                )
+                failure.suggested_fix = "Create backward-compat shim __init__.py or fix import order"
 
 
 def _try_fix(project: str, failure: Failure) -> bool:
@@ -246,16 +234,10 @@ def scan_project(project: str, auto_fix: bool = False) -> ProjectScan:
     try:
         rc, stdout, stderr = _run_tests(project)
     except subprocess.TimeoutExpired:
-        scan.failures.append(
-            Failure(
-                test_name="<suite>", error_type="Timeout", raw_output="pytest timed out"
-            )
-        )
+        scan.failures.append(Failure(test_name="<suite>", error_type="Timeout", raw_output="pytest timed out"))
         return scan
     except FileNotFoundError as e:
-        scan.failures.append(
-            Failure(test_name="<suite>", error_type="NotFound", raw_output=str(e))
-        )
+        scan.failures.append(Failure(test_name="<suite>", error_type="NotFound", raw_output=str(e)))
         return scan
 
     summary = _parse_pytest_summary(stdout, stderr)
@@ -281,15 +263,9 @@ def scan_project(project: str, auto_fix: bool = False) -> ProjectScan:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Auto-Heal Daemon MVP")
-    parser.add_argument(
-        "--project", action="append", help="Project to scan (repeatable)"
-    )
-    parser.add_argument(
-        "--all", action="store_true", help="Scan all active Python projects"
-    )
-    parser.add_argument(
-        "--auto-fix", action="store_true", help="Attempt automated fixes"
-    )
+    parser.add_argument("--project", action="append", help="Project to scan (repeatable)")
+    parser.add_argument("--all", action="store_true", help="Scan all active Python projects")
+    parser.add_argument("--auto-fix", action="store_true", help="Attempt automated fixes")
     parser.add_argument("--report", help="Write JSON report to file")
     args = parser.parse_args(argv)
 
@@ -306,9 +282,7 @@ def main(argv: list[str] | None = None) -> int:
         scan = scan_project(proj, auto_fix=args.auto_fix)
         results.append(scan)
         status = "✅ PASS" if scan.failed == 0 and scan.errors == 0 else "⚠️  FAIL"
-        print(
-            f"   {status}  {scan.passed}/{scan.total_tests} passed  ({scan.failed} failed, {scan.errors} errors)"
-        )
+        print(f"   {status}  {scan.passed}/{scan.total_tests} passed  ({scan.failed} failed, {scan.errors} errors)")
         for f in scan.failures:
             print(f"   • {f.test_name}: {', '.join(f.matched_patterns) or 'unmatched'}")
             if f.suggested_fix:
@@ -318,9 +292,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.report:
         report_data = [asdict(r) for r in results]
-        Path(args.report).write_text(
-            json.dumps(report_data, indent=2, default=str), encoding="utf-8"
-        )
+        Path(args.report).write_text(json.dumps(report_data, indent=2, default=str), encoding="utf-8")
         print(f"\n📄 Report written to {args.report}")
 
     total_failed = sum(r.failed + r.errors for r in results)

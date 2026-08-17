@@ -4,8 +4,9 @@ import json
 import sys
 from io import StringIO
 
-import omo.omo_external_resources as external_resources
 import pytest
+
+import omo.omo_external_resources as external_resources
 from omo.cli import main as cli_main
 from omo.omo_external_pack import (
     ExternalResourcePackProposalError,
@@ -117,9 +118,7 @@ def test_blocked_pack_and_tampered_preview_fail_closed(tmp_path):
 
 
 def test_conflicting_proposal_id_fails_closed(tmp_path):
-    record_external_resource_pack_proposal(
-        tmp_path, _projection(), proposal_id="proposal:fixed:1"
-    )
+    record_external_resource_pack_proposal(tmp_path, _projection(), proposal_id="proposal:fixed:1")
     changed = _projection()
     changed["pack"] = {
         "pack_id": "pack:other",
@@ -127,9 +126,7 @@ def test_conflicting_proposal_id_fails_closed(tmp_path):
         "provider": "other",
     }
     with pytest.raises(ExternalResourcePackProposalError, match="conflicting"):
-        record_external_resource_pack_proposal(
-            tmp_path, changed, proposal_id="proposal:fixed:1"
-        )
+        record_external_resource_pack_proposal(tmp_path, changed, proposal_id="proposal:fixed:1")
 
 
 def test_pack_proposal_cli_records_safe_receipt(tmp_path, capsys, monkeypatch):

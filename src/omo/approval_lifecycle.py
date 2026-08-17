@@ -55,9 +55,7 @@ def _append(
     prior = _existing(store, idempotency_key)
     if prior is not None:
         if prior.get("event_type") != event_type or prior.get("payload") != payload:
-            raise ApprovalLifecycleError(
-                f"conflicting approval lifecycle event: {idempotency_key}"
-            )
+            raise ApprovalLifecycleError(f"conflicting approval lifecycle event: {idempotency_key}")
         return prior
     try:
         return store.append(
@@ -98,13 +96,9 @@ def request_approval(
         return prior
     snapshot = store.snapshot(workflow_run_id)
     if snapshot.get("state") not in {"running"}:
-        raise ApprovalLifecycleError(
-            f"cannot request approval in state: {snapshot.get('state')}"
-        )
+        raise ApprovalLifecycleError(f"cannot request approval in state: {snapshot.get('state')}")
     requested_at = _stamp(now)
-    timeout_at = _stamp(
-        (_utc(requested_at) + timedelta(seconds=timeout_seconds)).isoformat()
-    )
+    timeout_at = _stamp((_utc(requested_at) + timedelta(seconds=timeout_seconds)).isoformat())
     payload = {
         "approval_id": approval_id,
         "requested_at": requested_at,
@@ -134,14 +128,10 @@ def grant_approval(
     store = _store(omo_dir)
     snapshot = store.snapshot(workflow_run_id)
     if snapshot.get("state") != "waiting_approval":
-        raise ApprovalLifecycleError(
-            f"cannot grant approval in state: {snapshot.get('state')}"
-        )
+        raise ApprovalLifecycleError(f"cannot grant approval in state: {snapshot.get('state')}")
     approval = snapshot.get("approvals", {}).get(approval_id)
     if not approval or approval.get("state") != "requested":
-        raise ApprovalLifecycleError(
-            f"approval '{approval_id}' is not in requested state"
-        )
+        raise ApprovalLifecycleError(f"approval '{approval_id}' is not in requested state")
     event_key = f"{workflow_run_id}:approval-granted:{approval_id}"
     prior = _existing(store, event_key)
     if prior is not None:
@@ -174,14 +164,10 @@ def expire_approval_timeout(
     store = _store(omo_dir)
     snapshot = store.snapshot(workflow_run_id)
     if snapshot.get("state") != "waiting_approval":
-        raise ApprovalLifecycleError(
-            f"cannot expire approval timeout in state: {snapshot.get('state')}"
-        )
+        raise ApprovalLifecycleError(f"cannot expire approval timeout in state: {snapshot.get('state')}")
     approval = snapshot.get("approvals", {}).get(approval_id)
     if not approval or approval.get("state") != "requested":
-        raise ApprovalLifecycleError(
-            f"approval '{approval_id}' is not in requested state"
-        )
+        raise ApprovalLifecycleError(f"approval '{approval_id}' is not in requested state")
     timeout_at = str(approval.get("timeout_at") or "")
     if not timeout_at:
         raise ApprovalLifecycleError(f"approval '{approval_id}' has no timeout_at")
@@ -326,9 +312,7 @@ def scan_approval_timeouts(
         "observed_at": observed_at,
         "run_count": len(run_ids),
         "waiting_count": sum(
-            1
-            for rid in run_ids
-            if _safe_snapshot(store, rid, errors).get("state") == "waiting_approval"
+            1 for rid in run_ids if _safe_snapshot(store, rid, errors).get("state") == "waiting_approval"
         ),
         "due_count": len(due),
         "expired_count": len(expired),

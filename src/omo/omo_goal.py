@@ -76,9 +76,7 @@ def cmd_goal_status(omo_dir: Path) -> int:
     return 0
 
 
-def cmd_goal_create(
-    omo_dir: Path, goal_id: str, description: str, source_ref: str = ""
-) -> int:
+def cmd_goal_create(omo_dir: Path, goal_id: str, description: str, source_ref: str = "") -> int:
     """Create a goal through the governed ingress broker."""
     goal_file = omo_dir / "goals" / "current.yaml"
     if not goal_file.exists():
@@ -97,9 +95,7 @@ def cmd_goal_create(
         print(f"❌ {exc}", file=sys.stderr)
         return 1
     print(f"✅ Governed goal {goal_id} created")
-    print(
-        f"Artifact: {omo_dir / '_delivery' / 'ingress' / 'goals' / f'{goal_id}.yaml'}"
-    )
+    print(f"Artifact: {omo_dir / '_delivery' / 'ingress' / 'goals' / f'{goal_id}.yaml'}")
     return 0
 
 
@@ -173,12 +169,8 @@ def cmd_goal_trace(omo_dir: Path, goal_id: str) -> int:
                 target_g = g
                 break
         if target_g:
-            print(
-                f"[Layer 1: Goal] {target_g.get('id')} — {target_g.get('desc', target_g.get('title', ''))}"
-            )
-            print(
-                f"  Status: {target_g.get('status', 'active')} | Progress: {target_g.get('progress', 0)}%"
-            )
+            print(f"[Layer 1: Goal] {target_g.get('id')} — {target_g.get('desc', target_g.get('title', ''))}")
+            print(f"  Status: {target_g.get('status', 'active')} | Progress: {target_g.get('progress', 0)}%")
         else:
             print(f"[Layer 1: Goal] {goal_id} (Declared in current.yaml)")
     print()
@@ -243,9 +235,7 @@ def main(argv: list[str] | None = None) -> int:
     p_create = sub.add_parser("create", help="Create a new goal")
     p_create.add_argument("id", help="Goal ID")
     p_create.add_argument("desc", help="Goal description")
-    p_create.add_argument(
-        "--source-ref", default="", help="Stable mutation source reference"
-    )
+    p_create.add_argument("--source-ref", default="", help="Stable mutation source reference")
 
     p_prog = sub.add_parser("progress", help="Update goal progress")
     p_prog.add_argument("id", help="Goal ID")

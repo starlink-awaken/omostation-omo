@@ -191,27 +191,19 @@ class AutonomyLadder:
         if verdict == "accepted":
             cap.total_accepted += 1
             cap.consecutive_accepted += 1
-            cap.calibration = (
-                cap.total_accepted / cap.observations if cap.observations else 0.0
-            )
+            cap.calibration = cap.total_accepted / cap.observations if cap.observations else 0.0
         elif verdict == "modified":
-            cap.calibration = (
-                cap.total_accepted / cap.observations if cap.observations else 0.0
-            )
+            cap.calibration = cap.total_accepted / cap.observations if cap.observations else 0.0
         elif verdict == "rejected":
             cap.consecutive_accepted = 0
-            cap.calibration = (
-                cap.total_accepted / cap.observations if cap.observations else 0.0
-            )
+            cap.calibration = cap.total_accepted / cap.observations if cap.observations else 0.0
 
         result: dict[str, Any] = {"level_changed": False}
 
         # Immediate demotion on rejected (existing logic)
         if verdict == "rejected" and cap.level != "L0":
             new_level = "L0"
-            result = self._apply_change(
-                cap, old_level, new_level, f"rejected verdict (was {old_level})"
-            )
+            result = self._apply_change(cap, old_level, new_level, f"rejected verdict (was {old_level})")
             # Set human review flag (BET-Y2Q3-T3-02)
             if DRIFT_CONFIG["human_review_required_after_demotion"]:
                 cap.requires_human_review = True
@@ -230,9 +222,7 @@ class AutonomyLadder:
             # Promotion check (blocked if requires_human_review)
             if not result.get("level_changed") and not cap.requires_human_review:
                 target = self._check_promotion(cap)
-                if target and AUTONOMY_LEVELS.index(target) > AUTONOMY_LEVELS.index(
-                    cap.level
-                ):
+                if target and AUTONOMY_LEVELS.index(target) > AUTONOMY_LEVELS.index(cap.level):
                     result = self._apply_change(
                         cap,
                         cap.level,
@@ -331,9 +321,7 @@ class AutonomyLadder:
         logger.info(f"Autonomy {capability}: human_review cleared")
         return {"cleared": True, "capability": capability}
 
-    def _apply_change(
-        self, cap: CapabilityAutonomy, from_level: str, to_level: str, reason: str
-    ) -> dict[str, Any]:
+    def _apply_change(self, cap: CapabilityAutonomy, from_level: str, to_level: str, reason: str) -> dict[str, Any]:
         cap.level = to_level
         _emit_event(cap.capability, from_level, to_level, reason)
         logger.info(f"Autonomy {cap.capability}: {from_level} → {to_level} ({reason})")
@@ -354,7 +342,5 @@ class AutonomyLadder:
         """Return current state of all capabilities."""
         result: dict[str, Any] = {}
         for cap_name, cap_data in self._data.get("capabilities", {}).items():
-            result[cap_name] = CapabilityAutonomy.from_dict(
-                cap_name, cap_data
-            ).to_dict()
+            result[cap_name] = CapabilityAutonomy.from_dict(cap_name, cap_data).to_dict()
         return result

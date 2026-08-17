@@ -19,11 +19,7 @@ def _slugify(text: str, max_len: int = 30) -> str:
 
 def _pitches_dir(workspace_root: Path, adapter: str) -> Path:
     """pitches 目录 (ecos: workspace/runtime/sandbox/pitches; local: <repo_root>/.c2g_data/pitches), 自动创建."""
-    d = (
-        workspace_root / "runtime" / "sandbox" / "pitches"
-        if adapter == "ecos"
-        else get_c2g_data_dir() / "pitches"
-    )
+    d = workspace_root / "runtime" / "sandbox" / "pitches" if adapter == "ecos" else get_c2g_data_dir() / "pitches"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -31,9 +27,7 @@ def _pitches_dir(workspace_root: Path, adapter: str) -> Path:
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
-    parser = argparse.ArgumentParser(
-        description="C2G (Concept-to-Goal) Engine - The Strategic Pipeline"
-    )
+    parser = argparse.ArgumentParser(description="C2G (Concept-to-Goal) Engine - The Strategic Pipeline")
     parser.add_argument(
         "--adapter",
         type=str,
@@ -44,9 +38,7 @@ def main(argv: list[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # 1. Brainstorm (V2P) - 生成结构化 Pitch (产品走查 2026-06-19 修真, 不再 Mock)
-    parser_bs = subparsers.add_parser(
-        "brainstorm", help="[V2P] Generate a structured Pitch from a topic"
-    )
+    parser_bs = subparsers.add_parser("brainstorm", help="[V2P] Generate a structured Pitch from a topic")
     parser_bs.add_argument("topic", type=str, help="The topic to brainstorm")
     parser_bs.add_argument(
         "--scenario",
@@ -56,9 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # 1.5 Draft (V2P) - Interactive Pitch Wizard
-    parser_draft = subparsers.add_parser(
-        "draft", help="[V2P] Interactive wizard to draft a Pitch"
-    )
+    parser_draft = subparsers.add_parser("draft", help="[V2P] Interactive wizard to draft a Pitch")
     parser_draft.add_argument(
         "--scenario",
         choices=list(SCENARIOS),
@@ -67,42 +57,26 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # 2. Bet (C2G) - bridging pitch to bet
-    parser_bet = subparsers.add_parser(
-        "bet", help="[C2G] Convert a Pitch into a tracked Bet"
-    )
-    parser_bet.add_argument(
-        "source_file", type=str, help="Path to the Pitch markdown file"
-    )
+    parser_bet = subparsers.add_parser("bet", help="[C2G] Convert a Pitch into a tracked Bet")
+    parser_bet.add_argument("source_file", type=str, help="Path to the Pitch markdown file")
 
     # 3. Radar (AGC) - strategy audit
     subparsers.add_parser("radar", help="[AGC] Audit system strategy alignment (Radar)")
 
     # 4. GC (AGC) - entropy garbage collection
-    parser_gc = subparsers.add_parser(
-        "gc", help="[AGC] Garbage collect decayed Sandbox pitches"
-    )
-    parser_gc.add_argument(
-        "--dry-run", action="store_true", help="Preview GC without moving files"
-    )
+    parser_gc = subparsers.add_parser("gc", help="[AGC] Garbage collect decayed Sandbox pitches")
+    parser_gc.add_argument("--dry-run", action="store_true", help="Preview GC without moving files")
 
     # 5. Outcome tracking (NEW) - Pitch 效果追踪
-    parser_outcome = subparsers.add_parser(
-        "outcome", help="[NEW] Track Pitch outcome tracking"
-    )
-    outcome_subparsers = parser_outcome.add_subparsers(
-        dest="outcome_command", required=True
-    )
+    parser_outcome = subparsers.add_parser("outcome", help="[NEW] Track Pitch outcome tracking")
+    outcome_subparsers = parser_outcome.add_subparsers(dest="outcome_command", required=True)
     outcome_subparsers.add_parser("list", help="List all tracked Pitch outcomes")
-    outcome_track = outcome_subparsers.add_parser(
-        "track", help="Track a specific Pitch"
-    )
+    outcome_track = outcome_subparsers.add_parser("track", help="Track a specific Pitch")
     outcome_track.add_argument("pitch_id", type=str, help="Pitch ID to track")
     outcome_subparsers.add_parser("analyze", help="Analyze Pitch success factors")
 
     # 6. Pitch suggest (NEW) - Pitch 改进建议
-    parser_suggest = subparsers.add_parser(
-        "suggest", help="[NEW] Get Pitch improvement suggestions"
-    )
+    parser_suggest = subparsers.add_parser("suggest", help="[NEW] Get Pitch improvement suggestions")
     parser_suggest.add_argument("pitch_file", type=str, help="Path to Pitch file")
 
     args = parser.parse_args(argv)
@@ -120,10 +94,7 @@ def main(argv: list[str] | None = None) -> int:
         # 修真 v1 (产品走查 2026-06-19): Mock print → 真生成 Pitch (KISS 模板, 不集成 MetaOS)
         # BET-6 (2026-06-27): --scenario 场景化 Pitch (注册表驱动, 向后兼容)
         sc = get_scenario(args.scenario)
-        pitch_path = (
-            _pitches_dir(workspace_root, args.adapter)
-            / f"Idea-{_slugify(args.topic)}.md"
-        )
+        pitch_path = _pitches_dir(workspace_root, args.adapter) / f"Idea-{_slugify(args.topic)}.md"
         if pitch_path.exists():
             print(f"ℹ️  Pitch 已存在: {pitch_path} (用 draft 补细节, 或直接 bet)")
             return 0
@@ -150,9 +121,7 @@ def main(argv: list[str] | None = None) -> int:
         pitch_path.write_text(content, encoding="utf-8")
         suffix = f" [场景: {sc.label}]" if sc else ""
         print(f"🧠 [V2P] brainstorm 真生成 Pitch{suffix}: {pitch_path}")
-        print(
-            f"➡️ 下一步: 编辑补 Upstream/Appetite → `c2g --adapter ecos bet {pitch_path.resolve()}`"
-        )
+        print(f"➡️ 下一步: 编辑补 Upstream/Appetite → `c2g --adapter ecos bet {pitch_path.resolve()}`")
 
     elif args.command == "draft":
         sc = get_scenario(args.scenario)
@@ -160,17 +129,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n🧠 [C2G 战略向导{scenario_tag}] 让我们把模糊的点子变成具体的行动：")
         try:
             idea = input("? 一句话描述您的点子 (Core Idea): ").strip()
-            upstream_hint = (
-                f" (Upstream, {sc.upstream_hint})"
-                if sc
-                else " (Upstream, e.g. 提升工程质量)"
-            )
-            upstream = input(
-                f"? 这个点子的北极星/上游愿景是什么{upstream_hint}: "
-            ).strip()
-            appetite = input(
-                "? 您的胃口/预算是多少 (Appetite, e.g. 2小时 / 1周): "
-            ).strip()
+            upstream_hint = f" (Upstream, {sc.upstream_hint})" if sc else " (Upstream, e.g. 提升工程质量)"
+            upstream = input(f"? 这个点子的北极星/上游愿景是什么{upstream_hint}: ").strip()
+            appetite = input("? 您的胃口/预算是多少 (Appetite, e.g. 2小时 / 1周): ").strip()
             context = input("? 补充一些背景信息 (可选): ").strip()
         except KeyboardInterrupt:
             print("\n❌ 已取消。")
@@ -180,9 +141,7 @@ def main(argv: list[str] | None = None) -> int:
             print("❌ 点子不能为空，已取消。")
             return 1
 
-        pitch_path = (
-            _pitches_dir(workspace_root, args.adapter) / f"Idea-{_slugify(idea)}.md"
-        )
+        pitch_path = _pitches_dir(workspace_root, args.adapter) / f"Idea-{_slugify(idea)}.md"
         if sc:
             sections = "".join(f"## {t}\n{p}\n\n" for t, p in sc.sections)
             scenario_line = f"> **Scenario**: {sc.key} ({sc.label})\n"
@@ -199,9 +158,7 @@ def main(argv: list[str] | None = None) -> int:
         pitch_path.write_text(content, encoding="utf-8")
 
         print(f"\n✅ 成功！Pitch{scenario_tag} 已生成于 {pitch_path}")
-        print(
-            f"➡️ 下一步：您可以执行 `workspace compass bet {pitch_path}` 进行下注转换。"
-        )
+        print(f"➡️ 下一步：您可以执行 `workspace compass bet {pitch_path}` 进行下注转换。")
 
     elif args.command == "bet":
         source = Path(args.source_file)

@@ -3,14 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
+
 from omo.omo_governance_overlay_loop import plan_governance_overlay_cycle
 
 
 def _write_yaml(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
-    )
+    path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
 
 def test_plan_governance_overlay_cycle_returns_idle_when_no_candidates(tmp_path: Path):
@@ -36,9 +35,7 @@ def test_plan_governance_overlay_cycle_returns_idle_when_no_candidates(tmp_path:
         {"items": []},
     )
 
-    result = plan_governance_overlay_cycle(
-        tmp_path, omo_dir=".omo", actor="copilot-cli", now="2026-06-03T06:40:00Z"
-    )
+    result = plan_governance_overlay_cycle(tmp_path, omo_dir=".omo", actor="copilot-cli", now="2026-06-03T06:40:00Z")
 
     assert result["run"]["summary"] == "idle"
     assert result["run"]["roadmap_item_id"] is None
@@ -118,9 +115,7 @@ def test_plan_governance_overlay_cycle_requests_approval_for_gated_planned_task(
         },
     )
 
-    result = plan_governance_overlay_cycle(
-        tmp_path, omo_dir=".omo", actor="copilot-cli", now="2026-06-03T06:40:00Z"
-    )
+    result = plan_governance_overlay_cycle(tmp_path, omo_dir=".omo", actor="copilot-cli", now="2026-06-03T06:40:00Z")
 
     assert result["run"]["target_results"][0]["action"] == "request_approval"
     assert result["run"]["target_results"][0]["result"] == "approval_request_needed"
@@ -162,13 +157,9 @@ def test_plan_governance_overlay_cycle_blocks_unsupported_target_ref(tmp_path: P
             ]
         },
     )
-    _write_yaml(
-        tmp_path / ".omo" / "debt" / "dashboard" / "current.yaml", {"items": []}
-    )
+    _write_yaml(tmp_path / ".omo" / "debt" / "dashboard" / "current.yaml", {"items": []})
 
-    result = plan_governance_overlay_cycle(
-        tmp_path, omo_dir=".omo", actor="copilot-cli", now="2026-06-03T06:40:00Z"
-    )
+    result = plan_governance_overlay_cycle(tmp_path, omo_dir=".omo", actor="copilot-cli", now="2026-06-03T06:40:00Z")
 
     assert result["run"]["target_results"][0]["action"] == "mark_blocked"
     assert result["run"]["target_results"][0]["result"] == "unsupported_target_ref"
@@ -230,9 +221,7 @@ def test_plan_governance_overlay_cycle_closes_done_active_item(tmp_path: Path):
         {"id": "TASK-A", "status": "done"},
     )
 
-    result = plan_governance_overlay_cycle(
-        tmp_path, omo_dir=".omo", actor="copilot-cli", now="2026-06-03T06:50:00Z"
-    )
+    result = plan_governance_overlay_cycle(tmp_path, omo_dir=".omo", actor="copilot-cli", now="2026-06-03T06:50:00Z")
 
     assert result["run"]["mode"] == "continue_active"
     assert result["run"]["summary"] == "close_ready"

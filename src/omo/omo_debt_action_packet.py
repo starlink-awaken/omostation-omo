@@ -5,9 +5,7 @@ from typing import Any
 
 
 def _schedule_command(item_id: str, now: str, review_window_days: int) -> str:
-    next_review = (
-        datetime.fromisoformat(now) + timedelta(days=review_window_days)
-    ).isoformat()
+    next_review = (datetime.fromisoformat(now) + timedelta(days=review_window_days)).isoformat()
     next_review = next_review.replace("+00:00", "Z")
     return f"python3 scripts/omo_debt.py schedule --omo-dir .omo --id {item_id} --next-review-at {next_review}"
 
@@ -51,12 +49,8 @@ def build_action_packet(review_queue: dict[str, Any], now: str) -> dict[str, Any
                 "recommended_action": "schedule",
                 "reason": "missing_next_review_at",
                 "command_template": _schedule_command_template(entry["id"]),
-                "shell_command": _schedule_command(
-                    entry["id"], now, review_window_days
-                ),
-                "suggested_command": _schedule_command(
-                    entry["id"], now, review_window_days
-                ),
+                "shell_command": _schedule_command(entry["id"], now, review_window_days),
+                "suggested_command": _schedule_command(entry["id"], now, review_window_days),
             }
         )
 

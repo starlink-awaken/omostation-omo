@@ -52,9 +52,7 @@ class JsonlShadowError(LedgerError):
 
 def _canonical_json_bytes(value: Any) -> bytes:
     """Canonical JSON: sort_keys, compact separators, UTF-8."""
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
 def content_hash(record: dict[str, Any]) -> str:
@@ -188,8 +186,7 @@ def classify_line(
                 "line": line_no,
                 "reason": "unknown_version",
                 "detail": (
-                    "unsupported schema_version/version: "
-                    f"{record.get('schema_version', record.get('version'))!r}"
+                    f"unsupported schema_version/version: {record.get('schema_version', record.get('version'))!r}"
                 ),
                 "record": record,
             },
@@ -200,10 +197,7 @@ def classify_line(
 
 
 def _write_quarantine(path: Path, entries: list[dict[str, Any]]) -> None:
-    lines = [
-        json.dumps(entry, ensure_ascii=False, sort_keys=True, allow_nan=False)
-        for entry in entries
-    ]
+    lines = [json.dumps(entry, ensure_ascii=False, sort_keys=True, allow_nan=False) for entry in entries]
     path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
 
 
@@ -247,13 +241,8 @@ def import_jsonl(
     """
     file_path = Path(file_path)
     source = derive_source(file_path, source_id)
-    if (
-        quarantine_path is not None
-        and Path(quarantine_path).resolve() == file_path.resolve()
-    ):
-        raise JsonlShadowError(
-            "quarantine_path must not be the same file as the JSONL source"
-        )
+    if quarantine_path is not None and Path(quarantine_path).resolve() == file_path.resolve():
+        raise JsonlShadowError("quarantine_path must not be the same file as the JSONL source")
     report: dict[str, Any] = {
         "source": source,
         "file": str(file_path),
@@ -271,9 +260,7 @@ def import_jsonl(
     report["quarantine_entries"] = quarantined
     for entry in quarantined:
         reason = entry["reason"]
-        report["quarantine_reasons"][reason] = (
-            report["quarantine_reasons"].get(reason, 0) + 1
-        )
+        report["quarantine_reasons"][reason] = report["quarantine_reasons"].get(reason, 0) + 1
 
     for record, record_hash, line_no in healthy:
         payload = {
@@ -319,9 +306,7 @@ def _is_adapter_export(path: Path) -> bool:
     """
     if not path.exists():
         return False
-    lines = [
-        line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
-    ]
+    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     if not lines:
         return False
     for line in lines:
@@ -355,9 +340,7 @@ def export_jsonl(broker: Any, output_path: Path | str) -> dict[str, Any]:
     """
     output_path = Path(output_path)
     if output_path.exists() and not _is_adapter_export(output_path):
-        raise JsonlShadowError(
-            f"refusing to overwrite {output_path}: not a {PROJECTION} export"
-        )
+        raise JsonlShadowError(f"refusing to overwrite {output_path}: not a {PROJECTION} export")
     events = broker.read(event_type=SHADOW_EVENT_TYPE, producer=SHADOW_PRODUCER)
     lines = []
     for event in events:
@@ -391,9 +374,7 @@ def _set_digest(records_by_hash: dict[str, Any]) -> str:
     return digest.hexdigest()
 
 
-def compare_jsonl(
-    broker: Any, file_path: Path | str, source_id: str | None = None
-) -> dict[str, Any]:
+def compare_jsonl(broker: Any, file_path: Path | str, source_id: str | None = None) -> dict[str, Any]:
     """Compare the source's healthy record set against ledger shadow events.
 
     Reads the source directly (same classification as import — never via

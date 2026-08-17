@@ -33,12 +33,8 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help='JSON object {dep_name: new_baseline}, e.g. \'{"apscheduler": ">=3.11.2"}\'',
     )
-    parser.add_argument(
-        "--actor", default="gen-dependency-baseline", help="actor (谁触发 patch)"
-    )
-    parser.add_argument(
-        "--source-ref", default="", help="source ref (commit sha / agent id)"
-    )
+    parser.add_argument("--actor", default="gen-dependency-baseline", help="actor (谁触发 patch)")
+    parser.add_argument("--source-ref", default="", help="source ref (commit sha / agent id)")
     args = parser.parse_args(argv)
 
     try:

@@ -59,7 +59,7 @@ def build_ecos_task(
         "human_approval_required": False,
         "metadata": {
             "governance_stack": "state_plane.kernel_plane.ingress_plane",
-            "ingress_plane": "omo/_vendored/c2g"  # ADR-0412 内包,
+            "ingress_plane": "omo/_vendored/c2g",  # ADR-0412 内包,
         },
     }
     if extra:
@@ -101,7 +101,7 @@ def build_local_task(
             "imported_via": imported_via,
             "governance_refs": _governance_refs(),
             "governance_stack": "state_plane.kernel_plane.ingress_plane",
-            "ingress_plane": "omo/_vendored/c2g"  # ADR-0412 内包,
+            "ingress_plane": "omo/_vendored/c2g",  # ADR-0412 内包,
         },
     }
     if extra:

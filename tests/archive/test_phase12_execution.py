@@ -103,15 +103,9 @@ def test_phase12_closeout_and_handoff_documents_exist() -> None:
     for rel_path in required:
         assert (OMO_ROOT / rel_path).exists(), rel_path
 
-    closeout = (OMO_ROOT / "summaries" / "phase12-closeout.md").read_text(
-        encoding="utf-8"
-    )
-    redteam = (OMO_ROOT / "_knowledge" / "management" / "phase12-redteam.md").read_text(
-        encoding="utf-8"
-    )
-    backlog = (OMO_ROOT / "plans" / "phase14-deferred-ecosystem-backlog.md").read_text(
-        encoding="utf-8"
-    )
+    closeout = (OMO_ROOT / "summaries" / "phase12-closeout.md").read_text(encoding="utf-8")
+    redteam = (OMO_ROOT / "_knowledge" / "management" / "phase12-redteam.md").read_text(encoding="utf-8")
+    backlog = (OMO_ROOT / "plans" / "phase14-deferred-ecosystem-backlog.md").read_text(encoding="utf-8")
     assert "Phase 12 is complete" in closeout
     assert "No Critical finding blocks Phase 12 closeout" in redteam
     assert "memU" in backlog

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import pytest
+
 from omo.omo_debt_reporting import (
     build_reporting_trend_packet,
     render_reporting_trend_markdown,
@@ -147,9 +148,7 @@ def test_build_reporting_trend_packet_reorders_runs_oldest_to_newest() -> None:
     ]
 
 
-def test_build_reporting_trend_packet_adds_execution_progress_from_oldest_selected_run() -> (
-    None
-):
+def test_build_reporting_trend_packet_adds_execution_progress_from_oldest_selected_run() -> None:
     history_packet = {
         "generated_at": "2026-06-12T00:00:00Z",
         "latest_run_stamp": "2026-06-10T00-00-00Z",
@@ -212,9 +211,7 @@ def test_build_reporting_trend_packet_adds_execution_progress_from_oldest_select
     }
 
 
-def test_build_reporting_trend_packet_marks_execution_progress_baseline_fully_executed() -> (
-    None
-):
+def test_build_reporting_trend_packet_marks_execution_progress_baseline_fully_executed() -> None:
     history_packet = {
         "generated_at": "2026-06-12T00:00:00Z",
         "latest_run_stamp": "2026-06-10T00-00-00Z",
@@ -264,9 +261,7 @@ def test_build_reporting_trend_packet_marks_execution_progress_baseline_fully_ex
     }
 
 
-def test_build_reporting_trend_packet_keeps_execution_progress_unchanged_at_baseline() -> (
-    None
-):
+def test_build_reporting_trend_packet_keeps_execution_progress_unchanged_at_baseline() -> None:
     history_packet = {
         "generated_at": "2026-06-12T00:00:00Z",
         "latest_run_stamp": "2026-06-10T00-00-00Z",
@@ -303,9 +298,7 @@ def test_build_reporting_trend_packet_keeps_execution_progress_unchanged_at_base
     }
 
 
-def test_build_reporting_trend_packet_surfaces_execution_progress_increase_vs_baseline() -> (
-    None
-):
+def test_build_reporting_trend_packet_surfaces_execution_progress_increase_vs_baseline() -> None:
     history_packet = {
         "generated_at": "2026-06-12T00:00:00Z",
         "latest_run_stamp": "2026-06-10T00-00-00Z",
@@ -342,9 +335,7 @@ def test_build_reporting_trend_packet_surfaces_execution_progress_increase_vs_ba
     }
 
 
-def test_build_reporting_trend_packet_leaves_execution_progress_null_when_history_is_insufficient() -> (
-    None
-):
+def test_build_reporting_trend_packet_leaves_execution_progress_null_when_history_is_insufficient() -> None:
     history_packet = {
         "generated_at": "2026-06-12T00:00:00Z",
         "latest_run_stamp": "2026-06-10T00-00-00Z",
@@ -370,9 +361,7 @@ def test_build_reporting_trend_packet_leaves_execution_progress_null_when_histor
     assert packet["execution_progress"] is None
 
 
-def test_build_reporting_trend_packet_adds_state_progress_from_selected_reporting_artifacts() -> (
-    None
-):
+def test_build_reporting_trend_packet_adds_state_progress_from_selected_reporting_artifacts() -> None:
     history_packet = {
         "generated_at": "2026-06-12T00:00:00Z",
         "latest_run_stamp": "2026-06-10T00-00-00Z",
@@ -404,15 +393,9 @@ def test_build_reporting_trend_packet_adds_state_progress_from_selected_reportin
     }
 
     reporting_packets_by_run = {
-        "2026-05-20T00-00-00Z": _owner_reporting_packet(
-            "2026-05-20T00-00-00Z", owners=[]
-        ),
-        "2026-06-01T00-00-00Z": _owner_reporting_packet(
-            "2026-06-01T00-00-00Z", owners=[]
-        ),
-        "2026-06-10T00-00-00Z": _owner_reporting_packet(
-            "2026-06-10T00-00-00Z", owners=[]
-        ),
+        "2026-05-20T00-00-00Z": _owner_reporting_packet("2026-05-20T00-00-00Z", owners=[]),
+        "2026-06-01T00-00-00Z": _owner_reporting_packet("2026-06-01T00-00-00Z", owners=[]),
+        "2026-06-10T00-00-00Z": _owner_reporting_packet("2026-06-10T00-00-00Z", owners=[]),
     }
     reporting_packets_by_run["2026-05-20T00-00-00Z"]["summary"]["state_counts"] = {  # type: ignore[reportIndexIssue]
         "pending_approval": 4,
@@ -466,9 +449,7 @@ def test_build_reporting_trend_packet_adds_state_progress_from_selected_reportin
     }
 
 
-def test_build_reporting_trend_packet_keeps_state_progress_null_for_insufficient_history() -> (
-    None
-):
+def test_build_reporting_trend_packet_keeps_state_progress_null_for_insufficient_history() -> None:
     packet = build_reporting_trend_packet(
         generated_at="2026-06-12T01:00:00Z",
         history_packet={
@@ -491,9 +472,7 @@ def test_build_reporting_trend_packet_keeps_state_progress_null_for_insufficient
     assert packet["state_progress"] is None
 
 
-def test_build_reporting_trend_packet_aligns_state_progress_anchor_with_execution_progress() -> (
-    None
-):
+def test_build_reporting_trend_packet_aligns_state_progress_anchor_with_execution_progress() -> None:
     history_packet = {
         "generated_at": "2026-06-12T00:00:00Z",
         "latest_run_stamp": "2026-06-10T00-00-00Z",
@@ -517,12 +496,8 @@ def test_build_reporting_trend_packet_aligns_state_progress_anchor_with_executio
         ],
     }
     reporting_packets_by_run = {
-        "2026-06-01T00-00-00Z": _owner_reporting_packet(
-            "2026-06-01T00-00-00Z", owners=[]
-        ),
-        "2026-06-10T00-00-00Z": _owner_reporting_packet(
-            "2026-06-10T00-00-00Z", owners=[]
-        ),
+        "2026-06-01T00-00-00Z": _owner_reporting_packet("2026-06-01T00-00-00Z", owners=[]),
+        "2026-06-10T00-00-00Z": _owner_reporting_packet("2026-06-10T00-00-00Z", owners=[]),
     }
     reporting_packets_by_run["2026-06-01T00-00-00Z"]["summary"]["state_counts"] = {  # type: ignore[reportIndexIssue]
         "pending_approval": 2,
@@ -541,18 +516,13 @@ def test_build_reporting_trend_packet_aligns_state_progress_anchor_with_executio
         reporting_packets_by_run=reporting_packets_by_run,
     )
 
-    assert (
-        packet["state_progress"]["anchor_run_stamp"]
-        == packet["execution_progress"]["anchor_run_stamp"]
-    )
+    assert packet["state_progress"]["anchor_run_stamp"] == packet["execution_progress"]["anchor_run_stamp"]
     assert [run["run_stamp"] for run in packet["state_progress"]["runs"]] == [
         run["run_stamp"] for run in packet["execution_progress"]["runs"]
     ]
 
 
-def test_build_reporting_trend_packet_keeps_state_progress_unchanged_at_baseline() -> (
-    None
-):
+def test_build_reporting_trend_packet_keeps_state_progress_unchanged_at_baseline() -> None:
     history_packet = {
         "generated_at": "2026-06-12T00:00:00Z",
         "latest_run_stamp": "2026-06-10T00-00-00Z",
@@ -576,12 +546,8 @@ def test_build_reporting_trend_packet_keeps_state_progress_unchanged_at_baseline
         ],
     }
     reporting_packets_by_run = {
-        "2026-06-01T00-00-00Z": _owner_reporting_packet(
-            "2026-06-01T00-00-00Z", owners=[]
-        ),
-        "2026-06-10T00-00-00Z": _owner_reporting_packet(
-            "2026-06-10T00-00-00Z", owners=[]
-        ),
+        "2026-06-01T00-00-00Z": _owner_reporting_packet("2026-06-01T00-00-00Z", owners=[]),
+        "2026-06-10T00-00-00Z": _owner_reporting_packet("2026-06-10T00-00-00Z", owners=[]),
     }
     reporting_packets_by_run["2026-06-01T00-00-00Z"]["summary"]["state_counts"] = {  # type: ignore[reportIndexIssue]
         "pending_approval": 2,
@@ -618,9 +584,7 @@ def test_build_reporting_trend_packet_keeps_state_progress_unchanged_at_baseline
     ]
 
 
-def test_build_reporting_trend_packet_reports_state_progress_increase_vs_baseline() -> (
-    None
-):
+def test_build_reporting_trend_packet_reports_state_progress_increase_vs_baseline() -> None:
     history_packet = {
         "generated_at": "2026-06-12T00:00:00Z",
         "latest_run_stamp": "2026-06-10T00-00-00Z",
@@ -644,12 +608,8 @@ def test_build_reporting_trend_packet_reports_state_progress_increase_vs_baselin
         ],
     }
     reporting_packets_by_run = {
-        "2026-06-01T00-00-00Z": _owner_reporting_packet(
-            "2026-06-01T00-00-00Z", owners=[]
-        ),
-        "2026-06-10T00-00-00Z": _owner_reporting_packet(
-            "2026-06-10T00-00-00Z", owners=[]
-        ),
+        "2026-06-01T00-00-00Z": _owner_reporting_packet("2026-06-01T00-00-00Z", owners=[]),
+        "2026-06-10T00-00-00Z": _owner_reporting_packet("2026-06-10T00-00-00Z", owners=[]),
     }
     reporting_packets_by_run["2026-06-01T00-00-00Z"]["summary"]["state_counts"] = {  # type: ignore[reportIndexIssue]
         "pending_approval": 1,
@@ -677,9 +637,7 @@ def test_build_reporting_trend_packet_reports_state_progress_increase_vs_baselin
     }
 
 
-def test_build_reporting_trend_packet_fails_closed_when_state_counts_do_not_match_total_items() -> (
-    None
-):
+def test_build_reporting_trend_packet_fails_closed_when_state_counts_do_not_match_total_items() -> None:
     history_packet = {
         "generated_at": "2026-06-12T00:00:00Z",
         "latest_run_stamp": "2026-06-10T00-00-00Z",
@@ -703,12 +661,8 @@ def test_build_reporting_trend_packet_fails_closed_when_state_counts_do_not_matc
         ],
     }
     reporting_packets_by_run = {
-        "2026-06-01T00-00-00Z": _owner_reporting_packet(
-            "2026-06-01T00-00-00Z", owners=[]
-        ),
-        "2026-06-10T00-00-00Z": _owner_reporting_packet(
-            "2026-06-10T00-00-00Z", owners=[]
-        ),
+        "2026-06-01T00-00-00Z": _owner_reporting_packet("2026-06-01T00-00-00Z", owners=[]),
+        "2026-06-10T00-00-00Z": _owner_reporting_packet("2026-06-10T00-00-00Z", owners=[]),
     }
     reporting_packets_by_run["2026-06-01T00-00-00Z"]["summary"]["state_counts"] = {  # type: ignore[reportIndexIssue]
         "pending_approval": 2,
@@ -721,9 +675,7 @@ def test_build_reporting_trend_packet_fails_closed_when_state_counts_do_not_matc
         "executed": 3,
     }
 
-    with pytest.raises(
-        ValueError, match="invalid state progress counts for run: 2026-06-01T00-00-00Z"
-    ):
+    with pytest.raises(ValueError, match="invalid state progress counts for run: 2026-06-01T00-00-00Z"):
         build_reporting_trend_packet(
             generated_at="2026-06-12T01:00:00Z",
             history_packet=history_packet,
@@ -822,15 +774,10 @@ def test_build_reporting_trend_packet_adds_shared_owner_series() -> None:
     ]
     assert packet["owners"]["compared"][0]["runs"][0]["item_count"] == 1
     assert packet["owners"]["compared"][0]["runs"][1]["item_count"] == 2
-    assert (
-        packet["owners"]["compared"][1]["intervals"][0]["executed_item_count_delta"]
-        == 1
-    )
+    assert packet["owners"]["compared"][1]["intervals"][0]["executed_item_count_delta"] == 1
 
 
-def test_build_reporting_trend_packet_computes_shared_owners_relative_to_selected_window() -> (
-    None
-):
+def test_build_reporting_trend_packet_computes_shared_owners_relative_to_selected_window() -> None:
     history_packet = {
         "generated_at": "2026-06-12T00:00:00Z",
         "latest_run_stamp": "2026-06-10T00-00-00Z",
@@ -922,9 +869,7 @@ def test_build_reporting_trend_packet_computes_shared_owners_relative_to_selecte
         reporting_packets_by_run=reporting_packets_by_run,
     )
 
-    assert [entry["owner"] for entry in packet["owners"]["compared"]] == [
-        "shared-owner"
-    ]
+    assert [entry["owner"] for entry in packet["owners"]["compared"]] == ["shared-owner"]
     assert packet["owners"]["owners_excluded_count"] == 0
 
 
@@ -1004,9 +949,7 @@ def test_build_reporting_trend_packet_writes_no_shared_owners_state() -> None:
     }
 
 
-def test_build_reporting_trend_packet_surfaces_excluded_owner_presence_at_window_end() -> (
-    None
-):
+def test_build_reporting_trend_packet_surfaces_excluded_owner_presence_at_window_end() -> None:
     history_packet = {
         "generated_at": "2026-06-12T00:00:00Z",
         "latest_run_stamp": "2026-06-10T00-00-00Z",
@@ -1121,9 +1064,7 @@ def test_build_reporting_trend_packet_surfaces_excluded_owner_presence_at_window
     }
 
 
-def test_build_reporting_trend_packet_surfaces_excluded_owner_presence_at_window_start() -> (
-    None
-):
+def test_build_reporting_trend_packet_surfaces_excluded_owner_presence_at_window_start() -> None:
     history_packet = {
         "generated_at": "2026-06-12T00:00:00Z",
         "latest_run_stamp": "2026-06-10T00-00-00Z",
@@ -1237,9 +1178,7 @@ def test_build_reporting_trend_packet_surfaces_excluded_owner_presence_at_window
     }
 
 
-def test_build_reporting_trend_packet_surfaces_excluded_owner_presence_in_middle_runs() -> (
-    None
-):
+def test_build_reporting_trend_packet_surfaces_excluded_owner_presence_in_middle_runs() -> None:
     history_packet = {
         "generated_at": "2026-06-12T00:00:00Z",
         "latest_run_stamp": "2026-06-10T00-00-00Z",
@@ -1458,9 +1397,7 @@ def test_build_reporting_trend_packet_writes_insufficient_history_state() -> Non
     assert packet["intervals"] == []
 
 
-def test_build_reporting_trend_packet_omits_owner_block_for_insufficient_history() -> (
-    None
-):
+def test_build_reporting_trend_packet_omits_owner_block_for_insufficient_history() -> None:
     history_packet = {
         "generated_at": "2026-06-12T00:00:00Z",
         "latest_run_stamp": "2026-06-10T00-00-00Z",
@@ -1563,9 +1500,7 @@ def test_build_reporting_trend_packet_rejects_missing_owner_reporting_packet() -
         ],
     }
 
-    with pytest.raises(
-        ValueError, match="missing owner reporting packet for run: 2026-06-01T00-00-00Z"
-    ):
+    with pytest.raises(ValueError, match="missing owner reporting packet for run: 2026-06-01T00-00-00Z"):
         build_reporting_trend_packet(
             generated_at="2026-06-12T01:00:00Z",
             history_packet=history_packet,
@@ -1586,9 +1521,7 @@ def test_build_reporting_trend_packet_rejects_missing_owner_reporting_packet() -
         )
 
 
-def test_build_reporting_trend_packet_selects_most_recent_window_before_reordering() -> (
-    None
-):
+def test_build_reporting_trend_packet_selects_most_recent_window_before_reordering() -> None:
     history_packet = {
         "generated_at": "2026-06-12T00:00:00Z",
         "latest_run_stamp": "2026-06-10T00-00-00Z",
@@ -1648,9 +1581,7 @@ def test_build_reporting_trend_packet_selects_most_recent_window_before_reorderi
     ]
 
 
-def test_build_reporting_trend_packet_uses_full_history_when_requested_window_exceeds_visible_runs() -> (
-    None
-):
+def test_build_reporting_trend_packet_uses_full_history_when_requested_window_exceeds_visible_runs() -> None:
     history_packet = {
         "generated_at": "2026-06-12T00:00:00Z",
         "latest_run_stamp": "2026-06-10T00-00-00Z",
@@ -1688,9 +1619,7 @@ def test_build_reporting_trend_packet_uses_full_history_when_requested_window_ex
     ]
 
 
-def test_build_reporting_trend_packet_rejects_missing_reporting_metadata_inside_selected_window() -> (
-    None
-):
+def test_build_reporting_trend_packet_rejects_missing_reporting_metadata_inside_selected_window() -> None:
     history_packet = {
         "generated_at": "2026-06-12T00:00:00Z",
         "latest_run_stamp": "2026-06-10T00-00-00Z",
@@ -1823,9 +1752,7 @@ def test_build_reporting_trend_packet_rejects_invalid_requested_range_stamp() ->
         ],
     }
 
-    with pytest.raises(
-        ValueError, match="invalid from-run-stamp: 2026-06-01T00:00:00Z"
-    ):
+    with pytest.raises(ValueError, match="invalid from-run-stamp: 2026-06-01T00:00:00Z"):
         build_reporting_trend_packet(
             generated_at="2026-06-12T01:00:00Z",
             history_packet=history_packet,
@@ -1858,9 +1785,7 @@ def test_build_reporting_trend_packet_rejects_missing_requested_range_stamp() ->
         ],
     }
 
-    with pytest.raises(
-        ValueError, match="from-run-stamp not in history: 2026-05-20T00-00-00Z"
-    ):
+    with pytest.raises(ValueError, match="from-run-stamp not in history: 2026-05-20T00-00-00Z"):
         build_reporting_trend_packet(
             generated_at="2026-06-12T01:00:00Z",
             history_packet=history_packet,
@@ -1900,9 +1825,7 @@ def test_build_reporting_trend_packet_rejects_reversed_semantic_range() -> None:
         ],
     }
 
-    with pytest.raises(
-        ValueError, match="from-run-stamp must not be newer than to-run-stamp"
-    ):
+    with pytest.raises(ValueError, match="from-run-stamp must not be newer than to-run-stamp"):
         build_reporting_trend_packet(
             generated_at="2026-06-12T01:00:00Z",
             history_packet=history_packet,
@@ -1911,9 +1834,7 @@ def test_build_reporting_trend_packet_rejects_reversed_semantic_range() -> None:
         )
 
 
-def test_render_reporting_trend_markdown_shows_trend_and_insufficient_history_states() -> (
-    None
-):
+def test_render_reporting_trend_markdown_shows_trend_and_insufficient_history_states() -> None:
     trend_packet = build_reporting_trend_packet(
         generated_at="2026-06-12T01:00:00Z",
         history_packet={

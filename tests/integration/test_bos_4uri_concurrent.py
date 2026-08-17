@@ -18,6 +18,7 @@ import asyncio
 import time
 
 import pytest
+
 from omo.omo_llm_bos_bridge import (  # type: ignore[reportAttributeAccessIssue]
     _MANAGER,
     invoke_bos_uri_tool,
@@ -48,9 +49,7 @@ async def test_4uri_serial_vs_concurrent_speedup():
     bridge._MANAGER = None  # type: ignore[reportAttributeAccessIssue]
 
     t0 = time.time()
-    results = await asyncio.gather(
-        *[invoke_bos_uri_tool(uri, args) for uri, args in URIS_4]
-    )
+    results = await asyncio.gather(*[invoke_bos_uri_tool(uri, args) for uri, args in URIS_4])
     t_concurrent = time.time() - t0
 
     assert len(results) == 4
@@ -75,9 +74,7 @@ async def test_4uri_concurrent_status_count():
 
     bridge._MANAGER = None  # type: ignore[reportAttributeAccessIssue]
 
-    results = await asyncio.gather(
-        *[invoke_bos_uri_tool(uri, args) for uri, args in URIS_4]
-    )
+    results = await asyncio.gather(*[invoke_bos_uri_tool(uri, args) for uri, args in URIS_4])
 
     by_status = {}
     for r in results:
@@ -98,9 +95,7 @@ async def test_4uri_concurrent_transport():
 
     bridge._MANAGER = None  # type: ignore[reportAttributeAccessIssue]
 
-    results = await asyncio.gather(
-        *[invoke_bos_uri_tool(uri, args) for uri, args in URIS_4]
-    )
+    results = await asyncio.gather(*[invoke_bos_uri_tool(uri, args) for uri, args in URIS_4])
 
     transports = [r.get("transport") for r in results]
     print(f"\\n4 URI transports: {transports}")

@@ -87,9 +87,7 @@ def _reject_forbidden(value: Any, path: str = "consumer") -> None:
     if isinstance(value, Mapping):
         for key, nested in value.items():
             if str(key).lower() in _FORBIDDEN_KEYS:
-                raise ExternalSceneConsumerError(
-                    f"forbidden raw or secret field: {path}.{key}"
-                )
+                raise ExternalSceneConsumerError(f"forbidden raw or secret field: {path}.{key}")
             _reject_forbidden(nested, f"{path}.{key}")
     elif isinstance(value, (list, tuple)):
         for index, nested in enumerate(value):
@@ -123,9 +121,7 @@ def _normalise(payload: Mapping[str, Any]) -> dict[str, Any]:
     }
     unknown = set(payload) - allowed
     if unknown:
-        raise ExternalSceneConsumerError(
-            f"consumer contains unsupported fields: {sorted(unknown)}"
-        )
+        raise ExternalSceneConsumerError(f"consumer contains unsupported fields: {sorted(unknown)}")
     if payload.get("schema") != CONSUMER_SCHEMA:
         raise ExternalSceneConsumerError("unexpected consumer schema")
     if payload.get("status") != "declared":
@@ -135,9 +131,7 @@ def _normalise(payload: Mapping[str, Any]) -> dict[str, Any]:
     if payload.get("provider_invocation") is not False:
         raise ExternalSceneConsumerError("consumer provider invocation must be false")
     if payload.get("workflow_run_id") not in (None, ""):
-        raise ExternalSceneConsumerError(
-            "consumer cannot bind a WorkflowRun before promotion"
-        )
+        raise ExternalSceneConsumerError("consumer cannot bind a WorkflowRun before promotion")
     kind = _text(payload.get("consumer_kind"), "consumer_kind", max_length=32)
     if kind not in _KINDS:
         raise ExternalSceneConsumerError(f"unsupported consumer kind: {kind}")
@@ -163,9 +157,7 @@ def _normalise(payload: Mapping[str, Any]) -> dict[str, Any]:
         "activation": "forbidden",
         "provider_invocation": False,
         "workflow_run_id": None,
-        "actor": _text(
-            payload.get("actor") or "scene-consumer", "actor", max_length=240
-        ),
+        "actor": _text(payload.get("actor") or "scene-consumer", "actor", max_length=240),
         "source_ref": _text(
             payload.get("source_ref") or "omo:external-resources:scene-consumer",
             "source_ref",
@@ -199,9 +191,7 @@ def read_external_scene_consumers(omo_dir: Path | str) -> list[dict[str, Any]]:
     return [dict(record) for record in _log(Path(omo_dir)).read_all()]
 
 
-def record_external_scene_consumer(
-    omo_dir: Path | str, payload: Mapping[str, Any]
-) -> dict[str, Any]:
+def record_external_scene_consumer(omo_dir: Path | str, payload: Mapping[str, Any]) -> dict[str, Any]:
     normalised = _normalise(payload)
     digest = _digest(_identity(normalised))
     receipt_id = f"external-scene-consumer:{hashlib.sha256(normalised['consumer_id'].encode()).hexdigest()[:32]}"
@@ -209,19 +199,13 @@ def record_external_scene_consumer(
         **normalised,
         "consumer_receipt_id": receipt_id,
         "consumer_digest": digest,
-        "recorded_at": datetime.now(UTC)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z"),
+        "recorded_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
     }
     log = _log(Path(omo_dir))
     for existing in log.read_all():
         if existing.get("consumer_receipt_id") != receipt_id:
             continue
-        if (
-            existing.get("consumer_digest") != digest
-            and _digest(_identity(existing)) != digest
-        ):
+        if existing.get("consumer_digest") != digest and _digest(_identity(existing)) != digest:
             raise ExternalSceneConsumerError("conflicting duplicate consumer_id")
         return {"status": "deduplicated", "receipt": existing}
     log.append(record, sort_keys=True)

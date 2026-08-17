@@ -40,7 +40,7 @@ from typing import Any, ContextManager, Self
 _thread_local_locks = threading.local()
 
 
-class fcntl_lock:
+class fcntl_lock:  # noqa: N801 — 公共 API 保持小写
     """POSIX 文件锁 — 跨进程安全 (Round 4 fcntl 注入样板).
 
     用途: AppendOnlyLog 跨进程并发写时, 默认 ``threading.Lock`` 不够 —
@@ -155,9 +155,7 @@ class AppendOnlyLog:
         Round 9 P1: 加 Pydantic 写时校验 (opt-in). 不传 schema = 旧行为不变.
         """
         # 1. Pydantic instance → dict (透明转换)
-        if hasattr(record, "model_dump") and callable(
-            getattr(record, "model_dump", None)
-        ):
+        if hasattr(record, "model_dump") and callable(getattr(record, "model_dump", None)):
             record = record.model_dump()  # type: ignore[attr-defined]
 
         # 2. Pydantic schema 校验 (fail-fast, 不静默)
@@ -185,9 +183,7 @@ class AppendOnlyLog:
 
         return read_jsonl(self.path)
 
-    def tail(
-        self, n: int, *, initial_chunk_size: int = 8192, max_chunk_size: int = 1_048_576
-    ) -> list[dict[str, Any]]:
+    def tail(self, n: int, *, initial_chunk_size: int = 8192, max_chunk_size: int = 1_048_576) -> list[dict[str, Any]]:
         """读最近 N 条 records (Round 9 P2 真正 O(n) 性能).
 
         算法: windowed seek — 从末尾 8KB 起始, 读 + parse 累计, 不够 n 条就

@@ -209,9 +209,7 @@ class EventLedgerSurface:
         )
         return AppendResult(
             sequence=sequence,
-            event_id=broker.read(from_sequence=sequence, to_sequence=sequence)[0][
-                "event_id"
-            ],
+            event_id=broker.read(from_sequence=sequence, to_sequence=sequence)[0]["event_id"],
             db_path=str(self._resolved_path),
         )
 
@@ -232,16 +230,10 @@ class EventLedgerSurface:
             producer=producer,
             episode_id=episode_id,
         )
-        return ReadResult(
-            events=events, count=len(events), db_path=str(self._resolved_path)
-        )
+        return ReadResult(events=events, count=len(events), db_path=str(self._resolved_path))
 
-    def verify(
-        self, from_sequence: int = 1, to_sequence: int | None = None
-    ) -> VerifyResult:
-        result = self.broker.verify_chain(
-            from_sequence=from_sequence, to_sequence=to_sequence
-        )
+    def verify(self, from_sequence: int = 1, to_sequence: int | None = None) -> VerifyResult:
+        result = self.broker.verify_chain(from_sequence=from_sequence, to_sequence=to_sequence)
         return VerifyResult(
             ok=result["ok"],
             total=result["total"],
@@ -278,9 +270,7 @@ def _unwrap_arguments(kwargs: dict[str, Any]) -> dict[str, Any]:
     if "arguments" not in kwargs:
         return kwargs
     if len(kwargs) > 1:
-        raise AgoraValidationError(
-            "ambiguous_kwargs", "kwargs has both 'arguments' and other keys"
-        )
+        raise AgoraValidationError("ambiguous_kwargs", "kwargs has both 'arguments' and other keys")
     inner = kwargs["arguments"]
     if isinstance(inner, dict):
         return dict(inner)
@@ -288,17 +278,11 @@ def _unwrap_arguments(kwargs: dict[str, Any]) -> dict[str, Any]:
         try:
             parsed = json.loads(inner)
         except json.JSONDecodeError:
-            raise AgoraValidationError(
-                "arguments_parse", "kwargs.arguments is not valid JSON"
-            ) from None
+            raise AgoraValidationError("arguments_parse", "kwargs.arguments is not valid JSON") from None
         if not isinstance(parsed, dict):
-            raise AgoraValidationError(
-                "arguments_type", "kwargs.arguments must be a JSON object"
-            ) from None
+            raise AgoraValidationError("arguments_type", "kwargs.arguments must be a JSON object") from None
         return parsed
-    raise AgoraValidationError(
-        "arguments_type", "kwargs.arguments must be an object or JSON string"
-    ) from None
+    raise AgoraValidationError("arguments_type", "kwargs.arguments must be an object or JSON string") from None
 
 
 def parse_agora_stdin() -> tuple[list[Any], dict[str, Any]]:
@@ -318,14 +302,10 @@ def parse_agora_stdin() -> tuple[list[Any], dict[str, Any]]:
     try:
         envelope = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise AgoraValidationError(
-            "parse_error", f"invalid stdin JSON: {exc}"
-        ) from None
+        raise AgoraValidationError("parse_error", f"invalid stdin JSON: {exc}") from None
 
     if not isinstance(envelope, dict):
-        raise AgoraValidationError(
-            "envelope_type", "stdin JSON must be an object"
-        ) from None
+        raise AgoraValidationError("envelope_type", "stdin JSON must be an object") from None
 
     args = envelope.get("args", [])
     kwargs_raw = envelope.get("kwargs", {})

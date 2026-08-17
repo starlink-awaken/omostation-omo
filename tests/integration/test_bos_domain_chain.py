@@ -14,9 +14,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-BOS_REGISTRY = Path(
-    str(Path(__file__).resolve().parents[3]) + "/.omo/_knowledge/bos-registry.json"
-)
+BOS_REGISTRY = Path(str(Path(__file__).resolve().parents[3]) + "/.omo/_knowledge/bos-registry.json")
 OMOSTATION_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -50,9 +48,7 @@ def test_each_domain_has_at_least_5_uris():
 
     counts = Counter(r.get("domain") for r in regs)
     for domain in ("memory", "governance", "analysis", "persona", "capability"):
-        assert counts[domain] >= 4, (
-            f"Domain {domain} 只有 {counts[domain]} 条 URI (≥ 4 要求)"
-        )
+        assert counts[domain] >= 4, f"Domain {domain} 只有 {counts[domain]} 条 URI (≥ 4 要求)"
 
 
 # ── 跨域跳转 URI 集合 (P35 任务规划) ──────────────────

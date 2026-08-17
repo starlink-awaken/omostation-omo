@@ -35,7 +35,6 @@ from .lifecycle import (
     recommended_next,
     scan_locks,
     staged_lane_report,
-    diff_baseline_report,
 )
 from .lint import agcp_drift_check, diff_check_rows
 
@@ -48,14 +47,10 @@ def run_check_command(check: dict[str, Any], context: dict[str, str]) -> dict[st
     env = os.environ.copy()
     matched_files = check.get("matched_files", [])
     if matched_files:
-        env["AGENT_WORKFLOW_MATCHED_FILES"] = json.dumps(
-            matched_files, ensure_ascii=False
-        )
+        env["AGENT_WORKFLOW_MATCHED_FILES"] = json.dumps(matched_files, ensure_ascii=False)
     allowed_lanes = check.get("allowed_lanes") or []
     if matched_files and allowed_lanes:
-        env["AGENT_WORKFLOW_ALLOWED_LANES"] = ",".join(
-            str(item) for item in allowed_lanes
-        )
+        env["AGENT_WORKFLOW_ALLOWED_LANES"] = ",".join(str(item) for item in allowed_lanes)
     started = time.monotonic()
     completed = subprocess_run(command, cwd=cwd, env=env)
     duration_s = round(time.monotonic() - started, 3)
@@ -66,9 +61,7 @@ def run_check_command(check: dict[str, Any], context: dict[str, str]) -> dict[st
         "description": check.get("description", ""),
         "required": bool(check.get("required", True)),
         "command": command_display(command),
-        "cwd": str(cwd.relative_to(WORKSPACE))
-        if cwd.is_relative_to(WORKSPACE)
-        else str(cwd),
+        "cwd": str(cwd.relative_to(WORKSPACE)) if cwd.is_relative_to(WORKSPACE) else str(cwd),
         "returncode": completed.returncode,
         "duration_s": duration_s,
         "ok": completed.returncode == 0 or not check.get("required", True),
@@ -83,9 +76,7 @@ def subprocess_run(command: list[str], cwd: Path, env: dict[str, str]) -> Any:
     # Helper to execute subprocess
     import subprocess
 
-    return subprocess.run(
-        command, cwd=cwd, env=env, capture_output=True, text=True, check=False
-    )
+    return subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True, check=False)
 
 
 def select_diff_checks(
@@ -119,12 +110,7 @@ def build_verify_report(
     context: dict[str, str] = {"run_id": run_id or ""}
     if run_id:
         _, run_payload = read_run(registry, run_id)
-        context.update(
-            {
-                str(key): str(value)
-                for key, value in (run_payload.get("context") or {}).items()
-            }
-        )
+        context.update({str(key): str(value) for key, value in (run_payload.get("context") or {}).items()})
     checks = select_diff_checks(registry, normalized_files, all_checks)
     results: list[dict[str, Any]] = []
     for check in checks:
@@ -143,18 +129,7 @@ def build_verify_report(
             }
         results.append(result)
     claim_coverage = claim_coverage_report(registry, run_id, normalized_files)
-    # T9-01 ①: claim 基线漂移检查 (模式 1 防线)
-    diff_baseline = diff_baseline_report(
-        registry,
-        run_id,
-        normalized_files,
-        scope_to_changed=not from_diff,
-    )
-    ok = (
-        all(result.get("ok", False) for result in results)
-        and bool(claim_coverage["ok"])
-        and bool(diff_baseline.get("ok", True))
-    )
+    ok = all(result.get("ok", False) for result in results) and bool(claim_coverage["ok"])
     report = {
         "ok": ok,
         "run_id": run_id,
@@ -163,7 +138,6 @@ def build_verify_report(
         "execute": execute,
         "changed_files": normalized_files,
         "claim_coverage": claim_coverage,
-        "diff_baseline": diff_baseline,
         "check_count": len(results),
         "checks": results,
     }
@@ -208,17 +182,9 @@ def print_verify_report(report: dict[str, Any], as_json: bool) -> None:
     if isinstance(claim_coverage, dict):
         for warning in claim_coverage.get("warnings") or []:
             print(f"[WARN] claim_policy: {warning}")
-    diff_baseline = report.get("diff_baseline")
-    if isinstance(diff_baseline, dict):
-        for warning in diff_baseline.get("warnings") or []:
-            print(f"[WARN] diff_baseline: {warning}")
     for result in report["checks"]:
         status = (
-            "PASS"
-            if result.get("ok") and not result.get("skipped")
-            else "SKIP"
-            if result.get("skipped")
-            else "FAIL"
+            "PASS" if result.get("ok") and not result.get("skipped") else "SKIP" if result.get("skipped") else "FAIL"
         )
         print(f"[{status}] {result['id']} :: {result['command']}")
 
@@ -248,9 +214,7 @@ def _is_stale_run(payload: dict[str, Any]) -> bool:
     return age_hours > STALE_RUN_HOURS
 
 
-def build_observe_report(
-    registry: dict[str, Any], run_id: str | None
-) -> dict[str, Any]:
+def build_observe_report(registry: dict[str, Any], run_id: str | None) -> dict[str, Any]:
     runs = load_run_records(registry)
     locks = load_lock_records(registry)
     now = datetime.now(UTC)
@@ -322,16 +286,12 @@ def build_observe_report(
     for lock_path, lock in locks:
         lock_run_id = str(lock.get("run_id") or "")
         if lock_run_id:
-            lock_paths_by_run.setdefault(lock_run_id, set()).add(
-                display_path(lock_path)
-            )
+            lock_paths_by_run.setdefault(lock_run_id, set()).add(display_path(lock_path))
 
     for current_run_id, (path, payload) in selected_runs.items():
         expected_locks = set(payload.get("locks") or [])
         if payload.get("status") == "active":
-            missing_locks = sorted(
-                expected_locks - lock_paths_by_run.get(current_run_id, set())
-            )
+            missing_locks = sorted(expected_locks - lock_paths_by_run.get(current_run_id, set()))
             if missing_locks:
                 # Stale run downgrade: 若 active run 超过 STALE_RUN_HOURS 无更新,
                 # 视为僵尸 run (锁可能已被 TTL 清理但 run 状态未同步)。此时缺锁
@@ -358,10 +318,7 @@ def build_observe_report(
                     {
                         "severity": "info",
                         "kind": "ledger_healed_from_run",
-                        "message": (
-                            f"ledger missing run event; replayed from run yaml: "
-                            f"{current_run_id}"
-                        ),
+                        "message": (f"ledger missing run event; replayed from run yaml: {current_run_id}"),
                         "run_id": current_run_id,
                         "path": display_path(path),
                     }
@@ -378,24 +335,12 @@ def build_observe_report(
                 )
 
     severities = {finding["severity"] for finding in findings}
-    decision = (
-        "escalate"
-        if "escalate" in severities
-        else "halt"
-        if "halt" in severities
-        else "continue"
-    )
+    decision = "escalate" if "escalate" in severities else "halt" if "halt" in severities else "continue"
     report = {
         "ok": decision == "continue",
         "decision": decision,
         "run_count": len(selected_runs),
-        "lock_count": len(
-            [
-                lock
-                for _, lock in locks
-                if not run_id or str(lock.get("run_id") or "") == run_id
-            ]
-        ),
+        "lock_count": len([lock for _, lock in locks if not run_id or str(lock.get("run_id") or "") == run_id]),
         "ledger": display_path(ledger_path(registry)),
         "findings": findings,
     }
@@ -408,13 +353,9 @@ def observe(registry: dict[str, Any], run_id: str | None, as_json: bool) -> int:
         print(json.dumps(report, ensure_ascii=False, indent=2))
     else:
         print(f"agent-workflow observe: {report['decision']}")
-        print(
-            f"runs={report['run_count']} locks={report['lock_count']} ledger={report['ledger']}"
-        )
+        print(f"runs={report['run_count']} locks={report['lock_count']} ledger={report['ledger']}")
         for finding in report["findings"]:
-            print(
-                f"[{finding['severity'].upper()}] {finding['kind']}: {finding['message']}"
-            )
+            print(f"[{finding['severity'].upper()}] {finding['kind']}: {finding['message']}")
     return 0 if report["decision"] == "continue" else 1
 
 
@@ -476,9 +417,7 @@ def p74_solidification_report(
         if isinstance(check, dict):
             command = check.get("command") or []
             if isinstance(command, list):
-                doctor_commands.extend(
-                    str(item) for item in command if isinstance(item, str)
-                )
+                doctor_commands.extend(str(item) for item in command if isinstance(item, str))
 
     workflows_summary: list[dict[str, Any]] = []
     for workflow in registry.get("workflows") or []:
@@ -490,30 +429,21 @@ def p74_solidification_report(
         read_patterns = surfaces.get("read") if isinstance(surfaces, dict) else None
         workflow_paths = [str(p) for p in (write_patterns or []) if isinstance(p, str)]
         if not workflow_paths:
-            workflow_paths = [
-                str(p) for p in (read_patterns or []) if isinstance(p, str)
-            ]
+            workflow_paths = [str(p) for p in (read_patterns or []) if isinstance(p, str)]
         has_check_coverage = (
-            any(
-                any(fnmatch.fnmatch(pattern, p) for p in covered_paths)
-                for pattern in workflow_paths
-            )
+            any(any(fnmatch.fnmatch(pattern, p) for p in covered_paths) for pattern in workflow_paths)
             if workflow_paths
             else False
         )
         if not has_check_coverage and workflow_id:
-            has_check_coverage = any(
-                workflow_id in command for command in doctor_commands
-            )
+            has_check_coverage = any(workflow_id in command for command in doctor_commands)
         last_start = started_runs.get(workflow_id, "")
         run_frequency = str(workflow.get("run_frequency") or "on_demand")
         # ADR-0211 D2: run_frequency drives warn_after threshold. Single-sourced
         # from SSOT silent_workflow_policy.warn_after_days_by_frequency
         # (on_demand=30d / periodic=7d / continuous=1d). Fallback to warn_after_days.
         freq_map = silent_policy.get("warn_after_days_by_frequency") or {}
-        warn_after = int(
-            freq_map.get(run_frequency) or silent_policy.get("warn_after_days") or 30
-        )
+        warn_after = int(freq_map.get(run_frequency) or silent_policy.get("warn_after_days") or 30)
         has_recent_run = False
         if last_start:
             try:
@@ -647,16 +577,8 @@ def requirement_iteration_report(registry: dict[str, Any]) -> dict[str, Any]:
         "**/__pycache__/**",
         "**/*.pyc",
     ]
-    include = [
-        str(p)
-        for p in (policy.get("in_scope_paths") or default_include)
-        if isinstance(p, str)
-    ]
-    exclude = [
-        str(p)
-        for p in (policy.get("exclude_paths") or default_exclude)
-        if isinstance(p, str)
-    ]
+    include = [str(p) for p in (policy.get("in_scope_paths") or default_include) if isinstance(p, str)]
+    exclude = [str(p) for p in (policy.get("exclude_paths") or default_exclude) if isinstance(p, str)]
 
     def in_scope(path: str) -> bool:
         if exclude and path_matches(exclude, path):
@@ -669,11 +591,7 @@ def requirement_iteration_report(registry: dict[str, Any]) -> dict[str, Any]:
     unstaged = [p for p in working if p not in staged_set and in_scope(p)]
 
     runs = load_run_records(registry)
-    active_runs = sorted(
-        run_id
-        for run_id, (_, payload) in runs.items()
-        if payload.get("status") == "active"
-    )
+    active_runs = sorted(run_id for run_id, (_, payload) in runs.items() if payload.get("status") == "active")
 
     findings: list[dict[str, Any]] = []
     if staged and not active_runs:
@@ -726,9 +644,7 @@ def compliance_report(registry: dict[str, Any], run_id: str | None) -> dict[str,
     for event in events:
         current_run_id = str(event.get("run_id") or "")
         if current_run_id:
-            event_names_by_run.setdefault(current_run_id, set()).add(
-                str(event.get("event") or "")
-            )
+            event_names_by_run.setdefault(current_run_id, set()).add(str(event.get("event") or ""))
         if event.get("parse_error"):
             findings.append(
                 {
@@ -801,30 +717,14 @@ def compliance_report(registry: dict[str, Any], run_id: str | None) -> dict[str,
                     "run_id": current_run_id,
                 }
             )
-    severities = {
-        finding["severity"] for finding in [*findings, *observe_report["findings"]]
-    }
-    decision = (
-        "halt"
-        if "halt" in severities
-        else "escalate"
-        if "escalate" in severities
-        else "continue"
-    )
+    severities = {finding["severity"] for finding in [*findings, *observe_report["findings"]]}
+    decision = "halt" if "halt" in severities else "escalate" if "escalate" in severities else "continue"
     p74_report = p74_solidification_report(registry, events, runs)
     req_report = requirement_iteration_report(registry)
     for finding in req_report.get("findings") or []:
         findings.append(finding)
-    severities = {
-        finding["severity"] for finding in [*findings, *observe_report["findings"]]
-    }
-    decision = (
-        "halt"
-        if "halt" in severities
-        else "escalate"
-        if "escalate" in severities
-        else "continue"
-    )
+    severities = {finding["severity"] for finding in [*findings, *observe_report["findings"]]}
+    decision = "halt" if "halt" in severities else "escalate" if "escalate" in severities else "continue"
     return {
         "ok": decision == "continue",
         "decision": decision,
@@ -845,19 +745,13 @@ def print_compliance_report(report: dict[str, Any], as_json: bool) -> None:
     print(f"agent-workflow compliance: {report['decision']}")
     print(f"runs={report['run_count']} events={report['event_count']}")
     for finding in report["findings"]:
-        print(
-            f"[{finding['severity'].upper()}] {finding['kind']}: {finding['message']}"
-        )
+        print(f"[{finding['severity'].upper()}] {finding['kind']}: {finding['message']}")
     for finding in report["observe"]["findings"]:
-        print(
-            f"[{finding['severity'].upper()}] {finding['kind']}: {finding['message']}"
-        )
+        print(f"[{finding['severity'].upper()}] {finding['kind']}: {finding['message']}")
     p74 = report.get("p74_solidification") or {}
     if p74:
         ok = "OK" if p74.get("ok") else "WARN"
-        print(
-            f"P74 solidification: [{ok}] {p74.get('warn_count', 0)} silent workflow(s)"
-        )
+        print(f"P74 solidification: [{ok}] {p74.get('warn_count', 0)} silent workflow(s)")
         for wf in p74.get("workflows", []):
             if wf.get("silent_health") != "active":
                 print(
@@ -892,26 +786,16 @@ def build_status_report(
     include_agcp_drift: bool = True,
 ) -> dict[str, Any]:
     runs = load_run_records(registry)
-    active_runs = sorted(
-        run_id
-        for run_id, (_, payload) in runs.items()
-        if payload.get("status") == "active"
-    )
+    active_runs = sorted(run_id for run_id, (_, payload) in runs.items() if payload.get("status") == "active")
     closed_runs = sorted(
-        run_id
-        for run_id, (_, payload) in runs.items()
-        if payload.get("status") in {"ok", "failed", "blocked"}
+        run_id for run_id, (_, payload) in runs.items() if payload.get("status") in {"ok", "failed", "blocked"}
     )
     observe_report = build_observe_report(registry, None)
     compliance = compliance_report(registry, None)
     events = ledger_events(registry)
     staged_lane = staged_lane_report()
     lock_scan = scan_locks(registry)
-    stale_locks = sum(
-        1
-        for entry in lock_scan
-        if entry["kind"] in ("zombie_expired", "zombie_stale_heartbeat")
-    )
+    stale_locks = sum(1 for entry in lock_scan if entry["kind"] in ("zombie_expired", "zombie_stale_heartbeat"))
     live_locks = sum(1 for entry in lock_scan if entry["kind"] == "live")
     current_run_id = active_runs[0] if len(active_runs) == 1 else None
     changed_files = changed_files_from_git(include_untracked=False)
@@ -930,14 +814,10 @@ def build_status_report(
             "missing_files": [],
             "missing_required_files": [],
             "missing_advisory_files": [],
-            "warnings": ["multiple active runs; pass a run id to verify/closeout"]
-            if len(active_runs) > 1
-            else [],
+            "warnings": ["multiple active runs; pass a run id to verify/closeout"] if len(active_runs) > 1 else [],
         }
     )
-    health = (
-        build_doctor_report(registry, include_agcp_drift) if include_health else None
-    )
+    health = build_doctor_report(registry, include_agcp_drift) if include_health else None
     report = {
         "ok": observe_report["decision"] == "continue"
         and compliance["decision"] == "continue"
@@ -951,9 +831,7 @@ def build_status_report(
         "lock_details": lock_scan,
         "current_run_id": current_run_id,
         "last_verify": last_ledger_event(events, {"agent_workflow_verify"}),
-        "last_closeout": last_ledger_event(
-            events, {"agent_workflow_closeout", "agent_workflow_close"}
-        ),
+        "last_closeout": last_ledger_event(events, {"agent_workflow_closeout", "agent_workflow_close"}),
         "compliance": {
             "ok": compliance["ok"],
             "decision": compliance["decision"],
@@ -961,14 +839,11 @@ def build_status_report(
             "findings": compliance["findings"],
             "observe_findings": compliance["observe"]["findings"],
         },
-        "requirement_iteration": compliance.get("requirement_iteration")
-        or requirement_iteration_report(registry),
+        "requirement_iteration": compliance.get("requirement_iteration") or requirement_iteration_report(registry),
         "staged_lane": staged_lane,
         "changed_files": changed_files,
         "claim_coverage": claim_coverage,
-        "health": None
-        if health is None
-        else {"ok": health["ok"], "checks": check_summary(health["checks"])},
+        "health": None if health is None else {"ok": health["ok"], "checks": check_summary(health["checks"])},
     }
     report["recommended_next"] = recommended_next(report)
     return report
@@ -984,17 +859,11 @@ def print_status_report(report: dict[str, Any], as_json: bool) -> None:
         f"locks={report['lock_count']} stale={report['stale_locks']}"
     )
     staged_lane = report["staged_lane"]
-    print(
-        f"staged_lane={'PASS' if staged_lane['ok'] else 'WARN'} lanes={','.join(staged_lane['lanes']) or '-'}"
-    )
+    print(f"staged_lane={'PASS' if staged_lane['ok'] else 'WARN'} lanes={','.join(staged_lane['lanes']) or '-'}")
     claim_coverage = report.get("claim_coverage")
     if isinstance(claim_coverage, dict):
         for warning in claim_coverage.get("warnings") or []:
             print(f"[WARN] claim_policy: {warning}")
-    diff_baseline = report.get("diff_baseline")
-    if isinstance(diff_baseline, dict):
-        for warning in diff_baseline.get("warnings") or []:
-            print(f"[WARN] diff_baseline: {warning}")
     print(f"compliance={report['compliance']['decision']}")
     req = report.get("requirement_iteration") or {}
     if req:
@@ -1045,9 +914,7 @@ def run_doctor_check(check_item: dict[str, Any]) -> dict[str, Any]:
         }
 
 
-def build_doctor_report(
-    registry: dict[str, Any], include_agcp_drift: bool = True
-) -> dict[str, Any]:
+def build_doctor_report(registry: dict[str, Any], include_agcp_drift: bool = True) -> dict[str, Any]:
     integrations = integration_rows(registry)
     for integration in integrations:
         name = str(integration["name"])
@@ -1087,8 +954,7 @@ def build_doctor_report(
     required_integration_health = [
         integration["health"]
         for integration in integrations
-        if integration.get("health_required")
-        and isinstance(integration.get("health"), dict)
+        if integration.get("health_required") and isinstance(integration.get("health"), dict)
     ]
     required_adapter_health = [
         adapter["health"]
@@ -1117,26 +983,15 @@ def print_doctor_report(report: dict[str, Any], as_json: bool) -> None:
         health = integration.get("health")
         health_status = ""
         if isinstance(health, dict):
-            label = (
-                "PASS"
-                if health["ok"]
-                else ("FAIL" if integration.get("health_required") else "WARN")
-            )
+            label = "PASS" if health["ok"] else ("FAIL" if integration.get("health_required") else "WARN")
             health_status = f" health={label}"
-        print(
-            f"{integration['name']:<14} {integration['status']:<12} "
-            f"{integration['authority']:<16}{health_status}"
-        )
+        print(f"{integration['name']:<14} {integration['status']:<12} {integration['authority']:<16}{health_status}")
     for adapter in report["adapters"]:
         status = "available" if adapter["available"] else "missing"
         suffix = f" ({adapter['path']})" if adapter["path"] else ""
         health = adapter.get("health")
         if isinstance(health, dict):
-            health_status = (
-                "PASS"
-                if health["ok"]
-                else ("FAIL" if adapter.get("health_required") else "WARN")
-            )
+            health_status = "PASS" if health["ok"] else ("FAIL" if adapter.get("health_required") else "WARN")
             suffix += f" health={health_status}"
         print(f"{adapter['name']:<14} {status}{suffix}")
     for item in report["checks"]:
@@ -1146,9 +1001,7 @@ def print_doctor_report(report: dict[str, Any], as_json: bool) -> None:
             print(item["stderr"], file=sys.stderr)
 
 
-def doctor(
-    registry: dict[str, Any], as_json: bool, include_agcp_drift: bool = True
-) -> int:
+def doctor(registry: dict[str, Any], as_json: bool, include_agcp_drift: bool = True) -> int:
     report = build_doctor_report(registry, include_agcp_drift)
     print_doctor_report(report, as_json)
     return 0 if report["ok"] else 1

@@ -30,9 +30,7 @@ def test_audit_rollout_helpers_persist_files(tmp_path: Path) -> None:
             }
         },
     }
-    history_path = write_drift_history(
-        tmp_path, "weekly", rollout, "2026-06-20T00:00:00Z", "2026-06-20"
-    )
+    history_path = write_drift_history(tmp_path, "weekly", rollout, "2026-06-20T00:00:00Z", "2026-06-20")
     index = update_history_index(
         tmp_path,
         "weekly",

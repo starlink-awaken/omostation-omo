@@ -154,12 +154,11 @@ def test_check_schema_registry_integrity_passes_for_real_schemas():
     assert issues == [], f"expected no issues, got {issues}"
 
 
-def test_check_schema_registry_integrity_detects_missing_z_timestamp(
-    tmp_path, monkeypatch
-):
+def test_check_schema_registry_integrity_detects_missing_z_timestamp(tmp_path, monkeypatch):
     """故意加 1 个非 ZTimestampModel schema, 应被检测出 'missing-z-timestamp'."""
-    from omo.omo_io_schemas import SCHEMA_REGISTRY
     from pydantic import BaseModel
+
+    from omo.omo_io_schemas import SCHEMA_REGISTRY
 
     # 在 SCHEMA_REGISTRY 临时加 1 个不继承 ZTimestampModel 的 schema
     class FakeNotZ(BaseModel):
@@ -171,12 +170,8 @@ def test_check_schema_registry_integrity_detects_missing_z_timestamp(
 
         issues = _check_schema_registry_integrity()
         # 找到 fake_not_z 的 missing-z-timestamp 违规
-        z_issues = [
-            i for i in issues if i[0] == "fake_not_z" and i[1] == "missing-z-timestamp"
-        ]
-        assert len(z_issues) == 1, (
-            f"expected 1 missing-z-timestamp for fake_not_z, got {z_issues}"
-        )
+        z_issues = [i for i in issues if i[0] == "fake_not_z" and i[1] == "missing-z-timestamp"]
+        assert len(z_issues) == 1, f"expected 1 missing-z-timestamp for fake_not_z, got {z_issues}"
     finally:
         # 清理 (monkeypatch 自动还原 setitem, 但显式 del 更稳)
         SCHEMA_REGISTRY.pop("fake_not_z", None)
@@ -195,12 +190,8 @@ def test_check_schema_registry_integrity_detects_empty_required(tmp_path, monkey
         from omo.omo_lint import _check_schema_registry_integrity
 
         issues = _check_schema_registry_integrity()
-        empty_issues = [
-            i for i in issues if i[0] == "fake_empty" and i[1] == "no-required-fields"
-        ]
-        assert len(empty_issues) == 1, (
-            f"expected 1 no-required-fields for fake_empty, got {empty_issues}"
-        )
+        empty_issues = [i for i in issues if i[0] == "fake_empty" and i[1] == "no-required-fields"]
+        assert len(empty_issues) == 1, f"expected 1 no-required-fields for fake_empty, got {empty_issues}"
     finally:
         SCHEMA_REGISTRY.pop("fake_empty", None)
 
@@ -248,12 +239,8 @@ def test_check_all_schemas_exported_detects_missing_class(monkeypatch):
         from omo.omo_lint import _check_all_schemas_exported
 
         issues = _check_all_schemas_exported()
-        audit_issues = [
-            i for i in issues if i[0] == "OmoAuditRecord" and i[1] == "missing-from-all"
-        ]
-        assert len(audit_issues) == 1, (
-            f"expected 1 missing-from-all for OmoAuditRecord, got {audit_issues}"
-        )
+        audit_issues = [i for i in issues if i[0] == "OmoAuditRecord" and i[1] == "missing-from-all"]
+        assert len(audit_issues) == 1, f"expected 1 missing-from-all for OmoAuditRecord, got {audit_issues}"
     finally:
         monkeypatch.setattr(omo_io_schemas, "__all__", original)
 
@@ -280,9 +267,7 @@ def test_check_cross_module_srp_whitelist_omo_audit_utility():  # type: ignore[r
     issues = _check_cross_module_srp()
     # 任何含 'omo_audit' 违规都说明白名单失效
     audit_violations = [i for i in issues if "omo_audit" in str(i)]
-    assert len(audit_violations) == 0, (
-        f"omo_audit 应在白名单, got violations: {audit_violations}"
-    )
+    assert len(audit_violations) == 0, f"omo_audit 应在白名单, got violations: {audit_violations}"
 
 
 def test_check_cross_module_srp_passes_for_real_consumers():  # noqa: F811
@@ -304,6 +289,4 @@ def test_check_cross_module_srp_whitelist_omo_audit_utility():  # noqa: F811
     issues = _check_cross_module_srp()
     # 任何含 'omo_audit' 违规都说明白名单失效
     audit_violations = [i for i in issues if "omo_audit" in str(i)]
-    assert len(audit_violations) == 0, (
-        f"omo_audit 应在白名单, got violations: {audit_violations}"
-    )
+    assert len(audit_violations) == 0, f"omo_audit 应在白名单, got violations: {audit_violations}"

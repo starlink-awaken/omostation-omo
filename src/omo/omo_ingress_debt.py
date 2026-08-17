@@ -56,9 +56,7 @@ def upsert_debt_item(
         registry = _load_registry(omo_dir)
 
         if effective_source_ref:
-            mapped_debt_id = registry["debts"]["by_source_ref"].get(
-                effective_source_ref
-            )
+            mapped_debt_id = registry["debts"]["by_source_ref"].get(effective_source_ref)
             if mapped_debt_id and mapped_debt_id != debt_id:
                 raise ValueError(
                     f"source_ref already mapped to different debt: {effective_source_ref} -> {mapped_debt_id}"
@@ -88,16 +86,8 @@ def upsert_debt_item(
             or payload.get("registered_at")
             or timestamp
         )
-        registered_at = str(
-            existing_payload.get("registered_at")
-            or payload.get("registered_at")
-            or first_seen_at
-        )
-        opened_at = str(
-            existing_payload.get("opened_at")
-            or payload.get("opened_at")
-            or registered_at
-        )
+        registered_at = str(existing_payload.get("registered_at") or payload.get("registered_at") or first_seen_at)
+        opened_at = str(existing_payload.get("opened_at") or payload.get("opened_at") or registered_at)
         occurrence_count = int(existing_payload.get("occurrence_count") or 0) + 1
 
         payload["registered_at"] = registered_at
@@ -107,9 +97,7 @@ def upsert_debt_item(
         payload["occurrence_count"] = occurrence_count
         payload["status"] = str(payload.get("status") or "open")
         payload["lifecycle_state"] = str(
-            payload.get("lifecycle_state")
-            or existing_payload.get("lifecycle_state")
-            or "identified"
+            payload.get("lifecycle_state") or existing_payload.get("lifecycle_state") or "identified"
         )
 
         note = (
@@ -133,9 +121,7 @@ def upsert_debt_item(
 
         debt_registry_path = omo_dir / "_truth" / "registry" / "debt.yaml"
         debt_registry: dict[str, Any] = (
-            _load_yaml(debt_registry_path)
-            if debt_registry_path.exists()
-            else {"version": 1}
+            _load_yaml(debt_registry_path) if debt_registry_path.exists() else {"version": 1}
         )
         debt_registry.setdefault("items_dir", ".omo/debt/items")
         debt_registry.setdefault("seed_items", [])
@@ -238,9 +224,7 @@ def remove_debt_item(
             debt_registry = _load_yaml(debt_registry_path) or {"version": 1}
             seed_items = debt_registry.get("seed_items", [])
             debt_ref = f".omo/debt/items/{debt_id}.yaml"
-            debt_registry["seed_items"] = [
-                item for item in seed_items if item != debt_ref
-            ]
+            debt_registry["seed_items"] = [item for item in seed_items if item != debt_ref]
             write_yaml_atomic(debt_registry_path, debt_registry)
 
         if debt_path.exists():

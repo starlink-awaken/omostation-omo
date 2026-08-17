@@ -45,7 +45,7 @@ class PredictiveGovernanceEngine:
     def _load_debt_registry(self):
         debt_file = self.omo_dir / "_truth" / "registry" / "debt.yaml"
         if debt_file.exists():
-            with open(debt_file, "r", encoding="utf-8") as f:
+            with open(debt_file, encoding="utf-8") as f:
                 return yaml.safe_load(f) or {}
         return {}
 
@@ -105,9 +105,7 @@ class PredictiveGovernanceEngine:
         forecast = self.forecast_governance_risks()
         actions = []
         if forecast.overall_risk_level == "high":
-            actions.append(
-                ProactiveAction(1, "处理高风险债务", "检测到高风险", "1-2天", "高")
-            )
+            actions.append(ProactiveAction(1, "处理高风险债务", "检测到高风险", "1-2天", "高"))
         actions.append(ProactiveAction(2, "健康检查", "定期检查", "1小时", "中"))
         return actions
 

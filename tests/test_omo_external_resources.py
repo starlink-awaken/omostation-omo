@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+
 from omo.omo_external_resources import (
     ExternalResourceObservationError,
     read_latest_external_resource_observation,
@@ -53,9 +54,7 @@ def _diff(change_count: int = 1, *, review_required: bool = False) -> dict:
             "review_required": review_required,
             "review_required_count": change_count if review_required else 0,
             "operational_observation_count": 0 if review_required else change_count,
-            "risk_codes": ["descriptor_provider_changed"]
-            if review_required
-            else ["health_changed"],
+            "risk_codes": ["descriptor_provider_changed"] if review_required else ["health_changed"],
         },
     }
 
@@ -117,11 +116,7 @@ def test_latest_falls_back_to_append_only_log(tmp_path: Path) -> None:
     latest = read_latest_external_resource_observation(tmp_path)
 
     assert latest == result["observation"]
-    json.loads(
-        (tmp_path / "_log/external-resource-observations.jsonl")
-        .read_text()
-        .splitlines()[0]
-    )
+    json.loads((tmp_path / "_log/external-resource-observations.jsonl").read_text().splitlines()[0])
 
 
 def test_observation_projects_manual_review_requirement(tmp_path: Path) -> None:

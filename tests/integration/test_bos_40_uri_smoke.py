@@ -26,6 +26,7 @@ from collections import Counter
 from pathlib import Path
 
 import pytest
+
 from omo.omo_llm_bos_bridge import invoke_bos_uri_tool
 
 OMOSTATION_ROOT = Path(__file__).resolve().parents[3]
@@ -71,9 +72,7 @@ def test_40_uri_registry_loads():
     domains = Counter(r.get("domain") for r in regs)
     # Verify domain structure exists (counts may grow)
     expected_domains = {"memory", "governance", "analysis", "persona", "capability"}
-    assert set(domains.keys()) == expected_domains, (
-        f"Domain set drift: {set(domains.keys())}"
-    )
+    assert set(domains.keys()) == expected_domains, f"Domain set drift: {set(domains.keys())}"
 
 
 @pytest.mark.bos_40
@@ -100,9 +99,7 @@ def test_smoke_25_resolved_15_gap_single_loop():
             # GAP URI: omo invoke 层 status=resolved, agora 内部 result.status=error + unknown_bos_uri
             if out.get("status") == "resolved":
                 result = out.get("result", {})
-                if result.get("status") == "error" and "unknown_bos_uri" in result.get(
-                    "error", ""
-                ):
+                if result.get("status") == "error" and "unknown_bos_uri" in result.get("error", ""):
                     results.append((uri, "gap"))
                     continue
                 results.append((uri, "resolved"))
@@ -123,8 +120,7 @@ def test_smoke_25_resolved_15_gap_single_loop():
     gap = by_status.get("gap", 0)
     classified = resolved + gap + by_status.get("invalid_uri", 0)
     assert classified == total, (
-        f"Expected all URIs classified resolved|gap|invalid_uri, got {dict(by_status)}: "
-        f"{results}"
+        f"Expected all URIs classified resolved|gap|invalid_uri, got {dict(by_status)}: {results}"
     )
     assert resolved >= 15, (
         f"Expected >=15 resolved after ADR-0181 filter, got {resolved}: "
@@ -163,10 +159,7 @@ def test_5_domain_each_resolves_at_least_one():
             if out.get("status") == "resolved":
                 result = out.get("result", {})
                 # 排除 GAP URI (status=error + unknown_bos_uri)
-                if not (
-                    result.get("status") == "error"
-                    and "unknown_bos_uri" in result.get("error", "")
-                ):
+                if not (result.get("status") == "error" and "unknown_bos_uri" in result.get("error", "")):
                     dom = uri.replace("bos://", "").split("/")[0]
                     resolved_domains.add(dom)
         return resolved_domains

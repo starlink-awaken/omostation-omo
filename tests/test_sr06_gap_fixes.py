@@ -5,6 +5,7 @@ gap-2: prompt 契约含 filesModified 强制条目
 gap-3: collect 的 changed_paths 含 untracked 扫描
 gap-4: supervisor terminal fallback limit 环境变量化
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -14,8 +15,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "projects/omo/src"))
 
-from omo.workflow_mesh import EVENT_STATE, WorkflowMeshStore  # noqa: E402
 from omo import workflow_dispatch as wd  # noqa: E402
+from omo.workflow_mesh import EVENT_STATE, WorkflowMeshStore  # noqa: E402
 
 
 def test_gap1_admission_renewed_event_registered():
@@ -26,8 +27,11 @@ def test_gap1_renew_admission_roundtrip(tmp_path):
     store_dir = tmp_path / ".omo"
     store_dir.mkdir()
     store = WorkflowMeshStore(store_dir)
-    store.append(__import__("omo.workflow_mesh", fromlist=["new_workflow_event"]).new_workflow_event(
-        "WorkflowRequested", "run-x", producer="t", payload={}, idempotency_key="a"))
+    store.append(
+        __import__("omo.workflow_mesh", fromlist=["new_workflow_event"]).new_workflow_event(
+            "WorkflowRequested", "run-x", producer="t", payload={}, idempotency_key="a"
+        )
+    )
     admission = {
         "admission_id": "admit-1",
         "status": "admitted",
@@ -41,25 +45,36 @@ def test_gap1_renew_admission_roundtrip(tmp_path):
         "expires_at": "2026-08-16T00:00:00+00:00",
     }
     from omo.workflow_dispatch import _proof
+
     admission["proof"] = _proof(admission)
-    store.append(__import__("omo.workflow_mesh", fromlist=["new_workflow_event"]).new_workflow_event(
-        "WorkflowAdmitted", "run-x", producer="t",
-        payload={"admission": admission},
-        idempotency_key="b"))
-    store.append(__import__("omo.workflow_mesh", fromlist=["new_workflow_event"]).new_workflow_event(
-        "StepDispatched", "run-x", producer="t",
-        payload={"step_run_id": "run-x:execute", "admission_id": "admit-1"},
-        idempotency_key="c"))
+    store.append(
+        __import__("omo.workflow_mesh", fromlist=["new_workflow_event"]).new_workflow_event(
+            "WorkflowAdmitted", "run-x", producer="t", payload={"admission": admission}, idempotency_key="b"
+        )
+    )
+    store.append(
+        __import__("omo.workflow_mesh", fromlist=["new_workflow_event"]).new_workflow_event(
+            "StepDispatched",
+            "run-x",
+            producer="t",
+            payload={"step_run_id": "run-x:execute", "admission_id": "admit-1"},
+            idempotency_key="c",
+        )
+    )
     # dispatched 态续期成功
     r = wd.renew_admission(
-        store_dir.parent, workflow_run_id="run-x", admission_id="admit-1",
-        ttl_seconds=600, now="2026-08-16T01:00:00+00:00", omo_dir=store_dir)
+        store_dir.parent,
+        workflow_run_id="run-x",
+        admission_id="admit-1",
+        ttl_seconds=600,
+        now="2026-08-16T01:00:00+00:00",
+        omo_dir=store_dir,
+    )
     assert r["renewed"] is True
     assert r["expires_at"].startswith("2026-08-16T01:10")
     # 身份不匹配拒绝
     try:
-        wd.renew_admission(store_dir.parent, workflow_run_id="run-x",
-                           admission_id="admit-wrong", omo_dir=store_dir)
+        wd.renew_admission(store_dir.parent, workflow_run_id="run-x", admission_id="admit-wrong", omo_dir=store_dir)
         raise AssertionError("should reject mismatched admission")
     except wd.WorkflowDispatchError:
         pass

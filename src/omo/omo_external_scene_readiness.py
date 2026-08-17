@@ -23,9 +23,7 @@ from .workflow_mesh import WorkflowMeshStore
 
 READINESS_SCHEMA = "external-scene-trial-promotion-readiness/v1"
 _REVIEW_ACTION = "continue"
-_POSITIVE_FEEDBACK_STATES = frozenset(
-    {"reviewed", "adopted", "submitted", "dispatched", "cited"}
-)
+_POSITIVE_FEEDBACK_STATES = frozenset({"reviewed", "adopted", "submitted", "dispatched", "cited"})
 _SCENE_FIELDS = ("scene_id", "journey_id", "outcome_metric")
 
 
@@ -91,9 +89,7 @@ def _feedback_summaries(
     result: list[dict[str, Any]] = []
     for record in feedback:
         run_id = str(record.get("workflow_run_id") or "").strip()
-        if run_id not in run_ids or not _same_scene(
-            record.get("scene_binding"), binding
-        ):
+        if run_id not in run_ids or not _same_scene(record.get("scene_binding"), binding):
             continue
         result.append(
             {
@@ -116,21 +112,13 @@ def _item(
 ) -> dict[str, Any]:
     binding = _scene_binding(trial.get("scene_binding"))
     assert binding is not None
-    matching = [
-        snapshot
-        for snapshot in snapshots
-        if _same_scene(snapshot.get("scene_binding"), binding)
-    ]
+    matching = [snapshot for snapshot in snapshots if _same_scene(snapshot.get("scene_binding"), binding)]
     run_ids = {
         str(snapshot.get("workflow_run_id") or "").strip()
         for snapshot in matching
         if str(snapshot.get("workflow_run_id") or "").strip()
     }
-    eligible = [
-        snapshot
-        for snapshot in matching
-        if snapshot.get("state") in ELIGIBLE_WORKFLOW_STATES
-    ]
+    eligible = [snapshot for snapshot in matching if snapshot.get("state") in ELIGIBLE_WORKFLOW_STATES]
     receipts: list[dict[str, Any]] = []
     for snapshot in eligible:
         receipts.extend(_receipt_summaries(snapshot))
@@ -140,22 +128,14 @@ def _item(
         binding,
     )
     positive_outcomes = [
-        record
-        for record in outcome_records
-        if record["consumption_state"] in _POSITIVE_FEEDBACK_STATES
+        record for record in outcome_records if record["consumption_state"] in _POSITIVE_FEEDBACK_STATES
     ]
-    rejected_outcomes = [
-        record
-        for record in outcome_records
-        if record["consumption_state"] == "rejected"
-    ]
+    rejected_outcomes = [record for record in outcome_records if record["consumption_state"] == "rejected"]
 
     checks = {
         "trial_recorded": True,
         "consumer_registered": bool(consumer and consumer.get("status") == "declared"),
-        "review_continued": bool(
-            review and review.get("review_action") == _REVIEW_ACTION
-        ),
+        "review_continued": bool(review and review.get("review_action") == _REVIEW_ACTION),
         "workflow_run_present": bool(run_ids),
         "workflow_run_eligible": bool(eligible),
         "external_receipt_recorded": bool(receipts),
@@ -213,13 +193,7 @@ def _item(
         ),
         "checks": checks,
         "matched_workflow_run_ids": sorted(run_ids),
-        "workflow_states": sorted(
-            {
-                str(snapshot.get("state"))
-                for snapshot in matching
-                if snapshot.get("state")
-            }
-        ),
+        "workflow_states": sorted({str(snapshot.get("state")) for snapshot in matching if snapshot.get("state")}),
         "external_receipts": receipts,
         "outcome_feedback": outcome_records,
         "blockers": blockers,

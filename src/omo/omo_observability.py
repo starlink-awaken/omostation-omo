@@ -18,9 +18,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-RUNTIME_DATA = (
-    Path(os.environ.get("RUNTIME_HOME", str(Path.home() / "runtime"))) / "data"
-)
+RUNTIME_DATA = Path(os.environ.get("RUNTIME_HOME", str(Path.home() / "runtime"))) / "data"
 
 # Round 4: .omo/_knowledge/ 是 AppendOnlyLog 消费者的落点目录
 _WORKSPACE = Path(os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace")))
@@ -88,9 +86,7 @@ def _resolve_log_paths(log_type: str, file_filter: str | None) -> list[Path]:
         all_paths = _knowledge_log_paths()
         if file_filter:
             # 支持完整文件名 (bos-metrics.jsonl) 或仅 stem (bos-metrics)
-            return [
-                p for p in all_paths if p.name == file_filter or p.stem == file_filter
-            ]
+            return [p for p in all_paths if p.name == file_filter or p.stem == file_filter]
         return all_paths
     path_map = {
         "kei": _kei_audit_path(),
@@ -138,18 +134,12 @@ def cmd_log_search(
     if since:
         try:
             since_dt = datetime.fromisoformat(since)
-            filtered = [
-                r
-                for r in filtered
-                if "ts" in r and datetime.fromisoformat(r["ts"]) >= since_dt
-            ]
+            filtered = [r for r in filtered if "ts" in r and datetime.fromisoformat(r["ts"]) >= since_dt]
         except ValueError:
             pass
 
     filtered = filtered[:limit]
-    print(
-        f"Found {len(filtered)} records (of {len(all_records)} total, across {len(paths)} file(s))"
-    )
+    print(f"Found {len(filtered)} records (of {len(all_records)} total, across {len(paths)} file(s))")
     print()
     for r in filtered:
         ts = r.get("ts", r.get("timestamp", r.get("recorded_at", "?")))
@@ -183,15 +173,11 @@ def cmd_log_tail(log_type: str, lines: int, file_filter: str | None = None) -> i
 
     # 按 ts 排序 (knowledge 混合文件时)
     if log_type == "knowledge":
-        all_records.sort(
-            key=lambda r: r.get("ts", r.get("recorded_at", "")), reverse=True
-        )
+        all_records.sort(key=lambda r: r.get("ts", r.get("recorded_at", "")), reverse=True)
         all_records = all_records[:lines]
 
     if log_type == "knowledge" and len(paths) > 1:
-        print(
-            f"Last {len(all_records)} records from {len(paths)} .jsonl files in .omo/_knowledge/:"
-        )
+        print(f"Last {len(all_records)} records from {len(paths)} .jsonl files in .omo/_knowledge/:")
     else:
         print(f"Last {len(all_records)} records from {paths[0].name}:")
     print()
@@ -267,9 +253,7 @@ def cmd_metric_show() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="omo observability", description="OMO log/metric inspection"
-    )
+    parser = argparse.ArgumentParser(prog="omo observability", description="OMO log/metric inspection")
     sub = parser.add_subparsers(dest="command")
 
     # Round 4: knowledge log type 支持多文件 (.omo/_knowledge/*.jsonl)
@@ -311,9 +295,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "log":
         if args.log_cmd == "search":
-            return cmd_log_search(
-                args.type, args.keyword, args.status, args.since, args.limit, args.file
-            )
+            return cmd_log_search(args.type, args.keyword, args.status, args.since, args.limit, args.file)
         elif args.log_cmd == "tail":
             return cmd_log_tail(args.type, args.lines, args.file)
         elif args.log_cmd == "stats":

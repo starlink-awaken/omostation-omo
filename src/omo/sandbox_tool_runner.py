@@ -50,19 +50,13 @@ def _stamp(value: str | None = None) -> str:
 
 def _digest(value: Any) -> str:
     return hashlib.sha256(
-        json.dumps(
-            value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
 
 
 def _existing(store: WorkflowMeshStore, idempotency_key: str) -> dict[str, Any] | None:
     return next(
-        (
-            event
-            for event in store.events()
-            if event.get("idempotency_key") == idempotency_key
-        ),
+        (event for event in store.events() if event.get("idempotency_key") == idempotency_key),
         None,
     )
 
@@ -100,9 +94,7 @@ def _validate_request(tool_id: str, input_ref: str, input_digest: str) -> None:
     if tool_id != SANDBOX_TOOL_ID:
         raise SandboxToolError(f"unsupported sandbox tool: {tool_id}")
     if not _SAFE_REF.fullmatch(input_ref):
-        raise SandboxToolError(
-            "input_ref must be an artifact://, bos://, or sandbox:// reference"
-        )
+        raise SandboxToolError("input_ref must be an artifact://, bos://, or sandbox:// reference")
     if not _SHA256.fullmatch(input_digest.lower()):
         raise SandboxToolError("input_digest must be a SHA-256 hex digest")
 
@@ -120,9 +112,7 @@ def _validate_live_context(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     snapshot = store.snapshot(workflow_run_id)
     if snapshot.get("state") in {"unknown", "planned", "closed", "cancelled"}:
-        raise SandboxToolError(
-            f"workflow is not executable in sandbox: {snapshot.get('state')}"
-        )
+        raise SandboxToolError(f"workflow is not executable in sandbox: {snapshot.get('state')}")
     if snapshot.get("trace_id") != trace_id:
         raise SandboxToolError("sandbox trace_id mismatch")
     admission = snapshot.get("admission")
@@ -229,14 +219,10 @@ def run_sandbox_tool(
     if prior is not None and prior.get("payload") != invocation_payload:
         raise SandboxToolError("sandbox invocation replay changed its request")
     event_types = {
-        str(event.get("event_type"))
-        for event in store.events()
-        if event.get("workflow_run_id") == workflow_run_id
+        str(event.get("event_type")) for event in store.events() if event.get("workflow_run_id") == workflow_run_id
     }
     if "WorkflowSucceeded" in event_types and prior is None:
-        raise SandboxToolError(
-            "workflow already succeeded without this sandbox invocation"
-        )
+        raise SandboxToolError("workflow already succeeded without this sandbox invocation")
 
     step_started = _append(
         store,
@@ -274,11 +260,7 @@ def run_sandbox_tool(
             payload={"step_count": 1, "execution_mode": "sandbox"},
         )
     else:
-        error_code = (
-            "SANDBOX_TOOL_FAILED"
-            if outcome == "failed"
-            else "SANDBOX_BACKEND_UNAVAILABLE"
-        )
+        error_code = "SANDBOX_TOOL_FAILED" if outcome == "failed" else "SANDBOX_BACKEND_UNAVAILABLE"
         result_event = _append(
             store,
             result_event_type,

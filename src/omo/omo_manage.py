@@ -87,9 +87,7 @@ def cmd_health() -> int:
                 ):
                     pass  # OK
                 else:
-                    issues.append(
-                        f"Goal {goal.get('id', '')} has inconsistent status/progress"
-                    )
+                    issues.append(f"Goal {goal.get('id', '')} has inconsistent status/progress")
 
     if not issues:
         print("No issues found.")

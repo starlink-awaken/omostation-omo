@@ -13,28 +13,20 @@ def _load_yaml(path: Path) -> dict:
     return load_yaml(path)
 
 
-def _resolve_required_capabilities(
-    matrix: dict, action: str, fallback: list[str]
-) -> tuple[list[str], str]:
+def _resolve_required_capabilities(matrix: dict, action: str, fallback: list[str]) -> tuple[list[str], str]:
     for rule in matrix.get("rules", []):
         if rule.get("action") == action:
-            return list(rule.get("required_capabilities", [])), rule.get(
-                "decision", "deny"
-            )
+            return list(rule.get("required_capabilities", [])), rule.get("decision", "deny")
     return fallback, "deny"
 
 
-def evaluate_worker_envelope(
-    root: Path, envelope_ref: Path, matrix_ref: Path | None = None
-) -> dict[str, Any]:
+def evaluate_worker_envelope(root: Path, envelope_ref: Path, matrix_ref: Path | None = None) -> dict[str, Any]:
     envelope = _load_yaml(root / envelope_ref)
     context = envelope.get("execution_context", {})
 
     contract = _load_yaml(root / context["admission_contract_ref"])
     matrix = (
-        _load_yaml(root / matrix_ref)
-        if matrix_ref is not None
-        else _load_yaml(root / contract["admission_matrix_ref"])
+        _load_yaml(root / matrix_ref) if matrix_ref is not None else _load_yaml(root / contract["admission_matrix_ref"])
     )
 
     required_capabilities, decision = _resolve_required_capabilities(
@@ -52,9 +44,7 @@ def evaluate_worker_envelope(
         }
     )
     missing_capabilities = [
-        capability
-        for capability in required_capabilities
-        if capability not in granted_capabilities
+        capability for capability in required_capabilities if capability not in granted_capabilities
     ]
 
     if missing_capabilities:
@@ -93,9 +83,7 @@ def request_conditional_approval(
 ) -> dict[str, str]:
     result = evaluate_worker_envelope(root, envelope_ref)
     if result["decision"] != "conditional_approval":
-        raise ValueError(
-            "conditional approval required before requesting governance approval"
-        )
+        raise ValueError("conditional approval required before requesting governance approval")
 
     envelope_path = root / envelope_ref
     envelope = _load_yaml(envelope_path)

@@ -60,9 +60,7 @@ def _task(tmp_path: Path, *, approval_ref: str | None = None) -> None:
         "deliverables": ["docs/result.md"],
         "test_plan": ["pytest"],
     }
-    (task_dir / "TASK-MESH-1.yaml").write_text(
-        yaml.safe_dump(task, sort_keys=False), encoding="utf-8"
-    )
+    (task_dir / "TASK-MESH-1.yaml").write_text(yaml.safe_dump(task, sort_keys=False), encoding="utf-8")
 
 
 def _health() -> dict:
@@ -395,9 +393,7 @@ def test_dispatch_admitted_workflow_no_double_step_dispatched(tmp_path: Path) ->
     assert len(step_dispatched) == 1, "Should not double-emit StepDispatched"
 
 
-def test_consume_pending_workflow_requests_iris_fast_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_consume_pending_workflow_requests_iris_fast_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """P0 完整第三块: consume 闭环 - planned run → admit → iris 快速路径."""
     import omo.workflow_dispatch as wd
     from omo.workflow_mesh import WorkflowMeshStore, new_workflow_event
@@ -425,10 +421,8 @@ def test_consume_pending_workflow_requests_iris_fast_path(
     # mock iris 快速路径 (避免 subprocess)
     dispatched: list[dict] = []
 
-    def fake_iris_dispatch(root, packet, iris_caps, omo_dir=".omo"):  # noqa: ANN001
-        dispatched.append(
-            {"run_id": packet["workflow_run_id"], "caps": list(iris_caps)}
-        )
+    def fake_iris_dispatch(root, packet, iris_caps, omo_dir=".omo"):
+        dispatched.append({"run_id": packet["workflow_run_id"], "caps": list(iris_caps)})
         return {**packet, "iris_dispatch": [], "dispatch_state": "dispatched"}
 
     monkeypatch.setattr(wd, "_dispatch_iris_via_executor", fake_iris_dispatch)
@@ -440,9 +434,7 @@ def test_consume_pending_workflow_requests_iris_fast_path(
         "capabilities": {"iris:apple_mail": {"available": True, "health": "green"}},
     }
 
-    result = consume_pending_workflow_requests(
-        tmp_path, capability_health=health, omo_dir=".omo"
-    )
+    result = consume_pending_workflow_requests(tmp_path, capability_health=health, omo_dir=".omo")
 
     assert result["total_planned"] == 1
     assert len(result["consumed"]) == 1
@@ -457,9 +449,7 @@ def test_consume_pending_workflow_requests_iris_fast_path(
     assert snap["state"] in {"admitted", "dispatched", "running"}
 
 
-def test_consume_pending_workflow_requests_skips_non_planned(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_consume_pending_workflow_requests_skips_non_planned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """consume 跳过 non-planned run (不重复消费 admitted/succeeded)."""
     import omo.workflow_dispatch as wd
 
@@ -483,9 +473,7 @@ def test_consume_pending_workflow_requests_skips_non_planned(
         lambda *a, **k: dispatched.append(1) or {},
     )
 
-    result = consume_pending_workflow_requests(
-        tmp_path, capability_health=_health(), omo_dir=".omo"
-    )
+    result = consume_pending_workflow_requests(tmp_path, capability_health=_health(), omo_dir=".omo")
 
     # 没 planned run → 0 consumed, 0 skipped, 0 failed
     assert result["total_planned"] == 0

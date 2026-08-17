@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
+
 from omo.omo_promotion_approval import evaluate_promotion_approval
 
 
@@ -13,9 +14,7 @@ def _write_text(path: Path, content: str) -> None:
 
 def _write_yaml(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
-    )
+    path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
 
 def test_evaluate_promotion_approval_returns_missing_when_ref_absent(tmp_path: Path):
@@ -34,11 +33,7 @@ def test_evaluate_promotion_approval_rejects_shared_markdown_baseline_ref(
     tmp_path: Path,
 ):
     _write_text(
-        tmp_path
-        / ".omo"
-        / "workers"
-        / "runs"
-        / "future-active-l2l3-pending-approval-2026-06-02.md",
+        tmp_path / ".omo" / "workers" / "runs" / "future-active-l2l3-pending-approval-2026-06-02.md",
         "# planning backlog presence only\n",
     )
 
@@ -55,11 +50,7 @@ def test_evaluate_promotion_approval_rejects_shared_markdown_baseline_ref(
 
 def test_evaluate_promotion_approval_rejects_yaml_for_different_task(tmp_path: Path):
     _write_yaml(
-        tmp_path
-        / ".omo"
-        / "workers"
-        / "runs"
-        / "OTHER-promotion-approval-2026-06-03T00-00-00Z.yaml",
+        tmp_path / ".omo" / "workers" / "runs" / "OTHER-promotion-approval-2026-06-03T00-00-00Z.yaml",
         {
             "version": 1,
             "approval_id": "OTHER-promotion-approval-2026-06-03T00-00-00Z",
@@ -92,11 +83,7 @@ def test_evaluate_promotion_approval_rejects_yaml_for_different_task(tmp_path: P
 
 def test_evaluate_promotion_approval_accepts_valid_task_specific_yaml(tmp_path: Path):
     _write_yaml(
-        tmp_path
-        / ".omo"
-        / "workers"
-        / "runs"
-        / "P19-W3-ARCHIVE-TS-promotion-approval-2026-06-03T00-00-00Z.yaml",
+        tmp_path / ".omo" / "workers" / "runs" / "P19-W3-ARCHIVE-TS-promotion-approval-2026-06-03T00-00-00Z.yaml",
         {
             "version": 1,
             "approval_id": "P19-W3-ARCHIVE-TS-promotion-approval-2026-06-03T00-00-00Z",

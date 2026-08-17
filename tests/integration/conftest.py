@@ -46,12 +46,8 @@ def _agora_services_available() -> bool:
 _AGORA_LIVE = _agora_services_available()
 
 
-def pytest_collection_modifyitems(
-    config: pytest.Config, items: list[pytest.Item]
-) -> None:
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Skip integration-markered tests when agora downstream is unavailable."""
     for item in items:
         if item.get_closest_marker("integration") and not _AGORA_LIVE:
-            item.add_marker(
-                pytest.mark.skip(reason="agora downstream services not available")
-            )
+            item.add_marker(pytest.mark.skip(reason="agora downstream services not available"))

@@ -195,12 +195,8 @@ def patterns_command(args: argparse.Namespace) -> int:
 
 def ecosystem_command(args: argparse.Namespace) -> int:
     root = _root()
-    packages = load_capability_registry(root, "system-packages.yaml") or {
-        "packages": []
-    }
-    article_samples = load_capability_registry(root, "article-samples.yaml") or {
-        "samples": []
-    }
+    packages = load_capability_registry(root, "system-packages.yaml") or {"packages": []}
+    article_samples = load_capability_registry(root, "article-samples.yaml") or {"samples": []}
     payload = {
         "id": "phase14-ecosystem-expansion-preview",
         "created_at": utc_now(),
@@ -217,9 +213,7 @@ def ecosystem_command(args: argparse.Namespace) -> int:
         "package_graph": {
             "mode": "manifest-preview",
             "packages_checked": len(packages.get("packages", [])),
-            "managers": sorted(
-                {package["manager"] for package in packages.get("packages", [])}
-            ),
+            "managers": sorted({package["manager"] for package in packages.get("packages", [])}),
         },
         "marketplace_preview": {
             "mode": "list-only",
@@ -283,33 +277,23 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     triage = sub.add_parser("triage")
-    triage.add_argument(
-        "--output", default=_phase14_evidence_ref("integration-triage.yaml")
-    )
+    triage.add_argument("--output", default=_phase14_evidence_ref("integration-triage.yaml"))
     triage.set_defaults(func=triage_command)
 
     pilots = sub.add_parser("pilots")
-    pilots.add_argument(
-        "--output", default=_phase14_evidence_ref("deep-absorption-pilots.yaml")
-    )
+    pilots.add_argument("--output", default=_phase14_evidence_ref("deep-absorption-pilots.yaml"))
     pilots.set_defaults(func=pilots_command)
 
     patterns = sub.add_parser("patterns")
-    patterns.add_argument(
-        "--output", default=_phase14_evidence_ref("architecture-patterns.yaml")
-    )
+    patterns.add_argument("--output", default=_phase14_evidence_ref("architecture-patterns.yaml"))
     patterns.set_defaults(func=patterns_command)
 
     ecosystem = sub.add_parser("ecosystem")
-    ecosystem.add_argument(
-        "--output", default=_phase14_evidence_ref("ecosystem-preview.yaml")
-    )
+    ecosystem.add_argument("--output", default=_phase14_evidence_ref("ecosystem-preview.yaml"))
     ecosystem.set_defaults(func=ecosystem_command)
 
     security = sub.add_parser("security")
-    security.add_argument(
-        "--output", default=_phase14_evidence_ref("security-review.yaml")
-    )
+    security.add_argument("--output", default=_phase14_evidence_ref("security-review.yaml"))
     security.set_defaults(func=security_command)
     return parser
 

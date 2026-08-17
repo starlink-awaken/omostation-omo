@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Optional
 
@@ -654,7 +654,7 @@ def register(source: str, title: str, description: str, severity: str, output_di
         import yaml
 
         # 生成债务 ID
-        debt_id = f"DEBT-{source.upper()}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+        debt_id = f"DEBT-{source.upper()}-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
 
         # 构建债务数据
         debt_data = {
@@ -663,7 +663,7 @@ def register(source: str, title: str, description: str, severity: str, output_di
             "description": description or f"{title} — 由 {source} 项目登记",
             "severity": severity,
             "source": source,
-            "registered_at": datetime.now(timezone.utc).isoformat(),
+            "registered_at": datetime.now(UTC).isoformat(),
             "status": "registered",
         }
 
@@ -757,7 +757,7 @@ def route(source: str, severity: str, owner: str, dry_run: bool):
                 if item_severity == "all":
                     assigned_owner = owner
 
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
 
                 # 添加 routing 字段
                 data["owner"] = assigned_owner
@@ -878,7 +878,7 @@ def review_queue(severity: str, source: str, output_dir: str, dry_run: bool):
                     "owner": data.get("owner") or data.get("assigned_to") or "team-lead",
                     "reviewers": data.get("reviewers", ["cockpit-team", "omo-team"]),
                     "status": "pending",
-                    "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "created_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
                     "priority": severity_priority_map.get(item_severity, "P2"),
                     "source_file": str(yf.resolve()),
                     "severity": item_severity,
@@ -970,7 +970,7 @@ def dispatch(source_dir: str, output_dir: str, dry_run: bool):
 
                 debt_id = data.get("debt_id", qf.stem)
                 owner = data.get("owner", "team-lead")
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
 
                 # 构建 dispatch 条目
                 dispatch_entry = {

@@ -686,9 +686,7 @@ def evaluate_target_with_derived_chain(target: dict, ledger: DebtLedger) -> dict
     # 链: governance policy → debt item → evidence → mitigation
     if debt_item.x1_policy_ref:
         policy = _resolve_policy(debt_item.x1_policy_ref)
-        result["derived_chain"].append(
-            {"type": "governance_policy", "id": policy.get("id")}
-        )
+        result["derived_chain"].append({"type": "governance_policy", "id": policy.get("id")})
     for ref in debt_item.evidence_refs:
         result["derived_chain"].append({"type": "evidence", "ref": ref})
     for ref in debt_item.mitigation_refs:

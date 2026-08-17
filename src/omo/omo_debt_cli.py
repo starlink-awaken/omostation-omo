@@ -40,11 +40,7 @@ def cmd_debt_list(omo_dir: Path) -> int:
     resolved_display = set(system.get("resolved_debt_items", []))
     # 计数集: 仅基于 debt_weight_items, 避免 resolved_debt_items 含外部历史项
     # 导致 open_count = total - resolved 出现负数 (P71 SSOT 口径不一致副作用)
-    resolved_in_items = {
-        debt_id
-        for debt_id, info in items.items()
-        if isinstance(info, dict) and info.get("resolved")
-    }
+    resolved_in_items = {debt_id for debt_id, info in items.items() if isinstance(info, dict) and info.get("resolved")}
     resolved_display.update(resolved_in_items)
     total = len(items)
     resolved_count = len(resolved_in_items)
@@ -173,15 +169,9 @@ def main(argv: list[str] | None = None) -> int:
     register_parser.add_argument("--subdimension", required=True)
     register_parser.add_argument("--severity", required=True)
     register_parser.add_argument("--owner", required=True)
-    register_parser.add_argument(
-        "--actor", default="", help="Who performed this action (default: empty)"
-    )
-    register_parser.add_argument(
-        "--x1-policy-ref", default="", help="X1 governance policy reference ID"
-    )
-    register_parser.add_argument(
-        "--x2-freshness", default="", help="X2 freshness timestamp (ISO 8601)"
-    )
+    register_parser.add_argument("--actor", default="", help="Who performed this action (default: empty)")
+    register_parser.add_argument("--x1-policy-ref", default="", help="X1 governance policy reference ID")
+    register_parser.add_argument("--x2-freshness", default="", help="X2 freshness timestamp (ISO 8601)")
     register_parser.add_argument(
         "--x3-tier",
         default="",
@@ -350,9 +340,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "report-trend":
-        reporting_trend_outputs(
-            omo_dir, args.last, args.from_run_stamp, args.to_run_stamp
-        )
+        reporting_trend_outputs(omo_dir, args.last, args.from_run_stamp, args.to_run_stamp)
         print("reported trend")
         return 0
 
@@ -378,9 +366,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "revalidate":
-        bound_run_ref = require_dispatch_bound_revalidate(
-            omo_dir, args.id, args.dispatch_run_ref
-        )
+        bound_run_ref = require_dispatch_bound_revalidate(omo_dir, args.id, args.dispatch_run_ref)
         require_matching_revalidate_approval(omo_dir, args.id, bound_run_ref)
         item_path, payload = update_item(omo_dir, args.id, _load_yaml)
         payload["last_reviewed_at"] = args.reviewed_at

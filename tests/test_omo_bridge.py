@@ -27,9 +27,7 @@ def test_generate_task_id_is_deterministic():
     """相同 title 永远产生相同 hash, 否则依赖解析没法做."""
     from omo.omo_bridge import _generate_task_id
 
-    assert _generate_task_id("P42-W0-MERGE-STATE") == _generate_task_id(
-        "P42-W0-MERGE-STATE"
-    )
+    assert _generate_task_id("P42-W0-MERGE-STATE") == _generate_task_id("P42-W0-MERGE-STATE")
     assert _generate_task_id("A") != _generate_task_id("B")
 
 
@@ -108,15 +106,7 @@ def test_import_bmad_writes_task_with_phase_wave(tmp_path):
     assert data["phase"] == 42
     assert data["wave"] == "W0"
     assert data["metadata"]["broker"] == "projects/omo/src/omo/omo_ingress.py"
-    artifact = (
-        omo.parent
-        / "runtime"
-        / "omo"
-        / "_delivery"
-        / "ingress"
-        / "tasks"
-        / f"{a_id}.yaml"
-    )
+    artifact = omo.parent / "runtime" / "omo" / "_delivery" / "ingress" / "tasks" / f"{a_id}.yaml"
     assert artifact.exists()
 
 
@@ -137,10 +127,7 @@ def test_import_bmad_preflights_all_registry_mappings_before_any_write(tmp_path)
     digest = hashlib.sha256(spec.read_bytes()).hexdigest()
     second_id = _stable_task_id(digest, 2)
     second_ref = f"omo:bridge:bmad:{spec.name}:{digest}:{second_id}"
-    registry = {
-        kind: {"by_id": {}, "by_source_ref": {}}
-        for kind in ("goals", "tasks", "debts", "capabilities")
-    }
+    registry = {kind: {"by_id": {}, "by_source_ref": {}} for kind in ("goals", "tasks", "debts", "capabilities")}
     registry["tasks"]["by_source_ref"][second_ref] = "SOME-OTHER-TASK"
     _write_registry(omo, registry)
 
@@ -149,9 +136,7 @@ def test_import_bmad_preflights_all_registry_mappings_before_any_write(tmp_path)
     assert report["ok"] is False
     assert report["created"] == 0
     assert not list((omo / "tasks" / "planned").glob("*.yaml"))
-    persisted = yaml.safe_load(
-        (workspace / "runtime/omo/_delivery/ingress/registry.yaml").read_text()
-    )
+    persisted = yaml.safe_load((workspace / "runtime/omo/_delivery/ingress/registry.yaml").read_text())
     assert persisted["tasks"]["by_source_ref"][second_ref] == "SOME-OTHER-TASK"
 
 
@@ -281,15 +266,7 @@ def test_import_fast_track_generates_valid_yaml(tmp_path):
     assert data["context_uri"] == f"bos://memory/fast-track/{task_id}"
     assert data["human_approval_required"] is False
     assert data["metadata"]["broker"] == "projects/omo/src/omo/omo_ingress.py"
-    assert (
-        omo.parent
-        / "runtime"
-        / "omo"
-        / "_delivery"
-        / "ingress"
-        / "tasks"
-        / f"{task_id}.yaml"
-    ).exists()
+    assert (omo.parent / "runtime" / "omo" / "_delivery" / "ingress" / "tasks" / f"{task_id}.yaml").exists()
 
 
 def test_import_bmad_rejects_todo_lines(tmp_path, capfd):
@@ -447,15 +424,10 @@ def test_import_bmad_changed_content_reports_drift_without_new_tasks(tmp_path):
     assert second["ok"] is False
     assert second["spec_drift"] is True
     assert second["created"] == 0
-    assert (
-        sorted(path.name for path in (omo / "tasks" / "planned").glob("*.yaml"))
-        == before
-    )
+    assert sorted(path.name for path in (omo / "tasks" / "planned").glob("*.yaml")) == before
 
 
-def test_bridge_main_returns_nonzero_when_bmad_contract_is_rejected(
-    tmp_path, monkeypatch
-):
+def test_bridge_main_returns_nonzero_when_bmad_contract_is_rejected(tmp_path, monkeypatch):
     from omo import omo_bridge
 
     spec = tmp_path / "invalid.md"
@@ -491,49 +463,17 @@ def test_import_pitch_uses_governed_goal_and_task_ingress(tmp_path, capfd):
 
     bet_id = f"BET-{hashlib.md5(pitch.name.encode()).hexdigest()[:4]}"
     task_id = f"IMPORTED-{hashlib.md5(bet_id.encode()).hexdigest()[:6]}"
-    goals_payload = yaml.safe_load(
-        (goals_dir / "current.yaml").read_text(encoding="utf-8")
-    )
+    goals_payload = yaml.safe_load((goals_dir / "current.yaml").read_text(encoding="utf-8"))
     assert any(goal["id"] == bet_id for goal in goals_payload["goals"])
-    task_payload = yaml.safe_load(
-        (omo / "tasks" / "planned" / f"{task_id}.yaml").read_text(encoding="utf-8")
-    )
+    task_payload = yaml.safe_load((omo / "tasks" / "planned" / f"{task_id}.yaml").read_text(encoding="utf-8"))
     assert task_payload["metadata"]["broker"] == "projects/omo/src/omo/omo_ingress.py"
-    assert (
-        omo.parent
-        / "runtime"
-        / "omo"
-        / "_delivery"
-        / "ingress"
-        / "goals"
-        / f"{bet_id}.yaml"
-    ).exists()
-    assert (
-        omo.parent
-        / "runtime"
-        / "omo"
-        / "_delivery"
-        / "ingress"
-        / "tasks"
-        / f"{task_id}.yaml"
-    ).exists()
+    assert (omo.parent / "runtime" / "omo" / "_delivery" / "ingress" / "goals" / f"{bet_id}.yaml").exists()
+    assert (omo.parent / "runtime" / "omo" / "_delivery" / "ingress" / "tasks" / f"{task_id}.yaml").exists()
     registry = yaml.safe_load(
-        (
-            omo.parent / "runtime" / "omo" / "_delivery" / "ingress" / "registry.yaml"
-        ).read_text(encoding="utf-8")
+        (omo.parent / "runtime" / "omo" / "_delivery" / "ingress" / "registry.yaml").read_text(encoding="utf-8")
     )
-    assert (
-        registry["goals"]["by_source_ref"][
-            f"omo:bridge:pitch-goal:{pitch.name}:{bet_id}"
-        ]
-        == bet_id
-    )
-    assert (
-        registry["tasks"]["by_source_ref"][
-            f"omo:bridge:pitch-task:{pitch.name}:{task_id}"
-        ]
-        == task_id
-    )
+    assert registry["goals"]["by_source_ref"][f"omo:bridge:pitch-goal:{pitch.name}:{bet_id}"] == bet_id
+    assert registry["tasks"]["by_source_ref"][f"omo:bridge:pitch-task:{pitch.name}:{task_id}"] == task_id
 
     out, _ = capfd.readouterr()
     assert "Bet 下注成功" in out

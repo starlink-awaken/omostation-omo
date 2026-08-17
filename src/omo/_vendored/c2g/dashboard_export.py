@@ -45,18 +45,13 @@ def build_dashboard(
         "critical": (heat.get("totals") or {}).get("critical", 0),
         "elevated": (heat.get("totals") or {}).get("elevated", 0),
         "proposal_count": proposals.get("proposal_count", 0),
-        "p0_proposals": sum(
-            1 for p in proposals.get("proposals") or [] if p.get("priority") == "P0"
-        ),
+        "p0_proposals": sum(1 for p in proposals.get("proposals") or [] if p.get("priority") == "P0"),
     }
 
     return {
         "schema": "c2g.wave2.dashboard.v1",
         "adr": "0190",
-        "generated_at": datetime.now(UTC)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z"),
+        "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "data_dir": str(data_dir),
         "cards": cards,
         "backtest": backtest,
@@ -70,9 +65,7 @@ def build_dashboard(
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(
-        description="Wave2 dashboard JSON export for cockpit (ADR-0190)"
-    )
+    ap = argparse.ArgumentParser(description="Wave2 dashboard JSON export for cockpit (ADR-0190)")
     ap.add_argument(
         "--data-dir",
         type=Path,

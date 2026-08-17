@@ -14,9 +14,7 @@ WORKSPACE_ROOT_PROJECT = "workspace-root"
 
 
 def _canonical_json(payload: dict[str, Any]) -> str:
-    return json.dumps(
-        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    )
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def _project_layers(layer_contract: dict[str, Any]) -> dict[str, str]:
@@ -27,9 +25,7 @@ def _project_layers(layer_contract: dict[str, Any]) -> dict[str, str]:
     return result
 
 
-def _affected_projects(
-    changed_projects: list[str], layer_contract: dict[str, Any]
-) -> list[str]:
+def _affected_projects(changed_projects: list[str], layer_contract: dict[str, Any]) -> list[str]:
     project_layers = _project_layers(layer_contract)
     graph = {project: set() for project in project_layers}
     downstream_layers = {layer: set() for layer in layer_contract.get("layers", {})}
@@ -41,15 +37,11 @@ def _affected_projects(
     for upstream_project, upstream_layer in project_layers.items():
         for downstream_layer in downstream_layers.get(upstream_layer, set()):
             graph[upstream_project].update(
-                project
-                for project, layer in project_layers.items()
-                if layer == downstream_layer
+                project for project, layer in project_layers.items() if layer == downstream_layer
             )
 
     affected = set(changed_projects)
-    queue = [
-        project for project in changed_projects if project != WORKSPACE_ROOT_PROJECT
-    ]
+    queue = [project for project in changed_projects if project != WORKSPACE_ROOT_PROJECT]
     while queue:
         current = queue.pop(0)
         for downstream in graph[current]:
@@ -64,16 +56,12 @@ def _claimed_projects(paths: list[str], known_projects: set[str]) -> set[str]:
     for raw_path in paths:
         normalized_path = Path(raw_path).as_posix().lstrip("./").rstrip("/")
         if normalized_path == "projects":
-            raise WorkflowError(
-                "ambiguous projects path cannot be bound to one affected project"
-            )
+            raise WorkflowError("ambiguous projects path cannot be bound to one affected project")
         parts = normalized_path.split("/")
         if len(parts) >= 2 and parts[0] == "projects":
             project = parts[1]
             if project not in known_projects:
-                raise WorkflowError(
-                    f"claimed path references unknown project: {project}"
-                )
+                raise WorkflowError(f"claimed path references unknown project: {project}")
             claimed.add(project)
         else:
             claimed.add(WORKSPACE_ROOT_PROJECT)
@@ -96,26 +84,18 @@ def validate_affected_graph_receipt(
         or any(part in {"", ".", ".."} for part in relative_path.parts)
         or relative_path.as_posix() != receipt_ref
     ):
-        raise WorkflowError(
-            "affected graph receipt reference must be canonical workspace-relative"
-        )
+        raise WorkflowError("affected graph receipt reference must be canonical workspace-relative")
     receipt_path = workspace / relative_path
     try:
         resolved_receipt = receipt_path.resolve(strict=True)
     except OSError as exc:
-        raise WorkflowError(
-            f"affected graph receipt file does not exist: {receipt_path}"
-        ) from exc
+        raise WorkflowError(f"affected graph receipt file does not exist: {receipt_path}") from exc
     if resolved_receipt != receipt_path.absolute():
-        raise WorkflowError(
-            "affected graph receipt reference must not traverse symlinks"
-        )
+        raise WorkflowError("affected graph receipt reference must not traverse symlinks")
     try:
         resolved_receipt.relative_to(workspace)
     except ValueError as exc:
-        raise WorkflowError(
-            "affected graph receipt reference must stay inside workspace"
-        ) from exc
+        raise WorkflowError("affected graph receipt reference must stay inside workspace") from exc
     if not resolved_receipt.is_file():
         raise WorkflowError(f"affected graph receipt is not a file: {receipt_ref}")
 
@@ -146,9 +126,7 @@ def validate_affected_graph_receipt(
         or not all(isinstance(item, str) and item for item in affected)
         or affected != sorted(set(affected))
     ):
-        raise WorkflowError(
-            "affected graph receipt project lists must be sorted and unique"
-        )
+        raise WorkflowError("affected graph receipt project lists must be sorted and unique")
 
     unsigned = {key: value for key, value in receipt.items() if key != "receipt_hash"}
     expected_hash = hashlib.sha256(_canonical_json(unsigned).encode()).hexdigest()
@@ -167,23 +145,15 @@ def validate_affected_graph_receipt(
     permitted_projects = known_projects | {WORKSPACE_ROOT_PROJECT}
     unknown = (set(changed) | set(affected)) - permitted_projects
     if unknown:
-        raise WorkflowError(
-            "affected graph receipt contains unknown project(s): "
-            + ", ".join(sorted(unknown))
-        )
+        raise WorkflowError("affected graph receipt contains unknown project(s): " + ", ".join(sorted(unknown)))
     expected_affected = _affected_projects(changed, layer_contract)
     if affected != expected_affected:
-        raise WorkflowError(
-            "affected graph affected_projects do not match recomputation"
-        )
+        raise WorkflowError("affected graph affected_projects do not match recomputation")
 
     claimed_projects = _claimed_projects(claimed_paths, known_projects)
     if claimed_surfaces:
         claimed_projects.add(WORKSPACE_ROOT_PROJECT)
     missing = claimed_projects - set(affected)
     if missing:
-        raise WorkflowError(
-            "claimed projects missing from affected graph receipt: "
-            + ", ".join(sorted(missing))
-        )
+        raise WorkflowError("claimed projects missing from affected graph receipt: " + ", ".join(sorted(missing)))
     return {**receipt, "receipt_ref": receipt_ref}

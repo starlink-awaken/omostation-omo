@@ -106,9 +106,7 @@ class AgentHost:
         }
 
 
-def _llm_deep_eval(
-    agent_id: str, question: str, context: dict[str, Any]
-) -> dict[str, Any] | None:
+def _llm_deep_eval(agent_id: str, question: str, context: dict[str, Any]) -> dict[str, Any] | None:
     """Call local LLM for deep evaluation when rule-based confidence is insufficient.
 
     Pattern: rules first → if confidence < threshold → LLM deep eval.
@@ -201,18 +199,12 @@ def _check_a2a_inbox(agent_id: str, workspace: Path) -> list[dict[str, Any]]:
     # 找发给自己的 task 消息, 且没有对应 reply
     replied_ts = {m.get("in_reply_to") for m in all_msgs if m.get("type") == "reply"}
     my_tasks = [
-        m
-        for m in all_msgs
-        if m.get("to") == agent_id
-        and m.get("type") == "task"
-        and m.get("ts") not in replied_ts
+        m for m in all_msgs if m.get("to") == agent_id and m.get("type") == "task" and m.get("ts") not in replied_ts
     ]
 
     # 写 reply 标记 resolved
     if my_tasks:
-        ts_now = (
-            datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-        )
+        ts_now = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         with open(msg_file, "a", encoding="utf-8") as f:
             for t in my_tasks:
                 reply = {
@@ -223,9 +215,7 @@ def _check_a2a_inbox(agent_id: str, workspace: Path) -> list[dict[str, Any]]:
                     "in_reply_to": t.get("ts"),
                     "payload": {
                         "status": "processed",
-                        "finding_type": t.get("payload", {})
-                        .get("finding", {})
-                        .get("type"),
+                        "finding_type": t.get("payload", {}).get("finding", {}).get("type"),
                     },
                 }
                 f.write(_json.dumps(reply, ensure_ascii=False, sort_keys=True) + "\n")
@@ -318,9 +308,7 @@ class KnowledgeCuratorAgent:
         """Read decision_outcomes + process A2A tasks → build knowledge graph."""
         from pathlib import Path as _Path
 
-        workspace = _Path(
-            os.environ.get("WORKSPACE_ROOT", str(_Path.home() / "Workspace"))
-        )
+        workspace = _Path(os.environ.get("WORKSPACE_ROOT", str(_Path.home() / "Workspace")))
 
         # A2A: 读 governor 发来的 task 消息 (多 Agent 协作)
         a2a_tasks = _check_a2a_inbox("knowledge-curator", workspace)
@@ -481,13 +469,9 @@ class JourneyRunnerAgent:
         import json as _json
         from pathlib import Path as _Path
 
-        workspace = _Path(
-            os.environ.get("WORKSPACE_ROOT", str(_Path.home() / "Workspace"))
-        )
+        workspace = _Path(os.environ.get("WORKSPACE_ROOT", str(_Path.home() / "Workspace")))
         code_root = _Path(os.environ.get("WORKSPACE_CODE_ROOT", str(workspace)))
-        states_dir = (
-            workspace / ".omo" / "_knowledge" / "workflow-mesh" / "journey-states"
-        )
+        states_dir = workspace / ".omo" / "_knowledge" / "workflow-mesh" / "journey-states"
         if not states_dir.is_dir():
             return {"action": "noop", "details": {"note": "no journey states dir"}}
 
@@ -506,9 +490,7 @@ class JourneyRunnerAgent:
                         if isinstance(ctx, dict) and ctx.get("human_approved"):
                             resumable.append(
                                 {
-                                    "journey_id": last.get(
-                                        "journey_id", journey_dir.name
-                                    ),
+                                    "journey_id": last.get("journey_id", journey_dir.name),
                                     "run_id": run_file.stem,
                                     "state": last.get("state", "?"),
                                 }
@@ -583,15 +565,11 @@ class GovernorAgent:
         import json as _json
         from pathlib import Path as _Path
 
-        workspace = _Path(
-            os.environ.get("WORKSPACE_ROOT", str(_Path.home() / "Workspace"))
-        )
+        workspace = _Path(os.environ.get("WORKSPACE_ROOT", str(_Path.home() / "Workspace")))
         findings: list[dict[str, str]] = []
 
         # 1. Check for timed-out journey checkpoints
-        states_dir = (
-            workspace / ".omo" / "_knowledge" / "workflow-mesh" / "journey-states"
-        )
+        states_dir = workspace / ".omo" / "_knowledge" / "workflow-mesh" / "journey-states"
         if states_dir.is_dir():
             for jd in states_dir.iterdir():
                 if not jd.is_dir():
@@ -617,17 +595,13 @@ class GovernorAgent:
         if mesh_log.exists():
             event_count = len(mesh_log.read_text(encoding="utf-8").strip().split("\n"))
             if event_count > 100:
-                findings.append(
-                    {"type": "high_event_volume", "count": str(event_count)}
-                )
+                findings.append({"type": "high_event_volume", "count": str(event_count)})
 
         # 3. Check debt registry growth (T-B5: debt 台账趋势)
         debt_items_dir = workspace / ".omo" / "debt" / "items"
         if debt_items_dir.is_dir():
             debt_count = len(list(debt_items_dir.glob("*.yaml")))
-            gap_count = len(
-                list((workspace / ".omo" / "debt" / "gap-items").glob("*.yaml"))
-            )
+            gap_count = len(list((workspace / ".omo" / "debt" / "gap-items").glob("*.yaml")))
             if debt_count + gap_count > 30:
                 findings.append(
                     {
@@ -655,9 +629,7 @@ class GovernorAgent:
                     {
                         "type": "low_trust_capabilities",
                         "count": str(len(low_trust)),
-                        "refs": ",".join(
-                            c.get("capability_ref", "?") for c in low_trust[:3]
-                        ),
+                        "refs": ",".join(c.get("capability_ref", "?") for c in low_trust[:3]),
                     }
                 )
         except Exception:
@@ -683,9 +655,7 @@ class GovernorAgent:
                     "count": len(findings),
                     "dispatched_to": dispatched,
                     "llm_deep_eval": deep_eval is not None,
-                    "llm_priority": deep_eval.get("recommendation")
-                    if deep_eval
-                    else None,
+                    "llm_priority": deep_eval.get("recommendation") if deep_eval else None,
                 },
             }
         return {"action": "noop", "details": {"note": "no governance issues detected"}}
@@ -710,19 +680,14 @@ class GovernorAgent:
             targets = dispatch_map.get(ftype, [])
             for target in targets:
                 msg = {
-                    "ts": datetime.now(UTC)
-                    .replace(microsecond=0)
-                    .isoformat()
-                    .replace("+00:00", "Z"),
+                    "ts": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
                     "from": "governor",
                     "to": target,
                     "type": "task",
                     "payload": {"action": "investigate", "finding": f},
                 }
                 with open(msg_queue, "a", encoding="utf-8") as mf:
-                    mf.write(
-                        _json.dumps(msg, ensure_ascii=False, sort_keys=True) + "\n"
-                    )
+                    mf.write(_json.dumps(msg, ensure_ascii=False, sort_keys=True) + "\n")
                 if target not in dispatched:
                     dispatched.append(target)
         return dispatched
@@ -741,9 +706,7 @@ class AdvisorAgent:
 
     def tick(self) -> dict[str, Any]:
         """Evaluate system alignment with TELOS principles + process A2A tasks."""
-        workspace = Path(
-            os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace"))
-        )
+        workspace = Path(os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace")))
 
         # A2A: 读 governor 发来的 task 消息 (多 Agent 协作)
         a2a_tasks = _check_a2a_inbox("advisor", workspace)
@@ -788,21 +751,15 @@ class AdvisorAgent:
         # Evaluate trust trends
         avg_success = 1.0
         if calibrations:
-            avg_success = sum(
-                float(c.get("success_rate", 1.0)) for c in calibrations
-            ) / len(calibrations)
+            avg_success = sum(float(c.get("success_rate", 1.0)) for c in calibrations) / len(calibrations)
 
         accept_rate = 1.0
         if outcomes:
-            accepted = sum(
-                1 for o in outcomes if "accepted" in str(o.get("actual_outcome", ""))
-            )
+            accepted = sum(1 for o in outcomes if "accepted" in str(o.get("actual_outcome", "")))
             accept_rate = accepted / len(outcomes)
 
         # TELOS alignment heuristic (rule-based first pass)
-        alignment = (
-            "aligned" if avg_success >= 0.7 and accept_rate >= 0.5 else "misaligned"
-        )
+        alignment = "aligned" if avg_success >= 0.7 and accept_rate >= 0.5 else "misaligned"
         confidence = round(min(avg_success, accept_rate), 2)
 
         # LLM deep eval: confidence不足时调PI做深判 (模型驱动)
@@ -825,28 +782,18 @@ class AdvisorAgent:
         return {
             "action": "evaluate",
             "details": {
-                "telos_alignment": deep_eval.get("verdict", alignment)
-                if deep_eval
-                else alignment,
-                "confidence": deep_eval.get("confidence", confidence)
-                if deep_eval
-                else confidence,
+                "telos_alignment": deep_eval.get("verdict", alignment) if deep_eval else alignment,
+                "confidence": deep_eval.get("confidence", confidence) if deep_eval else confidence,
                 "avg_success_rate": round(avg_success, 2),
                 "outcome_accept_rate": round(accept_rate, 2),
                 "calibrations_evaluated": len(calibrations),
                 "beliefs_count": len(beliefs),
                 "recommendation": deep_eval.get(
                     "recommendation",
-                    "maintain"
-                    if alignment == "aligned"
-                    else "review capability trust trends",
+                    "maintain" if alignment == "aligned" else "review capability trust trends",
                 )
                 if deep_eval
-                else (
-                    "maintain"
-                    if alignment == "aligned"
-                    else "review capability trust trends"
-                ),
+                else ("maintain" if alignment == "aligned" else "review capability trust trends"),
                 "llm_deep_eval": deep_eval is not None,
                 "llm_reasoning": deep_eval.get("reasoning") if deep_eval else None,
                 "a2a_tasks_processed": a2a_processed,
@@ -867,9 +814,7 @@ class AutonomyAssessmentAgent:
 
     def tick(self) -> dict[str, Any]:
         """Calculate 5-dimension autonomy score."""
-        workspace = Path(
-            os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace"))
-        )
+        workspace = Path(os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace")))
         try:
             omo_src = str(workspace / "projects/omo/src")
             import sys
@@ -896,27 +841,19 @@ class AutonomyAssessmentAgent:
         retention = min(active_items / 20.0, 1.0) if total_items else 0.1
 
         # 3. Generalization: 跨域覆盖
-        unique_refs = (
-            len({c.get("capability_ref", "?") for c in calibrations})
-            if calibrations
-            else 0
-        )
+        unique_refs = len({c.get("capability_ref", "?") for c in calibrations}) if calibrations else 0
         generalization = min(unique_refs / 5.0, 1.0) if unique_refs else 0.1
 
         # 4. Efficiency: calibration成功率
         if calibrations:
-            avg_rate = sum(
-                float(c.get("success_rate", 1.0)) for c in calibrations
-            ) / len(calibrations)
+            avg_rate = sum(float(c.get("success_rate", 1.0)) for c in calibrations) / len(calibrations)
             efficiency = avg_rate
         else:
             efficiency = 0.5
 
         # 5. Safety: 有约束违规=低分, 无=高分
         outcomes = state.get("decision_outcomes", [])
-        rejected = sum(
-            1 for o in outcomes if "rejected" in str(o.get("actual_outcome", ""))
-        )
+        rejected = sum(1 for o in outcomes if "rejected" in str(o.get("actual_outcome", "")))
         safety = 1.0 - (rejected / len(outcomes)) if outcomes else 0.9
 
         # Weighted score

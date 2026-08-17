@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+
 from omo.omo_external_scene_consumer import (
     ExternalSceneConsumerError,
     read_external_scene_consumers,

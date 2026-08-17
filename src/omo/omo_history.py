@@ -111,9 +111,7 @@ def score_trend(
     )
     if current is None:
         current = 0.0
-    last_score = (
-        last_entry.get("total_score", current) if last_entry is not None else current
-    )
+    last_score = last_entry.get("total_score", current) if last_entry is not None else current
     try:
         delta = float(current) - float(last_score)
     except (TypeError, ValueError):
@@ -130,10 +128,7 @@ def score_trend(
         "trend": trend,
         "current": current,
         "delta": round(delta, 2),
-        "history": [
-            {"date": e.get("date", "?"), "score": float(e.get("total_score") or 0.0)}
-            for e in entries[:30]
-        ],
+        "history": [{"date": e.get("date", "?"), "score": float(e.get("total_score") or 0.0)} for e in entries[:30]],
     }
 
 

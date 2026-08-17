@@ -74,9 +74,7 @@ class BosRegistrationModel(BaseModel):
             return v
         # 纯 module path
         if not re.match(r"^[a-zA-Z_][\w.]*$", v.strip()):
-            raise ValueError(
-                f"endpoint must be module:function, http(s)://, or placeholder://, got: {v!r}"
-            )
+            raise ValueError(f"endpoint must be module:function, http(s)://, or placeholder://, got: {v!r}")
         return v
 
     @model_validator(mode="after")
@@ -93,9 +91,7 @@ class BosRegistrationModel(BaseModel):
         except ValueError:
             return self  # _validate_uri 已拦截, 防御性兜底
         if parsed["domain"] != self.domain:
-            raise ValueError(
-                f"URI domain {parsed['domain']!r} != field domain {self.domain!r}"
-            )
+            raise ValueError(f"URI domain {parsed['domain']!r} != field domain {self.domain!r}")
         return self
 
     def to_legacy_dict(self) -> dict[str, Any]:

@@ -129,9 +129,7 @@ def create_goal(
         if source_ref:
             mapped_goal_id = registry["goals"]["by_source_ref"].get(source_ref)
             if mapped_goal_id and mapped_goal_id != goal_id:
-                raise ValueError(
-                    f"source_ref already mapped to different goal: {source_ref} -> {mapped_goal_id}"
-                )
+                raise ValueError(f"source_ref already mapped to different goal: {source_ref} -> {mapped_goal_id}")
 
         if existing_goal is not None:
             existing_fingerprint = _goal_existing_fingerprint(existing_goal)
@@ -204,14 +202,14 @@ def create_goal(
             details=details,
             audit_file=_audit_log_path(omo_dir),
         )
-        _record_trail(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_trail(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=f"broker:{ingress_plane}",
             action="create_goal",
             target=f".omo/goals/current.yaml#{goal_id}",
             parent_step_id=parent_step_id,
         )
-        _record_mutation(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_mutation(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=ingress_plane,
             action="create_goal",
@@ -273,11 +271,7 @@ def update_goal_progress(
             "source_ref": source_ref,
             "updated_at": timestamp,
         }
-        artifact_path = (
-            _delivery_root(omo_dir)
-            / "goals"
-            / f"{goal_id}-progress-{_timestamp_slug(timestamp)}.yaml"
-        )
+        artifact_path = _delivery_root(omo_dir) / "goals" / f"{goal_id}-progress-{_timestamp_slug(timestamp)}.yaml"
         write_yaml_atomic(artifact_path, artifact)
 
         parent_step_id = f"ingress:goal-progress:{goal_id}:{timestamp}"
@@ -292,14 +286,14 @@ def update_goal_progress(
             details=details,
             audit_file=_audit_log_path(omo_dir),
         )
-        _record_trail(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_trail(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=f"broker:{actor}",
             action="update_goal_progress",
             target=f".omo/goals/current.yaml#{goal_id}",
             parent_step_id=parent_step_id,
         )
-        _record_mutation(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_mutation(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=actor,
             action="update_goal_progress",
@@ -315,9 +309,7 @@ def update_goal_progress(
 def _load_goal_documents(goal_file: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     """Load frontmatter and body separately, including a damaged missing opener."""
     documents = [
-        document
-        for document in yaml.safe_load_all(goal_file.read_text(encoding="utf-8"))
-        if isinstance(document, dict)
+        document for document in yaml.safe_load_all(goal_file.read_text(encoding="utf-8")) if isinstance(document, dict)
     ]
     if not documents:
         raise ValueError(f"goals file must contain a mapping: {goal_file}")
@@ -338,9 +330,7 @@ def _write_goal_documents(
     payload: dict[str, Any],
 ) -> None:
     """Write the canonical two-document goals format atomically."""
-    frontmatter_yaml = yaml.safe_dump(
-        frontmatter, sort_keys=False, allow_unicode=True
-    ).rstrip()
+    frontmatter_yaml = yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=True).rstrip()
     payload_yaml = yaml.safe_dump(payload, sort_keys=False, allow_unicode=True).rstrip()
     content = f"---\n{frontmatter_yaml}\n---\n{payload_yaml}\n"
     write_text_atomic(goal_file, content)
@@ -363,9 +353,7 @@ def reconcile_goals(
     if not goal_file.exists():
         raise FileNotFoundError(f"missing goals/current.yaml: {goal_file}")
     if phase < 0 or not current_wave.strip():
-        raise ValueError(
-            "phase must be non-negative and current_wave must be non-empty"
-        )
+        raise ValueError("phase must be non-negative and current_wave must be non-empty")
     if not execution_mode.strip():
         raise ValueError("execution_mode must be non-empty")
 
@@ -412,11 +400,7 @@ def reconcile_goals(
             "source_ref": source_ref,
             "updated_at": timestamp,
         }
-        artifact_path = (
-            _delivery_root(omo_dir)
-            / "goals"
-            / f"reconcile-{_timestamp_slug(timestamp)}.yaml"
-        )
+        artifact_path = _delivery_root(omo_dir) / "goals" / f"reconcile-{_timestamp_slug(timestamp)}.yaml"
         write_yaml_atomic(artifact_path, artifact)
 
         parent_step_id = f"ingress:goal-reconcile:{timestamp}"
@@ -431,14 +415,14 @@ def reconcile_goals(
             details=details,
             audit_file=_audit_log_path(omo_dir),
         )
-        _record_trail(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_trail(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=f"broker:{actor}",
             action="reconcile_goals",
             target=".omo/goals/current.yaml",
             parent_step_id=parent_step_id,
         )
-        _record_mutation(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_mutation(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=actor,
             action="reconcile_goals",

@@ -8,8 +8,8 @@ import pytest
 
 from omo.omo_adjudication import (
     ADJUDICATION_SCHEMA,
-    AdjudicationStore,
     VALID_VERDICTS,
+    AdjudicationStore,
 )
 from omo.omo_io import AppendOnlyLog
 

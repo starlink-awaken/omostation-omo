@@ -318,9 +318,7 @@ def test_build_reporting_diff_packet_surfaces_added_and_removed_owners() -> None
         prior_packet=prior,
     )
 
-    assert [entry["owner"] for entry in packet["owners"]["compared"]] == [
-        "commerce-governance"
-    ]
+    assert [entry["owner"] for entry in packet["owners"]["compared"]] == ["commerce-governance"]
     assert packet["owners"]["added"] == [{"owner": "new-owner"}]
     assert packet["owners"]["removed"] == [{"owner": "old-owner"}]
 

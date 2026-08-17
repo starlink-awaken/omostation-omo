@@ -108,22 +108,16 @@ def _check_path_acl() -> dict:
     warn_findings = [
         f
         for f in (report.get("findings") or [])
-        if f.get("kind") in ("world_writable", "mode_777")
-        or f.get("severity") in ("warn", "halt")
+        if f.get("kind") in ("world_writable", "mode_777") or f.get("severity") in ("warn", "halt")
     ]
     # ignore pure info "ok" / missing_optional
-    actionable = [
-        f
-        for f in warn_findings
-        if f.get("kind") in ("world_writable", "mode_777", "stat_error")
-    ]
+    actionable = [f for f in warn_findings if f.get("kind") in ("world_writable", "mode_777", "stat_error")]
     if not actionable:
         return {
             "id": "path-acl",
             "status": "ok",
             "detail": (
-                f"surfaces={report.get('surface_count', 0)} "
-                f"no world-writable/0777 (strict={report.get('strict')})"
+                f"surfaces={report.get('surface_count', 0)} no world-writable/0777 (strict={report.get('strict')})"
             ),
             "meta": {
                 "warn_count": report.get("warn_count", 0),
@@ -163,9 +157,7 @@ def cmd_doctor(json_output: bool = False) -> int:
         try:
             results.append(check_fn())
         except Exception as e:
-            results.append(
-                {"id": check_fn.__name__, "status": "error", "detail": str(e)}
-            )
+            results.append({"id": check_fn.__name__, "status": "error", "detail": str(e)})
 
     ok_count = sum(1 for r in results if r["status"] == "ok")
     warn_count = sum(1 for r in results if r["status"] == "warn")
@@ -195,13 +187,9 @@ def cmd_doctor(json_output: bool = False) -> int:
     else:
         print("=== omo doctor ===\n")
         for r in results:
-            icon = {"ok": "OK", "warn": "WARN", "fail": "FAIL", "error": "ERR"}.get(
-                r["status"], "?"
-            )
+            icon = {"ok": "OK", "warn": "WARN", "fail": "FAIL", "error": "ERR"}.get(r["status"], "?")
             print(f"  [{icon}] {r['id']}: {r['detail']}")
-        print(
-            f"\nSummary: {ok_count} ok, {warn_count} warn, {fail_count} fail, {error_count} error"
-        )
+        print(f"\nSummary: {ok_count} ok, {warn_count} warn, {fail_count} fail, {error_count} error")
 
     if fail_count > 0 or error_count > 0:
         return 1

@@ -58,9 +58,7 @@ def content_hash(file_path: Path) -> str:
         return "ERROR"
 
 
-def find_markdown_files(
-    root: Path, exclude_patterns: list[str] | None = None
-) -> list[Path]:
+def find_markdown_files(root: Path, exclude_patterns: list[str] | None = None) -> list[Path]:
     patterns = exclude_patterns or [
         ".venv",
         "node_modules",
@@ -178,9 +176,7 @@ def cmd_vault(
     if output:
         out_path = WORKSPACE_ROOT / output
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(
-            json.dumps(audit, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+        out_path.write_text(json.dumps(audit, indent=2, ensure_ascii=False), encoding="utf-8")
         if not json_output:
             print(f"\nFull audit written to {out_path.relative_to(WORKSPACE_ROOT)}")
 

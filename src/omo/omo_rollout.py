@@ -33,25 +33,17 @@ def evaluate_rollout_envelope(root: Path, envelope_ref: Path) -> dict[str, Any]:
     rule = _resolve_rollout_rule(policy, str(execution_context["action"]))
 
     required_evidence_refs = list(rule.get("required_evidence_refs", []))
-    missing_evidence_refs = [
-        ref for ref in required_evidence_refs if not (root / ref).exists()
-    ]
+    missing_evidence_refs = [ref for ref in required_evidence_refs if not (root / ref).exists()]
     runtime_residue_paths = list(rollout_context.get("runtime_residue_paths", []))
     allowed_runtime_roots = list(runtime_boundary.get("allowed_runtime_roots", []))
     disallowed_runtime_paths = [
-        path
-        for path in runtime_residue_paths
-        if not _is_allowed_runtime_path(path, allowed_runtime_roots)
+        path for path in runtime_residue_paths if not _is_allowed_runtime_path(path, allowed_runtime_roots)
     ]
     approval_status = approval.get("approval_status")
     required_approval_status = rule.get("required_approval_status")
 
     decision = "allow"
-    if (
-        approval_status != required_approval_status
-        or missing_evidence_refs
-        or disallowed_runtime_paths
-    ):
+    if approval_status != required_approval_status or missing_evidence_refs or disallowed_runtime_paths:
         decision = "deny"
 
     return {
@@ -75,9 +67,7 @@ def _acceptance_ref_for_envelope(envelope_ref: Path) -> str:
     return f".omo/workers/runs/{stem}-acceptance.yaml"
 
 
-def accept_rollout_envelope(
-    root: Path, envelope_ref: Path, accepted_by: str, now: str
-) -> dict[str, str]:
+def accept_rollout_envelope(root: Path, envelope_ref: Path, accepted_by: str, now: str) -> dict[str, str]:
     result = evaluate_rollout_envelope(root, envelope_ref)
     if result["decision"] != "allow":
         raise ValueError("rollout envelope must evaluate to allow before acceptance")
@@ -103,12 +93,8 @@ def accept_rollout_envelope(
             "runtime_boundary_ref": rollout_context["runtime_boundary_ref"],
         },
         "evidence": {
-            "acceptance_evidence_refs": list(
-                rollout_context.get("acceptance_evidence_refs", [])
-            ),
-            "runtime_residue_paths": list(
-                rollout_context.get("runtime_residue_paths", [])
-            ),
+            "acceptance_evidence_refs": list(rollout_context.get("acceptance_evidence_refs", [])),
+            "runtime_residue_paths": list(rollout_context.get("runtime_residue_paths", [])),
         },
     }
     write_yaml_atomic(root / acceptance_ref, acceptance_record)

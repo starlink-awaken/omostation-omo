@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 try:
     from datetime import UTC
 except ImportError:
-    UTC = timezone.utc
+    UTC = UTC
 from pathlib import Path
 
 DB_PATH = Path(__file__).resolve().parents[4] / "data" / "cards" / "cards.db"
@@ -110,9 +110,7 @@ def _get_db() -> sqlite3.Connection:
     return conn
 
 
-def _record_history(
-    conn, card_id: str, old_status: str | None, new_status: str, note: str = ""
-):
+def _record_history(conn, card_id: str, old_status: str | None, new_status: str, note: str = ""):
     conn.execute(
         "INSERT INTO card_history (card_id, old_status, new_status, changed_at, note) VALUES (?, ?, ?, ?, ?)",
         (card_id, old_status, new_status, _now(), note),
@@ -176,9 +174,7 @@ def cmd_create(args):
     tags = json.dumps(args.tags if args.tags else [])
     extra = json.dumps({"severity": args.severity} if args.severity else {})
 
-    default_status = {"idea": "flash", "research": "identified"}.get(
-        args.type, "planned"
-    )
+    default_status = {"idea": "flash", "research": "identified"}.get(args.type, "planned")
     conn.execute(
         """INSERT INTO cards (id, type, status, title, domain, priority, summary, content, parent_id, created_at, updated_at, deadline, tags, extra)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -219,9 +215,7 @@ def cmd_list(args):
         params.extend(statuses)
     else:
         # Default: only active cards
-        conditions.append(
-            "status NOT IN ('done','resolved','discarded','archived','superseded','cancelled')"
-        )
+        conditions.append("status NOT IN ('done','resolved','discarded','archived','superseded','cancelled')")
 
     if getattr(args, "card_type", None):
         conditions.append("type = ?")
@@ -267,9 +261,7 @@ def cmd_show(args):
 
     print(f"\n{'─' * 80}")
     print(f"[{row['priority']}] {row['id']}")
-    print(
-        f"  Type: {row['type']}  |  Status: {row['status']}  |  Domain: {row['domain']}"
-    )
+    print(f"  Type: {row['type']}  |  Status: {row['status']}  |  Domain: {row['domain']}")
     print(f"  Created: {row['created_at']}  |  Updated: {row['updated_at']}")
     if row["deadline"]:
         print(f"  Deadline: {row['deadline']}")
@@ -320,9 +312,7 @@ def cmd_update(args):
     new_content = args.content if args.content is not None else row["content"]
     new_priority = args.priority if args.priority else row["priority"]
     new_deadline = args.deadline if args.deadline is not None else row["deadline"]
-    new_review_due = (
-        args.review_due if args.review_due is not None else row["review_due"]
-    )
+    new_review_due = args.review_due if args.review_due is not None else row["review_due"]
 
     note = args.note or "updated"
 
@@ -421,9 +411,7 @@ def cmd_check(args):
         (now.strftime("%Y-%m-%d"),),
     ).fetchall()
     for r in overdue:
-        violations.append(
-            f"⚠️  OVERDUE: {r['id']} '{r['title']}' (since {r['deadline']})"
-        )
+        violations.append(f"⚠️  OVERDUE: {r['id']} '{r['title']}' (since {r['deadline']})")
 
     # Check review_due
     review_overdue = conn.execute(
@@ -431,9 +419,7 @@ def cmd_check(args):
         (now.strftime("%Y-%m-%d"),),
     ).fetchall()
     for r in review_overdue:
-        violations.append(
-            f"🔴 REVIEW OVERDUE: {r['id']} '{r['title']}' (since {r['review_due']})"
-        )
+        violations.append(f"🔴 REVIEW OVERDUE: {r['id']} '{r['title']}' (since {r['review_due']})")
 
     # Check flash ideas older than 48h
     two_days_ago = datetime.now(UTC).strftime("%Y-%m-%d")
@@ -442,9 +428,7 @@ def cmd_check(args):
         (two_days_ago,),
     ).fetchall()
     for r in flash_old:
-        violations.append(
-            f"💡 Stale flash idea: {r['id']} '{r['title']}' (created {r['created_at']})"
-        )
+        violations.append(f"💡 Stale flash idea: {r['id']} '{r['title']}' (created {r['created_at']})")
 
     # Check incubating > 14 days
     from datetime import timedelta
@@ -455,9 +439,7 @@ def cmd_check(args):
         (two_weeks_ago,),
     ).fetchall()
     for r in incubating_stale:
-        violations.append(
-            f"💡 Incubating > 14 days: {r['id']} '{r['title']}' (since {r['created_at']})"
-        )
+        violations.append(f"💡 Incubating > 14 days: {r['id']} '{r['title']}' (since {r['created_at']})")
 
     conn.close()
 
@@ -737,15 +719,9 @@ def cmd_generate_views(args=None):
 | 活跃卡片 | {active} |
 | 活跃债务 | {debt_count} |
 | 卡片类型分布 | task({
-        _get_db()
-        .execute("SELECT COUNT(*) FROM cards WHERE type='task' AND status!='done'")
-        .fetchone()[0]
+        _get_db().execute("SELECT COUNT(*) FROM cards WHERE type='task' AND status!='done'").fetchone()[0]
     })·idea({
-        _get_db()
-        .execute(
-            "SELECT COUNT(*) FROM cards WHERE type='idea' AND status NOT IN ('discarded')"
-        )
-        .fetchone()[0]
+        _get_db().execute("SELECT COUNT(*) FROM cards WHERE type='idea' AND status NOT IN ('discarded')").fetchone()[0]
     })·debt({debt_count})·delivery·research |
 
 ## Phase 进度
@@ -937,18 +913,14 @@ def cmd_migrate(args):
             continue
 
         # Check if exists
-        existing = conn.execute(
-            "SELECT id FROM cards WHERE id = ?", (card_id,)
-        ).fetchone()
+        existing = conn.execute("SELECT id FROM cards WHERE id = ?", (card_id,)).fetchone()
         if existing:
             print(f"⏭  Skipping {card_id}: already exists")
             skipped += 1
             continue
 
         now = _now()
-        tags = json.dumps(
-            [t.strip() for t in fm.get("tags", "").strip("[]").split(",") if t.strip()]
-        )
+        tags = json.dumps([t.strip() for t in fm.get("tags", "").strip("[]").split(",") if t.strip()])
         extra = json.dumps(
             {
                 "severity": fm.get("severity", ""),
@@ -979,9 +951,7 @@ def cmd_migrate(args):
                 extra,
             ),
         )
-        _record_history(
-            conn, card_id, None, fm.get("status", "planned"), "imported from v1"
-        )
+        _record_history(conn, card_id, None, fm.get("status", "planned"), "imported from v1")
         imported += 1
         print(f"✅ {card_id}: {fm.get('title', '')}")
 
@@ -1054,16 +1024,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--output", default="")
 
     # minerva-ingest
-    p = sub.add_parser(
-        "minerva-ingest", help="Bridge: Minerva deep research → CARDS card"
-    )
+    p = sub.add_parser("minerva-ingest", help="Bridge: Minerva deep research → CARDS card")
     p.add_argument("id")
     p.add_argument("--level", default="L1")
 
     # generate-views
-    sub.add_parser(
-        "generate-views", help="Generate architecture views (Layer A+B) from SSOT"
-    )
+    sub.add_parser("generate-views", help="Generate architecture views (Layer A+B) from SSOT")
 
     # daemon
     sub.add_parser("daemon", help="Run generate + check + DASHBOARD update")
@@ -1071,9 +1037,7 @@ def main(argv: list[str] | None = None) -> int:
     # migrate
     p = sub.add_parser("migrate", help="Import v1 markdown cards")
     default_source = (
-        "Documents/@驾驶舱/CARDS"
-        if (Path.home() / "Documents" / "@驾驶舱").exists()
-        else "Documents/@驾驶舱/CARDS"
+        "Documents/@驾驶舱/CARDS" if (Path.home() / "Documents" / "@驾驶舱").exists() else "Documents/@驾驶舱/CARDS"
     )
     p.add_argument("--source", default=str(Path.home() / default_source))
 

@@ -20,9 +20,7 @@ def test_ontoderive_to_eidos_entity():
     """OntoDerive Entity -> Eidos OntologyNode."""
     try:
         Entity = importlib.import_module("engine.engine.formal.entity").Entity
-        to_eidos_entity = importlib.import_module(
-            "engine.ecosystem.eidos_adapter"
-        ).to_eidos_entity
+        to_eidos_entity = importlib.import_module("engine.ecosystem.eidos_adapter").to_eidos_entity
     except ImportError as e:
         print(f"Skip: {e}")
         return
@@ -43,9 +41,7 @@ def test_eidos_to_ontoderive_fact():
     """Eidos Fact -> OntoDerive FormalFact."""
     try:
         Fact = importlib.import_module("eidos.types").Fact
-        from_eidos_fact = importlib.import_module(
-            "engine.ecosystem.eidos_adapter"
-        ).from_eidos_fact
+        from_eidos_fact = importlib.import_module("engine.ecosystem.eidos_adapter").from_eidos_fact
     except ImportError as e:
         print(f"Skip: {e}")
         return
@@ -64,9 +60,7 @@ def test_eidos_to_ontoderive_fact():
 def test_minerva_to_eidos_card():
     """Minerva research result -> Eidos KnowledgeCard."""
     try:
-        research_result_to_card = importlib.import_module(
-            "minerva.knowledge.eidos_adapter"
-        ).research_result_to_card
+        research_result_to_card = importlib.import_module("minerva.knowledge.eidos_adapter").research_result_to_card
     except ImportError as e:
         print(f"Skip: {e}")
         return
@@ -91,9 +85,7 @@ def test_minerva_to_eidos_card():
 def test_eidos_can_validate_ontoderive_output():
     """Eidos validator can validate the converted OntologyNode."""
     try:
-        to_eidos_entity = importlib.import_module(
-            "engine.ecosystem.eidos_adapter"
-        ).to_eidos_entity
+        to_eidos_entity = importlib.import_module("engine.ecosystem.eidos_adapter").to_eidos_entity
         Entity = importlib.import_module("engine.engine.formal.entity").Entity
     except ImportError as e:
         print(f"Skip: {e}")

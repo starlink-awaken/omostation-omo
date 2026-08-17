@@ -116,8 +116,7 @@ def _check_anomalies(
         concentration = top_count / owner_total * 100
         if concentration > 50:
             warnings.append(
-                f"⚠️  Owner 集中度: {top_owner} 持有 {concentration:.0f}% 待处理任务 "
-                f"(单点故障风险, 知识/能力集中)"
+                f"⚠️  Owner 集中度: {top_owner} 持有 {concentration:.0f}% 待处理任务 (单点故障风险, 知识/能力集中)"
             )
 
     # 4. done task 7d 内 0 个 (战略停滞)
@@ -144,9 +143,7 @@ def strategy_audit(base_dir: Path, adapter: str = "ecos") -> int:
     不重复 get_omo_dir (修真前会触发, 修真后已修).
     """
     omo_dir = base_dir
-    print(
-        f"🧠 [Strategic Audit] 正在执行全盘战略审计 (读真实 .omo/tasks/ 数据, adapter: {adapter})..."
-    )
+    print(f"🧠 [Strategic Audit] 正在执行全盘战略审计 (读真实 .omo/tasks/ 数据, adapter: {adapter})...")
 
     done_files, planned_files = _list_task_files(omo_dir)
     all_files = done_files + planned_files
@@ -154,9 +151,7 @@ def strategy_audit(base_dir: Path, adapter: str = "ecos") -> int:
     total_done = len(done_files)
     total_planned = len(planned_files)
 
-    print(
-        f"📊 Task Inventory: {total_done} done + {total_planned} planned = {total} total"
-    )
+    print(f"📊 Task Inventory: {total_done} done + {total_planned} planned = {total} total")
     if total == 0:
         print("✅ No tasks found.")
         return 0
@@ -188,9 +183,7 @@ def strategy_audit(base_dir: Path, adapter: str = "ecos") -> int:
     # 4. Phase
     print()
     print("🌊 Phase Distribution:")
-    for ph, count in sorted(
-        metrics["phase"].items(), key=lambda x: (x[0] == "unphased", x[0])
-    ):
+    for ph, count in sorted(metrics["phase"].items(), key=lambda x: (x[0] == "unphased", x[0])):
         print(f"   {ph:<12} {count:>3}")
 
     # 5. Status
@@ -202,9 +195,7 @@ def strategy_audit(base_dir: Path, adapter: str = "ecos") -> int:
     # 6. 异常告警 (修真版新功能)
     print()
     print("🚨 Anomaly Detection:")
-    warnings = _check_anomalies(
-        metrics, total, omo_dir=omo_dir, pending_metrics=pending_metrics
-    )
+    warnings = _check_anomalies(metrics, total, omo_dir=omo_dir, pending_metrics=pending_metrics)
     if not warnings:
         print("   ✅ 无异常")
     else:
@@ -229,9 +220,7 @@ def strategy_gc(base_dir: Path, adapter: str = "ecos") -> int:
     decay_threshold_days = 28
     decay_threshold_seconds = decay_threshold_days * 24 * 3600
 
-    print(
-        f"♻️ [Entropy GC] 正在扫描 Sandbox (Threshold: {decay_threshold_days} days)..."
-    )
+    print(f"♻️ [Entropy GC] 正在扫描 Sandbox (Threshold: {decay_threshold_days} days)...")
 
     if not sandbox_dir.is_dir():
         print(f"   (Sandbox 目录 {sandbox_dir} 不存在, 跳过)")
@@ -257,16 +246,10 @@ def strategy_gc(base_dir: Path, adapter: str = "ecos") -> int:
 
 
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(
-        description="C2G Strategy Engine (Round 43 P1 修真)"
-    )
+    parser = argparse.ArgumentParser(description="C2G Strategy Engine (Round 43 P1 修真)")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser(
-        "audit", help="真审计: 读 .omo/tasks/ 真实数据, 修真前 mock 已废弃"
-    )
-    subparsers.add_parser(
-        "gc", help="真 GC: 读 sandbox/pitches/ 真 mtime, 修真前 mock 已废弃"
-    )
+    subparsers.add_parser("audit", help="真审计: 读 .omo/tasks/ 真实数据, 修真前 mock 已废弃")
+    subparsers.add_parser("gc", help="真 GC: 读 sandbox/pitches/ 真 mtime, 修真前 mock 已废弃")
 
     args = parser.parse_args(argv)
     omo_dir = get_omo_dir(Path.cwd())

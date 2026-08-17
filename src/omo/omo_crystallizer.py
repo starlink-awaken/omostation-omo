@@ -109,7 +109,7 @@ class SkillCrystallizer:
         skill_file = skill_dir / "SKILL.md"
 
         belief_ids = {b["id"] for b in beliefs}
-        topic_lessons = [ls for ls in lessons if ls.get("belief_id") in belief_ids]
+        topic_lessons = [lesson for lesson in lessons if lesson.get("belief_id") in belief_ids]
         topic_contexts = [c for c in contexts if c.get("belief_id") in belief_ids]
 
         if skill_file.exists():
@@ -188,9 +188,9 @@ class SkillCrystallizer:
 
         lines.append("## Standard Workflow")
         lines.append("")
-        lines.append(f"1. Run `make gac-local-gate` — all checks must pass.")
+        lines.append("1. Run `make gac-local-gate` — all checks must pass.")
         lines.append(f"2. For `{topic}` changes, use isolated worktree.")
-        lines.append(f"3. Verify with targeted tests before expanding scope.")
+        lines.append("3. Verify with targeted tests before expanding scope.")
         lines.append("")
 
         return "\n".join(lines)

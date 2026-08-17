@@ -11,15 +11,14 @@ from typing import Any
 # P105 R1: ingress-check 子模块 re-export.  These names remain a public
 # facade for CLI lint commands and downstream governance callers.
 from .omo_governance_surfaces_ingress import (
-    _check_ingress_registry,  # noqa: F401
-    _resolve_ingress_task_carrier,  # noqa: F401
+    _check_ingress_registry,
+    _resolve_ingress_task_carrier,
 )
 
 # P106 R1: task-policy + ingress-artifacts 子模块 re-export
 from .omo_governance_surfaces_ingress_artifacts import (
-    _check_ingress_artifacts,  # noqa: F401
+    _check_ingress_artifacts,
 )
-
 
 # P110 R1: build_governance_surfaces_report 子模块 (extracted 254L from omo_governance_surfaces.py)
 # Re-export 保持向后兼容 (cli.py / external callers)
@@ -83,10 +82,9 @@ def _check_c2g_omo_boundary(
         try:
             tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
         except SyntaxError as exc:
-            violations.append(
-                f"failed to parse {py_file.relative_to(workspace_root)}: {exc}"
-            )
+            violations.append(f"failed to parse {py_file.relative_to(workspace_root)}: {exc}")
             continue
+
         def _is_vendored_internal(module: str) -> bool:
             # ADR-0412: 内包后 _vendored 包内互引非越界 — 只拦散弹式内核直连
             return module.startswith("omo._vendored")
@@ -121,17 +119,13 @@ def _load_yaml(path):  # type: ignore[no-redef]
 def _check_task_policy_registry(
     workspace_root: Path,
 ) -> tuple[dict[str, Any], list[str]]:
-    registry_path = (
-        workspace_root / ".omo" / "_truth" / "registry" / "task-policies.yaml"
-    )
+    registry_path = workspace_root / ".omo" / "_truth" / "registry" / "task-policies.yaml"
     if not registry_path.exists():
         return {
             "exists": False,
             "path": str(registry_path),
             "registered_policy_names": [],
-            "runtime_policy_names": [
-                item["name"] for item in task_policy_registry_snapshot()
-            ],
+            "runtime_policy_names": [item["name"] for item in task_policy_registry_snapshot()],
         }, ["task policy registry missing"]
 
     registry = _load_yaml(registry_path)
@@ -141,9 +135,7 @@ def _check_task_policy_registry(
             "exists": True,
             "path": str(registry_path),
             "registered_policy_names": [],
-            "runtime_policy_names": [
-                item["name"] for item in task_policy_registry_snapshot()
-            ],
+            "runtime_policy_names": [item["name"] for item in task_policy_registry_snapshot()],
         }, ["task policy registry: policies block missing or not a list"]
 
     registered_items = [item for item in policies if isinstance(item, dict)]
@@ -179,20 +171,10 @@ def _check_task_policy_registry(
     issues: list[str] = []
     registered_names = sorted(registered_by_name)
     runtime_names = sorted(runtime_by_name)
-    missing_in_registry = sorted(
-        name for name in runtime_names if name not in registered_by_name
-    )
-    stale_in_registry = sorted(
-        name for name in registered_names if name not in runtime_by_name
-    )
-    issues.extend(
-        f"task policy registry missing runtime policy: {name}"
-        for name in missing_in_registry
-    )
-    issues.extend(
-        f"task policy registry contains stale policy: {name}"
-        for name in stale_in_registry
-    )
+    missing_in_registry = sorted(name for name in runtime_names if name not in registered_by_name)
+    stale_in_registry = sorted(name for name in registered_names if name not in runtime_by_name)
+    issues.extend(f"task policy registry missing runtime policy: {name}" for name in missing_in_registry)
+    issues.extend(f"task policy registry contains stale policy: {name}" for name in stale_in_registry)
 
     for name in sorted(set(registered_by_name).intersection(runtime_by_name)):
         if registered_by_name[name] != runtime_by_name[name]:
@@ -203,9 +185,7 @@ def _check_task_policy_registry(
         "path": str(registry_path),
         "registered_policy_names": registered_names,
         "runtime_policy_names": runtime_names,
-        "registered_policies": [
-            registered_by_name[name] | {"name": name} for name in registered_names
-        ],
+        "registered_policies": [registered_by_name[name] | {"name": name} for name in registered_names],
         "runtime_policies": runtime_items,
     }, issues
 
@@ -218,9 +198,7 @@ def _load_yaml(path):  # type: ignore[no-redef]
 def _check_internal_write_profile_registry(
     workspace_root: Path,
 ) -> tuple[dict[str, Any], list[str]]:
-    registry_path = (
-        workspace_root / ".omo" / "_truth" / "registry" / "internal-write-profiles.yaml"
-    )
+    registry_path = workspace_root / ".omo" / "_truth" / "registry" / "internal-write-profiles.yaml"
     runtime_items = _worker_internal_write_profiles_snapshot()
     if not registry_path.exists():
         return {
@@ -242,39 +220,27 @@ def _check_internal_write_profile_registry(
             "runtime_profiles": runtime_items,
         }, ["internal write profile registry: profiles block missing or not a list"]
 
-    registered_items = [
-        item for item in profiles if isinstance(item, dict) and item.get("name")
-    ]
+    registered_items = [item for item in profiles if isinstance(item, dict) and item.get("name")]
     keys = ("runtime_ref", "category", "subtype", "writes", "promotion_surface", "note")
-    registered_by_name = {
-        str(item["name"]): {k: item.get(k) for k in keys} for item in registered_items
-    }
-    runtime_by_name = {
-        str(item["name"]): {k: item.get(k) for k in keys} for item in runtime_items
-    }
+    registered_by_name = {str(item["name"]): {k: item.get(k) for k in keys} for item in registered_items}
+    runtime_by_name = {str(item["name"]): {k: item.get(k) for k in keys} for item in runtime_items}
     registered_names = sorted(registered_by_name)
     runtime_names = sorted(runtime_by_name)
     issues: list[str] = []
     for name in sorted(set(runtime_names) - set(registered_names)):
-        issues.append(
-            f"internal write profile registry missing runtime profile: {name}"
-        )
+        issues.append(f"internal write profile registry missing runtime profile: {name}")
     for name in sorted(set(registered_names) - set(runtime_names)):
         issues.append(f"internal write profile registry contains stale profile: {name}")
     for name in sorted(set(registered_names).intersection(runtime_names)):
         if registered_by_name[name] != runtime_by_name[name]:
             issues.append(f"internal write profile registry drift for {name}")
-    registered_profiles = [
-        registered_by_name[name] | {"name": name} for name in registered_names
-    ]
+    registered_profiles = [registered_by_name[name] | {"name": name} for name in registered_names]
     return {
         "exists": True,
         "path": str(registry_path),
         "registered_profile_names": registered_names,
         "runtime_profile_names": runtime_names,
-        "registered_subtype_counts": _worker_profile_subtype_counts(
-            registered_profiles
-        ),
+        "registered_subtype_counts": _worker_profile_subtype_counts(registered_profiles),
         "runtime_subtype_counts": _worker_profile_subtype_counts(runtime_items),
         "registered_profiles": registered_profiles,
         "runtime_profiles": runtime_items,
@@ -305,9 +271,7 @@ def _load_yaml(path):  # type: ignore[no-redef]
 def _check_mutation_surface_registry(
     workspace_root: Path,
 ) -> tuple[dict[str, Any], list[str]]:
-    registry_path = (
-        workspace_root / ".omo" / "_truth" / "registry" / "mutation-surfaces.yaml"
-    )
+    registry_path = workspace_root / ".omo" / "_truth" / "registry" / "mutation-surfaces.yaml"
     runtime_items = _mutation_surface_registry_snapshot()
     if not registry_path.exists():
         return {
@@ -329,9 +293,7 @@ def _check_mutation_surface_registry(
             "runtime_surfaces": runtime_items,
         }, ["mutation surface registry: surfaces block missing or not a list"]
 
-    registered_items = [
-        item for item in surfaces if isinstance(item, dict) and item.get("name")
-    ]
+    registered_items = [item for item in surfaces if isinstance(item, dict) and item.get("name")]
     registered_by_name = {
         str(item["name"]): {
             k: item.get(k)
@@ -381,9 +343,7 @@ def _check_mutation_surface_registry(
             [registered_by_name[name] | {"name": name} for name in registered_names]
         ),
         "runtime_category_counts": _mutation_surface_category_counts(runtime_items),
-        "registered_surfaces": [
-            registered_by_name[name] | {"name": name} for name in registered_names
-        ],
+        "registered_surfaces": [registered_by_name[name] | {"name": name} for name in registered_names],
         "runtime_surfaces": runtime_items,
     }, issues
 
@@ -457,9 +417,7 @@ EXPECTED_ASSET_LIFECYCLE_BY_TYPE: dict[str, tuple[str, str]] = {
 def _check_state_plane_asset_registry(
     workspace_root: Path,
 ) -> tuple[dict[str, Any], list[str]]:
-    registry_path = (
-        workspace_root / ".omo" / "_truth" / "registry" / "omo-governance-surfaces.yaml"
-    )
+    registry_path = workspace_root / ".omo" / "_truth" / "registry" / "omo-governance-surfaces.yaml"
     if not registry_path.exists():
         return {
             "exists": False,
@@ -473,10 +431,7 @@ def _check_state_plane_asset_registry(
     registry = _load_yaml(registry_path)
     assets = [item for item in registry.get("assets", []) if isinstance(item, dict)]
     top_level_assets = [
-        item
-        for item in assets
-        if item.get("plane") == "state_plane"
-        and str(item.get("ref", "")).startswith(".omo/")
+        item for item in assets if item.get("plane") == "state_plane" and str(item.get("ref", "")).startswith(".omo/")
     ]
 
     persistence_mode_counts: dict[str, int] = {}
@@ -496,31 +451,22 @@ def _check_state_plane_asset_registry(
         if not isinstance(persistence_mode, str) or not persistence_mode:
             issues.append(f"state plane asset missing persistence_mode: {ref}")
         elif persistence_mode not in ALLOWED_PERSISTENCE_MODES:
-            issues.append(
-                f"state plane asset invalid persistence_mode {persistence_mode!r}: {ref}"
-            )
+            issues.append(f"state plane asset invalid persistence_mode {persistence_mode!r}: {ref}")
         else:
-            persistence_mode_counts[persistence_mode] = (
-                persistence_mode_counts.get(persistence_mode, 0) + 1
-            )
+            persistence_mode_counts[persistence_mode] = persistence_mode_counts.get(persistence_mode, 0) + 1
 
         if not isinstance(retention_mode, str) or not retention_mode:
             issues.append(f"state plane asset missing retention_mode: {ref}")
         elif retention_mode not in ALLOWED_RETENTION_MODES:
-            issues.append(
-                f"state plane asset invalid retention_mode {retention_mode!r}: {ref}"
-            )
+            issues.append(f"state plane asset invalid retention_mode {retention_mode!r}: {ref}")
         else:
-            retention_mode_counts[retention_mode] = (
-                retention_mode_counts.get(retention_mode, 0) + 1
-            )
+            retention_mode_counts[retention_mode] = retention_mode_counts.get(retention_mode, 0) + 1
 
         expected = EXPECTED_ASSET_LIFECYCLE_BY_TYPE.get(asset_type)
-        if (
-            expected
-            and isinstance(persistence_mode, str)
-            and isinstance(retention_mode, str)
-        ) and (persistence_mode, retention_mode) != expected:
+        if (expected and isinstance(persistence_mode, str) and isinstance(retention_mode, str)) and (
+            persistence_mode,
+            retention_mode,
+        ) != expected:
             issues.append(
                 "state plane asset lifecycle drift "
                 f"for {ref}: expected {expected[0]}/{expected[1]}, "
@@ -550,9 +496,7 @@ def _asset_ref_to_top_level(ref: str) -> str:
 
 def _top_level_entries(omo_dir: Path) -> list[str]:
     ignored = {".DS_Store", "__pycache__", ".omo", "_derived"}
-    return sorted(
-        entry.name for entry in omo_dir.iterdir() if entry.name not in ignored
-    )
+    return sorted(entry.name for entry in omo_dir.iterdir() if entry.name not in ignored)
 
 
 def _check_goals_runtime_entry(omo_dir: Path) -> tuple[dict[str, Any], list[str]]:
@@ -564,23 +508,17 @@ def _check_goals_runtime_entry(omo_dir: Path) -> tuple[dict[str, Any], list[str]
         "exists": goals_path.exists(),
         "is_symlink": goals_path.is_symlink(),
         "resolves_to_truth": False,
-        "current_exists": (goals_path / "current.yaml").exists()
-        if goals_path.exists()
-        else False,
+        "current_exists": (goals_path / "current.yaml").exists() if goals_path.exists() else False,
     }
     issues: list[str] = []
     if not goals_path.exists():
         issues.append("goals runtime entry missing: .omo/goals")
         return summary, issues
     if not goals_path.is_symlink():
-        issues.append(
-            "goals runtime entry must be a symlink: .omo/goals -> .omo/_truth/goals"
-        )
+        issues.append("goals runtime entry must be a symlink: .omo/goals -> .omo/_truth/goals")
         return summary, issues
     try:
-        summary["resolves_to_truth"] = (
-            goals_path.resolve() == truth_goals_path.resolve()
-        )
+        summary["resolves_to_truth"] = goals_path.resolve() == truth_goals_path.resolve()
     except FileNotFoundError:
         summary["resolves_to_truth"] = False
     if not summary["resolves_to_truth"]:
@@ -597,9 +535,7 @@ def _read_c2g_governance_refs(workspace_root: Path) -> tuple[list[str], list[str
     c2g_src = workspace_root / "projects" / "c2g" / "src"
     c2g_pkg = "c2g"
     if not c2g_src.exists():
-        c2g_src = (
-            workspace_root / "projects" / "omo" / "src" / "omo" / "_vendored" / "c2g"
-        )
+        c2g_src = workspace_root / "projects" / "omo" / "src" / "omo" / "_vendored" / "c2g"
         c2g_pkg = "omo._vendored.c2g"
     if not c2g_src.exists():
         issues.append("c2g src missing (legacy projects/c2g and _vendored/c2g)")
@@ -658,10 +594,7 @@ def _has_internal_write_profile_gate(workspace_root: Path) -> bool:
     if not precommit.exists():
         return False
     text = precommit.read_text(encoding="utf-8")
-    return (
-        "omo-internal-write-profile-gate" in text
-        and "lint internal-write-profiles" in text
-    )
+    return "omo-internal-write-profile-gate" in text and "lint internal-write-profiles" in text
 
 
 def _has_state_plane_asset_gate(workspace_root: Path) -> bool:
@@ -717,8 +650,7 @@ def resolve_governance_workspace_root(start: Path | None = None) -> Path:
                 continue
             seen.add(candidate)
             if (candidate / ".omo").exists() and (
-                (candidate / "projects" / "c2g").exists()
-                or (candidate / "projects" / "omo").exists()
+                (candidate / "projects" / "c2g").exists() or (candidate / "projects" / "omo").exists()
             ):
                 return candidate
     for origin in starts:

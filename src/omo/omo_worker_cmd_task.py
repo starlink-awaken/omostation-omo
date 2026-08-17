@@ -76,9 +76,7 @@ def _normalize_planned_packets(
         else:
             normalized_count += 1
 
-    print(
-        f"normalize-planned summary: normalized={normalized_count} archived={archived_count} failed={len(failed)}"
-    )
+    print(f"normalize-planned summary: normalized={normalized_count} archived={archived_count} failed={len(failed)}")
     for failed_task_id, message in failed:
         print(f"FAILED {failed_task_id}: {message}")
     return 0 if not failed else 1
@@ -104,9 +102,7 @@ def setup_task_parser(subparsers: Any) -> None:
     promote_apply_parser.add_argument("--promoted-by", required=True)
     promote_apply_parser.add_argument("--now", required=True)
     promote_apply_parser.add_argument("--omo-dir", default=".omo")
-    self_evolution_route_parser = task_sub.add_parser(
-        "route-self-evolution-remediation"
-    )
+    self_evolution_route_parser = task_sub.add_parser("route-self-evolution-remediation")
     self_evolution_route_parser.add_argument("task_id")
     self_evolution_route_parser.add_argument("--actor", required=True)
     self_evolution_route_parser.add_argument("--now", required=True)
@@ -135,64 +131,36 @@ def setup_task_parser(subparsers: Any) -> None:
     approval_queue_status_parser = task_sub.add_parser("approval-queue-status")
     approval_queue_status_parser.add_argument("--omo-dir", default=".omo")
     approval_queue_status_parser.add_argument("--now")
-    promotion_approval_history_parser = task_sub.add_parser(
-        "promotion-approval-history"
-    )
+    promotion_approval_history_parser = task_sub.add_parser("promotion-approval-history")
     promotion_approval_history_parser.add_argument("--omo-dir", default=".omo")
     promotion_approval_history_parser.add_argument("--now")
-    promotion_approval_analytics_parser = task_sub.add_parser(
-        "promotion-approval-analytics"
-    )
+    promotion_approval_analytics_parser = task_sub.add_parser("promotion-approval-analytics")
     promotion_approval_analytics_parser.add_argument("--omo-dir", default=".omo")
     promotion_approval_analytics_parser.add_argument("--now")
     governance_overlay_status_parser = task_sub.add_parser("governance-overlay-status")
     governance_overlay_status_parser.add_argument("--omo-dir", default=".omo")
     governance_overlay_status_parser.add_argument("--now")
-    governance_overlay_approval_prep_status_parser = task_sub.add_parser(
-        "governance-overlay-approval-prep-status"
-    )
-    governance_overlay_approval_prep_status_parser.add_argument(
-        "--omo-dir", default=".omo"
-    )
+    governance_overlay_approval_prep_status_parser = task_sub.add_parser("governance-overlay-approval-prep-status")
+    governance_overlay_approval_prep_status_parser.add_argument("--omo-dir", default=".omo")
     governance_overlay_approval_prep_status_parser.add_argument("--now")
-    governance_overlay_approval_prep_history_parser = task_sub.add_parser(
-        "governance-overlay-approval-prep-history"
-    )
-    governance_overlay_approval_prep_history_parser.add_argument(
-        "--omo-dir", default=".omo"
-    )
+    governance_overlay_approval_prep_history_parser = task_sub.add_parser("governance-overlay-approval-prep-history")
+    governance_overlay_approval_prep_history_parser.add_argument("--omo-dir", default=".omo")
     governance_overlay_approval_prep_history_parser.add_argument("--now")
     governance_overlay_approval_prep_analytics_parser = task_sub.add_parser(
         "governance-overlay-approval-prep-analytics"
     )
-    governance_overlay_approval_prep_analytics_parser.add_argument(
-        "--omo-dir", default=".omo"
-    )
+    governance_overlay_approval_prep_analytics_parser.add_argument("--omo-dir", default=".omo")
     governance_overlay_approval_prep_analytics_parser.add_argument("--now")
-    governance_overlay_approval_prep_aging_parser = task_sub.add_parser(
-        "governance-overlay-approval-prep-aging"
-    )
-    governance_overlay_approval_prep_aging_parser.add_argument(
-        "--omo-dir", default=".omo"
-    )
+    governance_overlay_approval_prep_aging_parser = task_sub.add_parser("governance-overlay-approval-prep-aging")
+    governance_overlay_approval_prep_aging_parser.add_argument("--omo-dir", default=".omo")
     governance_overlay_approval_prep_aging_parser.add_argument("--now")
-    governance_overlay_approval_prep_diff_parser = task_sub.add_parser(
-        "governance-overlay-approval-prep-diff"
-    )
-    governance_overlay_approval_prep_diff_parser.add_argument(
-        "--omo-dir", default=".omo"
-    )
+    governance_overlay_approval_prep_diff_parser = task_sub.add_parser("governance-overlay-approval-prep-diff")
+    governance_overlay_approval_prep_diff_parser.add_argument("--omo-dir", default=".omo")
     governance_overlay_approval_prep_diff_parser.add_argument("--now")
-    governance_overlay_approval_prep_trend_parser = task_sub.add_parser(
-        "governance-overlay-approval-prep-trend"
-    )
-    governance_overlay_approval_prep_trend_parser.add_argument(
-        "--omo-dir", default=".omo"
-    )
+    governance_overlay_approval_prep_trend_parser = task_sub.add_parser("governance-overlay-approval-prep-trend")
+    governance_overlay_approval_prep_trend_parser.add_argument("--omo-dir", default=".omo")
     governance_overlay_approval_prep_trend_parser.add_argument("--now")
-    governance_overlay_run_next_parser = task_sub.add_parser(
-        "governance-overlay-run-next"
-    )
+    governance_overlay_run_next_parser = task_sub.add_parser("governance-overlay-run-next")
     governance_overlay_run_next_parser.add_argument("--omo-dir", default=".omo")
     governance_overlay_run_next_parser.add_argument("--actor", required=True)
     governance_overlay_run_next_parser.add_argument("--now")
@@ -237,9 +205,7 @@ def execute_task_command(args: argparse.Namespace) -> int:
         )
 
     if args.task_command == "promote-eval":
-        return _print_task_promotion_eval(
-            Path.cwd(), args.task_id, omo_dir=args.omo_dir
-        )
+        return _print_task_promotion_eval(Path.cwd(), args.task_id, omo_dir=args.omo_dir)
 
     if args.task_command == "promote-apply":
         return _apply_task_promotion(
@@ -260,14 +226,10 @@ def execute_task_command(args: argparse.Namespace) -> int:
         )
 
     if args.task_command == "promotion-history":
-        return _write_task_promotion_history(
-            Path.cwd(), omo_dir=args.omo_dir, now=args.now
-        )
+        return _write_task_promotion_history(Path.cwd(), omo_dir=args.omo_dir, now=args.now)
 
     if args.task_command == "promotion-readiness":
-        return _write_task_promotion_readiness(
-            Path.cwd(), omo_dir=args.omo_dir, now=args.now
-        )
+        return _write_task_promotion_readiness(Path.cwd(), omo_dir=args.omo_dir, now=args.now)
 
     if args.task_command == "promotion-request-approval":
         return _request_task_promotion_approval(
@@ -297,54 +259,34 @@ def execute_task_command(args: argparse.Namespace) -> int:
         )
 
     if args.task_command == "approval-queue-status":
-        return _write_task_approval_queue_status(
-            Path.cwd(), omo_dir=args.omo_dir, now=args.now
-        )
+        return _write_task_approval_queue_status(Path.cwd(), omo_dir=args.omo_dir, now=args.now)
 
     if args.task_command == "promotion-approval-history":
-        return _write_task_promotion_approval_history(
-            Path.cwd(), omo_dir=args.omo_dir, now=args.now
-        )
+        return _write_task_promotion_approval_history(Path.cwd(), omo_dir=args.omo_dir, now=args.now)
 
     if args.task_command == "promotion-approval-analytics":
-        return _write_task_promotion_approval_analytics(
-            Path.cwd(), omo_dir=args.omo_dir, now=args.now
-        )
+        return _write_task_promotion_approval_analytics(Path.cwd(), omo_dir=args.omo_dir, now=args.now)
 
     if args.task_command == "governance-overlay-status":
-        return _write_task_governance_overlay_status(
-            Path.cwd(), omo_dir=args.omo_dir, now=args.now
-        )
+        return _write_task_governance_overlay_status(Path.cwd(), omo_dir=args.omo_dir, now=args.now)
 
     if args.task_command == "governance-overlay-approval-prep-status":
-        return _write_task_governance_overlay_approval_prep_status(
-            Path.cwd(), omo_dir=args.omo_dir, now=args.now
-        )
+        return _write_task_governance_overlay_approval_prep_status(Path.cwd(), omo_dir=args.omo_dir, now=args.now)
 
     if args.task_command == "governance-overlay-approval-prep-history":
-        return _write_task_governance_overlay_approval_prep_history(
-            Path.cwd(), omo_dir=args.omo_dir, now=args.now
-        )
+        return _write_task_governance_overlay_approval_prep_history(Path.cwd(), omo_dir=args.omo_dir, now=args.now)
 
     if args.task_command == "governance-overlay-approval-prep-analytics":
-        return _write_task_governance_overlay_approval_prep_analytics(
-            Path.cwd(), omo_dir=args.omo_dir, now=args.now
-        )
+        return _write_task_governance_overlay_approval_prep_analytics(Path.cwd(), omo_dir=args.omo_dir, now=args.now)
 
     if args.task_command == "governance-overlay-approval-prep-aging":
-        return _write_task_governance_overlay_approval_prep_aging(
-            Path.cwd(), omo_dir=args.omo_dir, now=args.now
-        )
+        return _write_task_governance_overlay_approval_prep_aging(Path.cwd(), omo_dir=args.omo_dir, now=args.now)
 
     if args.task_command == "governance-overlay-approval-prep-diff":
-        return _write_task_governance_overlay_approval_prep_diff(
-            Path.cwd(), omo_dir=args.omo_dir, now=args.now
-        )
+        return _write_task_governance_overlay_approval_prep_diff(Path.cwd(), omo_dir=args.omo_dir, now=args.now)
 
     if args.task_command == "governance-overlay-approval-prep-trend":
-        return _write_task_governance_overlay_approval_prep_trend(
-            Path.cwd(), omo_dir=args.omo_dir, now=args.now
-        )
+        return _write_task_governance_overlay_approval_prep_trend(Path.cwd(), omo_dir=args.omo_dir, now=args.now)
 
     if args.task_command == "governance-overlay-run-next":
         return _write_task_governance_overlay_run_next(

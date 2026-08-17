@@ -3,19 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
+
 from omo.omo_admission import evaluate_worker_envelope, request_conditional_approval
 
 
 def _write_yaml(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
-    )
+    path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
 
-def test_evaluate_worker_envelope_returns_conditional_approval_for_wave3_dispatch() -> (
-    None
-):
+def test_evaluate_worker_envelope_returns_conditional_approval_for_wave3_dispatch() -> None:
     root = Path(__file__).resolve().parents[2]
 
     result = evaluate_worker_envelope(
@@ -171,18 +168,9 @@ def test_request_conditional_approval_creates_approval_record_and_governance_pro
     )
 
     approval_path = tmp_path / result["approval_ref"]
-    proposal_path = (
-        tmp_path
-        / ".omo"
-        / "_truth"
-        / "task-center"
-        / "proposals"
-        / f"{result['proposal_id']}.yaml"
-    )
+    proposal_path = tmp_path / ".omo" / "_truth" / "task-center" / "proposals" / f"{result['proposal_id']}.yaml"
     envelope = yaml.safe_load(
-        (tmp_path / ".omo" / "workers" / "runs" / "example-envelope.yaml").read_text(
-            encoding="utf-8"
-        )
+        (tmp_path / ".omo" / "workers" / "runs" / "example-envelope.yaml").read_text(encoding="utf-8")
     )
 
     assert approval_path.exists()

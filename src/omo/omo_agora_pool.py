@@ -95,18 +95,12 @@ class _AgoraPool:
         except (OSError, subprocess.SubprocessError):
             return False
 
-    async def invoke(
-        self, uri: str, args: dict[str, Any]
-    ) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
+    async def invoke(self, uri: str, args: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, str] | None]:
         """invoke URI, 返 (result, err). err 非空表示失败."""
         assert self._proc is not None and self._proc.stdin and self._proc.stdout
         async with self._lock:
             try:
-                payload = (
-                    "URI "
-                    + json.dumps({"uri": uri, "args": args}, ensure_ascii=False)
-                    + "\n"
-                )
+                payload = "URI " + json.dumps({"uri": uri, "args": args}, ensure_ascii=False) + "\n"
                 self._proc.stdin.write(payload.encode("utf-8"))
                 await self._proc.stdin.drain()
             except (BrokenPipeError, ConnectionResetError) as exc:
@@ -168,9 +162,7 @@ class _AgoraPoolManager:
         self._cmd = cmd
         self._max_size = max_size
         self._heartbeat_interval = (
-            heartbeat_interval_sec
-            if heartbeat_interval_sec is not None
-            else self.HEARTBEAT_INTERVAL_SEC
+            heartbeat_interval_sec if heartbeat_interval_sec is not None else self.HEARTBEAT_INTERVAL_SEC
         )
         self._idle: collections.deque[_AgoraPool] = collections.deque()
         self._active = 0
@@ -310,9 +302,7 @@ async def _get_agora_pool() -> _AgoraPoolManager | None:
             return None
 
 
-async def _resolve_via_agora_subprocess(
-    uri: str, args: dict[str, Any]
-) -> dict[str, Any] | None:
+async def _resolve_via_agora_subprocess(uri: str, args: dict[str, Any]) -> dict[str, Any] | None:
     """跨进程调 agora venv 跑 resolve_bos_uri (P32 跨进程架构, P42-W2 落地, P43-W0 长驻池).
 
     设计理由:
@@ -346,9 +336,7 @@ async def _resolve_via_agora_subprocess(
                 return result
             except Exception as exc:  # defensive fallback
                 await manager.release(pool, alive=False)
-                record_agora_failure(
-                    uri, "invoke_exception", f"{type(exc).__name__}: {exc}"
-                )
+                record_agora_failure(uri, "invoke_exception", f"{type(exc).__name__}: {exc}")
                 return {
                     "_subprocess_error": f"{type(exc).__name__}: {exc}",
                     "transport": "agora_pool",
@@ -361,9 +349,7 @@ async def _resolve_via_agora_subprocess(
     return result
 
 
-async def _resolve_via_oneoff_subprocess(
-    uri: str, args: dict[str, Any]
-) -> dict[str, Any] | None:
+async def _resolve_via_oneoff_subprocess(uri: str, args: dict[str, Any]) -> dict[str, Any] | None:
     """P42-W2 行为保留: 长驻池不可用时, fallback 到一次性 subprocess.
 
     启动开销 10-15s, 但保证可派发.
@@ -380,9 +366,7 @@ async def _resolve_via_oneoff_subprocess(
 
     import tempfile
 
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".json", delete=False, encoding="utf-8"
-    ) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
         json.dump({"uri": uri, "args": args}, f, ensure_ascii=False)
         args_file = f.name
 
@@ -419,9 +403,7 @@ async def _resolve_via_oneoff_subprocess(
 
     if proc.returncode != 0:
         stderr_text = stderr.decode("utf-8", errors="replace")
-        record_agora_failure(
-            uri, "non_zero_exit", f"rc={proc.returncode} stderr={stderr_text[:200]}"
-        )
+        record_agora_failure(uri, "non_zero_exit", f"rc={proc.returncode} stderr={stderr_text[:200]}")
         return {"_subprocess_error": stderr_text}
 
     try:

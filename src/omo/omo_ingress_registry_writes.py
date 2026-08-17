@@ -89,11 +89,7 @@ def write_capability_registry_bundle(
             "created_at": timestamp,
             "written_at": timestamp,
         }
-        artifact_path = (
-            _delivery_root(omo_dir)
-            / "capabilities"
-            / f"bundle-{_timestamp_slug(timestamp)}.yaml"
-        )
+        artifact_path = _delivery_root(omo_dir) / "capabilities" / f"bundle-{_timestamp_slug(timestamp)}.yaml"
         write_yaml_atomic(artifact_path, artifact)
         _register_ingress(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
             registry,
@@ -159,9 +155,7 @@ def write_manual_capabilities(
     artifact_ref = f"runtime/omo/_delivery/ingress/capabilities/manual-capabilities-{_timestamp_slug(timestamp)}.yaml"
     fingerprint = {
         "kind": "manual-capabilities",
-        "capability_count": len(payload.get("capabilities", []))
-        if isinstance(payload, dict)
-        else 0,
+        "capability_count": len(payload.get("capabilities", [])) if isinstance(payload, dict) else 0,
         "source_ref": source_ref,
     }
 
@@ -179,9 +173,7 @@ def write_manual_capabilities(
             "written_at": timestamp,
         }
         artifact_path = (
-            _delivery_root(omo_dir)
-            / "capabilities"
-            / f"manual-capabilities-{_timestamp_slug(timestamp)}.yaml"
+            _delivery_root(omo_dir) / "capabilities" / f"manual-capabilities-{_timestamp_slug(timestamp)}.yaml"
         )
         write_yaml_atomic(artifact_path, artifact)
         _register_ingress(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
@@ -195,10 +187,7 @@ def write_manual_capabilities(
         )
         _write_registry(omo_dir, registry)  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
         parent_step_id = f"ingress:manual-capabilities:{timestamp}"
-        details = (
-            f"actor={actor} source_ref={source_ref or '-'} "
-            f"artifact={_workspace_relative(artifact_path)}"
-        )
+        details = f"actor={actor} source_ref={source_ref or '-'} artifact={_workspace_relative(artifact_path)}"
         record_audit(
             action="ingress_write_manual_capabilities",
             debt_id="",
@@ -221,11 +210,7 @@ def write_manual_capabilities(
             artifact_ref=artifact_ref,
             source_ref=source_ref,
             created_at=timestamp,
-            extra={
-                "capability_count": len(payload.get("capabilities", []))
-                if isinstance(payload, dict)
-                else 0
-            },
+            extra={"capability_count": len(payload.get("capabilities", [])) if isinstance(payload, dict) else 0},
         )
         return deepcopy(payload)
 
@@ -253,9 +238,7 @@ def create_skill_manifest(
             "source_ref": source_ref,
             "written_at": timestamp,
         }
-        artifact_path = (
-            _delivery_root(omo_dir) / "task-center" / "skills" / f"{skill_id}.yaml"
-        )
+        artifact_path = _delivery_root(omo_dir) / "task-center" / "skills" / f"{skill_id}.yaml"
         write_yaml_atomic(artifact_path, artifact)
         parent_step_id = f"ingress:skill-manifest:{skill_id}:{timestamp}"
         details = (
@@ -318,10 +301,7 @@ def write_discovery_registry(
         )
         write_yaml_atomic(artifact_path, artifact)
         parent_step_id = f"ingress:discovery-registry:{timestamp}"
-        details = (
-            f"actor={actor} source_ref={source_ref or '-'} "
-            f"artifact={_workspace_relative(artifact_path)}"
-        )
+        details = f"actor={actor} source_ref={source_ref or '-'} artifact={_workspace_relative(artifact_path)}"
         record_audit(
             action="ingress_write_discovery_registry",
             debt_id="",
@@ -369,11 +349,7 @@ def write_usage_accounting(
             "source_ref": source_ref,
             "written_at": timestamp,
         }
-        artifact_path = (
-            _delivery_root(omo_dir)
-            / "task-center"
-            / f"usage-accounting-{_timestamp_slug(timestamp)}.yaml"
-        )
+        artifact_path = _delivery_root(omo_dir) / "task-center" / f"usage-accounting-{_timestamp_slug(timestamp)}.yaml"
         write_yaml_atomic(artifact_path, artifact)
         parent_step_id = f"ingress:usage-accounting:{timestamp}"
         details = (
@@ -427,11 +403,7 @@ def write_task_center_freshness(
             "source_ref": source_ref,
             "written_at": timestamp,
         }
-        artifact_path = (
-            _delivery_root(omo_dir)
-            / "task-center"
-            / f"freshness-{_timestamp_slug(timestamp)}.yaml"
-        )
+        artifact_path = _delivery_root(omo_dir) / "task-center" / f"freshness-{_timestamp_slug(timestamp)}.yaml"
         write_yaml_atomic(artifact_path, artifact)
         parent_step_id = f"ingress:freshness:{timestamp}"
         details = (
@@ -486,11 +458,7 @@ def write_task_center_control_decision(
             "source_ref": source_ref,
             "written_at": timestamp,
         }
-        ingress_artifact_path = (
-            _delivery_root(omo_dir)
-            / "task-center"
-            / f"control-{_timestamp_slug(timestamp)}.yaml"
-        )
+        ingress_artifact_path = _delivery_root(omo_dir) / "task-center" / f"control-{_timestamp_slug(timestamp)}.yaml"
         write_yaml_atomic(ingress_artifact_path, delivery_artifact)
         parent_step_id = f"ingress:control:{timestamp}"
         details = (
@@ -545,24 +513,15 @@ def update_governance_overlay_state(
         artifact = {
             "kind": "governance_overlay_state_updated",
             "roadmap_ref": ".omo/_truth/governance-overlay/roadmap.yaml",
-            "control_ref": ".omo/_control/governance-overlay/current.yaml"
-            if control is not None
-            else None,
+            "control_ref": ".omo/_control/governance-overlay/current.yaml" if control is not None else None,
             "actor": actor,
             "source_ref": source_ref,
             "updated_at": timestamp,
         }
-        artifact_path = (
-            _delivery_root(omo_dir)
-            / "governance-overlay"
-            / f"state-{_timestamp_slug(timestamp)}.yaml"
-        )
+        artifact_path = _delivery_root(omo_dir) / "governance-overlay" / f"state-{_timestamp_slug(timestamp)}.yaml"
         write_yaml_atomic(artifact_path, artifact)
         parent_step_id = f"ingress:governance-overlay:{timestamp}"
-        details = (
-            f"actor={actor} source_ref={source_ref or '-'} "
-            f"artifact={_workspace_relative(artifact_path)}"
-        )
+        details = f"actor={actor} source_ref={source_ref or '-'} artifact={_workspace_relative(artifact_path)}"
         record_audit(
             action="ingress_update_governance_overlay_state",
             debt_id="",

@@ -159,9 +159,7 @@ END;
 #: Canonical schema fingerprint computed from the actual DDL + trigger + index
 #: SQL text. Any modification to the physical model (columns, constraints,
 #: indexes, triggers, types) changes this checksum.
-SCHEMA_CHECKSUM = hashlib.sha256(
-    (LEDGER_DDL + "\n" + LEDGER_TRIGGERS).encode("utf-8")
-).hexdigest()
+SCHEMA_CHECKSUM = hashlib.sha256((LEDGER_DDL + "\n" + LEDGER_TRIGGERS).encode("utf-8")).hexdigest()
 
 # ---------------------------------------------------------------------------
 # SQLite security version gate (blueprint §10.2)
@@ -360,10 +358,7 @@ def _iter_statements(script: str) -> list[str]:
 #: Populate expected trigger definitions from the authoritative script so the
 #: verification target can never drift from the DDL that fresh databases get.
 _EXPECTED_TRIGGERS.update(
-    {
-        name: _normalize_sql(sql)
-        for name, sql in _trigger_definitions_from_script(LEDGER_TRIGGERS)
-    }
+    {name: _normalize_sql(sql) for name, sql in _trigger_definitions_from_script(LEDGER_TRIGGERS)}
 )
 
 
@@ -373,9 +368,7 @@ _EXPECTED_TRIGGERS.update(
 
 
 def _table_sql(conn: sqlite3.Connection, name: str) -> str:
-    row = conn.execute(
-        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)
-    ).fetchone()
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)).fetchone()
     if row is None:
         raise LedgerSchemaError(f"missing table: {name}")
     return row[0] or ""
@@ -447,14 +440,10 @@ def verify_schema(conn: sqlite3.Connection) -> dict[str, Any]:
     actual_tables = table_names(conn)
     missing_tables = expected_tables - actual_tables
     if missing_tables:
-        raise LedgerSchemaError(
-            f"schema drift: missing tables: {sorted(missing_tables)}"
-        )
+        raise LedgerSchemaError(f"schema drift: missing tables: {sorted(missing_tables)}")
     unexpected_tables = actual_tables - expected_tables
     if unexpected_tables:
-        raise LedgerSchemaError(
-            f"schema drift: unexpected tables: {sorted(unexpected_tables)}"
-        )
+        raise LedgerSchemaError(f"schema drift: unexpected tables: {sorted(unexpected_tables)}")
 
     # Exact normalized DDL comparison per table: the strongest drift check.
     # It detects extra columns, weakened CHECK, altered UNIQUE, etc.
@@ -480,12 +469,8 @@ def verify_schema(conn: sqlite3.Connection) -> dict[str, Any]:
         # Exact normalized DDL comparison against the authoritative CREATE
         # INDEX statement — catches UNIQUE/partial WHERE changes, wrong table,
         # and altered column lists in one check.
-        if _normalize_sql(stored_sql) != _normalize_sql(
-            _expected_index_stmt(index_name)
-        ):
-            raise LedgerSchemaError(
-                f"schema drift: index {index_name} definition changed"
-            )
+        if _normalize_sql(stored_sql) != _normalize_sql(_expected_index_stmt(index_name)):
+            raise LedgerSchemaError(f"schema drift: index {index_name} definition changed")
         # Belt-and-braces: verify the index is attached to the expected table
         # with the exact ordered columns.
         info = _index_info(conn, index_name)
@@ -494,13 +479,11 @@ def verify_schema(conn: sqlite3.Connection) -> dict[str, Any]:
         actual_table, actual_columns = info
         if actual_table != table:
             raise LedgerSchemaError(
-                f"schema drift: index {index_name} is on table {actual_table!r}, "
-                f"expected {table!r}"
+                f"schema drift: index {index_name} is on table {actual_table!r}, expected {table!r}"
             )
         if list(actual_columns) != list(columns):
             raise LedgerSchemaError(
-                f"schema drift: index {index_name} columns {list(actual_columns)} "
-                f"!= expected {list(columns)}"
+                f"schema drift: index {index_name} columns {list(actual_columns)} != expected {list(columns)}"
             )
 
     for trigger_name in sorted(_EXPECTED_TRIGGERS):
@@ -513,16 +496,12 @@ def verify_schema(conn: sqlite3.Connection) -> dict[str, Any]:
         actual_sql = _normalize_sql(row[0] or "")
         expected_sql = _EXPECTED_TRIGGERS[trigger_name]
         if actual_sql != expected_sql:
-            raise LedgerSchemaError(
-                f"schema drift: trigger {trigger_name} definition changed"
-            )
+            raise LedgerSchemaError(f"schema drift: trigger {trigger_name} definition changed")
 
     return {"tables": sorted(actual_tables), "ok": True}
 
 
-def _column_info(
-    conn: sqlite3.Connection, table: str, column: str
-) -> tuple[str, bool] | None:
+def _column_info(conn: sqlite3.Connection, table: str, column: str) -> tuple[str, bool] | None:
     rows = conn.execute(f'PRAGMA table_info("{table}")').fetchall()
     for row in rows:
         # PRAGMA table_info columns: cid, name, type, notnull, dflt_value, pk
@@ -542,20 +521,14 @@ def _check_column(
         raise LedgerSchemaError(f"schema drift: {table} missing column {column}")
     actual_type, actual_not_null = actual
     if actual_type != expected_type:
-        raise LedgerSchemaError(
-            f"schema drift: {table}.{column} type {actual_type!r} "
-            f"!= expected {expected_type!r}"
-        )
+        raise LedgerSchemaError(f"schema drift: {table}.{column} type {actual_type!r} != expected {expected_type!r}")
     if actual_not_null != expected_not_null:
         raise LedgerSchemaError(
-            f"schema drift: {table}.{column} NOT NULL={actual_not_null} "
-            f"!= expected {expected_not_null}"
+            f"schema drift: {table}.{column} NOT NULL={actual_not_null} != expected {expected_not_null}"
         )
 
 
-def _index_info(
-    conn: sqlite3.Connection, index_name: str
-) -> tuple[str, list[str]] | None:
+def _index_info(conn: sqlite3.Connection, index_name: str) -> tuple[str, list[str]] | None:
     """Return (table_name, ordered column list) for a named index, or None."""
     row = conn.execute(
         "SELECT tbl_name FROM sqlite_master WHERE type = 'index' AND name = ?",
@@ -596,10 +569,7 @@ def apply_schema(
     conn.execute("BEGIN")
     try:
         has_migration_table = (
-            conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' "
-                "AND name = 'schema_migration'"
-            ).fetchone()
+            conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migration'").fetchone()
             is not None
         )
         applied = None
@@ -614,8 +584,7 @@ def apply_schema(
             for stmt in _iter_statements(LEDGER_DDL + "\n" + LEDGER_TRIGGERS):
                 conn.execute(stmt)
             conn.execute(
-                "INSERT INTO schema_migration(version, applied_at, checksum) "
-                "VALUES (?, datetime('now'), ?)",
+                "INSERT INTO schema_migration(version, applied_at, checksum) VALUES (?, datetime('now'), ?)",
                 (schema_version, checksum),
             )
         else:
@@ -640,9 +609,7 @@ def apply_schema(
 
 def table_names(conn: sqlite3.Connection) -> set[str]:
     """Return the set of user tables currently present in the database."""
-    rows = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
-    ).fetchall()
+    rows = conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").fetchall()
     return {row[0] for row in rows}
 
 
@@ -652,15 +619,12 @@ def schema_fingerprint(conn: sqlite3.Connection) -> dict[str, Any]:
         "tables": sorted(table_names(conn)),
         "migrations": [
             dict(row)
-            for row in conn.execute(
-                "SELECT version, checksum FROM schema_migration ORDER BY version"
-            ).fetchall()
+            for row in conn.execute("SELECT version, checksum FROM schema_migration ORDER BY version").fetchall()
         ],
         "triggers": [
             row[0]
             for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'trigger' "
-                "AND tbl_name = 'event_log' ORDER BY name"
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'event_log' ORDER BY name"
             ).fetchall()
         ],
     }

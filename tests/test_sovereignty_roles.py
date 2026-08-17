@@ -250,9 +250,7 @@ def test_replace_bumps_version_and_updates_definition(svc):
 def test_replace_preserves_responsibilities_when_omitted(svc):
     """A replace that does not pass responsibilities must keep them (no data loss)."""
     _alice(svc)
-    updated = svc.replace(
-        "principal:alice", "role:family-steward", role_name="Renamed only"
-    )
+    updated = svc.replace("principal:alice", "role:family-steward", role_name="Renamed only")
     assert updated.role_name == "Renamed only"
     assert [r.name for r in updated.responsibilities] == [
         "School pickup",
@@ -340,9 +338,7 @@ def test_versions_strictly_monotonic_across_lifecycle(svc):
     a1 = _alice(svc)  # v1 active
     a2 = svc.replace("principal:alice", "role:family-steward", role_name="V2")  # v2
     a3 = svc.revoke("principal:alice", "role:family-steward")  # v3 revoked
-    a4 = svc.assign(
-        "principal:alice", "role:family-steward", role_name="Reactivated"
-    )  # v4 active (reactivation)
+    a4 = svc.assign("principal:alice", "role:family-steward", role_name="Reactivated")  # v4 active (reactivation)
     assert [a1.version, a2.version, a3.version, a4.version] == [1, 2, 3, 4]
     assert a4.status == STATUS_ACTIVE
     assert a4.assignment_id == a1.assignment_id  # same aggregate, version bumps
@@ -391,9 +387,7 @@ def test_responsibility_version_bumps_on_definition_change(svc):
     svc.replace(
         "principal:alice",
         "role:family-steward",
-        responsibilities=[
-            {"resp_id": "responsibility:school-pickup", "name": "Carline"}
-        ],
+        responsibilities=[{"resp_id": "responsibility:school-pickup", "name": "Carline"}],
     )
     state = svc.versions("principal:alice")
     assert state.responsibilities["responsibility:school-pickup"].name == "Carline"
@@ -709,9 +703,7 @@ def test_replay_rejects_principal_version_regression(svc, db_path):
     _inject_event(
         db_path,
         envelope_principal="principal:alice",
-        payload=_valid_assign_payload(
-            role_id="role:career-engineer", principal_version=5
-        ),
+        payload=_valid_assign_payload(role_id="role:career-engineer", principal_version=5),
         ik="pv-regression-1",
     )
     with pytest.raises(SovereigntyReplayError):
@@ -875,9 +867,7 @@ def test_replay_rejects_status_kind_mismatch(svc, db_path):
         [{"name": "X", "version": 1}],  # missing resp_id
         [{"resp_id": "responsibility:x", "version": 1}],  # missing name
         [{"resp_id": "responsibility:x", "name": "X"}],  # missing version
-        [
-            {"resp_id": "responsibility:x", "name": "X", "version": "1"}
-        ],  # non-int version
+        [{"resp_id": "responsibility:x", "name": "X", "version": "1"}],  # non-int version
         [{"resp_id": "school-pickup", "name": "X", "version": 1}],  # invalid prefix
         [42],  # not an object
     ],

@@ -67,9 +67,7 @@ def _reject_forbidden(value: Any, path: str = "receipt") -> None:
     if isinstance(value, Mapping):
         for key, nested in value.items():
             if str(key).lower() in _FORBIDDEN_KEYS:
-                raise ExternalReceiptError(
-                    f"forbidden raw or secret field: {path}.{key}"
-                )
+                raise ExternalReceiptError(f"forbidden raw or secret field: {path}.{key}")
             _reject_forbidden(nested, f"{path}.{key}")
     elif isinstance(value, (list, tuple)):
         for index, nested in enumerate(value):
@@ -110,8 +108,7 @@ def _normalise_receipt(receipt: Mapping[str, Any] | Any) -> dict[str, Any]:
     result_state = _required_text(value["result_state"], "result_state").lower()
     if result_state not in _EVIDENCE_STATES:
         raise ExternalReceiptError(
-            "only succeeded/degraded receipts may become EvidenceRecorded; "
-            f"received {result_state!r}"
+            f"only succeeded/degraded receipts may become EvidenceRecorded; received {result_state!r}"
         )
     decision_factors = value.get("decision_factors", {})
     if not isinstance(decision_factors, Mapping):

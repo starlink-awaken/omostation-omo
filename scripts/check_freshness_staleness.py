@@ -36,9 +36,7 @@ def _parse_ts(s: str) -> datetime | None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Check freshness staleness of all debt items."
-    )
+    parser = argparse.ArgumentParser(description="Check freshness staleness of all debt items.")
     parser.add_argument(
         "--omo-dir",
         default=".omo",
@@ -86,25 +84,19 @@ def main() -> int:
     if fresh:
         report += "## Fresh Items\n\n| ID | Title | Status | Age (days) |\n|----|-------|--------|------------|\n"
         for item, days in fresh:
-            report += (
-                f"| {item.id} | {item.title} | {item.lifecycle_state} | {days} |\n"
-            )
+            report += f"| {item.id} | {item.title} | {item.lifecycle_state} | {days} |\n"
         report += "\n"
 
     if stale:
         report += "## Stale Items\n\n| ID | Title | Status | Age (days) |\n|----|-------|--------|------------|\n"
         for item, days in stale:
-            report += (
-                f"| {item.id} | {item.title} | {item.lifecycle_state} | {days} |\n"
-            )
+            report += f"| {item.id} | {item.title} | {item.lifecycle_state} | {days} |\n"
         report += "\n"
 
     if ancient:
         report += "## Ancient Items\n\n| ID | Title | Status | Reason |\n|----|-------|--------|--------|\n"
         for item, reason in ancient:
-            report += (
-                f"| {item.id} | {item.title} | {item.lifecycle_state} | {reason} |\n"
-            )
+            report += f"| {item.id} | {item.title} | {item.lifecycle_state} | {reason} |\n"
         report += "\n"
 
     output_path = Path(args.output)

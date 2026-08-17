@@ -37,29 +37,29 @@ from omo.omo_io import read_jsonl
 
 # P88 R1: doc-lifecycle 子模块 (extracted 304L from omo_lint.py)
 # Re-export 保持向后兼容 (omo.cli / scripts/ / omo_audit.py 可能直接 import)
-from .omo_lint_doc import (  # noqa: F401
-    _DOC_LIFECYCLE_NEED_FRONTMATTER,  # noqa: F401
-    _DOC_LIFECYCLE_PATTERNS,  # noqa: F401
-    _check_doc_referenced,  # noqa: F401
-    _classify_doc,  # noqa: F401
-    _parse_frontmatter,  # noqa: F401
+from .omo_lint_doc import (
+    _DOC_LIFECYCLE_NEED_FRONTMATTER,
+    _DOC_LIFECYCLE_PATTERNS,
+    _check_doc_referenced,
+    _classify_doc,
+    _parse_frontmatter,
     cmd_lint_doc_archival_suggestions,
     cmd_lint_doc_lifecycle,
 )
 
 # P100 R1: schemas 子模块 (extracted 488L from omo_lint.py)
 # Re-export 保持向后兼容 (cli.py / omo_audit.py / omo_lint_seed 可能直接 import)
-from .omo_lint_schemas import (  # noqa: F401
-    _CROSS_MODULE_SRP_ALLOWLIST,  # noqa: F401
-    _SORT_KEYS_DEFAULT_EXEMPT_MODULES,  # noqa: F401
-    CONSUMER_MODULES,  # noqa: F401
+from .omo_lint_schemas import (
+    _CROSS_MODULE_SRP_ALLOWLIST,
+    _SORT_KEYS_DEFAULT_EXEMPT_MODULES,
+    CONSUMER_MODULES,
     OMO_SRC,
-    _check_all_schemas_exported,  # noqa: F401
-    _check_cross_module_srp,  # noqa: F401
-    _check_dead_imports,  # noqa: F401
-    _check_module_append_has_schema,  # noqa: F401
-    _check_schema_registry_integrity,  # noqa: F401
-    _check_sort_keys_default,  # noqa: F401
+    _check_all_schemas_exported,
+    _check_cross_module_srp,
+    _check_dead_imports,
+    _check_module_append_has_schema,
+    _check_schema_registry_integrity,
+    _check_sort_keys_default,
     cmd_lint_schemas,
 )
 from .omo_paths import OMO_ROOT, PROJECTS_DIR, WORKSPACE_ROOT
@@ -76,18 +76,14 @@ from .omo_task_policy import (
 # Re-export 保持向后兼容 (cli.py / scripts/ 可能直接 import)
 
 
-def cmd_lint_direct_omo_io(
-    paths: list[str] | None = None, *, diff: bool = False
-) -> int:
+def cmd_lint_direct_omo_io(paths: list[str] | None = None, *, diff: bool = False) -> int:
     """Run the cross-repo contract gatekeeper for direct `.omo` mutations."""
     gatekeeper = PROJECTS_DIR / "ecos" / "scripts" / "contract_gatekeeper.py"
     if not gatekeeper.exists():
         print(f"❌ contract_gatekeeper.py not found: {gatekeeper}")
         return 1
 
-    baseline_path = (
-        WORKSPACE_ROOT / ".omo" / "_truth" / "registry" / "direct-io-baseline.yaml"
-    )
+    baseline_path = WORKSPACE_ROOT / ".omo" / "_truth" / "registry" / "direct-io-baseline.yaml"
     try:
         baseline_payload = load_yaml(baseline_path)
     except FileNotFoundError:
@@ -105,9 +101,7 @@ def cmd_lint_direct_omo_io(
         for item in entries:
             if isinstance(item, dict):
                 print(f"  - {item.get('path')}: lines={item.get('lines', [])}")
-        print(
-            "修复方法: 先把遗留直写迁入 OMO 内核，再清空 .omo/_truth/registry/direct-io-baseline.yaml"
-        )
+        print("修复方法: 先把遗留直写迁入 OMO 内核，再清空 .omo/_truth/registry/direct-io-baseline.yaml")
         return 1
 
     cmd = [sys.executable, str(gatekeeper)]
@@ -134,9 +128,7 @@ def cmd_lint_direct_omo_io(
         ]
         cmd.extend(str(path) for path in default_paths if path.exists())
 
-    result = subprocess.run(  # noqa: PLW1510
-        cmd, cwd=str(WORKSPACE_ROOT), capture_output=True, text=True, check=False
-    )
+    result = subprocess.run(cmd, cwd=str(WORKSPACE_ROOT), capture_output=True, text=True, check=False)
     if result.stdout:
         print(result.stdout, end="")
     if result.stderr:
@@ -205,13 +197,13 @@ def _string_literals_in_expr(
             out.extend(_string_literals_in_expr(kw.value, assignments, seen=seen))
         return out
     if isinstance(node, ast.BinOp):
-        return _string_literals_in_expr(
-            node.left, assignments, seen=seen
-        ) + _string_literals_in_expr(node.right, assignments, seen=seen)
+        return _string_literals_in_expr(node.left, assignments, seen=seen) + _string_literals_in_expr(
+            node.right, assignments, seen=seen
+        )
     if isinstance(node, ast.Subscript):
-        return _string_literals_in_expr(
-            node.value, assignments, seen=seen
-        ) + _string_literals_in_expr(node.slice, assignments, seen=seen)
+        return _string_literals_in_expr(node.value, assignments, seen=seen) + _string_literals_in_expr(
+            node.slice, assignments, seen=seen
+        )
     if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
         out: list[str] = []
         for elt in node.elts:
@@ -227,11 +219,7 @@ def _collect_name_assignments(tree: ast.AST) -> dict[str, ast.AST]:
             for target in node.targets:
                 if isinstance(target, ast.Name):
                     assignments[target.id] = node.value
-        elif (
-            isinstance(node, ast.AnnAssign)
-            and isinstance(node.target, ast.Name)
-            and node.value is not None
-        ):
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value is not None:
             assignments[node.target.id] = node.value
     return assignments
 
@@ -263,40 +251,23 @@ def _sensitive_write_issues_in_file(path: Path) -> list[str]:
         target_expr: ast.AST | None = None
         op_name: str | None = None
 
-        if (
-            isinstance(node.func, ast.Attribute)
-            and node.func.attr in _SENSITIVE_WRITE_METHODS
-        ):
+        if isinstance(node.func, ast.Attribute) and node.func.attr in _SENSITIVE_WRITE_METHODS:
             target_expr = node.func.value
             op_name = node.func.attr
-        elif (
-            isinstance(node.func, ast.Name) and node.func.id in _SENSITIVE_WRITE_HELPERS
-        ):
+        elif isinstance(node.func, ast.Name) and node.func.id in _SENSITIVE_WRITE_HELPERS:
             if node.args:
                 target_expr = node.args[0]
                 op_name = node.func.id
         elif isinstance(node.func, ast.Name) and node.func.id == "open":
             mode_value: str | None = None
-            if (
-                len(node.args) >= 2
-                and isinstance(node.args[1], ast.Constant)
-                and isinstance(node.args[1].value, str)
-            ):
+            if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str):
                 mode_value = node.args[1].value
             else:
                 for kw in node.keywords:
-                    if (
-                        kw.arg == "mode"
-                        and isinstance(kw.value, ast.Constant)
-                        and isinstance(kw.value.value, str)
-                    ):
+                    if kw.arg == "mode" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
                         mode_value = kw.value.value
                         break
-            if (
-                mode_value
-                and any(flag in mode_value for flag in ("w", "a", "x"))
-                and node.args
-            ):
+            if mode_value and any(flag in mode_value for flag in ("w", "a", "x")) and node.args:
                 target_expr = node.args[0]
                 op_name = "open"
 
@@ -318,9 +289,7 @@ def _sensitive_write_issues_in_file(path: Path) -> list[str]:
         target_kind = _target_kind_from_tokens(tokens)
         if target_kind is None:
             continue
-        issues.append(
-            f"{path}:{node.lineno} direct sensitive write via {op_name} -> {target_kind}"
-        )
+        issues.append(f"{path}:{node.lineno} direct sensitive write via {op_name} -> {target_kind}")
 
     return issues
 
@@ -341,9 +310,7 @@ def cmd_lint_sensitive_governed_writes(paths: list[str] | None = None) -> int:
         issues.extend(_sensitive_write_issues_in_file(target))
 
     if issues:
-        print(
-            f"❌ omo lint sensitive-governed-writes fail: {len(issues)} direct write(s)"
-        )
+        print(f"❌ omo lint sensitive-governed-writes fail: {len(issues)} direct write(s)")
         for issue in issues:
             print(f"  - {issue}")
         print(
@@ -352,9 +319,7 @@ def cmd_lint_sensitive_governed_writes(paths: list[str] | None = None) -> int:
         )
         return 1
 
-    print(
-        f"✅ omo lint sensitive-governed-writes pass: checked={checked} direct_writes=0"
-    )
+    print(f"✅ omo lint sensitive-governed-writes pass: checked={checked} direct_writes=0")
     return 0
 
 
@@ -462,13 +427,9 @@ def cmd_lint_yaml_bypass(omo_dir: Path = Path(".omo")) -> int:
         for name, msg in issues:
             print(f"   - {name}: {msg}")
         print()
-        print(
-            "修复方法: 走 omo-debt close/reopen CLI 正路, 不要直接 yaml.safe_load + yaml.dump 改字段."
-        )
+        print("修复方法: 走 omo-debt close/reopen CLI 正路, 不要直接 yaml.safe_load + yaml.dump 改字段.")
         return 1
-    print(
-        "✅ omo lint yaml-bypass pass: 0 处越权 (所有 .omo/debt/items/*.yaml 走 OMO CLI 正路)"
-    )
+    print("✅ omo lint yaml-bypass pass: 0 处越权 (所有 .omo/debt/items/*.yaml 走 OMO CLI 正路)")
     return 0
 
 
@@ -485,11 +446,11 @@ ERROR_LOC = 1500
 # 登记放行 = 「存量不挡新交付」, 拆解归 BET-Y1Q2-T6-10 (god-module SRP 拆分)。
 # 移除条件: 对应文件拆到 <=1500L 时从本表删除。
 GOD_MODULE_ALLOWLIST: set[str] = {
-    "projects/omo/src/omo/blueprint_control.py",       # 2950L
-    "projects/omlxc/src/omlxc/storage/database.py",    # 1944L
+    "projects/omo/src/omo/blueprint_control.py",  # 2950L
+    "projects/omlxc/src/omlxc/storage/database.py",  # 1944L
     "projects/cockpit/src/cockpit/adapters/governance_context.py",  # 1754L
     "projects/omlxc/src/omlxc/daemon/composition.py",  # 1514L
-    "projects/omlxc/src/omlxc/cli.py",               # 1559L (omlxc v3.1.0 升级带入, 2026-08-16 登记)
+    "projects/omlxc/src/omlxc/cli.py",  # 1559L (omlxc v3.1.0 升级带入, 2026-08-16 登记)
 }
 
 # 不扫的目录 (测试/数据迁移脚本可超)
@@ -589,10 +550,7 @@ def cmd_lint_god_module(workspace_root: str = ".") -> int:
     error_n = len(report["error_files"])
     total = report["total_scanned"]
 
-    print(
-        f"=== god-module lint (warn>{report['warn_threshold']}L, "
-        f"error>{report['error_threshold']}L) ==="
-    )
+    print(f"=== god-module lint (warn>{report['warn_threshold']}L, error>{report['error_threshold']}L) ===")
     print(f"  扫文件: {total}")
     print(f"  warn (>600L): {warn_n}")
     print(f"  error (>800L): {error_n}")
@@ -602,8 +560,7 @@ def cmd_lint_god_module(workspace_root: str = ".") -> int:
         for path, loc in report["error_files"]:
             print(f"  🔴 {path}: {loc}L (>{report['error_threshold']})")
         print(
-            f"\n❌ GATE FAIL: {error_n} 个文件 >{report['error_threshold']}L. "
-            f"治本: 用 omo-srp-refactor skill 渐进拆解."
+            f"\n❌ GATE FAIL: {error_n} 个文件 >{report['error_threshold']}L. 治本: 用 omo-srp-refactor skill 渐进拆解."
         )
         return 1
 
@@ -632,9 +589,7 @@ def cmd_lint_ingress_registry(workspace_root: str = ".") -> int:
     # registry 未创建 (runtime cache 缺, 如 CI fresh checkout) — 合法状态, 不阻断.
     # 结构/反向映射检查只在 registry 存在时才有意义.
     if not summary.get("exists"):
-        print(
-            "✅ omo lint ingress-registry pass: registry not created yet (runtime cache absent)"
-        )
+        print("✅ omo lint ingress-registry pass: registry not created yet (runtime cache absent)")
         return 0
     if issues:
         print(f"❌ omo lint ingress-registry fail: {len(issues)} issue(s)")
@@ -667,10 +622,7 @@ def cmd_lint_mutation_surfaces(workspace_root: str = ".") -> int:
         return 1
 
     if summary.get("exists"):
-        print(
-            "✅ omo lint mutation-surfaces pass: "
-            f"surfaces={len(summary.get('runtime_surface_names', []))}"
-        )
+        print(f"✅ omo lint mutation-surfaces pass: surfaces={len(summary.get('runtime_surface_names', []))}")
     else:
         print("✅ omo lint mutation-surfaces pass: registry not created yet")
     return 0
@@ -691,10 +643,7 @@ def cmd_lint_internal_write_profiles(workspace_root: str = ".") -> int:
         return 1
 
     if summary.get("exists"):
-        print(
-            "✅ omo lint internal-write-profiles pass: "
-            f"profiles={len(summary.get('runtime_profile_names', []))}"
-        )
+        print(f"✅ omo lint internal-write-profiles pass: profiles={len(summary.get('runtime_profile_names', []))}")
     else:
         print("✅ omo lint internal-write-profiles pass: registry not created yet")
     return 0
@@ -756,9 +705,7 @@ def cmd_lint_ingress_artifacts(workspace_root: str = ".") -> int:
     summary, issues = _check_ingress_artifacts(root)
     # registry 未创建 (runtime cache 缺, 如 CI fresh checkout) — 合法状态, 不阻断.
     if not summary.get("exists"):
-        print(
-            "✅ omo lint ingress-artifacts pass: registry not created yet (runtime cache absent)"
-        )
+        print("✅ omo lint ingress-artifacts pass: registry not created yet (runtime cache absent)")
         return 0
     if issues:
         print(f"❌ omo lint ingress-artifacts fail: {len(issues)} issue(s)")
@@ -781,9 +728,7 @@ def cmd_lint_mutation_ledger(workspace_root: str = ".") -> int:
     ledger_path = _mutation_log_path(root / ".omo")
     # CI fresh checkout 无 runtime/omo (gitignored) — 合法空状态, 不阻断
     if not ledger_path.exists():
-        print(
-            "⚠️ omo lint mutation-ledger: ledger file missing (runtime cache absent, CI fresh checkout), 视为 pass"
-        )
+        print("⚠️ omo lint mutation-ledger: ledger file missing (runtime cache absent, CI fresh checkout), 视为 pass")
         return 0
 
     entries = read_jsonl(ledger_path)
@@ -814,9 +759,7 @@ def cmd_lint_mutation_ledger(workspace_root: str = ".") -> int:
         if entry.get("result") == "committed":
             committed += 1
         artifact_ref = entry.get("artifact_ref")
-        if not isinstance(artifact_ref, str) or not (
-            artifact_ref.startswith((".omo/", "runtime/omo/"))
-        ):
+        if not isinstance(artifact_ref, str) or not (artifact_ref.startswith((".omo/", "runtime/omo/"))):
             issues.append(f"entry {idx}: invalid artifact_ref {artifact_ref!r}")
             continue
         artifact_path = root / artifact_ref
@@ -832,10 +775,7 @@ def cmd_lint_mutation_ledger(workspace_root: str = ".") -> int:
             print(f"  - {issue}")
         return 1
 
-    print(
-        "✅ omo lint mutation-ledger pass: "
-        f"entries={len(entries)} committed={committed}"
-    )
+    print(f"✅ omo lint mutation-ledger pass: entries={len(entries)} committed={committed}")
     return 0
 
 
@@ -872,9 +812,7 @@ def load_gitignore_patterns() -> list[str]:
 def load_projection_paths() -> set[str]:
     if not REGISTRY.exists():
         return set()
-    documents = [
-        doc for doc in yaml.safe_load_all(REGISTRY.read_text(encoding="utf-8")) if doc
-    ]
+    documents = [doc for doc in yaml.safe_load_all(REGISTRY.read_text(encoding="utf-8")) if doc]
     paths: set[str] = set()
     for document in documents:
         if isinstance(document, dict) and "projections" in document:
@@ -1019,9 +957,7 @@ REGISTRY = OMO_ROOT / "_truth" / "registry" / "runtime-projections.yaml"
 def load_projection_registry() -> dict[str, dict[str, str]]:
     if not REGISTRY.exists():
         raise SystemExit(f"runtime-projections registry missing: {REGISTRY}")
-    documents = [
-        doc for doc in yaml.safe_load_all(REGISTRY.read_text(encoding="utf-8")) if doc
-    ]
+    documents = [doc for doc in yaml.safe_load_all(REGISTRY.read_text(encoding="utf-8")) if doc]
     for document in documents:
         if isinstance(document, dict) and "projections" in document:
             raw = document.get("projections") or {}
@@ -1041,9 +977,7 @@ def load_projection_registry() -> dict[str, dict[str, str]]:
                         "state": state,
                     }
             return normalized
-    raise SystemExit(
-        f"runtime-projections registry has no projections document: {REGISTRY}"
-    )
+    raise SystemExit(f"runtime-projections registry has no projections document: {REGISTRY}")
 
 
 def probe(path_str: str) -> dict[str, Any]:
@@ -1101,9 +1035,7 @@ def cmd_projection_guard(json_output: bool = False) -> int:
                 }
             )
             continue
-        if isinstance(canonical["kind"], str) and canonical["kind"].startswith(
-            ("yaml-error", "json-error")
-        ):
+        if isinstance(canonical["kind"], str) and canonical["kind"].startswith(("yaml-error", "json-error")):
             ok = False
             findings.append(
                 {
@@ -1140,9 +1072,7 @@ def cmd_projection_guard(json_output: bool = False) -> int:
         sys.stdout.write("\n")
     else:
         status = "OK" if ok else "FAIL"
-        print(
-            f"[{status}] projection-guard: {len(registry)} projections, {len(findings)} findings"
-        )
+        print(f"[{status}] projection-guard: {len(registry)} projections, {len(findings)} findings")
         for finding in findings:
             print(f"  [{finding['severity']}] {finding['kind']}: {finding}")
 
@@ -1167,12 +1097,8 @@ def main(argv: list[str] | None = None) -> int:
         "direct-omo-io",
         help="拦截非 broker 对 `.omo` / `spaces` 的直接文件系统改写",
     )
-    gate.add_argument(
-        "paths", nargs="*", help="要检查的文件/目录；默认扫 omo/c2g/scripts/bin"
-    )
-    gate.add_argument(
-        "--diff", action="store_true", help="只检查 git diff 中的 Python 文件"
-    )
+    gate.add_argument("paths", nargs="*", help="要检查的文件/目录；默认扫 omo/c2g/scripts/bin")
+    gate.add_argument("--diff", action="store_true", help="只检查 git diff 中的 Python 文件")
     sensitive_governed = sub.add_parser(
         "sensitive-governed-writes",
         help="拦截对 system/goals/tasks/capabilities 等敏感治理面的直接落盘",
@@ -1186,94 +1112,66 @@ def main(argv: list[str] | None = None) -> int:
         "ingress-registry",
         help="校验 runtime/omo/_delivery/ingress/registry.yaml 的结构、反向映射与落盘一致性",
     )
-    ingress_registry.add_argument(
-        "--workspace-root", default=".", help="显式指定 workspace root"
-    )
+    ingress_registry.add_argument("--workspace-root", default=".", help="显式指定 workspace root")
     mutation_surfaces = sub.add_parser(
         "mutation-surfaces",
         help="校验 mutation surface truth registry 与运行时 broker 清单是否一致",
     )
-    mutation_surfaces.add_argument(
-        "--workspace-root", default=".", help="显式指定 workspace root"
-    )
+    mutation_surfaces.add_argument("--workspace-root", default=".", help="显式指定 workspace root")
     internal_write_profiles = sub.add_parser(
         "internal-write-profiles",
         help="校验 worker internal write profile registry 与运行时清单是否一致",
     )
-    internal_write_profiles.add_argument(
-        "--workspace-root", default=".", help="显式指定 workspace root"
-    )
+    internal_write_profiles.add_argument("--workspace-root", default=".", help="显式指定 workspace root")
     state_plane_assets = sub.add_parser(
         "state-plane-assets",
         help="校验 .omo 顶层资产的持久化与保留语义是否登记完整",
     )
-    state_plane_assets.add_argument(
-        "--workspace-root", default=".", help="显式指定 workspace root"
-    )
+    state_plane_assets.add_argument("--workspace-root", default=".", help="显式指定 workspace root")
     c2g_omo_boundary = sub.add_parser(
         "c2g-omo-boundary",
         help="校验 c2g 只能通过本地 facade 接入 OMO，不得散弹式 import 内核模块",
     )
-    c2g_omo_boundary.add_argument(
-        "--workspace-root", default=".", help="显式指定 workspace root"
-    )
+    c2g_omo_boundary.add_argument("--workspace-root", default=".", help="显式指定 workspace root")
     ingress_artifacts = sub.add_parser(
         "ingress-artifacts",
         help="校验 ingress registry 指向的 artifact 文件存在且元数据与 registry 对齐",
     )
-    ingress_artifacts.add_argument(
-        "--workspace-root", default=".", help="显式指定 workspace root"
-    )
+    ingress_artifacts.add_argument("--workspace-root", default=".", help="显式指定 workspace root")
     mutation_ledger = sub.add_parser(
         "mutation-ledger",
         help="校验 runtime/omo/change-log/mutations.jsonl 账本存在、字段齐全且 artifact_ref 可回落到真实文件",
     )
-    mutation_ledger.add_argument(
-        "--workspace-root", default=".", help="显式指定 workspace root"
-    )
+    mutation_ledger.add_argument("--workspace-root", default=".", help="显式指定 workspace root")
     # P45 R2: 第 14 + 15 维度
     doc_lifecycle = sub.add_parser(
         "doc-lifecycle",
         help="扫 .omo/ 全部 .md/.yaml, 4 类分类 + 死文档 + frontmatter 覆盖率 (P45 R2 第 14 维度)",
     )
-    doc_lifecycle.add_argument(
-        "--workspace-root", default=".", help="显式指定 workspace root"
-    )
-    doc_lifecycle.add_argument(
-        "--verbose", action="store_true", help="输出每个文件的分类细节"
-    )
+    doc_lifecycle.add_argument("--workspace-root", default=".", help="显式指定 workspace root")
+    doc_lifecycle.add_argument("--verbose", action="store_true", help="输出每个文件的分类细节")
     doc_archival = sub.add_parser(
         "doc-archival-suggestions",
         help="软引导 (WARN only): 建议归档的死文档 (P45 R4 第 15 维度)",
     )
-    doc_archival.add_argument(
-        "--workspace-root", default=".", help="显式指定 workspace root"
-    )
+    doc_archival.add_argument("--workspace-root", default=".", help="显式指定 workspace root")
     self_evolution = sub.add_parser(
         "self-evolution-approval",
         help="校验 OPC P6 self-evolution task 仅落 planned/ 且审批字段完整",
     )
-    self_evolution.add_argument(
-        "--workspace-root", default=".", help="显式指定 workspace root"
-    )
+    self_evolution.add_argument("--workspace-root", default=".", help="显式指定 workspace root")
     task_policy = sub.add_parser(
         "task-policy",
         help="按注册表执行通用 task policy 校验",
     )
     task_policy.add_argument("policy_name", nargs="?", choices=sorted(TASK_POLICIES))
-    task_policy.add_argument(
-        "--all", action="store_true", help="执行全部已注册 task policy"
-    )
-    task_policy.add_argument(
-        "--workspace-root", default=".", help="显式指定 workspace root"
-    )
+    task_policy.add_argument("--all", action="store_true", help="执行全部已注册 task policy")
+    task_policy.add_argument("--workspace-root", default=".", help="显式指定 workspace root")
     god_module = sub.add_parser(
         "god-module",
         help="单文件 LOC 硬规则 (TASK-F7114ABA: warn>600L, error>800L)",
     )
-    god_module.add_argument(
-        "--workspace-root", default=".", help="显式指定 workspace root"
-    )
+    god_module.add_argument("--workspace-root", default=".", help="显式指定 workspace root")
     # P74: projection-guard (from bin/gac/omo-state-projection-guard.py)
     projection_guard = sub.add_parser(
         "projection-guard",
@@ -1291,9 +1189,7 @@ def main(argv: list[str] | None = None) -> int:
         "path-acl",
         help="Scheme C 5c L1: 巡检 .omo/spaces 写面 world-writable 等 (只读, 不 chmod)",
     )
-    path_acl.add_argument(
-        "--workspace-root", default=".", help="显式指定 workspace root"
-    )
+    path_acl.add_argument("--workspace-root", default=".", help="显式指定 workspace root")
     path_acl.add_argument("--json", action="store_true", help="JSON 输出")
     path_acl.add_argument(
         "--strict",

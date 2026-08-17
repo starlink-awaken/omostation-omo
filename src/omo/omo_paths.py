@@ -58,9 +58,7 @@ STATE_SYSTEM_YAML = OMO_ROOT / "state" / "system.yaml"
 PROJECTS_REGISTRY_YAML = OMO_ROOT / "PROJECTS.yaml"
 ROOT_INDEX_MD = OMO_ROOT / "INDEX.md"
 OMO_GOVERNANCE_SURFACES_STANDARD = STANDARDS_DIR / "omo-governance-surfaces.md"
-OMO_GOVERNANCE_SURFACES_REGISTRY = (
-    TRUTH_DIR / "registry" / "omo-governance-surfaces.yaml"
-)
+OMO_GOVERNANCE_SURFACES_REGISTRY = TRUTH_DIR / "registry" / "omo-governance-surfaces.yaml"
 
 # 运行时镜像子路径 (高 churn 产物)
 RUNTIME_DELIVERY_DIR = RUNTIME_OMO_ROOT / "_delivery"
@@ -106,10 +104,7 @@ def projection_path(name: str, *, prefer_canonical: bool = True) -> Path:
     canonical: Path | None = None
     legacy: Path | None = None
     if RUNTIME_PROJECTIONS_REGISTRY.is_file():
-        data = (
-            yaml.safe_load(RUNTIME_PROJECTIONS_REGISTRY.read_text(encoding="utf-8"))
-            or {}
-        )
+        data = yaml.safe_load(RUNTIME_PROJECTIONS_REGISTRY.read_text(encoding="utf-8")) or {}
         entry = (data.get("projections") or {}).get(name)
         if entry:
             canonical = WORKSPACE_ROOT / entry["canonical"]

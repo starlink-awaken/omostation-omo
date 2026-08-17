@@ -77,9 +77,7 @@ def test_crystallizer_includes_lessons_and_contexts(tmp_path: Path):
         },
     ]
 
-    result = crystallizer.check_and_crystallize(
-        beliefs=beliefs, lessons=lessons, contexts=contexts, topic="git-shim"
-    )
+    result = crystallizer.check_and_crystallize(beliefs=beliefs, lessons=lessons, contexts=contexts, topic="git-shim")
 
     assert result["status"] == "crystallized"
     assert result["lessons"] == 1

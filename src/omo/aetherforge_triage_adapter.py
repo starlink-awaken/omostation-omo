@@ -113,9 +113,7 @@ class AetherforgeTriageAdapter:
             resp = self._call_consensus(text)
         except (URLError, TimeoutError, OSError, ValueError) as exc:
             self.circuit_breaker.record_failure()
-            return self._fallback_route(
-                node, node_output, scene_id, reason=f"http error: {exc}"
-            )
+            return self._fallback_route(node, node_output, scene_id, reason=f"http error: {exc}")
 
         if resp.get("verdict") in (None, "", "错误") or resp.get("error"):
             self.circuit_breaker.record_failure()
@@ -134,10 +132,7 @@ class AetherforgeTriageAdapter:
                 node,
                 node_output,
                 scene_id,
-                reason=(
-                    f"cost budget exhausted "
-                    f"({self.cost_budget.accumulated:.4f} > {self.cost_budget.max_budget})"
-                ),
+                reason=(f"cost budget exhausted ({self.cost_budget.accumulated:.4f} > {self.cost_budget.max_budget})"),
             )
 
         # 4. 成功: 重置断路器 + 映射决策

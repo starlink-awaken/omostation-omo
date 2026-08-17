@@ -32,11 +32,7 @@ def test_omo_sync_writes_structured_record(tmp_path):
     assert "health_score" in result
 
     # 验证: log 文件被创建, record 结构化
-    records = [
-        line
-        for line in log_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    records = [line for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert len(records) == 1, f"expected 1 record, got {len(records)}"
 
     import json
@@ -97,9 +93,7 @@ def test_omo_sync_accepts_multi_document_state_yaml(tmp_path, monkeypatch):
 
     system_yaml = tmp_path / "system.yaml"
     system_yaml.write_text(
-        "---\nstatus: active\nowner: governance\n---\n---\n"
-        "current_phase: 42\n"
-        "health_score: 97.5\n",
+        "---\nstatus: active\nowner: governance\n---\n---\ncurrent_phase: 42\nhealth_score: 97.5\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(omo_state, "STATE_SYSTEM_YAML", system_yaml, raising=False)
@@ -135,8 +129,6 @@ def test_omo_sync_no_details_string_smell():
     assert "details" not in rec, "Round 3 锁: record 不应有 details 字段 (结构化取代)"
     # 也不应有 f-string 痕迹
     raw_line = tmp.read_text(encoding="utf-8").strip()
-    assert "phase=" not in raw_line, (
-        "Round 3 锁: record 不应含 f-string 拍扁 (e.g. 'phase=28')"
-    )
+    assert "phase=" not in raw_line, "Round 3 锁: record 不应含 f-string 拍扁 (e.g. 'phase=28')"
     assert "health_score=" not in raw_line
     tmp.unlink()

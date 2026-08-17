@@ -87,21 +87,13 @@ def compute_reputation(
     reliability = accepted / total_adjudicated if total_adjudicated > 0 else 1.0
     rejection_rate = rejected / total_adjudicated if total_adjudicated > 0 else 0.0
 
-    high_conf = [
-        o for o in outcomes if _extract_confidence(o.get("actual_outcome", "")) >= 0.8
-    ]
+    high_conf = [o for o in outcomes if _extract_confidence(o.get("actual_outcome", "")) >= 0.8]
     high_conf_ids = {o["id"] for o in high_conf}
     high_conf_accepted = sum(
-        1
-        for a in relevant_adj
-        if a.get("decision_id") in high_conf_ids and a.get("verdict") == "accepted"
+        1 for a in relevant_adj if a.get("decision_id") in high_conf_ids and a.get("verdict") == "accepted"
     )
-    high_conf_adjudicated = sum(
-        1 for a in relevant_adj if a.get("decision_id") in high_conf_ids
-    )
-    accuracy = (
-        high_conf_accepted / high_conf_adjudicated if high_conf_adjudicated > 0 else 1.0
-    )
+    high_conf_adjudicated = sum(1 for a in relevant_adj if a.get("decision_id") in high_conf_ids)
+    accuracy = high_conf_accepted / high_conf_adjudicated if high_conf_adjudicated > 0 else 1.0
 
     return ReputationProfile(
         agent_id=agent_id or "global",

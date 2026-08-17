@@ -55,9 +55,7 @@ def _append(
     prior = _existing(store, idempotency_key)
     if prior is not None:
         if prior.get("event_type") != event_type or prior.get("payload") != payload:
-            raise WorkerLifecycleError(
-                f"conflicting worker lifecycle event: {idempotency_key}"
-            )
+            raise WorkerLifecycleError(f"conflicting worker lifecycle event: {idempotency_key}")
         return prior
     try:
         return store.append(
@@ -85,9 +83,7 @@ def _validate_context(
 ) -> dict[str, Any]:
     snapshot = store.snapshot(workflow_run_id)
     if snapshot.get("state") in {"unknown", "planned", "closed", "cancelled"}:
-        raise WorkerLifecycleError(
-            f"workflow is not dispatchable for worker lifecycle: {snapshot.get('state')}"
-        )
+        raise WorkerLifecycleError(f"workflow is not dispatchable for worker lifecycle: {snapshot.get('state')}")
     admission = snapshot.get("admission")
     if not isinstance(admission, dict) or admission.get("admission_id") != admission_id:
         raise WorkerLifecycleError("worker lifecycle admission_id mismatch")
@@ -161,9 +157,7 @@ def acknowledge_worker(
         admission_id=admission_id,
     )
     acknowledged_at = _stamp(now)
-    lease_expires_at = _stamp(
-        (_utc(now) + timedelta(seconds=lease_seconds)).isoformat()
-    )
+    lease_expires_at = _stamp((_utc(now) + timedelta(seconds=lease_seconds)).isoformat())
     payload = {
         "dispatch_id": dispatch_id,
         "worker_id": worker_id,
@@ -201,9 +195,7 @@ def renew_worker_lease(
         raise WorkerLifecycleError("lease_seconds must be positive")
     store = _store(omo_dir)
     heartbeat_at = _stamp(now)
-    lease_expires_at = _stamp(
-        (_utc(now) + timedelta(seconds=lease_seconds)).isoformat()
-    )
+    lease_expires_at = _stamp((_utc(now) + timedelta(seconds=lease_seconds)).isoformat())
     event_key = heartbeat_id or lease_expires_at
     idempotency_key = f"{workflow_run_id}:worker-heartbeat:{dispatch_id}:{event_key}"
     prior = _existing(store, idempotency_key)
@@ -223,10 +215,7 @@ def renew_worker_lease(
         "active",
     }:
         raise WorkerLifecycleError("worker must ACK before renewing its lease")
-    if (
-        current.get("dispatch_id") != dispatch_id
-        or current.get("worker_id") != worker_id
-    ):
+    if current.get("dispatch_id") != dispatch_id or current.get("worker_id") != worker_id:
         raise WorkerLifecycleError("worker lease owner mismatch")
     payload = {
         "dispatch_id": dispatch_id,
@@ -280,10 +269,7 @@ def expire_worker_lease(
         "active",
     }:
         raise WorkerLifecycleError("worker has no live lease to expire")
-    if (
-        current.get("dispatch_id") != dispatch_id
-        or current.get("worker_id") != worker_id
-    ):
+    if current.get("dispatch_id") != dispatch_id or current.get("worker_id") != worker_id:
         raise WorkerLifecycleError("worker lease owner mismatch")
     observed_at = _stamp(now)
     lease_expires_at = str(current.get("lease_expires_at", ""))
@@ -325,13 +311,9 @@ def reclaim_worker(
 ) -> dict[str, Any]:
     """Record coordinator reclaim and successor assignment after expiry."""
     if not successor_worker_id or not successor_dispatch_id:
-        raise WorkerLifecycleError(
-            "successor_worker_id and successor_dispatch_id are required"
-        )
+        raise WorkerLifecycleError("successor_worker_id and successor_dispatch_id are required")
     store = _store(omo_dir)
-    event_key = (
-        f"{workflow_run_id}:worker-reclaim:{dispatch_id}:{successor_dispatch_id}"
-    )
+    event_key = f"{workflow_run_id}:worker-reclaim:{dispatch_id}:{successor_dispatch_id}"
     prior = _existing(store, event_key)
     if prior is not None:
         return prior
@@ -440,10 +422,7 @@ def scan_worker_leases(
             "lease_expires_at": lease_expires_at,
             "observed_at": observed_at,
         }
-        if not all(
-            context[key]
-            for key in ("dispatch_id", "worker_id", "step_run_id", "admission_id")
-        ):
+        if not all(context[key] for key in ("dispatch_id", "worker_id", "step_run_id", "admission_id")):
             errors.append(
                 {
                     "workflow_run_id": workflow_run_id,

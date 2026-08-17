@@ -75,9 +75,7 @@ def create_planned_task(
     task_id = str(task_data["id"])
     task_path = omo_dir / "tasks" / "planned" / f"{task_id}.yaml"
     timestamp = now or _utc_now()
-    payload = _task_payload_with_metadata(
-        task_data, ingress_plane=ingress_plane, source_ref=source_ref
-    )
+    payload = _task_payload_with_metadata(task_data, ingress_plane=ingress_plane, source_ref=source_ref)
     artifact_ref = f"runtime/omo/_delivery/ingress/tasks/{task_id}.yaml"
 
     with fcntl_lock(_lock_path(omo_dir)):
@@ -86,9 +84,7 @@ def create_planned_task(
         if source_ref:
             mapped_task_id = registry["tasks"]["by_source_ref"].get(source_ref)
             if mapped_task_id and mapped_task_id != task_id:
-                raise ValueError(
-                    f"source_ref already mapped to different task: {source_ref} -> {mapped_task_id}"
-                )
+                raise ValueError(f"source_ref already mapped to different task: {source_ref} -> {mapped_task_id}")
 
         if task_path.exists():
             existing_payload = _load_yaml(task_path)
@@ -100,17 +96,11 @@ def create_planned_task(
                     source_ref=source_ref,
                     artifact_ref=artifact_ref,
                     fingerprint=payload,
-                    created_at=str(
-                        existing_payload.get("metadata", {}).get(
-                            "created_at", timestamp
-                        )
-                    ),
+                    created_at=str(existing_payload.get("metadata", {}).get("created_at", timestamp)),
                 )
                 _write_registry(omo_dir, registry)  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
                 return existing_payload
-            raise ValueError(
-                f"planned task already exists with different payload: {task_id}"
-            )
+            raise ValueError(f"planned task already exists with different payload: {task_id}")
 
         write_yaml_atomic(task_path, payload)
 
@@ -195,9 +185,7 @@ def create_blocked_task(
             existing_payload = _load_yaml(task_path)
             if existing_payload == task_data:
                 return existing_payload
-            raise ValueError(
-                f"blocked task already exists with different payload: {task_id}"
-            )
+            raise ValueError(f"blocked task already exists with different payload: {task_id}")
 
         write_yaml_atomic(task_path, task_data)
 
@@ -209,11 +197,7 @@ def create_blocked_task(
             "source_ref": source_ref,
             "created_at": timestamp,
         }
-        artifact_path = (
-            _delivery_root(omo_dir)
-            / "tasks"
-            / f"{task_id}-blocked-{_timestamp_slug(timestamp)}.yaml"
-        )
+        artifact_path = _delivery_root(omo_dir) / "tasks" / f"{task_id}-blocked-{_timestamp_slug(timestamp)}.yaml"
         write_yaml_atomic(artifact_path, artifact)
 
         parent_step_id = f"ingress:task-blocked:{task_id}:{timestamp}"
@@ -266,9 +250,7 @@ def record_task_consensus(
         raise ValueError(f"task not found in active/blocked/done: {task_id}")
     group, task_path = resolved
     evidence_filename = f"{task_id.lower()}-{_timestamp_slug(timestamp)}.yaml"
-    evidence_path = (
-        omo_dir / "_delivery" / "task-center" / "consensus" / evidence_filename
-    )
+    evidence_path = omo_dir / "_delivery" / "task-center" / "consensus" / evidence_filename
 
     with fcntl_lock(_lock_path(omo_dir)):
         payload = _load_yaml(task_path)
@@ -286,9 +268,7 @@ def record_task_consensus(
 
         errors = validate_task_data(payload, group=group)
         if errors:
-            raise ValueError(
-                "invalid task after consensus update: " + "; ".join(errors)
-            )
+            raise ValueError("invalid task after consensus update: " + "; ".join(errors))
 
         write_yaml_atomic(evidence_path, evidence)
         write_yaml_atomic(task_path, payload)
@@ -302,11 +282,7 @@ def record_task_consensus(
             "source_ref": source_ref,
             "recorded_at": timestamp,
         }
-        artifact_path = (
-            _delivery_root(omo_dir)
-            / "tasks"
-            / f"{task_id}-consensus-{_timestamp_slug(timestamp)}.yaml"
-        )
+        artifact_path = _delivery_root(omo_dir) / "tasks" / f"{task_id}-consensus-{_timestamp_slug(timestamp)}.yaml"
         write_yaml_atomic(artifact_path, artifact)
 
         parent_step_id = f"ingress:task-consensus:{task_id}:{timestamp}"
@@ -365,16 +341,12 @@ def record_task_execution(
         raise ValueError("log_ref must be a non-empty workspace reference")
 
     timestamp = now or _utc_now()
-    resolved = _find_task_path(
-        omo_dir, task_id, groups=("planned", "active", "done", "archived/done")
-    )
+    resolved = _find_task_path(omo_dir, task_id, groups=("planned", "active", "done", "archived/done"))
     if resolved is None:
         raise ValueError(f"task not found in planned/active/done: {task_id}")
     group, task_path = resolved
     execution_filename = f"{task_id.lower()}-{_timestamp_slug(timestamp)}.yaml"
-    execution_path = (
-        omo_dir / "_delivery" / "task-center" / "execution" / execution_filename
-    )
+    execution_path = omo_dir / "_delivery" / "task-center" / "execution" / execution_filename
     execution_ref = f".omo/_delivery/task-center/execution/{execution_filename}"
 
     with fcntl_lock(_lock_path(omo_dir)):
@@ -401,9 +373,7 @@ def record_task_execution(
             handoff_refs.append(execution_ref)
         errors = validate_task_data(payload, group=group)
         if errors:
-            raise ValueError(
-                "invalid task after execution record: " + "; ".join(errors)
-            )
+            raise ValueError("invalid task after execution record: " + "; ".join(errors))
 
         write_yaml_atomic(
             execution_path,
@@ -422,11 +392,7 @@ def record_task_execution(
             **execution,
             "source_ref": source_ref,
         }
-        artifact_path = (
-            _delivery_root(omo_dir)
-            / "tasks"
-            / f"{task_id}-execution-{_timestamp_slug(timestamp)}.yaml"
-        )
+        artifact_path = _delivery_root(omo_dir) / "tasks" / f"{task_id}-execution-{_timestamp_slug(timestamp)}.yaml"
         write_yaml_atomic(artifact_path, artifact)
         parent_step_id = f"ingress:task-execution:{task_id}:{timestamp}"
         record_audit(
@@ -434,8 +400,7 @@ def record_task_execution(
             debt_id="",
             actor=actor,
             details=(
-                f"task_id={task_id} exit_code={exit_code} log_ref={log_ref.strip()} "
-                f"execution_ref={execution_ref}"
+                f"task_id={task_id} exit_code={exit_code} log_ref={log_ref.strip()} execution_ref={execution_ref}"
             ),
             audit_file=_audit_log_path(omo_dir),
         )
@@ -486,9 +451,7 @@ def execute_controlled_task(
         raise ValueError("Task has no execution command")
     action_id = str(metadata.get("action_id") or "")
     if action_id not in {"copy-verify-command", "runtime-check-ports"}:
-        raise ValueError(
-            "Only project verification and runtime port probes can be controlled-executed"
-        )
+        raise ValueError("Only project verification and runtime port probes can be controlled-executed")
 
     workspace_root = omo_dir.parent.resolve()
     cwd = workspace_root
@@ -496,9 +459,7 @@ def execute_controlled_task(
     if action_id == "copy-verify-command":
         match = re.fullmatch(r'cd "([^"]+)" && (.+)', command, flags=re.DOTALL)
         if not match:
-            raise ValueError(
-                "Controlled verification command must declare an explicit working directory"
-            )
+            raise ValueError("Controlled verification command must declare an explicit working directory")
         cwd = Path(match.group(1)).expanduser().resolve()
         allowed_roots = [workspace_root]
         for env_name in ("COCKPIT_UI_ROOT", "COCKPIT_UI_DIST"):
@@ -509,22 +470,14 @@ def execute_controlled_task(
             if env_name == "COCKPIT_UI_DIST" and candidate_root.name == "dist":
                 candidate_root = candidate_root.parent
             allowed_roots.append(candidate_root)
-        if not any(
-            cwd == allowed_root or allowed_root in cwd.parents
-            for allowed_root in allowed_roots
-        ):
+        if not any(cwd == allowed_root or allowed_root in cwd.parents for allowed_root in allowed_roots):
             raise ValueError(
                 "Controlled verification working directory must be inside Workspace "
                 "or an explicitly configured external worktree"
             )
         command_body = match.group(2).strip()
-        if any(
-            token in command_body
-            for token in (";", "|", ">", "<", "$(", "`", "&&", "||", "\n", "\r")
-        ):
-            raise ValueError(
-                "Controlled verification command contains unsupported shell composition"
-            )
+        if any(token in command_body for token in (";", "|", ">", "<", "$(", "`", "&&", "||", "\n", "\r")):
+            raise ValueError("Controlled verification command contains unsupported shell composition")
 
     timestamp = _utc_now()
     slug = _timestamp_slug(timestamp)
@@ -535,12 +488,7 @@ def execute_controlled_task(
             if (
                 not isinstance(ports, list)
                 or not ports
-                or any(
-                    isinstance(port, bool)
-                    or not isinstance(port, int)
-                    or not 1 <= port <= 65535
-                    for port in ports
-                )
+                or any(isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535 for port in ports)
             ):
                 raise ValueError("Runtime port probe must declare valid probe_ports")
             outputs = []
@@ -554,12 +502,8 @@ def execute_controlled_task(
                     timeout=timeout_seconds,
                     check=False,
                 )
-                probe_status = (
-                    "listening" if result.returncode == 0 else "not_listening"
-                )
-                outputs.append(
-                    f"port={port}\nstatus={probe_status}\n{result.stdout or ''}{result.stderr or ''}"
-                )
+                probe_status = "listening" if result.returncode == 0 else "not_listening"
+                outputs.append(f"port={port}\nstatus={probe_status}\n{result.stdout or ''}{result.stderr or ''}")
             output = "\n".join(outputs)
         else:
             result = subprocess.run(
@@ -575,12 +519,8 @@ def execute_controlled_task(
             output = (result.stdout or "") + (result.stderr or "")
     except subprocess.TimeoutExpired as exc:
         exit_code = 124
-        stdout = (
-            exc.stdout.decode() if isinstance(exc.stdout, bytes) else (exc.stdout or "")
-        )
-        stderr = (
-            exc.stderr.decode() if isinstance(exc.stderr, bytes) else (exc.stderr or "")
-        )
+        stdout = exc.stdout.decode() if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+        stderr = exc.stderr.decode() if isinstance(exc.stderr, bytes) else (exc.stderr or "")
         output = stdout + stderr + f"\nTimed out after {timeout_seconds}s\n"
     write_text_atomic(log_path, output)
     log_ref = str(log_path.resolve().relative_to(workspace_root))
@@ -603,9 +543,7 @@ def execute_controlled_task(
     }
 
 
-def _controlled_process_context(
-    omo_dir: Path, task_id: str
-) -> tuple[Path, dict[str, Any]]:
+def _controlled_process_context(omo_dir: Path, task_id: str) -> tuple[Path, dict[str, Any]]:
     task_path = omo_dir / "tasks" / "active" / f"{task_id}.yaml"
     if not task_path.exists():
         raise ValueError("Only active tasks can control a service process")
@@ -618,25 +556,16 @@ def _controlled_process_context(
     command = str(metadata.get("command") or "").strip()
     match = re.fullmatch(r'cd "([^"]+)" && (.+)', command, flags=re.DOTALL)
     if not match:
-        raise ValueError(
-            "Controlled start command must declare an explicit working directory"
-        )
+        raise ValueError("Controlled start command must declare an explicit working directory")
     cwd = Path(match.group(1)).expanduser().resolve()
     workspace_root = omo_dir.parent.resolve()
     try:
         cwd.relative_to(workspace_root)
     except ValueError as exc:
-        raise ValueError(
-            "Controlled start working directory must be inside Workspace"
-        ) from exc
+        raise ValueError("Controlled start working directory must be inside Workspace") from exc
     command_body = match.group(2).strip()
-    if any(
-        token in command_body
-        for token in (";", "|", ">", "<", "$(", "`", "&&", "||", "&", "\n", "\r")
-    ):
-        raise ValueError(
-            "Controlled start command contains unsupported shell composition"
-        )
+    if any(token in command_body for token in (";", "|", ">", "<", "$(", "`", "&&", "||", "&", "\n", "\r")):
+        raise ValueError("Controlled start command contains unsupported shell composition")
     return task_path, {
         "payload": payload,
         "metadata": metadata,
@@ -667,15 +596,11 @@ def start_controlled_task(
             raise ValueError("Task approval must be granted before process start")
     prior = context["metadata"].get("execution_process")
     if isinstance(prior, dict) and prior.get("status") == "started":
-        raise ValueError(
-            "Task already has a started process; stop it before starting again"
-        )
+        raise ValueError("Task already has a started process; stop it before starting again")
 
     timestamp = _utc_now()
     slug = _timestamp_slug(timestamp)
-    log_path = (
-        _delivery_root(omo_dir) / "task-execution" / f"{task_id}-start-{slug}.log"
-    )
+    log_path = _delivery_root(omo_dir) / "task-execution" / f"{task_id}-start-{slug}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("ab") as log_file:
         process = subprocess.Popen(
@@ -698,9 +623,7 @@ def start_controlled_task(
         "started_at": timestamp,
     }
     execution_filename = f"{task_id.lower()}-process-{slug}.yaml"
-    execution_path = (
-        omo_dir / "_delivery" / "task-center" / "execution" / execution_filename
-    )
+    execution_path = omo_dir / "_delivery" / "task-center" / "execution" / execution_filename
     execution_ref = f".omo/_delivery/task-center/execution/{execution_filename}"
     with fcntl_lock(_lock_path(omo_dir)):
         payload = _load_yaml(task_path)
@@ -718,9 +641,7 @@ def start_controlled_task(
             **process_record,
             "source_ref": source_ref,
         }
-        artifact_path = (
-            _delivery_root(omo_dir) / "tasks" / f"{task_id}-process-start-{slug}.yaml"
-        )
+        artifact_path = _delivery_root(omo_dir) / "tasks" / f"{task_id}-process-start-{slug}.yaml"
         write_yaml_atomic(artifact_path, artifact)
         parent_step_id = f"ingress:task-process-start:{task_id}:{timestamp}"
         record_audit(
@@ -781,16 +702,9 @@ def _watch_controlled_process(
         payload = _load_yaml(task_path)
         metadata = payload.setdefault("metadata", {})
         current = metadata.get("execution_process") or {}
-        if (
-            not isinstance(current, dict)
-            or int(current.get("pid") or -1) != process.pid
-        ):
+        if not isinstance(current, dict) or int(current.get("pid") or -1) != process.pid:
             return
-        status = (
-            current.get("status")
-            if current.get("status") in {"stopped", "not_running"}
-            else "exited"
-        )
+        status = current.get("status") if current.get("status") in {"stopped", "not_running"} else "exited"
         process_record = {
             **current,
             "status": status,
@@ -801,11 +715,7 @@ def _watch_controlled_process(
         write_yaml_atomic(task_path, payload)
         execution_path = omo_dir.parent / execution_ref
         write_yaml_atomic(execution_path, {"task_id": task_id, **process_record})
-        artifact_path = (
-            _delivery_root(omo_dir)
-            / "tasks"
-            / f"{task_id}-process-exit-{_timestamp_slug(timestamp)}.yaml"
-        )
+        artifact_path = _delivery_root(omo_dir) / "tasks" / f"{task_id}-process-exit-{_timestamp_slug(timestamp)}.yaml"
         write_yaml_atomic(
             artifact_path,
             {
@@ -902,9 +812,7 @@ def stop_controlled_task(
             if not _controlled_pid_is_running(pid):
                 stop_status = "not_running"
             else:
-                os.killpg(
-                    int(process_record.get("process_group_id") or pid), signal.SIGTERM
-                )
+                os.killpg(int(process_record.get("process_group_id") or pid), signal.SIGTERM)
         except ProcessLookupError:
             stop_status = "not_running"
         except OSError as exc:
@@ -924,11 +832,7 @@ def stop_controlled_task(
             **process_record,
             "source_ref": source_ref,
         }
-        artifact_path = (
-            _delivery_root(omo_dir)
-            / "tasks"
-            / f"{task_id}-process-stop-{_timestamp_slug(timestamp)}.yaml"
-        )
+        artifact_path = _delivery_root(omo_dir) / "tasks" / f"{task_id}-process-stop-{_timestamp_slug(timestamp)}.yaml"
         write_yaml_atomic(artifact_path, artifact)
         parent_step_id = f"ingress:task-process-stop:{task_id}:{timestamp}"
         record_audit(
@@ -979,10 +883,7 @@ def restart_controlled_task(
     )
     deadline = time.monotonic() + max(0.1, timeout_seconds)
     while time.monotonic() < deadline:
-        if (
-            get_controlled_process_status(omo_dir, task_id=task_id).get("status")
-            != "running"
-        ):
+        if get_controlled_process_status(omo_dir, task_id=task_id).get("status") != "running":
             break
         time.sleep(0.05)
     else:
@@ -1027,9 +928,7 @@ def complete_task(
             if done_path.exists():
                 existing_payload = _load_yaml(done_path)
                 metadata = existing_payload.get("metadata", {})
-                metadata_completed_at = (
-                    metadata.get("completed_at") if isinstance(metadata, dict) else None
-                )
+                metadata_completed_at = metadata.get("completed_at") if isinstance(metadata, dict) else None
                 if not existing_payload.get("completed_at") and metadata_completed_at:
                     existing_payload["completed_at"] = metadata_completed_at
                     write_yaml_atomic(done_path, existing_payload)
@@ -1066,11 +965,7 @@ def complete_task(
             "source_ref": source_ref,
             "completed_at": timestamp,
         }
-        artifact_path = (
-            _delivery_root(omo_dir)
-            / "tasks"
-            / f"{task_id}-done-{_timestamp_slug(timestamp)}.yaml"
-        )
+        artifact_path = _delivery_root(omo_dir) / "tasks" / f"{task_id}-done-{_timestamp_slug(timestamp)}.yaml"
         write_yaml_atomic(artifact_path, artifact)
 
         parent_step_id = f"ingress:task-done:{task_id}:{timestamp}"
@@ -1120,9 +1015,7 @@ def update_done_task_evidence_paths(
     task_path = omo_dir / "tasks" / "done" / f"{task_id}.yaml"
     if not task_path.exists():
         raise ValueError(f"done task not found: {task_id}")
-    if not isinstance(evidence_paths, list) or not all(
-        isinstance(item, str) and item for item in evidence_paths
-    ):
+    if not isinstance(evidence_paths, list) or not all(isinstance(item, str) and item for item in evidence_paths):
         raise ValueError("evidence_paths must be a non-empty list[str]")
 
     with fcntl_lock(_lock_path(omo_dir)):
@@ -1143,9 +1036,7 @@ def update_done_task_evidence_paths(
             "updated_at": timestamp,
         }
         artifact_path = (
-            _delivery_root(omo_dir)
-            / "tasks"
-            / f"{task_id}-evidence-refresh-{_timestamp_slug(timestamp)}.yaml"
+            _delivery_root(omo_dir) / "tasks" / f"{task_id}-evidence-refresh-{_timestamp_slug(timestamp)}.yaml"
         )
         write_yaml_atomic(artifact_path, artifact)
         parent_step_id = f"ingress:task-evidence-refresh:{task_id}:{timestamp}"
@@ -1204,9 +1095,7 @@ def update_planned_task_evidence_paths(
             break
     if task_path is None:
         raise ValueError(f"planned/active task not found: {task_id}")
-    if not isinstance(evidence_paths, list) or not all(
-        isinstance(item, str) and item for item in evidence_paths
-    ):
+    if not isinstance(evidence_paths, list) or not all(isinstance(item, str) and item for item in evidence_paths):
         raise ValueError("evidence_paths must be a non-empty list[str]")
 
     with fcntl_lock(_lock_path(omo_dir)):
@@ -1226,11 +1115,7 @@ def update_planned_task_evidence_paths(
             "source_ref": source_ref,
             "updated_at": timestamp,
         }
-        artifact_path = (
-            _delivery_root(omo_dir)
-            / "tasks"
-            / f"{task_id}-evidence-add-{_timestamp_slug(timestamp)}.yaml"
-        )
+        artifact_path = _delivery_root(omo_dir) / "tasks" / f"{task_id}-evidence-add-{_timestamp_slug(timestamp)}.yaml"
         write_yaml_atomic(artifact_path, artifact)
         parent_step_id = f"ingress:task-evidence-add:{task_id}:{timestamp}"
         details = (

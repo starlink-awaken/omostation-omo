@@ -89,11 +89,7 @@ def yield_task_to_planned(
             "source_ref": source_ref,
             "yielded_at": timestamp,
         }
-        artifact_path = (
-            _delivery_root(omo_dir)
-            / "tasks"
-            / f"{task_id}-yield-{_timestamp_slug(timestamp)}.yaml"
-        )
+        artifact_path = _delivery_root(omo_dir) / "tasks" / f"{task_id}-yield-{_timestamp_slug(timestamp)}.yaml"
         write_yaml_atomic(artifact_path, artifact)
 
         parent_step_id = f"ingress:task-yield:{task_id}:{timestamp}"
@@ -108,14 +104,14 @@ def yield_task_to_planned(
             details=details,
             audit_file=_audit_log_path(omo_dir),
         )
-        _record_trail(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_trail(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=f"broker:{actor}",
             action="yield_task_to_planned",
             target=f".omo/tasks/planned/{task_id}.yaml",
             parent_step_id=parent_step_id,
         )
-        _record_mutation(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_mutation(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=actor,
             action="yield_task_to_planned",
@@ -174,11 +170,7 @@ def archive_done_task(
             "source_ref": source_ref,
             "archived_at": timestamp,
         }
-        artifact_path = (
-            _delivery_root(omo_dir)
-            / "tasks"
-            / f"{task_id}-archive-{_timestamp_slug(timestamp)}.yaml"
-        )
+        artifact_path = _delivery_root(omo_dir) / "tasks" / f"{task_id}-archive-{_timestamp_slug(timestamp)}.yaml"
         write_yaml_atomic(artifact_path, artifact)
 
         parent_step_id = f"ingress:task-archive:{task_id}:{timestamp}"
@@ -193,14 +185,14 @@ def archive_done_task(
             details=details,
             audit_file=_audit_log_path(omo_dir),
         )
-        _record_trail(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_trail(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=f"broker:{actor}",
             action="archive_done_task",
             target=archived_ref,
             parent_step_id=parent_step_id,
         )
-        _record_mutation(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_mutation(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=actor,
             action="archive_done_task",
@@ -246,9 +238,7 @@ def normalize_legacy_planned_task(
             if "priority" in payload and payload.get("priority"):
                 metadata.setdefault("priority", payload.get("priority"))
 
-        if original_status in {"done", "archived", "failed", "blocked"} or payload.get(
-            "completed_at"
-        ):
+        if original_status in {"done", "archived", "failed", "blocked"} or payload.get("completed_at"):
             archived_payload = deepcopy(payload)
             archived_payload["status"] = "archived"
             archived_payload["archived_at"] = timestamp
@@ -268,9 +258,7 @@ def normalize_legacy_planned_task(
                 "normalized_at": timestamp,
             }
             artifact_path = (
-                _delivery_root(omo_dir)
-                / "tasks"
-                / f"{task_id}-legacy-archive-{_timestamp_slug(timestamp)}.yaml"
+                _delivery_root(omo_dir) / "tasks" / f"{task_id}-legacy-archive-{_timestamp_slug(timestamp)}.yaml"
             )
             write_yaml_atomic(artifact_path, artifact)
             record_audit(
@@ -283,14 +271,14 @@ def normalize_legacy_planned_task(
                 ),
                 audit_file=_audit_log_path(omo_dir),
             )
-            _record_trail(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+            _record_trail(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
                 omo_dir,
                 actor=f"broker:{actor}",
                 action="normalize_legacy_planned_task",
                 target=f".omo/tasks/archived/legacy-normalized/{task_id}.yaml",
                 parent_step_id=f"ingress:legacy-planned-archive:{task_id}:{timestamp}",
             )
-            _record_mutation(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+            _record_mutation(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
                 omo_dir,
                 actor=actor,
                 action="normalize_legacy_planned_task",
@@ -307,23 +295,17 @@ def normalize_legacy_planned_task(
             return {"action": "archived", "task": archived_payload}
 
         normalized = deepcopy(payload)
-        normalized["status"] = (
-            "pending" if original_status == "pending" else "candidate"
-        )
+        normalized["status"] = "pending" if original_status == "pending" else "candidate"
         normalized.setdefault("task_type", "feature")
         normalized.setdefault("risk_level", normalized.get("risk", "L0") or "L0")
         normalized.setdefault("depends_on", [])
         normalized.setdefault("deliverables", [normalized.get("title", task_id)])
-        normalized.setdefault(
-            "source_docs", [f".omo/tasks/planned/{task_id}.yaml#legacy-normalized"]
-        )
+        normalized.setdefault("source_docs", [f".omo/tasks/planned/{task_id}.yaml#legacy-normalized"])
         normalized.setdefault("knowledge_refs", [])
         normalized.setdefault("handoff_refs", [])
         normalized.setdefault("entry_gate", [])
         normalized.setdefault("evidence_required", ["legacy planned packet normalized"])
-        normalized.setdefault(
-            "test_plan", ["python3 scripts/omo_worker.py task validate --all-planned"]
-        )
+        normalized.setdefault("test_plan", ["python3 scripts/omo_worker.py task validate --all-planned"])
         normalized["assigned_to"] = None
         normalized["dispatch_id"] = None
         normalized["run_ref"] = None
@@ -337,13 +319,9 @@ def normalize_legacy_planned_task(
 
         risk_level = str(normalized.get("risk_level") or "L0")
         if not normalized.get("allowed_operation_level"):
-            normalized["allowed_operation_level"] = (
-                risk_level if risk_level in {"L2", "L3"} else "L0"
-            )
+            normalized["allowed_operation_level"] = risk_level if risk_level in {"L2", "L3"} else "L0"
         if "human_approval_required" not in normalized:
-            normalized["human_approval_required"] = normalized.get(
-                "allowed_operation_level"
-            ) in {"L2", "L3"}
+            normalized["human_approval_required"] = normalized.get("allowed_operation_level") in {"L2", "L3"}
 
         errors = validate_task_data(normalized, group="planned")
         if errors:
@@ -361,9 +339,7 @@ def normalize_legacy_planned_task(
             "normalized_status": normalized["status"],
         }
         artifact_path = (
-            _delivery_root(omo_dir)
-            / "tasks"
-            / f"{task_id}-legacy-normalize-{_timestamp_slug(timestamp)}.yaml"
+            _delivery_root(omo_dir) / "tasks" / f"{task_id}-legacy-normalize-{_timestamp_slug(timestamp)}.yaml"
         )
         write_yaml_atomic(artifact_path, artifact)
         record_audit(
@@ -376,14 +352,14 @@ def normalize_legacy_planned_task(
             ),
             audit_file=_audit_log_path(omo_dir),
         )
-        _record_trail(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_trail(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=f"broker:{actor}",
             action="normalize_legacy_planned_task",
             target=f".omo/tasks/planned/{task_id}.yaml",
             parent_step_id=f"ingress:legacy-planned-normalize:{task_id}:{timestamp}",
         )
-        _record_mutation(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
+        _record_mutation(  # type: ignore[reportUndefinedVariable]  # noqa: F821  # rebound at module load from omo.omo_ingress
             omo_dir,
             actor=actor,
             action="normalize_legacy_planned_task",

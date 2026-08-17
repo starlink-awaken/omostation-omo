@@ -24,9 +24,7 @@ AGORA_ROOT = Path(str(Path(__file__).resolve().parents[3]) + "/projects/agora")
 KAIRON_ROOT = Path(str(Path(__file__).resolve().parents[3]) + "/projects/kairon")
 
 
-def _invoke_agora_stdio(
-    uri: str, action: str, args: list | None = None, kwargs: dict | None = None
-) -> dict:
+def _invoke_agora_stdio(uri: str, action: str, args: list | None = None, kwargs: dict | None = None) -> dict:
     """跨进程调 agora stdio invoke (不在 omo 进程 import kairon)."""
     args_str = json.dumps(args or [])
     kwargs_str = json.dumps(kwargs or {})
@@ -97,9 +95,7 @@ def test_real_scenario_p34w5_5of5():
                 "action": action,
                 "elapsed_s": round(elapsed, 2),
                 "status": r.get("status"),
-                "result": r.get("result")
-                if r.get("status") == "ok"
-                else r.get("error"),
+                "result": r.get("result") if r.get("status") == "ok" else r.get("error"),
             }
         )
         # 不应 timeout (跨进程)

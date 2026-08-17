@@ -67,9 +67,7 @@ def _validate_ecos_task(task_data: dict) -> bool:
         import httpx
 
         try:
-            response = httpx.post(
-                "http://localhost:9190/omo/validate-task", json=task_data, timeout=10.0
-            )
+            response = httpx.post("http://localhost:9190/omo/validate-task", json=task_data, timeout=10.0)
             response.raise_for_status()
             result = response.json()
             if not result.get("valid", False):
@@ -108,9 +106,7 @@ def _save_local_task(base_dir: Path, task_data: dict, adapter: str) -> bool:
     return True
 
 
-def _import_bmad(
-    file_path: Path, omo_dir: Path, sequential: bool = False, adapter: str = "ecos"
-):
+def _import_bmad(file_path: Path, omo_dir: Path, sequential: bool = False, adapter: str = "ecos"):
     print(f"🌉 正在将 BMAD / OpenSpec 规范转换为 OMO Planned Tasks: {file_path}")
     content = file_path.read_text(encoding="utf-8")
     tasks_created = 0
@@ -284,9 +280,7 @@ def _import_pitch(source_file: Path, base_dir: Path, adapter: str = "ecos"):
         if goals_file.exists():
             from .bridge_utils import strip_frontmatter
 
-            goals_data = next(
-                yaml.safe_load_all(strip_frontmatter(goals_file.read_text())), {}
-            )
+            goals_data = next(yaml.safe_load_all(strip_frontmatter(goals_file.read_text())), {})
             existing_ids = [g.get("id") for g in goals_data.get("goals", [])]
             if bet_id in existing_ids:
                 print(f"  ⏭  Bet {bet_id} already exists, skip.")
@@ -335,9 +329,7 @@ def _import_pitch(source_file: Path, base_dir: Path, adapter: str = "ecos"):
 
     tasks_created = 0
     for idx, extracted in enumerate(llm_tasks):
-        task_id = (
-            f"IMPORTED-{hashlib.md5((bet_id + str(idx)).encode()).hexdigest()[:6]}"
-        )
+        task_id = f"IMPORTED-{hashlib.md5((bet_id + str(idx)).encode()).hexdigest()[:6]}"
 
         if adapter == "ecos":
             task_data = build_ecos_task(
@@ -363,9 +355,7 @@ def _import_pitch(source_file: Path, base_dir: Path, adapter: str = "ecos"):
                 },
             )
             if not _validate_ecos_task(task_data):
-                print(
-                    f"  ❌ M2 防腐层拦截 (Schema Validation Failed for task {task_id})"
-                )
+                print(f"  ❌ M2 防腐层拦截 (Schema Validation Failed for task {task_id})")
                 continue
             _write_ecos_task(base_dir, task_id, task_data)
         else:

@@ -13,7 +13,7 @@ hard agora import, explicit False on terminal ledger failure).
 from __future__ import annotations
 
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from ecos.ssot.mof.generated.control.mof_control_models import DelegationMandate
@@ -73,7 +73,7 @@ def pdp(broker):
 
 @pytest.fixture()
 def now():
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # ---------------------------------------------------------------------------

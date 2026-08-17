@@ -37,9 +37,7 @@ def _default_data_dir() -> Path:
     return Path("runtime/c2g/outcomes")
 
 
-def build_report(
-    data_dir: Path, horizon: int = 3, publish_knowledge: bool = False
-) -> dict:
+def build_report(data_dir: Path, horizon: int = 3, publish_knowledge: bool = False) -> dict:
     tracker = OutcomeTracker(data_dir)
     series = outcomes_time_series(tracker._outcomes)
     model = PredictiveModel(horizon=horizon)
@@ -63,9 +61,7 @@ def build_report(
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(
-        description="C2G predictive governance report (ADR-0185 Phase B / ADR-0296 Phase C)"
-    )
+    ap = argparse.ArgumentParser(description="C2G predictive governance report (ADR-0185 Phase B / ADR-0296 Phase C)")
     ap.add_argument(
         "--data-dir",
         type=Path,

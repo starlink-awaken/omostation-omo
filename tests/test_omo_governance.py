@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+
 from omo.omo_governance import (
     apply_truth_mutation,
     approve_truth_mutation,
@@ -56,9 +57,7 @@ def test_propose_truth_mutation_writes_proposal_record(tmp_path: Path):
     )
 
     assert proposal["status"] == "proposed"
-    proposal_path = (
-        tmp_path / ".omo" / "_truth" / "task-center" / "proposals" / "p-001.yaml"
-    )
+    proposal_path = tmp_path / ".omo" / "_truth" / "task-center" / "proposals" / "p-001.yaml"
     assert proposal_path.exists()
 
     payload = _load_yaml(proposal_path)
@@ -113,9 +112,7 @@ def test_approved_truth_mutation_applies_yaml_patch_and_writes_audit_artifacts(
 ):
     target = tmp_path / ".omo" / "state" / "system.yaml"
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        "next_milestone: planning\nphase_status: pending\n", encoding="utf-8"
-    )
+    target.write_text("next_milestone: planning\nphase_status: pending\n", encoding="utf-8")
 
     propose_truth_mutation(
         tmp_path,
@@ -161,24 +158,8 @@ def test_approved_truth_mutation_applies_yaml_patch_and_writes_audit_artifacts(
     assert target_payload["phase_status"] == "in_progress"
     assert applied["status"] == "verified"
 
-    apply_artifact = (
-        tmp_path
-        / ".omo"
-        / "_delivery"
-        / "task-center"
-        / "proposals"
-        / "p-003"
-        / "apply.yaml"
-    )
-    verify_artifact = (
-        tmp_path
-        / ".omo"
-        / "_delivery"
-        / "task-center"
-        / "proposals"
-        / "p-003"
-        / "verify.yaml"
-    )
+    apply_artifact = tmp_path / ".omo" / "_delivery" / "task-center" / "proposals" / "p-003" / "apply.yaml"
+    verify_artifact = tmp_path / ".omo" / "_delivery" / "task-center" / "proposals" / "p-003" / "verify.yaml"
     assert apply_artifact.exists()
     assert verify_artifact.exists()
 
@@ -213,9 +194,7 @@ def test_propose_truth_mutation_rejects_secret_like_values(tmp_path: Path):
                     "blast_radius": "high",
                     "touches": [".omo/state/system.yaml"],
                 },
-                "verification_plan": [
-                    "python3 scripts/sync_omo_state.py --omo-dir .omo"
-                ],
+                "verification_plan": ["python3 scripts/sync_omo_state.py --omo-dir .omo"],
                 "rollback_plan": ["restore prior YAML snapshot"],
                 "secret_refs": [],
                 "trace_id": "trace-004",
@@ -376,9 +355,7 @@ def test_governance_cli_apply_executes_approved_proposal(tmp_path: Path, monkeyp
     assert payload["next_milestone"] == "Phase 6 Wave 1 runtime core"
 
 
-def test_governance_cli_propose_accepts_multi_document_yaml_file(
-    tmp_path: Path, monkeypatch
-):
+def test_governance_cli_propose_accepts_multi_document_yaml_file(tmp_path: Path, monkeypatch):
     target = tmp_path / ".omo" / "state" / "system.yaml"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("next_milestone: planning\n", encoding="utf-8")
@@ -425,16 +402,12 @@ def test_governance_cli_propose_accepts_multi_document_yaml_file(
     )
 
     assert omo_governance_main() == 0
-    payload = _load_yaml(
-        tmp_path / ".omo" / "_truth" / "task-center" / "proposals" / "p-008b.yaml"
-    )
+    payload = _load_yaml(tmp_path / ".omo" / "_truth" / "task-center" / "proposals" / "p-008b.yaml")
     assert payload["status"] == "proposed"
     assert payload["target"]["ref"] == ".omo/state/system.yaml"
 
 
-def test_governance_cli_ingress_goal_writes_goal_and_artifact(
-    tmp_path: Path, monkeypatch, capsys
-):
+def test_governance_cli_ingress_goal_writes_goal_and_artifact(tmp_path: Path, monkeypatch, capsys):
     goals_file = tmp_path / ".omo" / "goals" / "current.yaml"
     goals_file.parent.mkdir(parents=True, exist_ok=True)
     goals_file.write_text("phase: 44\ngoals: []\n", encoding="utf-8")
@@ -465,21 +438,11 @@ def test_governance_cli_ingress_goal_writes_goal_and_artifact(
     assert "ingress goal created BET-9001" in captured.out
     payload = _load_yaml(goals_file)
     assert any(goal["id"] == "BET-9001" for goal in payload["goals"])
-    artifact = _load_yaml(
-        tmp_path
-        / "runtime"
-        / "omo"
-        / "_delivery"
-        / "ingress"
-        / "goals"
-        / "BET-9001.yaml"
-    )
+    artifact = _load_yaml(tmp_path / "runtime" / "omo" / "_delivery" / "ingress" / "goals" / "BET-9001.yaml")
     assert artifact["ingress_plane"] == "projects/c2g"
 
 
-def test_governance_cli_ingress_task_writes_planned_task_and_artifact(
-    tmp_path: Path, monkeypatch, capsys
-):
+def test_governance_cli_ingress_task_writes_planned_task_and_artifact(tmp_path: Path, monkeypatch, capsys):
     (tmp_path / ".omo").mkdir(parents=True, exist_ok=True)
     task_file = tmp_path / "task.yaml"
     task_file.write_text(
@@ -535,25 +498,13 @@ def test_governance_cli_ingress_task_writes_planned_task_and_artifact(
     assert rc == 0
     captured = capsys.readouterr()
     assert "ingress task created IMPORTED-CLI-1" in captured.out
-    payload = _load_yaml(
-        tmp_path / ".omo" / "tasks" / "planned" / "IMPORTED-CLI-1.yaml"
-    )
+    payload = _load_yaml(tmp_path / ".omo" / "tasks" / "planned" / "IMPORTED-CLI-1.yaml")
     assert payload["metadata"]["broker"] == "projects/omo/src/omo/omo_ingress.py"
-    artifact = _load_yaml(
-        tmp_path
-        / "runtime"
-        / "omo"
-        / "_delivery"
-        / "ingress"
-        / "tasks"
-        / "IMPORTED-CLI-1.yaml"
-    )
+    artifact = _load_yaml(tmp_path / "runtime" / "omo" / "_delivery" / "ingress" / "tasks" / "IMPORTED-CLI-1.yaml")
     assert artifact["task_ref"] == ".omo/tasks/planned/IMPORTED-CLI-1.yaml"
 
 
-def test_governance_cli_ingress_debt_upserts_debt_and_artifact(
-    tmp_path: Path, monkeypatch, capsys
-):
+def test_governance_cli_ingress_debt_upserts_debt_and_artifact(tmp_path: Path, monkeypatch, capsys):
     (tmp_path / ".omo").mkdir(parents=True, exist_ok=True)
     debt_file = tmp_path / "debt.yaml"
     debt_file.write_text(
@@ -592,21 +543,11 @@ def test_governance_cli_ingress_debt_upserts_debt_and_artifact(
     payload = _load_yaml(tmp_path / ".omo" / "debt" / "items" / "DEBT-CLI-1.yaml")
     assert payload["lifecycle_state"] == "identified"
     assert payload["occurrence_count"] == 1
-    artifact = _load_yaml(
-        tmp_path
-        / "runtime"
-        / "omo"
-        / "_delivery"
-        / "ingress"
-        / "debts"
-        / "DEBT-CLI-1.yaml"
-    )
+    artifact = _load_yaml(tmp_path / "runtime" / "omo" / "_delivery" / "ingress" / "debts" / "DEBT-CLI-1.yaml")
     assert artifact["debt_ref"] == ".omo/debt/items/DEBT-CLI-1.yaml"
 
 
-def test_governance_cli_ingress_uses_workspace_root_not_subrepo_cwd(
-    tmp_path: Path, monkeypatch, capsys
-):
+def test_governance_cli_ingress_uses_workspace_root_not_subrepo_cwd(tmp_path: Path, monkeypatch, capsys):
     goals_file = tmp_path / ".omo" / "goals" / "current.yaml"
     goals_file.parent.mkdir(parents=True, exist_ok=True)
     goals_file.write_text("phase: 44\ngoals: []\n", encoding="utf-8")

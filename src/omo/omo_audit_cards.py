@@ -30,9 +30,7 @@ def find_card_db() -> Path | None:
     for p in DEFAULT_DB_PATHS:
         if p.exists():
             return p
-    cockpit_db = (
-        WORKSPACE_ROOT / "projects" / "cockpit" / "tests" / "fixtures" / "cards.db"
-    )
+    cockpit_db = WORKSPACE_ROOT / "projects" / "cockpit" / "tests" / "fixtures" / "cards.db"
     if cockpit_db.exists():
         return cockpit_db
     return None
@@ -100,9 +98,7 @@ def collect_metrics(db_path: Path) -> dict:
     return metrics
 
 
-def cmd_cards(
-    db_path: str | None = None, json_output: bool = False, output: str | None = None
-) -> int:
+def cmd_cards(db_path: str | None = None, json_output: bool = False, output: str | None = None) -> int:
     if db_path:
         path = Path(db_path)
         if not path.is_absolute():
@@ -138,9 +134,7 @@ def cmd_cards(
     if output:
         out_path = WORKSPACE_ROOT / output
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(
-            json.dumps(metrics, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+        out_path.write_text(json.dumps(metrics, indent=2, ensure_ascii=False), encoding="utf-8")
         if not json_output:
             print(f"\nMetrics written to {out_path.relative_to(WORKSPACE_ROOT)}")
 

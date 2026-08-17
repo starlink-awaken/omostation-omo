@@ -18,15 +18,11 @@ class EcosGovernanceProvider(IGovernanceProvider):
         try:
             _import_omo_module("omo.omo_task_schema")
         except ImportError:
-            raise ImportError(
-                "The 'omo' package is required to use EcosGovernanceProvider. Install c2g[ecos]."
-            )
+            raise ImportError("The 'omo' package is required to use EcosGovernanceProvider. Install c2g[ecos].")
 
     def validate_pitch(self, pitch: PitchSchema) -> bool:
         if not pitch.upstream_ref:
-            print(
-                "  ❌ [CR-STRATEGY-01 孤儿拦截] Pitch缺乏Upstream锚点，拒绝转化为Bet。"
-            )
+            print("  ❌ [CR-STRATEGY-01 孤儿拦截] Pitch缺乏Upstream锚点，拒绝转化为Bet。")
             return False
         return True
 
@@ -58,9 +54,7 @@ class EcosStorageProvider(IStorageProvider):
         try:
             _import_omo_module("omo.omo_ingress")
         except ImportError:
-            raise ImportError(
-                "The 'omo' package is required to use EcosStorageProvider. Install c2g[ecos]."
-            )
+            raise ImportError("The 'omo' package is required to use EcosStorageProvider. Install c2g[ecos].")
 
     def save_bet(self, bet: BetSchema) -> str:
         create_goal_via_broker(
@@ -90,9 +84,7 @@ class EcosStorageProvider(IStorageProvider):
             "source_docs": metadata.get("source_docs", ["c2g:task-without-source-doc"]),
             "deliverables": metadata.get("deliverables", ["执行记录与源码修改"]),
             "imported_via": metadata.get("imported_via", "projects/c2g"),
-            "context_uri": metadata.get(
-                "context_uri", f"bos://memory/tasks/{task.task_id}"
-            ),
+            "context_uri": metadata.get("context_uri", f"bos://memory/tasks/{task.task_id}"),
             "assigned_to": None,
             "dispatch_id": None,
             "run_ref": None,
@@ -127,9 +119,7 @@ class EcosStorageProvider(IStorageProvider):
             appetite = "Unknown"
             for line in content.split("\n"):
                 if "> **Upstream**" in line:
-                    upstream = (
-                        line.split(":", 1)[1].strip() if ":" in line else line.strip()
-                    )
+                    upstream = line.split(":", 1)[1].strip() if ":" in line else line.strip()
                 if "**Appetite:**" in line:
                     appetite = line.replace("**Appetite:**", "").strip()
 
@@ -181,13 +171,9 @@ def get_providers(base_dir_path: str | None = None, adapter_type: str = "ecos"):
     """
     if adapter_type == "ecos":
         try:
-            return EcosGovernanceProvider(base_dir_path), EcosStorageProvider(
-                base_dir_path
-            )
+            return EcosGovernanceProvider(base_dir_path), EcosStorageProvider(base_dir_path)
         except ImportError as e:
-            print(
-                f"⚠️ eCOS Adapter not available ({e}). Falling back to 'local' adapter."
-            )
+            print(f"⚠️ eCOS Adapter not available ({e}). Falling back to 'local' adapter.")
             adapter_type = "local"
 
     if adapter_type == "local":

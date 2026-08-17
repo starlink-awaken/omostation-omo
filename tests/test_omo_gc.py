@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 import yaml
+
 from omo.omo_gc import archive_resolved_debt_items
 
 
@@ -17,23 +18,17 @@ def test_archive_resolved_debt_items_moves_only_old_resolved_entries(
 
     old_resolved = debt_dir / "DEBT-OLD.yaml"
     old_resolved.write_text(
-        yaml.safe_dump(
-            {"id": "DEBT-OLD", "resolved": True}, sort_keys=False, allow_unicode=True
-        ),
+        yaml.safe_dump({"id": "DEBT-OLD", "resolved": True}, sort_keys=False, allow_unicode=True),
         encoding="utf-8",
     )
     fresh_resolved = debt_dir / "DEBT-FRESH.yaml"
     fresh_resolved.write_text(
-        yaml.safe_dump(
-            {"id": "DEBT-FRESH", "resolved": True}, sort_keys=False, allow_unicode=True
-        ),
+        yaml.safe_dump({"id": "DEBT-FRESH", "resolved": True}, sort_keys=False, allow_unicode=True),
         encoding="utf-8",
     )
     old_open = debt_dir / "DEBT-OPEN.yaml"
     old_open.write_text(
-        yaml.safe_dump(
-            {"id": "DEBT-OPEN", "resolved": False}, sort_keys=False, allow_unicode=True
-        ),
+        yaml.safe_dump({"id": "DEBT-OPEN", "resolved": False}, sort_keys=False, allow_unicode=True),
         encoding="utf-8",
     )
 

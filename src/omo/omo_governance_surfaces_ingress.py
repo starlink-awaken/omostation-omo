@@ -104,9 +104,7 @@ def _check_ingress_registry(
             "debt_source_refs": [],
             "capability_ids": [],
             "capability_source_refs": [],
-        }, [
-            f"ingress registry: required file missing: {registry_path.relative_to(workspace_root)}"
-        ]
+        }, [f"ingress registry: required file missing: {registry_path.relative_to(workspace_root)}"]
 
     registry = _load_yaml(registry_path)
     issues: list[str] = []
@@ -149,101 +147,62 @@ def _check_ingress_registry(
             issues.append(f"ingress registry: {label} missing or not a mapping")
 
     goals_by_id = goals_by_id if isinstance(goals_by_id, dict) else {}
-    goals_by_source_ref = (
-        goals_by_source_ref if isinstance(goals_by_source_ref, dict) else {}
-    )
+    goals_by_source_ref = goals_by_source_ref if isinstance(goals_by_source_ref, dict) else {}
     tasks_by_id = tasks_by_id if isinstance(tasks_by_id, dict) else {}
-    tasks_by_source_ref = (
-        tasks_by_source_ref if isinstance(tasks_by_source_ref, dict) else {}
-    )
+    tasks_by_source_ref = tasks_by_source_ref if isinstance(tasks_by_source_ref, dict) else {}
     debts_by_id = debts_by_id if isinstance(debts_by_id, dict) else {}
-    debts_by_source_ref = (
-        debts_by_source_ref if isinstance(debts_by_source_ref, dict) else {}
-    )
-    capabilities_by_id = (
-        capabilities_by_id if isinstance(capabilities_by_id, dict) else {}
-    )
-    capabilities_by_source_ref = (
-        capabilities_by_source_ref
-        if isinstance(capabilities_by_source_ref, dict)
-        else {}
-    )
+    debts_by_source_ref = debts_by_source_ref if isinstance(debts_by_source_ref, dict) else {}
+    capabilities_by_id = capabilities_by_id if isinstance(capabilities_by_id, dict) else {}
+    capabilities_by_source_ref = capabilities_by_source_ref if isinstance(capabilities_by_source_ref, dict) else {}
 
     for item_id, meta in goals_by_id.items():
         if not isinstance(meta, dict):
             issues.append(f"ingress registry: goals.by_id.{item_id} not a mapping")
             continue
-        if (
-            meta.get("artifact_ref")
-            != f"runtime/omo/_delivery/ingress/goals/{item_id}.yaml"
-        ):
-            issues.append(
-                f"ingress registry: goals.by_id.{item_id} artifact_ref mismatch"
-            )
+        if meta.get("artifact_ref") != f"runtime/omo/_delivery/ingress/goals/{item_id}.yaml":
+            issues.append(f"ingress registry: goals.by_id.{item_id} artifact_ref mismatch")
         if not (omo_dir / "goals" / "current.yaml").exists():
             issues.append("ingress registry: goals/current.yaml missing")
         source_ref = meta.get("source_ref", "")
         if source_ref and goals_by_source_ref.get(source_ref) != item_id:
-            issues.append(
-                f"ingress registry: goals source_ref reverse mapping mismatch for {item_id}"
-            )
+            issues.append(f"ingress registry: goals source_ref reverse mapping mismatch for {item_id}")
 
     for source_ref, item_id in goals_by_source_ref.items():
         if item_id not in goals_by_id:
-            issues.append(
-                f"ingress registry: goals.by_source_ref points to missing id {item_id}"
-            )
+            issues.append(f"ingress registry: goals.by_source_ref points to missing id {item_id}")
 
     for item_id, meta in tasks_by_id.items():
         if not isinstance(meta, dict):
             issues.append(f"ingress registry: tasks.by_id.{item_id} not a mapping")
             continue
-        if (
-            meta.get("artifact_ref")
-            != f"runtime/omo/_delivery/ingress/tasks/{item_id}.yaml"
-        ):
-            issues.append(
-                f"ingress registry: tasks.by_id.{item_id} artifact_ref mismatch"
-            )
+        if meta.get("artifact_ref") != f"runtime/omo/_delivery/ingress/tasks/{item_id}.yaml":
+            issues.append(f"ingress registry: tasks.by_id.{item_id} artifact_ref mismatch")
         task_carrier = _resolve_ingress_task_carrier(omo_dir, item_id)
         if task_carrier is None:
             issues.append(f"ingress registry: task carrier missing for {item_id}")
         source_ref = meta.get("source_ref", "")
         if source_ref and tasks_by_source_ref.get(source_ref) != item_id:
-            issues.append(
-                f"ingress registry: tasks source_ref reverse mapping mismatch for {item_id}"
-            )
+            issues.append(f"ingress registry: tasks source_ref reverse mapping mismatch for {item_id}")
 
     for source_ref, item_id in tasks_by_source_ref.items():
         if item_id not in tasks_by_id:
-            issues.append(
-                f"ingress registry: tasks.by_source_ref points to missing id {item_id}"
-            )
+            issues.append(f"ingress registry: tasks.by_source_ref points to missing id {item_id}")
 
     for item_id, meta in debts_by_id.items():
         if not isinstance(meta, dict):
             issues.append(f"ingress registry: debts.by_id.{item_id} not a mapping")
             continue
-        if (
-            meta.get("artifact_ref")
-            != f"runtime/omo/_delivery/ingress/debts/{item_id}.yaml"
-        ):
-            issues.append(
-                f"ingress registry: debts.by_id.{item_id} artifact_ref mismatch"
-            )
+        if meta.get("artifact_ref") != f"runtime/omo/_delivery/ingress/debts/{item_id}.yaml":
+            issues.append(f"ingress registry: debts.by_id.{item_id} artifact_ref mismatch")
         if not (omo_dir / "debt" / "items" / f"{item_id}.yaml").exists():
             issues.append(f"ingress registry: debt item missing for {item_id}")
         source_ref = meta.get("source_ref", "")
         if source_ref and debts_by_source_ref.get(source_ref) != item_id:
-            issues.append(
-                f"ingress registry: debts source_ref reverse mapping mismatch for {item_id}"
-            )
+            issues.append(f"ingress registry: debts source_ref reverse mapping mismatch for {item_id}")
 
     for source_ref, item_id in debts_by_source_ref.items():
         if item_id not in debts_by_id:
-            issues.append(
-                f"ingress registry: debts.by_source_ref points to missing id {item_id}"
-            )
+            issues.append(f"ingress registry: debts.by_source_ref points to missing id {item_id}")
 
     capability_expected_targets = {
         "bundle": [
@@ -259,17 +218,13 @@ def _check_ingress_registry(
     }
     for item_id, meta in capabilities_by_id.items():
         if not isinstance(meta, dict):
-            issues.append(
-                f"ingress registry: capabilities.by_id.{item_id} not a mapping"
-            )
+            issues.append(f"ingress registry: capabilities.by_id.{item_id} not a mapping")
             continue
         artifact_ref = meta.get("artifact_ref")
         if not isinstance(artifact_ref, str) or not artifact_ref.startswith(
             "runtime/omo/_delivery/ingress/capabilities/"
         ):
-            issues.append(
-                f"ingress registry: capabilities.by_id.{item_id} artifact_ref mismatch"
-            )
+            issues.append(f"ingress registry: capabilities.by_id.{item_id} artifact_ref mismatch")
         for expected_path in capability_expected_targets.get(item_id, []):
             if not expected_path.exists():
                 issues.append(
@@ -277,15 +232,11 @@ def _check_ingress_registry(
                 )
         source_ref = meta.get("source_ref", "")
         if source_ref and capabilities_by_source_ref.get(source_ref) != item_id:
-            issues.append(
-                f"ingress registry: capabilities source_ref reverse mapping mismatch for {item_id}"
-            )
+            issues.append(f"ingress registry: capabilities source_ref reverse mapping mismatch for {item_id}")
 
     for source_ref, item_id in capabilities_by_source_ref.items():
         if item_id not in capabilities_by_id:
-            issues.append(
-                f"ingress registry: capabilities.by_source_ref points to missing id {item_id}"
-            )
+            issues.append(f"ingress registry: capabilities.by_source_ref points to missing id {item_id}")
 
     return {
         "exists": True,
