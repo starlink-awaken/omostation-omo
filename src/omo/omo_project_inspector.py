@@ -95,26 +95,45 @@ class OMOProjectInspector:
                 "drift": False,
             }
 
+        is_standalone_git = (proj_dir / ".git").exists()
         try:
-            res = subprocess.run(
-                ["git", "status", "--porcelain"],
-                cwd=str(proj_dir),
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            is_dirty = bool(res.stdout.strip())
+            if is_standalone_git:
+                res = subprocess.run(
+                    ["git", "status", "--porcelain"],
+                    cwd=str(proj_dir),
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                commit_res = subprocess.run(
+                    ["git", "rev-parse", "--short", "HEAD"],
+                    cwd=str(proj_dir),
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                is_dirty = bool(res.stdout.strip())
+                head_commit = commit_res.stdout.strip() or "N/A"
+            else:
+                res = subprocess.run(
+                    ["git", "status", "--porcelain", "--", f"projects/{proj_name}"],
+                    cwd=str(self.root),
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                commit_res = subprocess.run(
+                    ["git", "rev-parse", "--short", "HEAD"],
+                    cwd=str(self.root),
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                is_dirty = bool(res.stdout.strip())
+                head_commit = commit_res.stdout.strip() or "N/A"
 
-            commit_res = subprocess.run(
-                ["git", "rev-parse", "--short", "HEAD"],
-                cwd=str(proj_dir),
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            head_commit = commit_res.stdout.strip() or "N/A"
             return {
-                "is_submodule": True,
+                "is_submodule": is_standalone_git,
                 "is_dirty": is_dirty,
                 "head_commit": head_commit,
                 "drift": is_dirty,
