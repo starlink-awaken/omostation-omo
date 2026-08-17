@@ -58,6 +58,7 @@ from .core import (
     validate_agent_profile,
     workflow_by_id,
 )
+from .affected_graph_receipt import validate_affected_graph_receipt
 
 _LOCK_FILENAME_MAX_LEN = 255
 _RUN_UPDATE_LOCK_NAME_MAX_LEN = _LOCK_FILENAME_MAX_LEN - len("run_.update.lock")
@@ -669,9 +670,11 @@ def claim_run(
     surfaces: list[str],
     force_lock: bool,
     affected_hash: str | None = None,
+    affected_receipt: str | None = None,
 ) -> dict[str, Any]:
     heartbeat_run(registry, run_id)  # SR-01: renew before claim
-    if not affected_hash:
+    receipt_reference = affected_hash or affected_receipt
+    if not receipt_reference:
         raise WorkflowError("Missing or invalid affected-hash. You must run affected-graph.py first.")
     if not paths and not surfaces:
         raise WorkflowError("claim requires at least one --path or --surface")
@@ -681,6 +684,12 @@ def claim_run(
             raise WorkflowError(f"cannot claim against non-active run: {run_id}")
         normalized_paths = sorted({normalize_repo_path(item) for item in paths})
         normalized_surfaces = sorted({item.strip() for item in surfaces if item.strip()})
+        affected_graph = validate_affected_graph_receipt(
+            receipt_reference,
+            normalized_paths,
+            WORKSPACE,
+            normalized_surfaces,
+        )
 
         # Phase 3 A2A Path Locks (Logical Isolation)
         # Check for path hierarchy overlap with other active runs
@@ -745,6 +754,7 @@ def claim_run(
                 "surfaces": normalized_surfaces,
                 "scopes": scopes,
                 "locks": lock_paths,
+                "affected_graph": affected_graph,
             }
             payload.setdefault("claims", []).append(claim)
             write_run(path, payload)
