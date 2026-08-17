@@ -243,6 +243,28 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _load_chain_bind():
+    """Load bin/plan/chain_bind.py if present (best-effort; workspace layout)."""
+    import importlib.util
+    from ..omo_paths import WORKSPACE_ROOT
+
+    plan_dir = WORKSPACE_ROOT / "bin" / "plan"
+    cb = plan_dir / "chain_bind.py"
+    if not cb.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location("chain_bind", cb)
+    if spec is None or spec.loader is None:
+        return None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["chain_bind"] = mod  # dataclass 解析 __module__ 需要 sys.modules 注册
+    try:
+        spec.loader.exec_module(mod)
+    except Exception:  # noqa: BLE001 — 门禁加载失败不阻断 CLI (fail-open 到原行为)
+        sys.modules.pop("chain_bind", None)
+        return None
+    return mod
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -358,6 +380,20 @@ def main(argv: list[str] | None = None) -> int:
             return run_stage(workflow, args.stage, context, args.execute, args.json)
         if args.command == "start":
             workflow = workflow_by_id(registry, args.workflow_id)
+            # ADR-0203 requirement-iteration 硬门 (从根仓 wrapper 下沉, 堵
+            # `python -m omo.workflow.cli start` 绕过口子 + 修 exit-0 静默 —
+            # DECISION-SCENARIO-DERIVATION §5 实证 2026-08-17)
+            bet_id = getattr(args, "bet", "") or ""
+            chain_bind = _load_chain_bind()
+            if chain_bind is not None:
+                verdict = chain_bind.start_requires_bet(args.workflow_id, bet_id)
+                if not verdict.ok:
+                    print(
+                        "agent-workflow: requirement-iteration start requires "
+                        f"--bet <BET-ID> ({', '.join(verdict.reasons)})",
+                        file=sys.stderr,
+                    )
+                    return 1
             objective = args.objective
             if getattr(args, "bet", None):
                 bet_id = args.bet
@@ -480,3 +516,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"agent-workflow: {exc}", file=sys.stderr)
         return 2
     return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
