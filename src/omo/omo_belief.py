@@ -401,6 +401,63 @@ class MOSBeliefManager:
         )
         return cc_id
 
+    def transfer_calibration(
+        self,
+        source_capability_ref: str,
+        target_capability_ref: str,
+        *,
+        min_samples: int = 5,
+        operator: str = "",
+    ) -> str | None:
+        """跨场景校准迁移 (BET-Y2Q3-T3-01).
+
+        将源场景的校准经验迁移到目标场景, 附带来源追溯.
+        仅当源校准样本数 >= min_samples 时迁移 (防止低置信度传播).
+
+        Returns:
+            新 calibration ID, 或 None (源校准不存在/样本不足).
+        """
+        state = self._load_state()
+        cals = state.get("capability_calibrations", [])
+        # 取源场景最近 N 条校准
+        source_cals = [c for c in cals if source_capability_ref in c.get("capability_ref", "")]
+        if not source_cals or len(source_cals) < min_samples:
+            return None
+        # 加权平均 (样本数越多权重越大)
+        total_samples = sum(c.get("sample_size", 1) for c in source_cals)
+        if total_samples == 0:
+            return None
+        weighted_rate = sum(
+            c.get("success_rate", 0.0) * c.get("sample_size", 1) for c in source_cals
+        ) / total_samples
+        weighted_latency = sum(
+            c.get("avg_latency_ms", 0.0) * c.get("sample_size", 1) for c in source_cals
+        ) / total_samples
+        # 创建迁移校准 (provenance 追溯)
+        cc_id = f"cc-{len(cals) + 1:04d}"
+        entry = {
+            "id": cc_id,
+            "capability_ref": target_capability_ref,
+            "measured_at": _utc_now(),
+            "success_rate": round(weighted_rate, 4),
+            "avg_latency_ms": round(weighted_latency, 1),
+            "sample_size": total_samples,  # 继承源样本数
+            "last_run_id": None,
+            "transferred_from": source_capability_ref,
+            "transfer_operator": operator,
+            "transfer_at": _utc_now(),
+            "schema": "calibration-transfer/v1",
+        }
+        cals.append(entry)
+        write_yaml_atomic(self.state_file, state)
+        self._update_registry_summary(len(state["beliefs"]), state)
+        self._append_audit_log(
+            "TRANSFER_CALIBRATION",
+            f"id={cc_id} from={source_capability_ref} to={target_capability_ref} "
+            f"rate={weighted_rate:.2f} samples={total_samples} by={operator}",
+        )
+        return cc_id
+
     def record_decision_outcome(
         self,
         decision_type: str,
