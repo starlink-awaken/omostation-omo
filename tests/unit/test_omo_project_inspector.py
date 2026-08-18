@@ -1,6 +1,7 @@
 """Tests for OMOProjectInspector."""
 
 from pathlib import Path
+
 from omo.omo_project_inspector import OMOProjectInspector
 
 

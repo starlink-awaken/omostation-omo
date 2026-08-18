@@ -246,6 +246,7 @@ def build_parser() -> argparse.ArgumentParser:
 def _load_chain_bind():
     """Load bin/plan/chain_bind.py if present (best-effort; workspace layout)."""
     import importlib.util
+
     from ..omo_paths import WORKSPACE_ROOT
 
     plan_dir = WORKSPACE_ROOT / "bin" / "plan"
