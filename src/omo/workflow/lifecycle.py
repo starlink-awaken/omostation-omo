@@ -41,6 +41,7 @@ except ImportError:
 
 
 from ..omo_io import write_yaml_atomic
+from .affected_graph_receipt import validate_affected_graph_receipt
 from .core import (
     CLAIM_POLICY_MODES,
     RUN_UPDATE_LOCK_TIMEOUT_SECONDS,
@@ -58,7 +59,6 @@ from .core import (
     validate_agent_profile,
     workflow_by_id,
 )
-from .affected_graph_receipt import validate_affected_graph_receipt
 
 _LOCK_FILENAME_MAX_LEN = 255
 _RUN_UPDATE_LOCK_NAME_MAX_LEN = _LOCK_FILENAME_MAX_LEN - len("run_.update.lock")
