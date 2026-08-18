@@ -266,6 +266,113 @@ class MOSBeliefManager:
         self._append_audit_log("RECORD_WORLD_SNAPSHOT", f"id={ws_id} domain={domain} source={source}")
         return ws_id
 
+    def delta_from_previous(
+        self,
+        domain: str,
+        *,
+        source: str | None = None,
+    ) -> dict[str, Any]:
+        """世界模型增量查询 — 回答"和上次比变了什么".
+
+        返回最新快照与同 domain 前一个快照之间的字段级 diff.
+        可选按 source 过滤.
+
+        Returns:
+            {
+                "domain": str,
+                "base": {"id": str, "observed_at": str, "observations": dict} | None,
+                "current": {"id": str, "observed_at": str, "observations": dict} | None,
+                "delta": {
+                    "added": {k: v},
+                    "removed": {k: v},
+                    "changed": {k: {"from": v, "to": v}},
+                    "unchanged": {k: v},
+                },
+                "changed_fields": list[str],
+                "has_delta": bool,
+            }
+        """
+        state = self._load_state()
+        snaps = [s for s in state["world_snapshots"] if s.get("domain") == domain]
+        if source is not None:
+            snaps = [s for s in snaps if s.get("source") == source]
+        # 按 observed_at 降序，最新在前；id 降序作稳定次键（同秒写入时 ws-NNNN 大者更新）
+        snaps_sorted = sorted(
+            snaps,
+            key=lambda s: (s.get("observed_at", ""), s.get("id", "")),
+            reverse=True,
+        )
+        if not snaps_sorted:
+            return {
+                "domain": domain,
+                "base": None,
+                "current": None,
+                "delta": {"added": {}, "removed": {}, "changed": {}, "unchanged": {}},
+                "changed_fields": [],
+                "has_delta": False,
+            }
+        current = snaps_sorted[0]
+        base = snaps_sorted[1] if len(snaps_sorted) > 1 else None
+        cur_obs = current.get("observations", {}) or {}
+        base_obs = (base.get("observations", {}) or {}) if base else None
+
+        # 无前驱 = 无可比较，全部字段视为 unchanged（首次基线）
+        if base_obs is None:
+            return {
+                "domain": domain,
+                "base": None,
+                "current": {
+                    "id": current["id"],
+                    "observed_at": current.get("observed_at"),
+                    "observations": cur_obs,
+                },
+                "delta": {
+                    "added": {},
+                    "removed": {},
+                    "changed": {},
+                    "unchanged": dict(cur_obs),
+                },
+                "changed_fields": [],
+                "has_delta": False,
+            }
+
+        added = {k: v for k, v in cur_obs.items() if k not in base_obs}
+        removed = {k: v for k, v in base_obs.items() if k not in cur_obs}
+        changed: dict[str, Any] = {}
+        unchanged: dict[str, Any] = {}
+        for k in set(cur_obs) & set(base_obs):
+            if cur_obs[k] != base_obs[k]:
+                changed[k] = {"from": base_obs[k], "to": cur_obs[k]}
+            else:
+                unchanged[k] = cur_obs[k]
+
+        has_delta = bool(added or removed or changed)
+        return {
+            "domain": domain,
+            "base": (
+                {
+                    "id": base["id"],
+                    "observed_at": base.get("observed_at"),
+                    "observations": base_obs,
+                }
+                if base
+                else None
+            ),
+            "current": {
+                "id": current["id"],
+                "observed_at": current.get("observed_at"),
+                "observations": cur_obs,
+            },
+            "delta": {
+                "added": added,
+                "removed": removed,
+                "changed": changed,
+                "unchanged": unchanged,
+            },
+            "changed_fields": sorted(set(added) | set(removed) | set(changed)),
+            "has_delta": has_delta,
+        }
+
     def record_capability_calibration(
         self,
         capability_ref: str,

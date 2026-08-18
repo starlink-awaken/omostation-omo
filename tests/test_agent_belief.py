@@ -88,6 +88,71 @@ def test_record_world_snapshot_with_expiry(tmp_path: Path):
     assert state["world_snapshots"][0]["expires_at"] == "2026-08-08T00:00:00Z"
 
 
+class TestDeltaFromPrevious:
+    """BET-Y2Q1-T3-01: 世界模型增量查询 — 回答"和上次比变了什么"."""
+
+    def test_delta_no_snapshots(self, tmp_path: Path):
+        mgr = MOSBeliefManager(root=tmp_path)
+        result = mgr.delta_from_previous("governance")
+        assert result["has_delta"] is False
+        assert result["current"] is None
+        assert result["base"] is None
+        assert result["changed_fields"] == []
+
+    def test_delta_single_snapshot_no_change(self, tmp_path: Path):
+        mgr = MOSBeliefManager(root=tmp_path)
+        mgr.record_world_snapshot(
+            source="ci", domain="governance", observations={"checks": 38}
+        )
+        result = mgr.delta_from_previous("governance")
+        assert result["has_delta"] is False
+        assert result["current"] is not None
+        assert result["base"] is None  # 只有一个快照，无前驱
+        assert result["delta"]["unchanged"] == {"checks": 38}
+
+    def test_delta_detects_added_changed_removed(self, tmp_path: Path):
+        mgr = MOSBeliefManager(root=tmp_path)
+        mgr.record_world_snapshot(
+            source="ci",
+            domain="governance",
+            observations={"checks": 38, "health": 97, "flaky": 3},
+        )
+        mgr.record_world_snapshot(
+            source="ci",
+            domain="governance",
+            observations={"checks": 39, "health": 97, "new_metric": 1},
+        )
+        result = mgr.delta_from_previous("governance")
+        assert result["has_delta"] is True
+        d = result["delta"]
+        assert d["added"] == {"new_metric": 1}
+        assert d["removed"] == {"flaky": 3}
+        assert d["changed"] == {"checks": {"from": 38, "to": 39}}
+        assert d["unchanged"] == {"health": 97}
+        assert set(result["changed_fields"]) == {"checks", "flaky", "new_metric"}
+
+    def test_delta_filters_by_source(self, tmp_path: Path):
+        mgr = MOSBeliefManager(root=tmp_path)
+        mgr.record_world_snapshot(source="ci", domain="gov", observations={"a": 1})
+        mgr.record_world_snapshot(source="agent", domain="gov", observations={"b": 2})
+        mgr.record_world_snapshot(source="ci", domain="gov", observations={"a": 10})
+        # 不按 source 过滤：取最新两条 (agent 的 b=2 和 ci 的 a=10)
+        result_all = mgr.delta_from_previous("gov")
+        assert result_all["current"]["observations"] == {"a": 10}
+        # 按 source=ci 过滤：只比较 ci 的两条
+        result_ci = mgr.delta_from_previous("gov", source="ci")
+        assert result_ci["has_delta"] is True
+        assert result_ci["delta"]["changed"] == {"a": {"from": 1, "to": 10}}
+
+    def test_delta_is_domain_scoped(self, tmp_path: Path):
+        mgr = MOSBeliefManager(root=tmp_path)
+        mgr.record_world_snapshot(source="ci", domain="gov", observations={"a": 1})
+        mgr.record_world_snapshot(source="ci", domain="deploy", observations={"b": 2})
+        result = mgr.delta_from_previous("gov")
+        assert result["has_delta"] is False  # gov 只有一个快照
+        assert result["current"]["observations"] == {"a": 1}
+
+
 def test_record_capability_calibration(tmp_path: Path):
     mgr = MOSBeliefManager(root=tmp_path)
     cc_id = mgr.record_capability_calibration(

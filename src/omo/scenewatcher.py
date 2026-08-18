@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from omo.mental_model import IntentSource, MentalModel
 from omo.model_router import ModelRouterProtocol, StubModelRouter
 from omo.omo_belief import MOSBeliefManager
 
@@ -61,6 +62,16 @@ class SceneWatcher:
     model_router: ModelRouterProtocol = field(default_factory=StubModelRouter)
     decision_log: list[DecisionResult] = field(default_factory=list)
     mos_manager: MOSBeliefManager | None = None
+    mental_model: MentalModel | None = None  # BET-Y2Q1-T3-03: 三模型决策上下文
+    intent_source: IntentSource | None = None  # 注入后自动构建 mental_model
+
+    def __post_init__(self) -> None:
+        """注入 intent_source 后自动构建 mental_model (SOLID D)."""
+        if self.mental_model is None and (self.mos_manager is not None or self.intent_source is not None):
+            self.mental_model = MentalModel(
+                mos_manager=self.mos_manager,
+                intent_source=self.intent_source,
+            )
 
     def promote_scene(self, *, dry_run: bool = True) -> dict[str, Any]:
         """推进 scene lifecycle (proposal → active 候选).
@@ -99,10 +110,32 @@ class SceneWatcher:
         若 mos_manager 已注入, 持久化 decision_outcome 到 MOS (ADR-0372).
         """
         model_decision = self.model_router.route(node, node_output, scene_id=self.scene_id)
+
+        # BET-Y2Q1-T3-03: 三模型上下文调整决策
+        mental_ctx = None
+        adjusted_confidence = model_decision.confidence
+        if self.mental_model is not None:
+            mental_ctx = self.mental_model.context_for_decision(
+                self.scene_id, action_type=node
+            )
+            adjusted_confidence = max(0.0, min(1.0, model_decision.confidence + mental_ctx.adjustment))
+
+        # 用调整后置信度判定 action (可能因上下文改变决策)
+        threshold = 0.8
+        if adjusted_confidence >= threshold:
+            action = "pass" if model_decision.action == "pass" else model_decision.action
+        else:
+            action = "human_veto"
+
+        # 决策理由 = 模型理由 + 心智上下文 (可解释)
+        reason_parts = [model_decision.reason]
+        if mental_ctx is not None:
+            reason_parts.append(f"[mental] {mental_ctx.to_rationale()} (adj={mental_ctx.adjustment:+.2f})")
+
         decision = DecisionResult(
-            action=model_decision.action,
-            confidence=model_decision.confidence,
-            reason=model_decision.reason,
+            action=action,
+            confidence=adjusted_confidence,
+            reason=" | ".join(reason_parts),
             model_used=model_decision.model_used,
             cost_estimate=model_decision.cost_estimate,
         )
