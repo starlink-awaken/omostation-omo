@@ -69,10 +69,10 @@ CROSS_DOMAIN_URIS = {
     ],
     "persona_to_capability": [
         "bos://persona/health-profile/summary",
-        "bos://capability/forge/register-tool",
+        "bos://capability/agent-runtime/status",
     ],
     "capability_to_governance": [
-        "bos://capability/forge/register-tool",
+        "bos://capability/runtime/health",
         "bos://governance/omo/audit",
     ],
 }

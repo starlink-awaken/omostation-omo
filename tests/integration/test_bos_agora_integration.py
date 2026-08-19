@@ -3,7 +3,7 @@
 omo 进程调 omo_bos (P33-W1 战役 2) → agora 进程 spawn kairon 子进程 → 返结果.
 不在 omo 进程 import kairon (M3 揭出后修).
 
-P34-W2 验证: 12 条 Analysis URI 全部在 registry, 3 条在 resolver 可真活.
+P34-W2 验证: 9 条 Analysis URI 全部在 registry (iris/connect|transform|validate 已 deprecated, agora SSOT 排除).
 """
 
 from __future__ import annotations
@@ -30,9 +30,6 @@ ANALYSIS_URIS = [
     "bos://analysis/codeanalyze/scan",
     "bos://analysis/codeanalyze/report",
     "bos://analysis/codeanalyze/lint",
-    "bos://analysis/iris/connect",
-    "bos://analysis/iris/transform",
-    "bos://analysis/iris/validate",
 ]
 
 
