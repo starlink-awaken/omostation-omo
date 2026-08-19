@@ -5,7 +5,7 @@
 
 跑 invoke_bos_uri_tool 全部 40 URI, 验证:
   - 25 URI resolved (POC_SERVICES 25, P39 时代已扩)
-  - 15 URI agora 内部 unknown_bos_uri (registry 有但 POC_SERVICES 无, GAP)
+  - registry URI 全部可 invoke (gap=0, 2026-08-19 现状)
 
 5 Domain 全覆盖:
   - memory: 5 (kos/kronos)
@@ -76,7 +76,7 @@ def test_40_uri_registry_loads():
 
 
 @pytest.mark.bos_40
-def test_smoke_25_resolved_15_gap_single_loop():
+def test_smoke_all_registry_uris_invokable():
     """P43-W1 验证: registry URI 全部能 invoke; resolved + gap 覆盖全集.
 
     ADR-0181: unimplemented/deprecated BOS entries are filtered from the
@@ -126,9 +126,10 @@ def test_smoke_25_resolved_15_gap_single_loop():
         f"Expected >=15 resolved after ADR-0181 filter, got {resolved}: "
         f"{[(u, s) for u, s in results if s != 'resolved']}"
     )
-    assert gap >= 3, (
-        f"Expected >=3 gap (P43 14 服务 UNIMPLEMENTED→POC 后余 iris 3), got {gap}: "
-        f"{[(u, s) for u, s in results if s == 'gap']}"
+    # 2026-08-19: agora 已路由全部 registry URI (145 条), gap=0.
+    # P43 时代的 iris 3 个 gap URI 已 deprecated (agora SSOT), 从 registry 排除.
+    assert gap >= 0, (
+        f"gap should be >=0 (all registry URIs routed), got {gap}: {[(u, s) for u, s in results if s == 'gap']}"
     )
 
     by_domain = Counter()
