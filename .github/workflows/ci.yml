@@ -15,8 +15,10 @@ jobs:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v5
         with:
-          enable-cache: true
-          cache-dependency-glob: "uv.lock"
+          # lint runs uv run --no-project (no project deps), so there is no
+          # uv.lock cache to save; setup-uv@v5 Post Run fails with
+          # "Cache path does not exist". Disable cache for the lint job.
+          enable-cache: false
           python-version: "3.13"
       - name: Diff-scoped Ruff checks
         run: |
