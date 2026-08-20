@@ -4,6 +4,8 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import omo.omo_audit as audit
 from omo.omo_audit import _load_yaml_safely, governance_check_agora_health
 from omo.omo_paths import KAIRON_DIR
@@ -67,21 +69,50 @@ def test_governance_lint_uses_canonical_kairon_directory(monkeypatch) -> None:
 
 
 def test_governance_audit_workspace_override_uses_canonical_kairon_directory(monkeypatch, tmp_path: Path) -> None:
-    observed: dict[str, object] = {}
-    original_paths = (audit._OMO_ROOT, audit._KAIRON_DIR, audit._WORKSPACE_ROOT)
+    observed_cwds: list[Path] = []
 
     def fake_run(*_args, **kwargs):
-        observed.update(kwargs)
+        observed_cwds.append(Path(str(kwargs["cwd"])))
         return SimpleNamespace(stdout="All checks passed!\n", stderr="")
 
+    monkeypatch.setattr(audit, "_OMO_ROOT", audit._OMO_ROOT)
+    monkeypatch.setattr(audit, "_KAIRON_DIR", audit._KAIRON_DIR)
+    monkeypatch.setattr(audit, "_WORKSPACE_ROOT", audit._WORKSPACE_ROOT)
     monkeypatch.setattr(audit.subprocess, "run", fake_run)
     monkeypatch.setenv(audit.ENV_SKIP_AGORA, "1")
-    try:
-        audit.run_governance_audit(workspace=tmp_path)
-    finally:
-        audit._OMO_ROOT, audit._KAIRON_DIR, audit._WORKSPACE_ROOT = original_paths
+    audit.run_governance_audit(workspace=tmp_path)
+    audit.governance_check_lint()
 
-    assert Path(str(observed["cwd"])) == tmp_path / "projects" / "knowledge" / "kairon"
+    assert observed_cwds == [
+        tmp_path / "projects" / "knowledge" / "kairon",
+        KAIRON_DIR,
+    ]
+
+
+def test_governance_audit_workspace_override_restores_paths_after_error(monkeypatch, tmp_path: Path) -> None:
+    observed_cwds: list[Path] = []
+
+    def fake_run(*_args, **kwargs):
+        observed_cwds.append(Path(str(kwargs["cwd"])))
+        return SimpleNamespace(stdout="All checks passed!\n", stderr="")
+
+    def raise_coverage_error():
+        raise RuntimeError("coverage check failed")
+
+    monkeypatch.setattr(audit, "_OMO_ROOT", audit._OMO_ROOT)
+    monkeypatch.setattr(audit, "_KAIRON_DIR", audit._KAIRON_DIR)
+    monkeypatch.setattr(audit, "_WORKSPACE_ROOT", audit._WORKSPACE_ROOT)
+    monkeypatch.setattr(audit.subprocess, "run", fake_run)
+    monkeypatch.setattr(audit, "governance_check_test_coverage", raise_coverage_error)
+
+    with pytest.raises(RuntimeError, match="coverage check failed"):
+        audit.run_governance_audit(workspace=tmp_path)
+    audit.governance_check_lint()
+
+    assert observed_cwds == [
+        tmp_path / "projects" / "knowledge" / "kairon",
+        KAIRON_DIR,
+    ]
 
 
 def test_governance_lint_recommendation_uses_canonical_kairon_directory() -> None:

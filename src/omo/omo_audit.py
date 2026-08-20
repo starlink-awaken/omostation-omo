@@ -820,29 +820,35 @@ def run_governance_audit(workspace: Path | None = None) -> GovernanceReport:
     workspace 参数允许测试时传入 tmp_path, 默认读 WORKSPACE_ROOT.
     """
     global _OMO_ROOT, _KAIRON_DIR, _WORKSPACE_ROOT
+    original_paths: tuple[Path, Path, Path] | None = None
     if workspace is not None:
+        original_paths = (_OMO_ROOT, _KAIRON_DIR, _WORKSPACE_ROOT)
         _OMO_ROOT = workspace / ".omo"
         _KAIRON_DIR = workspace / "projects" / "knowledge" / "kairon"
         _WORKSPACE_ROOT = workspace
 
-    checks = [
-        governance_check_lint(),
-        governance_check_test_coverage(),
-        governance_check_debt_integrity(),
-        governance_check_adr_links(),
-        governance_check_task_consistency(),
-        governance_check_agora_health(),
-        governance_check_doc_lifecycle(),
-    ]
-    total = sum(c.score for c in checks) / len(checks)
-    return GovernanceReport(
-        date=datetime.now(UTC).strftime("%Y-%m-%d"),
-        total_score=round(total, 1),
-        grade=compute_grade(total),
-        checks=checks,
-        watchlist=build_watchlist(checks),
-        recommendations=build_recommendations(checks),
-    )
+    try:
+        checks = [
+            governance_check_lint(),
+            governance_check_test_coverage(),
+            governance_check_debt_integrity(),
+            governance_check_adr_links(),
+            governance_check_task_consistency(),
+            governance_check_agora_health(),
+            governance_check_doc_lifecycle(),
+        ]
+        total = sum(c.score for c in checks) / len(checks)
+        return GovernanceReport(
+            date=datetime.now(UTC).strftime("%Y-%m-%d"),
+            total_score=round(total, 1),
+            grade=compute_grade(total),
+            checks=checks,
+            watchlist=build_watchlist(checks),
+            recommendations=build_recommendations(checks),
+        )
+    finally:
+        if original_paths is not None:
+            _OMO_ROOT, _KAIRON_DIR, _WORKSPACE_ROOT = original_paths
 
 
 def render_markdown(report: GovernanceReport) -> str:
