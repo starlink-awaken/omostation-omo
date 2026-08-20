@@ -118,9 +118,7 @@ class SceneColdStartPlanner:
             )
         # 2. 迁移校准 (打折)
         total_samples = sum(c.get("sample_size", 1) for c in source_cals)
-        weighted_rate = sum(
-            c.get("success_rate", 0.0) * c.get("sample_size", 1) for c in source_cals
-        ) / total_samples
+        weighted_rate = sum(c.get("success_rate", 0.0) * c.get("sample_size", 1) for c in source_cals) / total_samples
         seeded_rate = min(weighted_rate * self.discount, self.max_initial_rate)
         # 3. 执行迁移
         transferred_id = self.mos_manager.transfer_calibration(
@@ -147,9 +145,7 @@ class SceneColdStartPlanner:
             ),
         )
 
-    def _find_best_source(
-        self, required_capabilities: list[str]
-    ) -> tuple[str | None, list[dict[str, Any]]]:
+    def _find_best_source(self, required_capabilities: list[str]) -> tuple[str | None, list[dict[str, Any]]]:
         """查找最佳源场景 (样本数最多且满足门槛)."""
         state = getattr(self.mos_manager, "_load_state", lambda: {})()
         cals = state.get("capability_calibrations", [])
@@ -170,9 +166,7 @@ class SceneColdStartPlanner:
         best_cals: list[dict[str, Any]] = []
         for scene_id, scene_cals in scene_samples.items():
             total = sum(c.get("sample_size", 1) for c in scene_cals)
-            if total >= self.min_source_samples and total > sum(
-                c.get("sample_size", 1) for c in best_cals
-            ):
+            if total >= self.min_source_samples and total > sum(c.get("sample_size", 1) for c in best_cals):
                 best_scene = scene_id
                 best_cals = scene_cals
         return best_scene, best_cals

@@ -115,9 +115,7 @@ class SceneWatcher:
         mental_ctx = None
         adjusted_confidence = model_decision.confidence
         if self.mental_model is not None:
-            mental_ctx = self.mental_model.context_for_decision(
-                self.scene_id, action_type=node
-            )
+            mental_ctx = self.mental_model.context_for_decision(self.scene_id, action_type=node)
             adjusted_confidence = max(0.0, min(1.0, model_decision.confidence + mental_ctx.adjustment))
 
         # 用调整后置信度判定 action (可能因上下文改变决策)

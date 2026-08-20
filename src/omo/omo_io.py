@@ -51,6 +51,7 @@ _VOLATILE_OMO_PATHS = (
     ".omo/change-log/mutations.jsonl",
     ".omo/tasks/registry/done/",
     ".omo/_truth/registry/dependency-baseline.yaml",
+    ".omo/_truth/registry/memory-os.yaml",
     ".omo/_delivery/audit-rollout/",
 )
 

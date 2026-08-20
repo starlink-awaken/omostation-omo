@@ -465,10 +465,13 @@ def test_feedback_composes_runtime_observation_dependencies(tmp_path: Path, monk
         actual_outcome="pass",
     )
     root_truth = workspace_root / ".omo/_truth/registry/memory-os.yaml"
-    before_root_truth = root_truth.read_bytes()
+    # MOSBeliefManager 不再向版本化的 truth registry 写入运行时计数；
+    # 若文件不存在，则其应保持不存在（不被运行时投影污染）。
+    before_root_truth_bytes = root_truth.read_bytes() if root_truth.exists() else b""
 
     assert cli._cmd_feedback(["--decision-id", decision_id, "--verdict", "accepted"]) == 0
-    assert root_truth.read_bytes() == before_root_truth
+    after_root_truth_bytes = root_truth.read_bytes() if root_truth.exists() else b""
+    assert after_root_truth_bytes == before_root_truth_bytes
 
     calibration_summary = runtime_delivery / "outcomes/capability_calibration_summary.yaml"
     autonomy_state = runtime_truth / "registry/autonomy-levels.yaml"

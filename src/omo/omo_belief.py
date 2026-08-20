@@ -97,7 +97,9 @@ class MOSBeliefManager:
         registry_file: Path | None = None,
     ):
         self.root = root or WORKSPACE_ROOT
-        self.registry_file = registry_file or (self.root / ".omo/_truth/registry/memory-os.yaml")
+        # 运行时计数投影写入 runtime truth，避免污染版本化的 SSOT registry。
+        # 调用方仍可显式传入 registry_file 覆盖（测试/兼容场景）。
+        self.registry_file = registry_file or (self.root / "runtime" / "omo" / "_truth" / "registry" / "memory-os.yaml")
         self.state_dir = self.root / ".omo" / "state" / "agent-beliefs"
         self.state_file = self.state_dir / "index.yaml"
         self.audit_log_file = self.state_dir / "audit.log"
@@ -427,12 +429,10 @@ class MOSBeliefManager:
         total_samples = sum(c.get("sample_size", 1) for c in source_cals)
         if total_samples == 0:
             return None
-        weighted_rate = sum(
-            c.get("success_rate", 0.0) * c.get("sample_size", 1) for c in source_cals
-        ) / total_samples
-        weighted_latency = sum(
-            c.get("avg_latency_ms", 0.0) * c.get("sample_size", 1) for c in source_cals
-        ) / total_samples
+        weighted_rate = sum(c.get("success_rate", 0.0) * c.get("sample_size", 1) for c in source_cals) / total_samples
+        weighted_latency = (
+            sum(c.get("avg_latency_ms", 0.0) * c.get("sample_size", 1) for c in source_cals) / total_samples
+        )
         # 创建迁移校准 (provenance 追溯)
         cc_id = f"cc-{len(cals) + 1:04d}"
         entry = {

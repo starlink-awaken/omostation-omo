@@ -159,7 +159,8 @@ class DriftMonitor:
             cals = state.get("capability_calibrations", [])
             # 过滤: scene_id 或 action_type 匹配 capability_ref
             filtered = [
-                c for c in cals
+                c
+                for c in cals
                 if scene_id in c.get("capability_ref", "")
                 or (action_type and action_type in c.get("capability_ref", ""))
             ]
@@ -178,8 +179,7 @@ class DriftMonitor:
 
     def _is_already_degraded(self, scene_id: str, action_type: str) -> bool:
         return len(self.get_degraded_scenes()) > 0 and any(
-            d.get("scene_id") == scene_id and d.get("action_type") == action_type
-            for d in self.get_degraded_scenes()
+            d.get("scene_id") == scene_id and d.get("action_type") == action_type for d in self.get_degraded_scenes()
         )
 
     def _degraded_at(self, scene_id: str, action_type: str) -> str | None:
@@ -201,7 +201,9 @@ class DriftMonitor:
         self._append_event(event)
         logger.warning(
             "scene %s degraded: rate=%.2f < threshold=%.2f",
-            scene_id, rate, self.threshold,
+            scene_id,
+            rate,
+            self.threshold,
         )
 
     def _append_event(self, event: DriftEvent) -> None:

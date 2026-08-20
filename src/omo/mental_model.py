@@ -117,9 +117,7 @@ class MentalModel:
             cur = delta.get("current")
             ctx.world_current = (cur.get("observations", {}) if cur else {}) or {}
             if ctx.world_has_delta:
-                ctx.rationale_parts.append(
-                    f"world delta: {', '.join(ctx.world_changed_fields[:3])}"
-                )
+                ctx.rationale_parts.append(f"world delta: {', '.join(ctx.world_changed_fields[:3])}")
         except Exception:
             logger.debug("world model read failed", exc_info=True)
 
@@ -149,9 +147,7 @@ class MentalModel:
                 top = items[0]
                 ctx.intent_top_title = getattr(top, "title", "")
                 ctx.intent_top_priority = getattr(getattr(top, "priority", None), "name", "")
-                ctx.rationale_parts.append(
-                    f"intent top: [{ctx.intent_top_priority}] {ctx.intent_top_title}"
-                )
+                ctx.rationale_parts.append(f"intent top: [{ctx.intent_top_priority}] {ctx.intent_top_title}")
         except Exception:
             logger.debug("intent model read failed", exc_info=True)
 
