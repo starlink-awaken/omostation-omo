@@ -62,7 +62,12 @@ def _worker(
         "id": "pi",
         "enabled": enabled,
         "admission_state": admission_state,
-        "transports": transports if transports is not None else {"cli_prompt": {"command": "pi --prompt {prompt}"}, "acp_stdio": {"command": "pi --acp --acp-transport stdio"}},
+        "transports": transports
+        if transports is not None
+        else {
+            "cli_prompt": {"command": "pi --prompt {prompt}"},
+            "acp_stdio": {"command": "pi --acp --acp-transport stdio"},
+        },
     }
 
 
@@ -84,8 +89,7 @@ def _admitted_pi_worker() -> dict:
             },
             "acp_stdio": {
                 "command": (
-                    '/usr/bin/python3 "{workspace_root}/bin/gac/pi-worker-adapter.py" '
-                    "run --acp --acp-transport stdio"
+                    '/usr/bin/python3 "{workspace_root}/bin/gac/pi-worker-adapter.py" run --acp --acp-transport stdio'
                 )
             },
         },
@@ -206,8 +210,7 @@ def test_admitted_pi_worker_uses_one_shell_free_omo_transport(tmp_path: Path) ->
         },
         "acp_stdio": {
             "command": (
-                '/usr/bin/python3 "{workspace_root}/bin/gac/pi-worker-adapter.py" '
-                "run --acp --acp-transport stdio"
+                '/usr/bin/python3 "{workspace_root}/bin/gac/pi-worker-adapter.py" run --acp --acp-transport stdio'
             )
         },
     }

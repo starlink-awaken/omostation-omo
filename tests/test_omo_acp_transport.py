@@ -5,6 +5,7 @@
 2. R0/R1 权限策略严格绑定 WorkPacket/clone/claim/path
 3. 越权/协议篡改/scope drift 无 WorkflowVerified
 """
+
 from __future__ import annotations
 
 import json
@@ -26,6 +27,7 @@ from omo.omo_acp_transport import (
 )
 
 # ── Permission Broker Tests ──
+
 
 class TestPermissionEvaluation:
     """R0/R1/R2 权限代理决策矩阵."""
@@ -91,6 +93,7 @@ class TestPermissionEvaluation:
 
 
 # ── Session Lifecycle Tests ──
+
 
 class TestAcpSessionLifecycle:
     """ACP 会话状态机 — 不启动真实进程."""
@@ -162,6 +165,7 @@ class TestAcpSessionLifecycle:
 
 # ── Failure Injection Tests ──
 
+
 class TestFailureInjection:
     """故障注入: timeout, cancel, protocol error."""
 
@@ -209,6 +213,7 @@ class TestFailureInjection:
 
 
 # ── Permission Flow Integration Test ──
+
 
 class TestPermissionFlow:
     """模拟完整的 permission request/response 流程."""
@@ -262,6 +267,7 @@ class TestPermissionFlow:
 
 
 # ── _build_permission_request Tests ──
+
 
 class TestBuildPermissionRequest:
     """结构化权限请求构造."""

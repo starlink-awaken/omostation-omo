@@ -9,6 +9,7 @@
 
 设计依据: docs/superpowers/specs/2026-08-14-codex-acp-stdio-cutover-design.md
 """
+
 from __future__ import annotations
 
 import enum
@@ -51,6 +52,7 @@ class PermissionDecision(enum.Enum):
 @dataclass
 class PermissionRequest:
     """结构化的权限请求 — 不暴露 raw prompt 或路径."""
+
     packet_id: str
     assignment: str
     workflow_step: str
@@ -64,6 +66,7 @@ class PermissionRequest:
 @dataclass
 class PermissionResponse:
     """权限决策回执 — 脱敏, 不含 raw prompt/transcript/token."""
+
     request: PermissionRequest
     decision: PermissionDecision
     reason: str
@@ -73,6 +76,7 @@ class PermissionResponse:
 @dataclass
 class AcpSessionConfig:
     """ACP 会话配置."""
+
     command: str
     cwd: Path
     timeout_seconds: float = 300.0
@@ -83,6 +87,7 @@ class AcpSessionConfig:
 @dataclass
 class AcpTurnResult:
     """单次 ACP turn 的结果."""
+
     state: AcpState
     output: str = ""
     permission_responses: list[PermissionResponse] = field(default_factory=list)
@@ -104,9 +109,8 @@ def _build_permission_request(
     canonical_scope 必须是 digest, 不得包含绝对路径或原文.
     """
     import hashlib
-    scope_digest = hashlib.sha256(
-        f"{packet_id}:{canonical_scope}".encode()
-    ).hexdigest()[:16]
+
+    scope_digest = hashlib.sha256(f"{packet_id}:{canonical_scope}".encode()).hexdigest()[:16]
     return PermissionRequest(
         packet_id=packet_id,
         assignment=assignment,
@@ -150,14 +154,8 @@ def _evaluate_permission(
         )
 
     # R1: 写操作 — 检查 scope 是否在 allowed_write_paths 内
-    scope_in_allowed = any(
-        scope.endswith(allowed) or allowed in scope
-        for allowed in allowed_write_paths
-    )
-    scope_in_forbidden = any(
-        scope.endswith(forbidden) or forbidden in scope
-        for forbidden in forbidden_write_paths
-    )
+    scope_in_allowed = any(scope.endswith(allowed) or allowed in scope for allowed in allowed_write_paths)
+    scope_in_forbidden = any(scope.endswith(forbidden) or forbidden in scope for forbidden in forbidden_write_paths)
 
     if scope_in_forbidden:
         return PermissionResponse(
@@ -246,12 +244,14 @@ class AcpStdioSession:
         if session_id:
             params["session_id"] = session_id
 
-        self._send_message({
-            "jsonrpc": "2.0",
-            "method": "session/new",
-            "id": 2,
-            "params": params,
-        })
+        self._send_message(
+            {
+                "jsonrpc": "2.0",
+                "method": "session/new",
+                "id": 2,
+                "params": params,
+            }
+        )
         response = self._read_message()
         if response and "error" not in response:
             self._state = AcpState.SESSION_CREATED
@@ -268,8 +268,8 @@ class AcpStdioSession:
     ) -> AcpTurnResult:
         """提交一个 turn, 处理 permission requests, 收集输出.
 
-        这是核心方法: 发送 prompt, 处理中间的 permission requests,
-       收集模型输出, 返回完整结果.
+         这是核心方法: 发送 prompt, 处理中间的 permission requests,
+        收集模型输出, 返回完整结果.
         """
         if self._state not in (AcpState.SESSION_CREATED, AcpState.TURN_COMPLETED):
             raise RuntimeError(f"cannot submit turn from state {self._state}")
@@ -279,12 +279,14 @@ class AcpStdioSession:
         permission_responses: list[PermissionResponse] = []
 
         # Send prompt
-        self._send_message({
-            "jsonrpc": "2.0",
-            "method": "session/prompt",
-            "id": 3,
-            "params": {"prompt": prompt},
-        })
+        self._send_message(
+            {
+                "jsonrpc": "2.0",
+                "method": "session/prompt",
+                "id": 3,
+                "params": {"prompt": prompt},
+            }
+        )
 
         # Read responses until turn-end or error
         while True:
@@ -352,16 +354,18 @@ class AcpStdioSession:
                 self._permission_log.append(perm_response)
 
                 # Send permission decision
-                self._send_message({
-                    "jsonrpc": "2.0",
-                    "method": "permission/respond",
-                    "id": response.get("id", 4),
-                    "params": {
-                        "decision": perm_response.decision.value,
-                        "reason": perm_response.reason,
-                        "request_id": perm_response.request_id,
-                    },
-                })
+                self._send_message(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "permission/respond",
+                        "id": response.get("id", 4),
+                        "params": {
+                            "decision": perm_response.decision.value,
+                            "reason": perm_response.reason,
+                            "request_id": perm_response.request_id,
+                        },
+                    }
+                )
                 self._state = AcpState.PERMISSION_DECIDED
 
             elif method == "session/update":
@@ -401,11 +405,13 @@ class AcpStdioSession:
         """取消当前 turn — 发送 cancel 信号."""
         if self._process is None:
             return
-        self._send_message({
-            "jsonrpc": "2.0",
-            "method": "session/cancel",
-            "id": 99,
-        })
+        self._send_message(
+            {
+                "jsonrpc": "2.0",
+                "method": "session/cancel",
+                "id": 99,
+            }
+        )
         self._state = AcpState.CANCELLED
 
     def reap(self) -> int:
@@ -470,9 +476,7 @@ class AcpStdioSession:
 
         import select
 
-        ready, _, _ = select.select(
-            [self._process.stdout], [], [], timeout
-        )
+        ready, _, _ = select.select([self._process.stdout], [], [], timeout)
         if not ready:
             raise TimeoutError("ACP read timed out")
 
