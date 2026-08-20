@@ -87,6 +87,14 @@ def _local_signal(**changes):
     )
 
 
+def _evidence_ref(seed: str = "draft") -> str:
+    return f"evidence://personal-draft/sha256:{hashlib.sha256(seed.encode()).hexdigest()}"
+
+
+def _feedback_ref(value: str) -> str:
+    return f"feedback://sha256:{hashlib.sha256(value.encode()).hexdigest()}"
+
+
 def test_start_requires_active_assignment_with_requested_responsibility(broker, service):
     _assign(broker, responsibility="other-duty")
 
@@ -253,7 +261,7 @@ def test_evidence_outcome_and_projection_share_episode_and_hash_chain(broker, se
         human_confirmed=True,
     )
     context = service.reload_execution_context(episode.episode_id, "principal:alice")
-    service.record_evidence(context, "file:///runtime/omo/personal-drafts/draft.json")
+    service.record_evidence(context, _evidence_ref("projection"))
     service.record_outcome(context, "accept")
 
     with pytest.raises(PersonalEpisodeError) as exc:
@@ -573,17 +581,41 @@ def _confirmed_context(service, *, request_id="request-001"):
 def test_record_evidence_persists_system_output_origin(broker, service):
     _assign(broker)
     ctx = _confirmed_context(service)
-    service.record_evidence(ctx, "file:///drafts/system.json", output_origin="system")
+    service.record_evidence(ctx, _evidence_ref("system"), output_origin="system")
 
     rows = broker.read(episode_id=ctx.episode_id, event_type=EVT_EVIDENCE_LOCAL_DRAFT)
     payload = json.loads(rows[0]["payload_json"])
     assert payload["output_origin"] == "system"
 
 
+def test_record_evidence_rejects_absolute_file_uri_without_write(broker, service):
+    _assign(broker)
+    ctx = _confirmed_context(service)
+    count_before = broker.count()
+
+    with pytest.raises(PersonalEpisodeError) as exc:
+        service.record_evidence(ctx, "file:///Users/private/personal-draft.json", output_origin="system")
+
+    assert exc.value.reason == "invalid_evidence_ref"
+    assert broker.count() == count_before
+
+
+def test_record_evidence_rejects_malformed_opaque_digest_without_write(broker, service):
+    _assign(broker)
+    ctx = _confirmed_context(service)
+    count_before = broker.count()
+
+    with pytest.raises(PersonalEpisodeError) as exc:
+        service.record_evidence(ctx, "evidence://personal-draft/sha256:not-a-digest", output_origin="system")
+
+    assert exc.value.reason == "invalid_evidence_ref"
+    assert broker.count() == count_before
+
+
 def test_record_evidence_persists_user_provided_output_origin(broker, service):
     _assign(broker)
     ctx = _confirmed_context(service)
-    service.record_evidence(ctx, "file:///drafts/user.json", output_origin="user_provided")
+    service.record_evidence(ctx, _evidence_ref("user"), output_origin="user_provided")
 
     rows = broker.read(episode_id=ctx.episode_id, event_type=EVT_EVIDENCE_LOCAL_DRAFT)
     payload = json.loads(rows[0]["payload_json"])
@@ -593,7 +625,7 @@ def test_record_evidence_persists_user_provided_output_origin(broker, service):
 def test_record_evidence_defaults_output_origin_to_unknown(broker, service):
     _assign(broker)
     ctx = _confirmed_context(service)
-    service.record_evidence(ctx, "file:///drafts/legacy.json")
+    service.record_evidence(ctx, _evidence_ref("legacy"))
 
     rows = broker.read(episode_id=ctx.episode_id, event_type=EVT_EVIDENCE_LOCAL_DRAFT)
     payload = json.loads(rows[0]["payload_json"])
@@ -605,7 +637,7 @@ def test_record_evidence_rejects_invalid_output_origin(broker, service):
     ctx = _confirmed_context(service)
 
     with pytest.raises(PersonalEpisodeError) as exc:
-        service.record_evidence(ctx, "file:///drafts/bad.json", output_origin="hacker")
+        service.record_evidence(ctx, _evidence_ref("bad"), output_origin="hacker")
 
     assert exc.value.reason == "invalid_output_origin"
 
@@ -613,8 +645,9 @@ def test_record_evidence_rejects_invalid_output_origin(broker, service):
 def test_record_evidence_idempotent_with_output_origin(broker, service):
     _assign(broker)
     ctx = _confirmed_context(service)
-    seq1 = service.record_evidence(ctx, "file:///drafts/dup.json", output_origin="system")
-    seq2 = service.record_evidence(ctx, "file:///drafts/dup.json", output_origin="user_provided")
+    evidence_ref = _evidence_ref("dup")
+    seq1 = service.record_evidence(ctx, evidence_ref, output_origin="system")
+    seq2 = service.record_evidence(ctx, evidence_ref, output_origin="user_provided")
 
     assert seq1 == seq2
     rows = broker.read(episode_id=ctx.episode_id, event_type=EVT_EVIDENCE_LOCAL_DRAFT)
@@ -627,6 +660,7 @@ def test_record_evidence_idempotent_with_output_origin(broker, service):
 def test_record_outcome_accepts_ignore_verdict(broker, service):
     _assign(broker)
     ctx = _confirmed_context(service)
+    service.record_evidence(ctx, _evidence_ref("ignore"), output_origin="system")
     seq = service.record_outcome(ctx, "ignore")
 
     rows = broker.read(episode_id=ctx.episode_id, event_type=EVT_OUTCOME_HUMAN)
@@ -638,6 +672,8 @@ def test_record_outcome_accepts_ignore_verdict(broker, service):
 def test_record_outcome_persists_burden_fields(broker, service):
     _assign(broker)
     ctx = _confirmed_context(service)
+    evidence_ref = _evidence_ref("burden")
+    service.record_evidence(ctx, evidence_ref, output_origin="system")
     service.record_outcome(
         ctx,
         "accept",
@@ -649,11 +685,89 @@ def test_record_outcome_persists_burden_fields(broker, service):
     payload = json.loads(rows[0]["payload_json"])
     assert payload["review_duration_seconds"] == 30
     assert payload["estimated_time_saved_seconds"] == 300
+    assert payload["outcome_feedback_schema"] == "outcome-feedback/v1"
+    assert payload["revision_receipt"] == {
+        "schema": "revision-receipt/v1",
+        "candidate_ref": evidence_ref,
+        "revision_digest": evidence_ref.rsplit("/", 1)[-1],
+        "changed_fields": [],
+    }
+
+
+def test_record_outcome_edit_requires_changed_fields_and_revision_digest(broker, service):
+    _assign(broker)
+    ctx = _confirmed_context(service)
+    service.record_evidence(ctx, _evidence_ref("candidate"), output_origin="system")
+    count_before = broker.count()
+
+    with pytest.raises(PersonalEpisodeError) as exc:
+        service.record_outcome(ctx, "edit")
+
+    assert exc.value.reason == "revision_receipt_required"
+    assert broker.count() == count_before
+
+
+def test_record_outcome_edit_persists_receipt_bound_to_latest_candidate(broker, service):
+    _assign(broker)
+    ctx = _confirmed_context(service)
+    candidate_ref = _evidence_ref("candidate-edit")
+    revision_digest = f"sha256:{'b' * 64}"
+    service.record_evidence(ctx, candidate_ref, output_origin="system")
+
+    service.record_outcome(
+        ctx,
+        "edit",
+        feedback_id="feedback:edit-001",
+        revision_digest=revision_digest,
+        changed_fields=["context", "title"],
+    )
+
+    rows = broker.read(episode_id=ctx.episode_id, event_type=EVT_OUTCOME_HUMAN)
+    payload = json.loads(rows[0]["payload_json"])
+    assert payload["feedback_id"] == _feedback_ref("feedback:edit-001")
+    assert payload["revision_receipt"] == {
+        "schema": "revision-receipt/v1",
+        "candidate_ref": candidate_ref,
+        "revision_digest": revision_digest,
+        "changed_fields": ["context", "title"],
+    }
+
+
+@pytest.mark.parametrize(
+    ("verdict", "revision_digest", "changed_fields"),
+    [
+        ("edit", "sha256:not-a-digest", ["context"]),
+        ("accept", None, ["context"]),
+    ],
+)
+def test_record_outcome_rejects_malformed_revision_receipt_without_write(
+    broker,
+    service,
+    verdict,
+    revision_digest,
+    changed_fields,
+):
+    _assign(broker)
+    ctx = _confirmed_context(service)
+    service.record_evidence(ctx, _evidence_ref("bad-receipt"), output_origin="system")
+    count_before = broker.count()
+
+    with pytest.raises(PersonalEpisodeError) as exc:
+        service.record_outcome(
+            ctx,
+            verdict,
+            revision_digest=revision_digest,
+            changed_fields=changed_fields,
+        )
+
+    assert exc.value.reason == "invalid_revision_receipt"
+    assert broker.count() == count_before
 
 
 def test_record_outcome_omitted_burden_stays_null(broker, service):
     _assign(broker)
     ctx = _confirmed_context(service)
+    service.record_evidence(ctx, _evidence_ref("null-burden"), output_origin="system")
     service.record_outcome(ctx, "accept")
 
     rows = broker.read(episode_id=ctx.episode_id, event_type=EVT_OUTCOME_HUMAN)
@@ -684,6 +798,7 @@ def test_record_outcome_rejects_invalid_burden(broker, service, kwargs):
 def test_record_outcome_accepts_zero_burden(broker, service):
     _assign(broker)
     ctx = _confirmed_context(service)
+    service.record_evidence(ctx, _evidence_ref("zero-burden"), output_origin="system")
     service.record_outcome(
         ctx,
         "accept",
@@ -700,6 +815,7 @@ def test_record_outcome_accepts_zero_burden(broker, service):
 def test_record_outcome_identical_feedback_request_is_idempotent(broker, service):
     _assign(broker)
     ctx = _confirmed_context(service)
+    service.record_evidence(ctx, _evidence_ref("idempotent"), output_origin="system")
 
     first = service.record_outcome(
         ctx,
@@ -721,9 +837,122 @@ def test_record_outcome_identical_feedback_request_is_idempotent(broker, service
     assert len(rows) == 1
 
 
+def test_record_outcome_replays_legacy_raw_feedback_id_without_append(broker, service):
+    _assign(broker)
+    ctx = _confirmed_context(service)
+    candidate_ref = _evidence_ref("legacy-feedback-replay")
+    raw_feedback_id = "feedback:legacy-replay"
+    service.record_evidence(ctx, candidate_ref, output_origin="system")
+    legacy_sequence = broker.append(
+        EVT_OUTCOME_HUMAN,
+        producer="omo-personal-episode",
+        principal_id="principal:alice",
+        space_id="personal",
+        correlation_id=f"personal-episode|{ctx.episode_id}",
+        idempotency_key=f"legacy-feedback|{ctx.episode_id}",
+        episode_id=ctx.episode_id,
+        role_context_id=ctx.role_context_id,
+        responsibility_id=ctx.responsibility_id,
+        mandate_id=ctx.mandate_id,
+        payload={
+            "feedback_id": raw_feedback_id,
+            "verdict": "accept",
+            "action_id": ctx.action_id,
+            "review_duration_seconds": 30,
+            "estimated_time_saved_seconds": 300,
+        },
+        occurred_at=NOW,
+    )
+    count_before = broker.count()
+
+    replay = service.record_outcome(
+        ctx,
+        "accept",
+        feedback_id=raw_feedback_id,
+        review_duration_seconds=30,
+        estimated_time_saved_seconds=300,
+    )
+
+    assert replay == legacy_sequence
+    assert broker.count() == count_before
+    rows = broker.read(episode_id=ctx.episode_id, event_type=EVT_OUTCOME_HUMAN)
+    assert len(rows) == 1
+    assert json.loads(rows[0]["payload_json"])["feedback_id"] == raw_feedback_id
+
+    with pytest.raises(PersonalEpisodeError) as exc:
+        service.record_outcome(
+            ctx,
+            "reject",
+            feedback_id=raw_feedback_id,
+            review_duration_seconds=30,
+            estimated_time_saved_seconds=300,
+        )
+
+    assert exc.value.reason == "feedback_replay_conflict"
+    assert broker.count() == count_before
+
+
+def test_record_outcome_feedback_id_is_persisted_only_as_opaque_digest(broker, service):
+    _assign(broker)
+    ctx = _confirmed_context(service)
+    service.record_evidence(ctx, _evidence_ref("feedback-privacy"), output_origin="system")
+    private_value = "/Users/private/notes/credential-sk-test-secret.txt"
+
+    service.record_outcome(ctx, "accept", feedback_id=private_value)
+
+    row = broker.read(episode_id=ctx.episode_id, event_type=EVT_OUTCOME_HUMAN)[0]
+    serialized = json.dumps(row, sort_keys=True)
+    payload = json.loads(row["payload_json"])
+    assert payload["feedback_id"] == _feedback_ref(private_value)
+    assert private_value not in serialized
+    assert "/Users/private" not in serialized
+    assert "sk-test-secret" not in serialized
+
+
+@pytest.mark.parametrize("feedback_id", [" ", "x" * 241])
+def test_record_outcome_rejects_invalid_feedback_id_without_write(broker, service, feedback_id):
+    _assign(broker)
+    ctx = _confirmed_context(service)
+    service.record_evidence(ctx, _evidence_ref("invalid-feedback"), output_origin="system")
+    count_before = broker.count()
+
+    with pytest.raises(PersonalEpisodeError) as exc:
+        service.record_outcome(ctx, "accept", feedback_id=feedback_id)
+
+    assert exc.value.reason == "invalid_feedback_id"
+    assert broker.count() == count_before
+
+
+def test_record_outcome_conflicting_feedback_replay_fails_closed(broker, service):
+    _assign(broker)
+    ctx = _confirmed_context(service)
+    service.record_evidence(ctx, _evidence_ref("feedback-conflict"), output_origin="system")
+    service.record_outcome(
+        ctx,
+        "accept",
+        feedback_id="feedback:conflict",
+        review_duration_seconds=10,
+        estimated_time_saved_seconds=100,
+    )
+    count_before = broker.count()
+
+    with pytest.raises(PersonalEpisodeError) as exc:
+        service.record_outcome(
+            ctx,
+            "reject",
+            feedback_id="feedback:conflict",
+            review_duration_seconds=20,
+            estimated_time_saved_seconds=100,
+        )
+
+    assert exc.value.reason == "feedback_replay_conflict"
+    assert broker.count() == count_before
+
+
 def test_record_outcome_later_repeated_verdict_becomes_effective(broker, service):
     _assign(broker)
     ctx = _confirmed_context(service)
+    service.record_evidence(ctx, _evidence_ref("repeated"), output_origin="system")
 
     service.record_outcome(ctx, "accept", feedback_id="feedback:001")
     service.record_outcome(ctx, "reject", feedback_id="feedback:002")
@@ -738,6 +967,7 @@ def test_record_outcome_later_repeated_verdict_becomes_effective(broker, service
 def test_record_outcome_later_feedback_can_supplement_burden(broker, service):
     _assign(broker)
     ctx = _confirmed_context(service)
+    service.record_evidence(ctx, _evidence_ref("supplement"), output_origin="system")
 
     service.record_outcome(ctx, "accept", feedback_id="feedback:001")
     service.record_outcome(
@@ -813,7 +1043,7 @@ def _make_full_episode(
         human_confirmed=True,
     )
     ctx = svc.reload_execution_context(episode_id, principal)
-    svc.record_evidence(ctx, f"file:///drafts/{request_id}.json", output_origin=output_origin)
+    svc.record_evidence(ctx, _evidence_ref(request_id), output_origin=output_origin)
     svc.record_outcome(
         ctx,
         verdict,
@@ -977,15 +1207,15 @@ def test_observe_principal_cross_principal_isolation(broker, service):
 def test_observe_principal_verdict_distribution(broker, service):
     _assign(broker)
     ctx1 = _confirmed_context(service, request_id="vd-1")
-    service.record_evidence(ctx1, "file:///d/vd-1.json", output_origin="system")
+    service.record_evidence(ctx1, _evidence_ref("vd-1"), output_origin="system")
     service.record_outcome(ctx1, "accept")
 
     ctx2 = _confirmed_context(service, request_id="vd-2")
-    service.record_evidence(ctx2, "file:///d/vd-2.json", output_origin="system")
+    service.record_evidence(ctx2, _evidence_ref("vd-2"), output_origin="system")
     service.record_outcome(ctx2, "reject")
 
     ctx3 = _confirmed_context(service, request_id="vd-3")
-    service.record_evidence(ctx3, "file:///d/vd-3.json", output_origin="system")
+    service.record_evidence(ctx3, _evidence_ref("vd-3"), output_origin="system")
     service.record_outcome(ctx3, "ignore")
 
     obs = service.observe_principal("principal:alice")
@@ -996,15 +1226,15 @@ def test_observe_principal_verdict_distribution(broker, service):
 def test_observe_principal_evidence_origin_counts(broker, service):
     _assign(broker)
     ctx1 = _confirmed_context(service, request_id="ev-1")
-    service.record_evidence(ctx1, "file:///d/ev-1.json", output_origin="system")
+    service.record_evidence(ctx1, _evidence_ref("ev-1"), output_origin="system")
     service.record_outcome(ctx1, "accept")
 
     ctx2 = _confirmed_context(service, request_id="ev-2")
-    service.record_evidence(ctx2, "file:///d/ev-2.json", output_origin="user_provided")
+    service.record_evidence(ctx2, _evidence_ref("ev-2"), output_origin="user_provided")
     service.record_outcome(ctx2, "accept")
 
     ctx3 = _confirmed_context(service, request_id="ev-3")
-    service.record_evidence(ctx3, "file:///d/ev-3.json")  # default unknown
+    service.record_evidence(ctx3, _evidence_ref("ev-3"))  # default unknown
     service.record_outcome(ctx3, "accept")
 
     obs = service.observe_principal("principal:alice")
@@ -1035,7 +1265,7 @@ def test_observe_principal_signal_to_verdict_latency(broker, service):
         human_confirmed=True,
     )
     ctx = svc_signal.reload_execution_context(ep.episode_id, "principal:alice")
-    svc_signal.record_evidence(ctx, "file:///d/lat.json", output_origin="system")
+    svc_signal.record_evidence(ctx, _evidence_ref("lat"), output_origin="system")
 
     svc_outcome = PersonalEpisodeService(broker, clock=lambda: outcome_time)
     svc_outcome.record_outcome(ctx, "accept", review_duration_seconds=10, estimated_time_saved_seconds=100)
@@ -1075,7 +1305,7 @@ def test_observe_principal_no_raw_leakage_in_output(broker, service):
         human_confirmed=True,
     )
     ctx = service.reload_execution_context(episode_id, "principal:alice")
-    service.record_evidence(ctx, "file:///drafts/secret.json", output_origin="system")
+    service.record_evidence(ctx, _evidence_ref("secret"), output_origin="system")
     service.record_outcome(ctx, "accept", review_duration_seconds=5, estimated_time_saved_seconds=50)
 
     obs = service.observe_principal("principal:alice")
@@ -1119,17 +1349,47 @@ def test_observe_principal_to_dict_round_trips(broker, service):
 
 
 def test_observe_principal_legacy_evidence_treated_as_unknown(broker, service):
-    """Evidence recorded without output_origin (legacy) counts as unknown."""
+    """A legacy file URI remains observable but never gate-qualifying."""
     _assign(broker)
     ctx = _confirmed_context(service, request_id="legacy-ev")
-    # Record evidence without output_origin — simulates legacy data
-    service.record_evidence(ctx, "file:///drafts/legacy.json")
-    service.record_outcome(ctx, "accept")
+    broker.append(
+        EVT_EVIDENCE_LOCAL_DRAFT,
+        producer="omo-personal-episode",
+        principal_id="principal:alice",
+        space_id="personal",
+        correlation_id=f"personal-episode|{ctx.episode_id}",
+        idempotency_key=f"legacy-evidence|{ctx.episode_id}",
+        episode_id=ctx.episode_id,
+        payload={
+            "evidence_uri": "file:///Users/legacy/private-draft.json",
+            "action_id": ctx.action_id,
+        },
+        evidence_uri="file:///Users/legacy/private-draft.json",
+        occurred_at=_W1,
+    )
+    broker.append(
+        EVT_OUTCOME_HUMAN,
+        producer="omo-personal-episode",
+        principal_id="principal:alice",
+        space_id="personal",
+        correlation_id=f"personal-episode|{ctx.episode_id}",
+        idempotency_key=f"legacy-outcome|{ctx.episode_id}",
+        episode_id=ctx.episode_id,
+        payload={
+            "verdict": "accept",
+            "action_id": ctx.action_id,
+            "review_duration_seconds": 5,
+            "estimated_time_saved_seconds": 50,
+        },
+        occurred_at=_W1,
+    )
 
     obs = service.observe_principal("principal:alice")
 
     assert obs.unknown_evidence_count == 1
     assert obs.system_evidence_count == 0
+    assert obs.verdict_distribution == {"accept": 1}
+    assert obs.weekly_samples[0].qualifying_episodes == 0
 
 
 def test_observe_principal_candidate_requires_system_evidence(broker, service):
@@ -1149,6 +1409,53 @@ def test_observe_principal_candidate_requires_system_evidence(broker, service):
     # user_provided evidence doesn't qualify for the gate
     assert obs.readiness == "collecting"
     assert obs.system_evidence_count == 0
+
+
+def test_gate_requires_receipt_bound_candidate_itself_to_be_system_origin(broker, service):
+    _assign(broker)
+    for ei in range(3):
+        svc = PersonalEpisodeService(broker, clock=lambda: _W1)
+        signal = _local_signal(
+            item_id=f"mixed-{ei}",
+            content_sha256=hashlib.sha256(f"mixed-{ei}".encode()).hexdigest(),
+            source_uri=f"iris://local-files/mixed-{ei}",
+            title=f"Mixed origin {ei}",
+        )
+        result = svc.ingest_local_signal(signal)
+        episode_id = result.episode.episode_id
+        svc.confirm(
+            episode_id=episode_id,
+            principal_id="principal:alice",
+            executor_id="agent:personal-steward",
+            human_confirmed=True,
+        )
+        ctx = svc.reload_execution_context(episode_id, "principal:alice")
+        svc.record_evidence(ctx, _evidence_ref(f"mixed-system-{ei}"), output_origin="system")
+        svc.record_evidence(ctx, _evidence_ref(f"mixed-user-{ei}"), output_origin="user_provided")
+        svc.record_outcome(
+            ctx,
+            "accept",
+            feedback_id=f"feedback:mixed-{ei}",
+            review_duration_seconds=5,
+            estimated_time_saved_seconds=50,
+        )
+        broker.append(
+            EVT_ACTION_SUCCEEDED,
+            producer=PDP_PRODUCER,
+            principal_id="principal:alice",
+            space_id="sovereignty",
+            correlation_id=f"action|{ctx.action_id}|succeeded",
+            idempotency_key=f"{ctx.action_id}|succeeded",
+            episode_id=episode_id,
+            payload={"action_id": ctx.action_id, "episode_id": episode_id, "status": "succeeded"},
+            occurred_at=_W1,
+        )
+
+    observation = service.observe_principal("principal:alice")
+
+    assert observation.system_evidence_count == 3
+    assert observation.user_evidence_count == 3
+    assert observation.weekly_samples[0].qualifying_episodes == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1187,6 +1494,56 @@ def test_gate_requires_signal_source(broker, service):
     assert sample.qualifying_episodes == 0
 
 
+def test_gate_rejects_legacy_outcome_without_revision_receipt(broker, service):
+    _assign(broker)
+    svc = PersonalEpisodeService(broker, clock=lambda: _W1)
+    result = svc.ingest_local_signal(_local_signal())
+    episode_id = result.episode.episode_id
+    svc.confirm(
+        episode_id=episode_id,
+        principal_id="principal:alice",
+        executor_id="agent:personal-steward",
+        human_confirmed=True,
+    )
+    ctx = svc.reload_execution_context(episode_id, "principal:alice")
+    svc.record_evidence(ctx, _evidence_ref("legacy-outcome"), output_origin="system")
+    broker.append(
+        EVT_OUTCOME_HUMAN,
+        producer="omo-personal-episode",
+        principal_id="principal:alice",
+        space_id="personal",
+        correlation_id=f"personal-episode|{episode_id}",
+        idempotency_key=f"legacy-outcome|{episode_id}",
+        episode_id=episode_id,
+        role_context_id=ctx.role_context_id,
+        responsibility_id=ctx.responsibility_id,
+        mandate_id=ctx.mandate_id,
+        payload={
+            "verdict": "accept",
+            "action_id": ctx.action_id,
+            "review_duration_seconds": 5,
+            "estimated_time_saved_seconds": 50,
+        },
+        occurred_at=_W1,
+    )
+    broker.append(
+        EVT_ACTION_SUCCEEDED,
+        producer=PDP_PRODUCER,
+        principal_id="principal:alice",
+        space_id="sovereignty",
+        correlation_id=f"action|{ctx.action_id}|succeeded",
+        idempotency_key=f"{ctx.action_id}|succeeded",
+        episode_id=episode_id,
+        payload={"action_id": ctx.action_id, "episode_id": episode_id, "status": "succeeded"},
+        occurred_at=_W1,
+    )
+
+    observation = service.observe_principal("principal:alice")
+
+    assert observation.verdict_distribution == {"accept": 1}
+    assert observation.weekly_samples[0].qualifying_episodes == 0
+
+
 def test_week_bucket_uses_outcome_time(broker, service):
     """Blocker 3: week bucket is effective outcome occurred_at, not signal time."""
     _assign(broker)
@@ -1209,7 +1566,7 @@ def test_week_bucket_uses_outcome_time(broker, service):
         human_confirmed=True,
     )
     ctx = svc.reload_execution_context(episode_id, "principal:alice")
-    svc.record_evidence(ctx, "file:///drafts/wbucket.json", output_origin="system")
+    svc.record_evidence(ctx, _evidence_ref("wbucket"), output_origin="system")
 
     # Record outcome at _W2 (one week later).
     svc2 = PersonalEpisodeService(broker, clock=lambda: _W2)

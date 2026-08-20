@@ -44,6 +44,10 @@ PERSONAL_SIGNAL_OUTCOME_METRIC = "adopted_real_personal_outcome_count"
 
 _OUTCOMES = frozenset({"accept", "edit", "reject", "defer", "ignore"})
 VALID_OUTPUT_ORIGINS = frozenset({"system", "user_provided", "unknown"})
+PERSONAL_DRAFT_EVIDENCE_PREFIX = "evidence://personal-draft/sha256:"
+REVISION_RECEIPT_SCHEMA = "revision-receipt/v1"
+OUTCOME_FEEDBACK_SCHEMA = "outcome-feedback/v1"
+REVISION_FIELDS = frozenset({"title", "context", "deadline", "next_action"})
 
 
 class PersonalEpisodeError(ValueError):
@@ -591,6 +595,7 @@ class PersonalEpisodeService:
         ``user_provided``.  Legacy or omitted values persist as ``unknown``.
         """
         self._required("evidence_uri", evidence_uri)
+        _personal_draft_digest(evidence_uri)
         if output_origin not in VALID_OUTPUT_ORIGINS:
             raise PersonalEpisodeError(
                 "invalid_output_origin",
@@ -627,6 +632,8 @@ class PersonalEpisodeService:
         feedback_id: str | None = None,
         review_duration_seconds: float | None = None,
         estimated_time_saved_seconds: float | None = None,
+        revision_digest: str | None = None,
+        changed_fields: list[str] | tuple[str, ...] | None = None,
     ) -> int:
         """Record one human feedback outcome using the closed vocabulary.
 
@@ -645,14 +652,81 @@ class PersonalEpisodeService:
             )
         _validate_burden("review_duration_seconds", review_duration_seconds)
         _validate_burden("estimated_time_saved_seconds", estimated_time_saved_seconds)
+        candidate_ref = self._latest_evidence_ref(context)
+        candidate_digest = _personal_draft_digest(candidate_ref)
+        normalized_fields = _revision_fields(changed_fields)
+        if verdict == "edit":
+            if revision_digest is None or not normalized_fields:
+                raise PersonalEpisodeError(
+                    "revision_receipt_required",
+                    "edit requires revision_digest and changed_fields",
+                )
+            normalized_revision_digest = _sha256_digest(revision_digest)
+            if normalized_revision_digest == candidate_digest:
+                raise PersonalEpisodeError(
+                    "invalid_revision_receipt",
+                    "edit revision_digest must differ from the candidate digest",
+                )
+        else:
+            if normalized_fields:
+                raise PersonalEpisodeError(
+                    "invalid_revision_receipt",
+                    "changed_fields are only valid for an edit verdict",
+                )
+            if revision_digest is not None and _sha256_digest(revision_digest) != candidate_digest:
+                raise PersonalEpisodeError(
+                    "invalid_revision_receipt",
+                    "non-edit revision_digest must match the candidate digest",
+                )
+            normalized_revision_digest = candidate_digest
+        persisted_feedback_id: str | None
+        if feedback_id is None:
+            persisted_feedback_id = None
+        else:
+            persisted_feedback_id = _feedback_ref(feedback_id)
+        outcome_payload = {
+            "outcome_feedback_schema": OUTCOME_FEEDBACK_SCHEMA,
+            "feedback_id": persisted_feedback_id,
+            "verdict": verdict,
+            "action_id": context.action_id,
+            "review_duration_seconds": review_duration_seconds,
+            "estimated_time_saved_seconds": estimated_time_saved_seconds,
+            "revision_receipt": {
+                "schema": REVISION_RECEIPT_SCHEMA,
+                "candidate_ref": candidate_ref,
+                "revision_digest": normalized_revision_digest,
+                "changed_fields": normalized_fields,
+            },
+        }
         if feedback_id is None:
             identity_key = verdict
             existing = self._find_event(context.episode_id, EVT_OUTCOME_HUMAN, "verdict", verdict)
         else:
-            self._required("feedback_id", feedback_id)
-            identity_key = f"feedback|{_short_hash(feedback_id)}"
-            existing = self._find_event(context.episode_id, EVT_OUTCOME_HUMAN, "feedback_id", feedback_id)
+            feedback_ref = _feedback_ref(feedback_id)
+            identity_key = f"feedback|{_short_hash(feedback_ref)}"
+            existing = self._find_event(
+                context.episode_id,
+                EVT_OUTCOME_HUMAN,
+                "feedback_id",
+                feedback_ref,
+            )
+            if existing is None:
+                existing = self._find_event(
+                    context.episode_id,
+                    EVT_OUTCOME_HUMAN,
+                    "feedback_id",
+                    feedback_id,
+                )
         if existing is not None:
+            if not _outcome_replay_matches(
+                _payload(existing),
+                outcome_payload,
+                raw_feedback_id=feedback_id,
+            ):
+                raise PersonalEpisodeError(
+                    "feedback_replay_conflict",
+                    "feedback replay does not match the recorded outcome",
+                )
             return int(existing["sequence"])
         return self._broker.append(
             EVT_OUTCOME_HUMAN,
@@ -665,15 +739,23 @@ class PersonalEpisodeService:
             role_context_id=context.role_context_id,
             responsibility_id=context.responsibility_id,
             mandate_id=context.mandate_id,
-            payload={
-                "feedback_id": feedback_id,
-                "verdict": verdict,
-                "action_id": context.action_id,
-                "review_duration_seconds": review_duration_seconds,
-                "estimated_time_saved_seconds": estimated_time_saved_seconds,
-            },
+            payload=outcome_payload,
             occurred_at=self._clock_ts(),
         )
+
+    def _latest_evidence_ref(self, context: PersonalExecutionContext) -> str:
+        evidence_rows = [
+            row
+            for row in self._broker.read(episode_id=context.episode_id)
+            if row.get("event_type") == EVT_EVIDENCE_LOCAL_DRAFT and row.get("principal_id") == context.principal_id
+        ]
+        if not evidence_rows:
+            raise PersonalEpisodeError(
+                "revision_receipt_required",
+                "human outcome requires a recorded never-send candidate",
+            )
+        evidence_rows.sort(key=lambda row: int(row.get("sequence", 0)))
+        return _required_payload(_payload(evidence_rows[-1]), "evidence_uri")
 
     def observe_principal(self, principal_id: str) -> PrincipalObservation:
         """Deterministic, read-only per-principal observation over the same Ledger.
@@ -770,6 +852,10 @@ class PersonalEpisodeService:
             # Action.Succeeded matching for same episode/action_id (Blocker 1).
             action_id = _deterministic("action:personal-", ep_id)
             has_action_succeeded = (ep_id, action_id) in succeeded_keys
+            has_revision_receipt = _has_valid_revision_receipt(
+                effective_outcome,
+                evidence_payloads,
+            )
             observations.append(
                 {
                     "episode_id": ep_id,
@@ -780,6 +866,10 @@ class PersonalEpisodeService:
                     "evidence_origins": [ep.get("output_origin", "unknown") for ep in evidence_payloads],
                     "effective_outcome": effective_outcome,
                     "effective_outcome_dt": effective_outcome_dt,
+                    "has_revision_receipt": has_revision_receipt,
+                    "receipt_candidate_origin": (
+                        evidence_payloads[-1].get("output_origin", "unknown") if has_revision_receipt else None
+                    ),
                 }
             )
 
@@ -940,6 +1030,107 @@ def _validate_burden(name: str, value: float | None) -> None:
         raise PersonalEpisodeError("invalid_burden", f"{name} must be non-negative and finite")
 
 
+def _sha256_digest(value: str) -> str:
+    if not isinstance(value, str) or not value.startswith("sha256:"):
+        raise PersonalEpisodeError("invalid_revision_receipt", "revision_digest must be sha256:<hex>")
+    digest = value.removeprefix("sha256:")
+    if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+        raise PersonalEpisodeError("invalid_revision_receipt", "revision_digest must be sha256:<hex>")
+    return value
+
+
+def _personal_draft_digest(evidence_ref: str) -> str:
+    if not isinstance(evidence_ref, str) or not evidence_ref.startswith(PERSONAL_DRAFT_EVIDENCE_PREFIX):
+        raise PersonalEpisodeError(
+            "invalid_evidence_ref",
+            "evidence_ref must be an opaque personal-draft digest",
+        )
+    try:
+        return _sha256_digest(evidence_ref.removeprefix("evidence://personal-draft/"))
+    except PersonalEpisodeError as exc:
+        raise PersonalEpisodeError(
+            "invalid_evidence_ref",
+            "evidence_ref must be an opaque personal-draft digest",
+        ) from exc
+
+
+def _feedback_ref(feedback_id: str) -> str:
+    """Project a caller request ID to a bounded opaque ledger identifier."""
+    if (
+        not isinstance(feedback_id, str)
+        or not feedback_id.strip()
+        or feedback_id != feedback_id.strip()
+        or len(feedback_id) > 240
+    ):
+        raise PersonalEpisodeError(
+            "invalid_feedback_id",
+            "feedback_id must be a non-empty identifier of at most 240 characters",
+        )
+    return f"feedback://sha256:{hashlib.sha256(feedback_id.encode('utf-8')).hexdigest()}"
+
+
+def _outcome_replay_matches(
+    recorded: Mapping[str, Any],
+    expected: Mapping[str, Any],
+    *,
+    raw_feedback_id: str | None,
+) -> bool:
+    """Compare a replay without mutating legacy raw-ID ledger rows."""
+    normalized = dict(recorded)
+    if raw_feedback_id is not None and normalized.get("feedback_id") == raw_feedback_id:
+        normalized["feedback_id"] = expected.get("feedback_id")
+    if "outcome_feedback_schema" in normalized or "revision_receipt" in normalized:
+        return normalized == dict(expected)
+    legacy_fields = (
+        "feedback_id",
+        "verdict",
+        "action_id",
+        "review_duration_seconds",
+        "estimated_time_saved_seconds",
+    )
+    return all(normalized.get(field) == expected.get(field) for field in legacy_fields)
+
+
+def _revision_fields(values: list[str] | tuple[str, ...] | None) -> list[str]:
+    if values is None:
+        return []
+    if not isinstance(values, (list, tuple)) or any(not isinstance(value, str) for value in values):
+        raise PersonalEpisodeError("invalid_revision_receipt", "changed_fields must be a list of field names")
+    normalized = sorted({value.strip() for value in values if value.strip()})
+    if any(value not in REVISION_FIELDS for value in normalized):
+        raise PersonalEpisodeError(
+            "invalid_revision_receipt",
+            "changed_fields contains an unsupported field",
+        )
+    return normalized
+
+
+def _has_valid_revision_receipt(
+    outcome: Mapping[str, Any] | None,
+    evidence_payloads: list[Mapping[str, Any]],
+) -> bool:
+    """Return whether an outcome is bound to the latest privacy-safe candidate."""
+    if outcome is None or outcome.get("outcome_feedback_schema") != OUTCOME_FEEDBACK_SCHEMA:
+        return False
+    receipt = outcome.get("revision_receipt")
+    if not isinstance(receipt, Mapping) or receipt.get("schema") != REVISION_RECEIPT_SCHEMA:
+        return False
+    if not evidence_payloads:
+        return False
+    latest_ref = evidence_payloads[-1].get("evidence_uri")
+    if receipt.get("candidate_ref") != latest_ref or not isinstance(latest_ref, str):
+        return False
+    try:
+        candidate_digest = _personal_draft_digest(latest_ref)
+        revision_digest = _sha256_digest(str(receipt.get("revision_digest", "")))
+        changed_fields = _revision_fields(receipt.get("changed_fields"))
+    except PersonalEpisodeError:
+        return False
+    if outcome.get("verdict") == "edit":
+        return bool(changed_fields) and revision_digest != candidate_digest
+    return not changed_fields and revision_digest == candidate_digest
+
+
 def _iso_week_key(dt: datetime) -> str:
     """ISO Monday-based natural week key, e.g. '2026-W32'."""
     iso = dt.isocalendar()
@@ -1057,7 +1248,7 @@ def _build_observation(
         has_saved = False
 
         for ep in eps:
-            has_system = "system" in ep["evidence_origins"]
+            has_system = ep.get("receipt_candidate_origin") == "system"
             eff = ep["effective_outcome"]
             is_accept = eff is not None and eff.get("verdict") == "accept"
             review_raw = eff.get("review_duration_seconds") if eff else None
@@ -1092,6 +1283,7 @@ def _build_observation(
                 and review_lt
                 and ep.get("has_signal_source", False)
                 and ep.get("has_action_succeeded", False)
+                and ep.get("has_revision_receipt", False)
             ):
                 qualifying_eps += 1
 
