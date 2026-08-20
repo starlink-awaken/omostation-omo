@@ -44,6 +44,7 @@ from .lifecycle import (
     print_plan,
     prune_stale_locks,
     read_run,
+    resolve_parent_delivery_identity,
     run_stage,
     scan_locks,
     spawn_run,
@@ -385,6 +386,15 @@ def main(argv: list[str] | None = None) -> int:
             # `python -m omo.workflow.cli start` 绕过口子 + 修 exit-0 静默 —
             # DECISION-SCENARIO-DERIVATION §5 实证 2026-08-17)
             bet_id = getattr(args, "bet", "") or ""
+            parent_run_id = getattr(args, "parent_run", "") or ""
+            inherited_delivery_identity = None
+            parent_agent = ""
+            if parent_run_id:
+                bet_id, inherited_delivery_identity, parent_agent = resolve_parent_delivery_identity(
+                    registry,
+                    parent_run_id,
+                    bet_id,
+                )
             chain_bind = _load_chain_bind()
             if chain_bind is not None:
                 verdict = chain_bind.start_requires_bet(args.workflow_id, bet_id)
@@ -396,8 +406,7 @@ def main(argv: list[str] | None = None) -> int:
                     )
                     return 1
             objective = args.objective
-            if getattr(args, "bet", None):
-                bet_id = args.bet
+            if bet_id:
                 import yaml
 
                 from ..omo_paths import WORKSPACE_ROOT
@@ -419,7 +428,10 @@ def main(argv: list[str] | None = None) -> int:
                 objective,
                 args.dry_run,
                 args.force_lock,
-                parent_run_id=getattr(args, "parent_run", "") or "",
+                parent_run_id=parent_run_id,
+                parent_agent=parent_agent,
+                bet_id=bet_id,
+                inherited_delivery_identity=inherited_delivery_identity,
             )
             if args.json:
                 print(json.dumps(record, ensure_ascii=False, indent=2))
