@@ -144,11 +144,11 @@ def _validate_inherited_delivery_identity(
     return inherited
 
 
-def _delivery_identity_from_parent(parent_payload: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
+def _delivery_identity_from_parent(parent_payload: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     binding_keys = ("bet_id", *_DELIVERY_IDENTITY_KEYS)
     present = [key for key in binding_keys if key in parent_payload]
     if not present:
-        return "", None
+        raise WorkflowError("WORK_PACKET_PARENT_BINDING_REQUIRED: legacy unbound parent runs cannot create child runs")
     missing = [key for key in binding_keys if key not in parent_payload]
     if missing:
         raise WorkflowError(
@@ -163,6 +163,22 @@ def _delivery_identity_from_parent(parent_payload: dict[str, Any]) -> tuple[str,
         identity,
         parent_run_id=str(parent_payload.get("run_id") or ""),
     )
+
+
+def resolve_parent_delivery_identity(
+    registry: dict[str, Any],
+    parent_run_id: str,
+    requested_bet_id: str = "",
+) -> tuple[str, dict[str, Any], str]:
+    """Resolve one immutable parent identity before any child-side mutation."""
+    _, parent_payload = read_run(registry, parent_run_id)
+    parent_bet_id, identity = _delivery_identity_from_parent(parent_payload)
+    if requested_bet_id and requested_bet_id != parent_bet_id:
+        raise WorkflowError(
+            "WORK_PACKET_PARENT_BET_CONFLICT: requested "
+            f"{requested_bet_id} but parent {parent_run_id} is bound to {parent_bet_id}"
+        )
+    return parent_bet_id, identity, str(parent_payload.get("agent_profile") or "")
 
 
 def workflow_plan(workflow: dict[str, Any], context: dict[str, str]) -> dict[str, Any]:
@@ -637,6 +653,19 @@ def start_run(
     inherited_delivery_identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     validate_agent_profile(registry, workflow, context.get("profile", ""), require=True)
+    if parent_run_id:
+        parent_bet_id, parent_identity, resolved_parent_agent = resolve_parent_delivery_identity(
+            registry,
+            parent_run_id,
+            bet_id,
+        )
+        if inherited_delivery_identity is not None and inherited_delivery_identity != parent_identity:
+            raise WorkflowError("WORK_PACKET_PARENT_BINDING_MISMATCH: supplied child identity differs from parent")
+        bet_id = parent_bet_id
+        inherited_delivery_identity = parent_identity
+        parent_agent = resolved_parent_agent
+    elif inherited_delivery_identity is not None:
+        raise WorkflowError("WORK_PACKET_PARENT_BINDING_INCOMPLETE: inherited identity requires parent_run_id")
     if inherited_delivery_identity is not None:
         delivery_identity = _validate_inherited_delivery_identity(
             bet_id,
@@ -725,9 +754,6 @@ def spawn_run(
     dry_run: bool = False,
     force_lock: bool = False,
 ) -> dict[str, Any]:
-    _, parent_payload = read_run(registry, parent_run_id)
-    parent_agent = parent_payload.get("agent_profile", "")
-    bet_id, inherited_delivery_identity = _delivery_identity_from_parent(parent_payload)
     return start_run(
         registry,
         workflow,
@@ -736,9 +762,6 @@ def spawn_run(
         dry_run,
         force_lock,
         parent_run_id=parent_run_id,
-        parent_agent=parent_agent,
-        bet_id=bet_id,
-        inherited_delivery_identity=inherited_delivery_identity,
     )
 
 
