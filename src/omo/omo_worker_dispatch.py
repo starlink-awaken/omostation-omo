@@ -149,7 +149,7 @@ def dispatch_task(
     worker_id: str,
     allowed_write_paths: list[str],
     launch: bool = False,
-    transport: str = "cli_prompt",
+    transport: str = "acp_stdio",  # T1-19: ACP stdio preferred
     prior_evidence: list[str] | None = None,
     prompt_addendum: list[str] | None = None,
     workflow_packet: dict[str, Any] | None = None,
@@ -562,7 +562,7 @@ def reclaim_task(
     allowed_write_paths: list[str],
     reason: str,
     launch: bool = False,
-    transport: str = "cli_prompt",
+    transport: str = "acp_stdio",  # T1-19: ACP stdio preferred
     omo_dir: str | Path = ".omo",
 ) -> dict[str, str]:
     active_dir = _omo_path(root, omo_dir) / "tasks" / "active"
