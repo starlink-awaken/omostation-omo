@@ -36,6 +36,7 @@ from omo.omo_io import AppendOnlyLog
 from omo.omo_paths import (
     DEBT_ITEMS_DIR,
     DECISIONS_DIR,
+    KAIRON_DIR,
     KAIRON_PACKAGES,
     TASKS_PLANNED_DIR,
     WORKSPACE_ROOT,
@@ -151,7 +152,7 @@ def summary(audit_file: str | Path | None = None) -> dict:
 # =============================================================================
 
 # 模块级路径(允许测试覆盖)
-_KAIRON_DIR: Path = Path(__file__).resolve().parents[4] / "projects" / "kairon"
+_KAIRON_DIR: Path = KAIRON_DIR
 _OMO_ROOT: Path = WORKSPACE_ROOT / ".omo"
 _WORKSPACE_ROOT: Path = WORKSPACE_ROOT
 
@@ -797,7 +798,7 @@ def build_recommendations(checks: list[CheckResult]) -> list[str]:
         if c.severity == "ok":
             continue
         if c.category == "lint":
-            recs.append("修复 ruff 错误, 参考 `cd projects/kairon && uv run ruff check packages/ --fix`")
+            recs.append("修复 ruff 错误, 参考 `cd projects/knowledge/kairon && uv run ruff check packages/ --fix`")
         elif c.category == "tests":
             sample = ", ".join(d.split(":")[0] for d in c.details[:3])
             recs.append(f"为 {sample} 等包至少添加 1 个 smoke test")
@@ -821,7 +822,7 @@ def run_governance_audit(workspace: Path | None = None) -> GovernanceReport:
     global _OMO_ROOT, _KAIRON_DIR, _WORKSPACE_ROOT
     if workspace is not None:
         _OMO_ROOT = workspace / ".omo"
-        _KAIRON_DIR = workspace / "projects" / "kairon"
+        _KAIRON_DIR = workspace / "projects" / "knowledge" / "kairon"
         _WORKSPACE_ROOT = workspace
 
     checks = [

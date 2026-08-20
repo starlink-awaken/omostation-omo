@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
+import omo.omo_audit as audit
 from omo.omo_audit import _load_yaml_safely, governance_check_agora_health
+from omo.omo_paths import KAIRON_DIR
 
 
 def test_governance_check_agora_health_with_active_event_loop(monkeypatch):
@@ -46,3 +49,54 @@ def test_load_yaml_safely_accepts_multi_document_yaml(tmp_path: Path) -> None:
         "current_phase": 42,
         "health_score": 100,
     }
+
+
+def test_governance_lint_uses_canonical_kairon_directory(monkeypatch) -> None:
+    observed: dict[str, object] = {}
+
+    def fake_run(*_args, **kwargs):
+        observed.update(kwargs)
+        return SimpleNamespace(stdout="All checks passed!\n", stderr="")
+
+    monkeypatch.setattr(audit.subprocess, "run", fake_run)
+
+    result = audit.governance_check_lint()
+
+    assert result.severity == "ok"
+    assert Path(str(observed["cwd"])) == KAIRON_DIR
+
+
+def test_governance_audit_workspace_override_uses_canonical_kairon_directory(monkeypatch, tmp_path: Path) -> None:
+    observed: dict[str, object] = {}
+    original_paths = (audit._OMO_ROOT, audit._KAIRON_DIR, audit._WORKSPACE_ROOT)
+
+    def fake_run(*_args, **kwargs):
+        observed.update(kwargs)
+        return SimpleNamespace(stdout="All checks passed!\n", stderr="")
+
+    monkeypatch.setattr(audit.subprocess, "run", fake_run)
+    monkeypatch.setenv(audit.ENV_SKIP_AGORA, "1")
+    try:
+        audit.run_governance_audit(workspace=tmp_path)
+    finally:
+        audit._OMO_ROOT, audit._KAIRON_DIR, audit._WORKSPACE_ROOT = original_paths
+
+    assert Path(str(observed["cwd"])) == tmp_path / "projects" / "knowledge" / "kairon"
+
+
+def test_governance_lint_recommendation_uses_canonical_kairon_directory() -> None:
+    recommendations = audit.build_recommendations(
+        [
+            audit.CheckResult(
+                name="ruff lint",
+                category="lint",
+                severity="warn",
+                score=90.0,
+                message="2 errors",
+            )
+        ]
+    )
+
+    assert recommendations == [
+        "修复 ruff 错误, 参考 `cd projects/knowledge/kairon && uv run ruff check packages/ --fix`"
+    ]
