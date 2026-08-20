@@ -25,7 +25,6 @@ from omo.omo_acp_transport import (
     _evaluate_permission,
 )
 
-
 # ── Permission Broker Tests ──
 
 class TestPermissionEvaluation:

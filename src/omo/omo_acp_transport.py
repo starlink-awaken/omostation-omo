@@ -163,7 +163,7 @@ def _evaluate_permission(
         return PermissionResponse(
             request=request,
             decision=PermissionDecision.DENY,
-            reason=f"R1 write to forbidden scope: denied",
+            reason="R1 write to forbidden scope: denied",
             request_id=request_id,
         )
 

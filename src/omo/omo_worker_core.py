@@ -251,8 +251,8 @@ def _launch_acp_stdio(
     """Launch worker via ACP stdio transport with structured permission broker."""
     from .omo_acp_transport import (
         AcpSessionConfig,
-        AcpStdioSession,
         AcpState,
+        AcpStdioSession,
     )
 
     command = _worker_command(registry, worker_id, "acp_stdio")
