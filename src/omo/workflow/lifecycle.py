@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -10,6 +11,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import yaml
@@ -63,6 +65,54 @@ from .core import (
 _LOCK_FILENAME_MAX_LEN = 255
 _RUN_UPDATE_LOCK_NAME_MAX_LEN = _LOCK_FILENAME_MAX_LEN - len("run_.update.lock")
 _PATH_LOCK_NAME_MAX_LEN = _LOCK_FILENAME_MAX_LEN - len(".lock.yaml")
+_SPEC_BINDING_CONTRACT: ModuleType | None = None
+
+
+def _load_spec_binding_contract() -> ModuleType:
+    """Load the Workspace-owned BET/WorkPacket boundary or fail closed."""
+    global _SPEC_BINDING_CONTRACT
+    if _SPEC_BINDING_CONTRACT is not None:
+        return _SPEC_BINDING_CONTRACT
+    path = WORKSPACE / "bin/plan/bet-ledger.py"
+    spec = importlib.util.spec_from_file_location("_omo_spec_binding_contract", path)
+    if spec is None or spec.loader is None:
+        raise WorkflowError(f"SPEC_BINDING_UNAVAILABLE: cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:  # noqa: BLE001 - a broken mandatory gate must halt.
+        sys.modules.pop(spec.name, None)
+        raise WorkflowError(f"SPEC_BINDING_UNAVAILABLE: cannot load {path}: {exc}") from exc
+    _SPEC_BINDING_CONTRACT = module
+    return module
+
+
+def _prepare_bet_execution(bet_id: str) -> dict[str, Any]:
+    contract = _load_spec_binding_contract()
+    try:
+        return contract.prepare_bet_execution(bet_id, workspace=WORKSPACE)
+    except contract.SpecBindingContractError as exc:
+        raise WorkflowError(str(exc)) from exc
+
+
+def _validate_work_packet_claim(
+    payload: dict[str, Any],
+    paths: list[str],
+    surfaces: list[str],
+) -> None:
+    if not payload.get("bet_id") and payload.get("work_packet") is None:
+        return
+    contract = _load_spec_binding_contract()
+    try:
+        contract.validate_work_packet_run(
+            payload,
+            paths,
+            claimed_surfaces=surfaces,
+            workspace=WORKSPACE,
+        )
+    except contract.SpecBindingContractError as exc:
+        raise WorkflowError(str(exc)) from exc
 
 
 def workflow_plan(workflow: dict[str, Any], context: dict[str, str]) -> dict[str, Any]:
@@ -533,8 +583,12 @@ def start_run(
     *,
     parent_run_id: str = "",
     parent_agent: str = "",
+    bet_id: str = "",
 ) -> dict[str, Any]:
     validate_agent_profile(registry, workflow, context.get("profile", ""), require=True)
+    delivery_identity = _prepare_bet_execution(bet_id) if bet_id else None
+    if bet_id:
+        context = {**context, "bet_id": bet_id}
     plan = workflow_plan(workflow, context)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run_id = f"{stamp}-{plan['id']}-{uuid.uuid4().hex[:8]}"
@@ -558,6 +612,11 @@ def start_run(
         record["parent_run_id"] = parent_run_id
     if parent_agent:
         record["parent_agent"] = parent_agent
+    if bet_id:
+        record["bet_id"] = bet_id
+        if delivery_identity is None:  # Defensive invariant; preparation is fail-closed.
+            raise WorkflowError(f"WORK_PACKET_MISSING: no prepared identity for {bet_id}")
+        record.update(delivery_identity)
     if dry_run:
         return record
     record["locks"] = acquire_locks(registry, plan["lock_scopes"], run_id, context["actor"], force_lock)
@@ -672,6 +731,10 @@ def claim_run(
     affected_hash: str | None = None,
     affected_receipt: str | None = None,
 ) -> dict[str, Any]:
+    _, guard_payload = read_run(registry, run_id)
+    if guard_payload.get("status") != "active":
+        raise WorkflowError(f"cannot claim against non-active run: {run_id}")
+    _validate_work_packet_claim(guard_payload, list(paths or []), list(surfaces or []))
     heartbeat_run(registry, run_id)  # SR-01: renew before claim
     receipt_reference = affected_hash or affected_receipt
     if not receipt_reference:

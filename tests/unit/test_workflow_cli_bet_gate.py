@@ -39,7 +39,7 @@ def test_exempt_workflow_passes_without_bet(capsys, tmp_path):
     rc = cli.main([
         "--registry", str(REGISTRY_PATH),
         "start", "observer-audit", "--profile", "observer-agent",
-        "--objective", "t", "--force-lock",
+        "--objective", "t", "--dry-run",
     ])
     out = capsys.readouterr().out
     assert rc == 0, out

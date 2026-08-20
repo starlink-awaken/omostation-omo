@@ -420,6 +420,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.dry_run,
                 args.force_lock,
                 parent_run_id=getattr(args, "parent_run", "") or "",
+                bet_id=bet_id,
             )
             if args.json:
                 print(json.dumps(record, ensure_ascii=False, indent=2))
