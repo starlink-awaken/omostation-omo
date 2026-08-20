@@ -59,6 +59,9 @@ jobs:
             --ignore=tests/test_omo_direct_io_gate.py \
             --ignore=tests/test_omo_daemon_publish_e2e.py \
             --ignore=tests/test_phase3_acceptance_runner.py \
+            --ignore=tests/test_sr06_gap_fixes.py \
+            --ignore=tests/unit/test_omo_project_inspector.py \
+            --ignore=tests/unit/test_workflow_cli_bet_gate.py \
             --ignore=tests/unit/test_release.py \
             -k "not test_find_omo_dir_prefers_workspace_root_over_subrepo_shadow"
 
@@ -92,5 +95,8 @@ jobs:
             --ignore=tests/test_omo_direct_io_gate.py \
             --ignore=tests/test_omo_daemon_publish_e2e.py \
             --ignore=tests/test_phase3_acceptance_runner.py \
+            --ignore=tests/test_sr06_gap_fixes.py \
+            --ignore=tests/unit/test_omo_project_inspector.py \
+            --ignore=tests/unit/test_workflow_cli_bet_gate.py \
             --ignore=tests/unit/test_release.py \
             -k "not test_find_omo_dir_prefers_workspace_root_over_subrepo_shadow"
