@@ -36,6 +36,7 @@ from omo.omo_io import AppendOnlyLog
 from omo.omo_paths import (
     DEBT_ITEMS_DIR,
     DECISIONS_DIR,
+    KAIRON_DIR,
     KAIRON_PACKAGES,
     TASKS_PLANNED_DIR,
     WORKSPACE_ROOT,
@@ -151,7 +152,7 @@ def summary(audit_file: str | Path | None = None) -> dict:
 # =============================================================================
 
 # 模块级路径(允许测试覆盖)
-_KAIRON_DIR: Path = Path(__file__).resolve().parents[4] / "projects" / "kairon"
+_KAIRON_DIR: Path = KAIRON_DIR
 _OMO_ROOT: Path = WORKSPACE_ROOT / ".omo"
 _WORKSPACE_ROOT: Path = WORKSPACE_ROOT
 
@@ -797,7 +798,7 @@ def build_recommendations(checks: list[CheckResult]) -> list[str]:
         if c.severity == "ok":
             continue
         if c.category == "lint":
-            recs.append("修复 ruff 错误, 参考 `cd projects/kairon && uv run ruff check packages/ --fix`")
+            recs.append("修复 ruff 错误, 参考 `cd projects/knowledge/kairon && uv run ruff check packages/ --fix`")
         elif c.category == "tests":
             sample = ", ".join(d.split(":")[0] for d in c.details[:3])
             recs.append(f"为 {sample} 等包至少添加 1 个 smoke test")
@@ -819,29 +820,35 @@ def run_governance_audit(workspace: Path | None = None) -> GovernanceReport:
     workspace 参数允许测试时传入 tmp_path, 默认读 WORKSPACE_ROOT.
     """
     global _OMO_ROOT, _KAIRON_DIR, _WORKSPACE_ROOT
+    original_paths: tuple[Path, Path, Path] | None = None
     if workspace is not None:
+        original_paths = (_OMO_ROOT, _KAIRON_DIR, _WORKSPACE_ROOT)
         _OMO_ROOT = workspace / ".omo"
-        _KAIRON_DIR = workspace / "projects" / "kairon"
+        _KAIRON_DIR = workspace / "projects" / "knowledge" / "kairon"
         _WORKSPACE_ROOT = workspace
 
-    checks = [
-        governance_check_lint(),
-        governance_check_test_coverage(),
-        governance_check_debt_integrity(),
-        governance_check_adr_links(),
-        governance_check_task_consistency(),
-        governance_check_agora_health(),
-        governance_check_doc_lifecycle(),
-    ]
-    total = sum(c.score for c in checks) / len(checks)
-    return GovernanceReport(
-        date=datetime.now(UTC).strftime("%Y-%m-%d"),
-        total_score=round(total, 1),
-        grade=compute_grade(total),
-        checks=checks,
-        watchlist=build_watchlist(checks),
-        recommendations=build_recommendations(checks),
-    )
+    try:
+        checks = [
+            governance_check_lint(),
+            governance_check_test_coverage(),
+            governance_check_debt_integrity(),
+            governance_check_adr_links(),
+            governance_check_task_consistency(),
+            governance_check_agora_health(),
+            governance_check_doc_lifecycle(),
+        ]
+        total = sum(c.score for c in checks) / len(checks)
+        return GovernanceReport(
+            date=datetime.now(UTC).strftime("%Y-%m-%d"),
+            total_score=round(total, 1),
+            grade=compute_grade(total),
+            checks=checks,
+            watchlist=build_watchlist(checks),
+            recommendations=build_recommendations(checks),
+        )
+    finally:
+        if original_paths is not None:
+            _OMO_ROOT, _KAIRON_DIR, _WORKSPACE_ROOT = original_paths
 
 
 def render_markdown(report: GovernanceReport) -> str:
