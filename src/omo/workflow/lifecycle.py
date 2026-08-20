@@ -9,6 +9,7 @@ import sys
 import time
 import uuid
 from contextlib import contextmanager
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType
@@ -66,6 +67,7 @@ _LOCK_FILENAME_MAX_LEN = 255
 _RUN_UPDATE_LOCK_NAME_MAX_LEN = _LOCK_FILENAME_MAX_LEN - len("run_.update.lock")
 _PATH_LOCK_NAME_MAX_LEN = _LOCK_FILENAME_MAX_LEN - len(".lock.yaml")
 _SPEC_BINDING_CONTRACT: ModuleType | None = None
+_DELIVERY_IDENTITY_KEYS = ("spec_binding", "work_packet", "work_packet_hash")
 
 
 def _load_spec_binding_contract() -> ModuleType:
@@ -113,6 +115,54 @@ def _validate_work_packet_claim(
         )
     except contract.SpecBindingContractError as exc:
         raise WorkflowError(str(exc)) from exc
+
+
+def _validate_inherited_delivery_identity(
+    bet_id: str,
+    identity: dict[str, Any],
+    *,
+    parent_run_id: str,
+) -> dict[str, Any]:
+    if not bet_id or set(identity) != set(_DELIVERY_IDENTITY_KEYS):
+        raise WorkflowError(
+            "WORK_PACKET_PARENT_BINDING_INCOMPLETE: parent must provide exact "
+            "bet_id/spec_binding/work_packet/work_packet_hash"
+        )
+    packet = identity.get("work_packet")
+    if not isinstance(packet, dict) or packet.get("spec_binding") != identity.get("spec_binding"):
+        raise WorkflowError("WORK_PACKET_PARENT_BINDING_MISMATCH: parent spec_binding differs from work_packet")
+    inherited = deepcopy(identity)
+    _validate_work_packet_claim(
+        {
+            "run_id": parent_run_id,
+            "bet_id": bet_id,
+            **inherited,
+        },
+        [],
+        [],
+    )
+    return inherited
+
+
+def _delivery_identity_from_parent(parent_payload: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
+    binding_keys = ("bet_id", *_DELIVERY_IDENTITY_KEYS)
+    present = [key for key in binding_keys if key in parent_payload]
+    if not present:
+        return "", None
+    missing = [key for key in binding_keys if key not in parent_payload]
+    if missing:
+        raise WorkflowError(
+            f"WORK_PACKET_PARENT_BINDING_INCOMPLETE: parent run {parent_payload.get('run_id', '')} missing {missing}"
+        )
+    bet_id = parent_payload.get("bet_id")
+    if not isinstance(bet_id, str) or not bet_id:
+        raise WorkflowError("WORK_PACKET_PARENT_BINDING_INCOMPLETE: parent bet_id is required")
+    identity = {key: parent_payload[key] for key in _DELIVERY_IDENTITY_KEYS}
+    return bet_id, _validate_inherited_delivery_identity(
+        bet_id,
+        identity,
+        parent_run_id=str(parent_payload.get("run_id") or ""),
+    )
 
 
 def workflow_plan(workflow: dict[str, Any], context: dict[str, str]) -> dict[str, Any]:
@@ -584,9 +634,17 @@ def start_run(
     parent_run_id: str = "",
     parent_agent: str = "",
     bet_id: str = "",
+    inherited_delivery_identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     validate_agent_profile(registry, workflow, context.get("profile", ""), require=True)
-    delivery_identity = _prepare_bet_execution(bet_id) if bet_id else None
+    if inherited_delivery_identity is not None:
+        delivery_identity = _validate_inherited_delivery_identity(
+            bet_id,
+            inherited_delivery_identity,
+            parent_run_id=parent_run_id,
+        )
+    else:
+        delivery_identity = _prepare_bet_execution(bet_id) if bet_id else None
     if bet_id:
         context = {**context, "bet_id": bet_id}
     plan = workflow_plan(workflow, context)
@@ -669,6 +727,7 @@ def spawn_run(
 ) -> dict[str, Any]:
     _, parent_payload = read_run(registry, parent_run_id)
     parent_agent = parent_payload.get("agent_profile", "")
+    bet_id, inherited_delivery_identity = _delivery_identity_from_parent(parent_payload)
     return start_run(
         registry,
         workflow,
@@ -678,6 +737,8 @@ def spawn_run(
         force_lock,
         parent_run_id=parent_run_id,
         parent_agent=parent_agent,
+        bet_id=bet_id,
+        inherited_delivery_identity=inherited_delivery_identity,
     )
 
 
