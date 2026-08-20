@@ -62,7 +62,12 @@ def _worker(
         "id": "pi",
         "enabled": enabled,
         "admission_state": admission_state,
-        "transports": transports if transports is not None else {"cli_prompt": {"command": "pi --prompt {prompt}"}},
+        "transports": transports
+        if transports is not None
+        else {
+            "cli_prompt": {"command": "pi --prompt {prompt}"},
+            "acp_stdio": {"command": "pi --acp --acp-transport stdio"},
+        },
     }
 
 
@@ -81,7 +86,12 @@ def _admitted_pi_worker() -> dict:
                     "run --execute "
                     '--timeout-seconds 120 --prompt "{prompt}"'
                 )
-            }
+            },
+            "acp_stdio": {
+                "command": (
+                    '/usr/bin/python3 "{workspace_root}/bin/gac/pi-worker-adapter.py" run --acp --acp-transport stdio'
+                )
+            },
         },
         "capabilities": ["reasoning", "verification"],
         "require_explicit_capabilities": True,
@@ -197,7 +207,12 @@ def test_admitted_pi_worker_uses_one_shell_free_omo_transport(tmp_path: Path) ->
                 "run --execute "
                 '--timeout-seconds 120 --prompt "{prompt}"'
             )
-        }
+        },
+        "acp_stdio": {
+            "command": (
+                '/usr/bin/python3 "{workspace_root}/bin/gac/pi-worker-adapter.py" run --acp --acp-transport stdio'
+            )
+        },
     }
     assert "receipt" not in pi["transports"]["cli_prompt"]["command"]
 
@@ -468,7 +483,7 @@ def test_invalid_command_template_is_rejected_before_run_artifacts(
     tmp_path: Path,
 ) -> None:
     pi = _admitted_pi_worker()
-    pi["transports"]["cli_prompt"]["command"] = 'pi "{unknown_placeholder}"'
+    pi["transports"]["acp_stdio"]["command"] = 'pi "{unknown_placeholder}"'
     task_path = _task_fixture(tmp_path, worker=pi)
     task = yaml.safe_load(task_path.read_text(encoding="utf-8"))
     task["risk_level"] = "L0"

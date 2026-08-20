@@ -238,6 +238,50 @@ def _dispatch_allowed_write_paths(task: dict) -> list[str]:
     return paths
 
 
+def _launch_acp_stdio(
+    root: Path,
+    registry: dict,
+    worker_id: str,
+    prompt_text: str,
+    stdout_path: Path,
+    *,
+    allowed_write_paths: list[str] | None = None,
+    forbidden_write_paths: list[str] | None = None,
+) -> str:
+    """Launch worker via ACP stdio transport with structured permission broker."""
+    from .omo_acp_transport import (
+        AcpSessionConfig,
+        AcpState,
+        AcpStdioSession,
+    )
+
+    command = _worker_command(registry, worker_id, "acp_stdio")
+    config = AcpSessionConfig(
+        command=command,
+        cwd=root,
+    )
+    session = AcpStdioSession(config)
+    try:
+        session.initialize()
+        session.create_session()
+        result = session.submit_turn(
+            prompt_text,
+            allowed_write_paths=allowed_write_paths,
+            forbidden_write_paths=forbidden_write_paths,
+        )
+        output = redact_sensitive_text(result.output)
+        write_text_atomic(stdout_path, output)
+
+        if result.state not in (AcpState.TURN_COMPLETED, AcpState.CANCELLED):
+            raise RuntimeError(
+                f"ACP stdio launch failed: worker_id={worker_id} "
+                f"state={result.state.value} error={result.error} log={stdout_path}"
+            )
+        return output
+    finally:
+        session.reap()
+
+
 def _launch_worker_from_prompt(
     root: Path,
     registry: dict,
@@ -245,8 +289,23 @@ def _launch_worker_from_prompt(
     transport: str,
     prompt_path: Path,
     stdout_path: Path,
+    *,
+    allowed_write_paths: list[str] | None = None,
+    forbidden_write_paths: list[str] | None = None,
 ) -> str:
     prompt_text = prompt_path.read_text(encoding="utf-8")
+
+    if transport == "acp_stdio":
+        return _launch_acp_stdio(
+            root,
+            registry,
+            worker_id,
+            prompt_text,
+            stdout_path,
+            allowed_write_paths=allowed_write_paths,
+            forbidden_write_paths=forbidden_write_paths,
+        )
+
     argv = _build_launch_argv(
         registry,
         worker_id,
