@@ -726,6 +726,30 @@ def dispatch_admitted_workflow(
     **admission_options: Any,
 ) -> dict[str, Any]:
     """Admit first, then hand the immutable packet to the legacy worker bridge."""
+    from .omo_worker_core import _build_launch_argv
+
+    request_identity = admission_options.get("request_identity")
+    if not isinstance(request_identity, Mapping):
+        raise WorkflowDispatchError("bound worker dispatch requires request identity")
+    workflow_run_id = str(
+        admission_options.setdefault(
+            "workflow_run_id",
+            f"mesh-{task_id.lower()}-{uuid4().hex[:12]}",
+        )
+    )
+    registry = load_yaml(root / Path(admission_options.get("omo_dir", ".omo")) / "_truth" / "registry" / "workers.yaml")
+    _build_launch_argv(
+        registry,
+        worker_id,
+        transport,
+        "",
+        workspace_root=root,
+        run_id=workflow_run_id,
+        packet_id=request_identity.get("packet_id"),
+        packet_hash=request_identity.get("packet_hash"),
+        instruction_binding=request_identity.get("instruction_binding"),
+        command_key="ack_command",
+    )
     packet = admit_workflow(
         root,
         task_id=task_id,

@@ -216,6 +216,22 @@ def dispatch_task(
     workflow_run_id = str(workflow_packet.get("workflow_run_id") or "") if isinstance(workflow_packet, dict) else ""
     if workflow_packet is not None and not isinstance(request_identity, dict):
         raise ValueError("bound workflow dispatch requires request_identity")
+    ack_argv = (
+        _build_launch_argv(
+            registry,
+            worker_id,
+            transport,
+            "",
+            workspace_root=root,
+            run_id=workflow_run_id,
+            packet_id=request_identity["packet_id"],
+            packet_hash=request_identity["packet_hash"],
+            instruction_binding=request_identity["instruction_binding"],
+            command_key="ack_command",
+        )
+        if isinstance(request_identity, dict)
+        else None
+    )
     blueprint = (
         {
             "packet_id": request_identity["packet_id"],
@@ -267,18 +283,7 @@ def dispatch_task(
             now=dispatch_now,
             ack_origin_proof=ack_origin_proof,
         )
-        ack_argv = _build_launch_argv(
-            registry,
-            worker_id,
-            transport,
-            "",
-            workspace_root=root,
-            run_id=workflow_run_id,
-            packet_id=request_identity["packet_id"],
-            packet_hash=request_identity["packet_hash"],
-            instruction_binding=request_identity["instruction_binding"],
-            command_key="ack_command",
-        )
+        assert ack_argv is not None
         ack_argv.extend(
             [
                 workflow_run_id,

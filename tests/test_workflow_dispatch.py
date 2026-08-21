@@ -292,6 +292,49 @@ def test_dispatch_bridge_records_step_dispatch_worker_context(tmp_path: Path) ->
     assert snapshot["worker"]["worker_id"] == "worker-a"
 
 
+def test_missing_ack_command_is_zero_side_effect_and_retryable(tmp_path: Path) -> None:
+    _task(tmp_path)
+    registry_path = tmp_path / ".omo" / "_truth" / "registry" / "workers.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    ack_command = registry["workers"][0]["transports"]["cli_prompt"].pop("ack_command")
+    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+    before = {
+        str(path.relative_to(tmp_path)): path.read_bytes() for path in (tmp_path / ".omo").rglob("*") if path.is_file()
+    }
+    options = {
+        "task_id": "TASK-MESH-1",
+        "worker_id": "worker-a",
+        "allowed_write_paths": ["docs/"],
+        "backend": "runtime",
+        "required_capabilities": ["workflow.execute", "runtime"],
+        "capability_health": _health(),
+        "workflow_run_id": "run-ack-command-retry",
+        "now": "2026-08-02T10:00:00+00:00",
+        "request_identity": _request_identity(),
+    }
+
+    with pytest.raises(ValueError, match="ack_command_missing"):
+        dispatch_admitted_workflow(tmp_path, **options)
+
+    after = {
+        str(path.relative_to(tmp_path)): path.read_bytes() for path in (tmp_path / ".omo").rglob("*") if path.is_file()
+    }
+    assert after == before
+
+    registry["workers"][0]["transports"]["cli_prompt"]["ack_command"] = ack_command
+    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+    result = dispatch_admitted_workflow(tmp_path, **options)
+
+    events = WorkflowMeshStore(tmp_path / ".omo").events()
+    assert result["workflow_run_id"] == "run-ack-command-retry"
+    assert [event["event_type"] for event in events] == [
+        "WorkflowRequested",
+        "WorkflowAdmitted",
+        "StepDispatched",
+        "WorkerAcknowledged",
+    ]
+
+
 def test_bound_dispatch_persists_and_launches_exact_delivery_argv(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -33,7 +33,7 @@ from .approval_lifecycle import (
 from .omo_io import write_text_atomic
 from .omo_shared import load_yaml
 from .omo_task_schema import validate_task_file
-from .omo_worker_core import _require_admitted_worker, _require_worker_policy
+from .omo_worker_core import _build_launch_argv, _require_admitted_worker, _require_worker_policy
 from .omo_worker_dispatch import dispatch_task
 from .orchestration_contract import OrchestrationContractCoordinator
 from .workflow_dispatch import admit_workflow
@@ -363,6 +363,18 @@ class BlueprintControlService:
             "instruction_binding": dict(packet["instruction_binding"]),
         }
         workflow_run_id = f"blueprint-{str(packet['packet_id']).lower()}"
+        _build_launch_argv(
+            registry,
+            worker_id,
+            transport,
+            "",
+            workspace_root=self.root,
+            run_id=workflow_run_id,
+            packet_id=identity["packet_id"],
+            packet_hash=identity["packet_hash"],
+            instruction_binding=identity["instruction_binding"],
+            command_key="ack_command",
+        )
         admission = admit_workflow(
             self.root,
             task_id=task_id,
