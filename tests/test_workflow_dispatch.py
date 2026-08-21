@@ -36,6 +36,10 @@ def _task(tmp_path: Path, *, approval_ref: str | None = None) -> None:
                         "enabled": True,
                         "admission_state": "admitted",
                         "transports": {
+                            "acp_stdio": {
+                                "command": "echo acp",
+                                "worker_ack_protocol": "omo-worker-origin-ack/v1",
+                            },
                             "cli_prompt": {
                                 "command": "worker-a",
                                 "worker_ack_protocol": "omo-worker-origin-ack/v1",
@@ -297,7 +301,7 @@ def test_missing_worker_ack_protocol_is_zero_side_effect_and_retryable(tmp_path:
     _task(tmp_path)
     registry_path = tmp_path / ".omo" / "_truth" / "registry" / "workers.yaml"
     registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
-    ack_protocol = registry["workers"][0]["transports"]["cli_prompt"].pop("worker_ack_protocol")
+    ack_protocol = registry["workers"][0]["transports"]["acp_stdio"].pop("worker_ack_protocol")
     registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
     before = {
         str(path.relative_to(tmp_path)): path.read_bytes() for path in (tmp_path / ".omo").rglob("*") if path.is_file()
@@ -322,7 +326,7 @@ def test_missing_worker_ack_protocol_is_zero_side_effect_and_retryable(tmp_path:
     }
     assert after == before
 
-    registry["workers"][0]["transports"]["cli_prompt"]["worker_ack_protocol"] = ack_protocol
+    registry["workers"][0]["transports"]["acp_stdio"]["worker_ack_protocol"] = ack_protocol
     registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
     result = dispatch_admitted_workflow(tmp_path, **options)
 
@@ -341,7 +345,7 @@ def test_controller_cannot_self_ack_when_worker_returns_without_ack(
     _task(tmp_path)
     registry_path = tmp_path / ".omo" / "_truth" / "registry" / "workers.yaml"
     registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
-    registry["workers"][0]["transports"]["cli_prompt"]["command"] = (
+    registry["workers"][0]["transports"]["acp_stdio"]["command"] = (
         'worker-a "{prompt}" --run-id "{run_id}" --packet-id "{packet_id}" '
         '--packet-hash "{packet_hash}" --instruction-binding-json "{instruction_binding_json}"'
     )
@@ -390,7 +394,7 @@ def test_actual_worker_process_acknowledges_before_transport_returns(tmp_path: P
         "ack_decision='proceed',origin_proof=os.environ['OMO_WORKER_ACK_ORIGIN_PROOF'],"
         "lease_seconds=c['lease_seconds'])"
     )
-    registry["workers"][0]["transports"]["cli_prompt"]["command"] = (
+    registry["workers"][0]["transports"]["acp_stdio"]["command"] = (
         f"{shlex.quote(sys.executable)} -c {shlex.quote(worker_code)}"
     )
     registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
@@ -461,7 +465,7 @@ def test_legacy_dispatch_without_packet_is_observer_only(tmp_path: Path) -> None
             worker_id="worker-a",
             allowed_write_paths=["docs/"],
             launch=False,
-            transport="cli_prompt",
+            transport="acp_stdio",
             now="2026-08-02T10:00:00+00:00",
         )
 
@@ -493,7 +497,7 @@ def test_dispatch_with_packet_emits_step_dispatched(tmp_path: Path) -> None:
         worker_id="worker-a",
         allowed_write_paths=["docs/"],
         launch=False,
-        transport="cli_prompt",
+        transport="acp_stdio",
         workflow_packet=packet,
         now="2026-08-02T10:00:00+00:00",
     )
