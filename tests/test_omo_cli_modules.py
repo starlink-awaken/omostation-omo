@@ -443,6 +443,88 @@ class TestOmoState:
         assert "TASK-ALIVE" in planned[0]
         assert "ZOMBIE" not in str(planned)
 
+    def test_cmd_state_sync_tasks_rebuilds_active_and_blocked_index_sections(self, tmp_path: Path) -> None:
+        """Active/blocked 真源不得在 INDEX 投影中被错误地写为空。"""
+        omo_dir = tmp_path
+        state_dir = omo_dir / "state"
+        state_dir.mkdir(parents=True)
+        tasks = {
+            "active": ("TASK-ACTIVE", "正在执行的任务"),
+            "planned": ("TASK-PLANNED", "待执行的任务"),
+            "blocked": ("bet-y1q2-t7-01", "工程交付 dogfood 开 shadow"),
+            "done": ("TASK-DONE", "已经完成的任务"),
+        }
+        for section, (task_id, title) in tasks.items():
+            task_dir = omo_dir / "tasks" / section
+            task_dir.mkdir(parents=True)
+            (task_dir / f"{task_id}.yaml").write_text(
+                f"id: {task_id}\ntitle: {title}\nstatus: {section}\n",
+                encoding="utf-8",
+            )
+        (state_dir / "system.yaml").write_text(
+            yaml.dump(
+                {
+                    "active_tasks": 0,
+                    "planned_tasks": 0,
+                    "blocked_tasks": 0,
+                    "completed_tasks": 0,
+                    "total_tasks": 0,
+                }
+            ),
+            encoding="utf-8",
+        )
+        index_file = omo_dir / "tasks" / "registry" / "INDEX.md"
+        index_file.parent.mkdir(parents=True)
+        index_file.write_text(
+            """# Tasks Registry
+
+## Active Tasks
+
+当前无活跃任务。
+
+## Planned Tasks (0 个)
+| ID | Title | Status |
+|----|-------|--------|
+
+> **补充规划**: 保留说明。
+
+## Completed Tasks (0 个)
+
+> `tasks/done/` — 0 个顶层 YAML 文件。
+
+## Archived Tasks (0 个顶层)
+
+保留的归档说明。
+
+## Blocked Tasks
+
+当前无阻塞任务。
+
+---
+*Updated: 2026-08-01 (依据 `omo state sync-tasks` 与真实目录重算: done=0, planned=0, active=0, archived=0 顶层)*
+""",
+            encoding="utf-8",
+        )
+
+        assert cmd_state_sync_tasks(omo_dir, dry_run=False) == 0
+
+        state = yaml.safe_load((state_dir / "system.yaml").read_text(encoding="utf-8"))
+        assert state["active_tasks"] == 1
+        assert state["planned_tasks"] == 1
+        assert state["blocked_tasks"] == 1
+        assert state["completed_tasks"] == 1
+        assert state["total_tasks"] == 4
+        index = index_file.read_text(encoding="utf-8")
+        assert "## Active Tasks (1 个)" in index
+        assert "| TASK-ACTIVE | 正在执行的任务 | active |" in index
+        assert "## Planned Tasks (1 个)" in index
+        assert "| TASK-PLANNED | 待执行的任务 | candidate |" in index
+        assert "## Blocked Tasks (1 个)" in index
+        assert "| bet-y1q2-t7-01 | 工程交付 dogfood 开 shadow | blocked |" in index
+        assert "当前无活跃任务" not in index
+        assert "当前无阻塞任务" not in index
+        assert "blocked=1" in index
+
     def test_cmd_state_sync_delegates_to_state_broker_json(self, capsys, tmp_path: Path, monkeypatch) -> None:
         """state sync 统一代理到 omo_ingress_state broker."""
         omo_dir = tmp_path / ".omo"
