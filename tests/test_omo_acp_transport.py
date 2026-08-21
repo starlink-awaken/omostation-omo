@@ -65,6 +65,40 @@ class TestPermissionEvaluation:
         assert resp.decision == PermissionDecision.ALLOW_ONCE
         assert "R1" in resp.reason
 
+    def test_r1_glob_suffix_scope_auto_allow(self):
+        # canary 实证: allowed_write_paths 含 /** 后缀时按前缀匹配 (真 bug 修复回归保护)
+        req = self._make_request(operation="write", scope="projects/omo/src/omo/x.py")
+        resp = _evaluate_permission(
+            req,
+            allowed_write_paths=["projects/omo/**"],
+            forbidden_write_paths=[],
+            raw_scope="projects/omo/src/omo/x.py",
+        )
+        assert resp.decision == PermissionDecision.ALLOW_ONCE
+        assert "R1" in resp.reason
+
+    def test_r1_glob_suffix_scope_outside_still_human(self):
+        # /** 边界外路径不得误匹配
+        req = self._make_request(operation="write", scope="projects/agora/src/x.py")
+        resp = _evaluate_permission(
+            req,
+            allowed_write_paths=["projects/omo/**"],
+            forbidden_write_paths=[],
+            raw_scope="projects/agora/src/x.py",
+        )
+        assert resp.decision == PermissionDecision.HUMAN_REQUIRED
+
+    def test_r1_glob_forbidden_wins_over_allowed(self):
+        # forbidden glob 应优先于 allowed glob
+        req = self._make_request(operation="write", scope=".omo/state/system.yaml")
+        resp = _evaluate_permission(
+            req,
+            allowed_write_paths=[".omo/**"],
+            forbidden_write_paths=[".omo/state/**"],
+            raw_scope=".omo/state/system.yaml",
+        )
+        assert resp.decision == PermissionDecision.DENY
+
     def test_r1_write_to_forgidden_scope_deny(self):
         req = self._make_request(operation="write", scope=".omo/state/system.yaml")
         resp = _evaluate_permission(
