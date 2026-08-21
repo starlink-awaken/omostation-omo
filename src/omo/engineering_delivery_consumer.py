@@ -217,7 +217,8 @@ def _validate_delivery(payload: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _validate_review(payload: Mapping[str, Any]) -> dict[str, Any]:
+def normalize_engineering_delivery_review(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the canonical review payload used for assertion binding."""
     value = _strict_envelope(payload, _REVIEW_FIELDS, "review")
     decision = _required_text(value.get("decision"), "decision", max_length=32).lower()
     if decision not in _DECISIONS:
@@ -563,7 +564,7 @@ def record_engineering_delivery_review(
     """Record an explicit human verdict and project it to MOS fail-closed."""
     root = Path(omo_dir)
     run_id = _required_text(workflow_run_id, "workflow_run_id")
-    review = _validate_review(payload)
+    review = normalize_engineering_delivery_review(payload)
     snapshot = WorkflowMeshStore(root).snapshot(run_id)
     if snapshot.get("state") == "unknown" or snapshot.get("scene_binding") != SCENE_BINDING:
         raise EngineeringDeliveryConsumerError("review requires an existing engineering-delivery workflow run")
@@ -914,5 +915,6 @@ __all__ = [
     "build_engineering_delivery_review_queue",
     "build_engineering_delivery_shadow_observer",
     "consume_engineering_delivery",
+    "normalize_engineering_delivery_review",
     "record_engineering_delivery_review",
 ]

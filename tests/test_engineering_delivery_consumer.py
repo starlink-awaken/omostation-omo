@@ -17,6 +17,7 @@ from omo.engineering_delivery_consumer import (
     build_engineering_delivery_review_queue,
     build_engineering_delivery_shadow_observer,
     consume_engineering_delivery,
+    normalize_engineering_delivery_review,
     record_engineering_delivery_review,
 )
 from omo.omo_belief import MOSBeliefManager
@@ -116,6 +117,20 @@ def _assertion(
         hashlib.sha256,
     ).hexdigest()
     return {**body, "signature": signature}
+
+
+def test_normalize_review_exposes_the_exact_signed_broker_payload():
+    assert normalize_engineering_delivery_review(
+        {
+            "delivery_id": " delivery-1 ",
+            "decision": " ADOPTED ",
+            "evidence_refs": [" evidence://human-review/1842 "],
+        }
+    ) == {
+        "delivery_id": "delivery-1",
+        "decision": "adopted",
+        "evidence_refs": ["evidence://human-review/1842"],
+    }
 
 
 def test_machine_consume_records_only_receipt_and_submitted_feedback(tmp_path):
