@@ -63,7 +63,7 @@ def _worker_registry(root: Path) -> None:
                             "cli_prompt": {
                                 "command": "worker-dogfood",
                                 "worker_ack_protocol": "omo-worker-origin-ack/v1",
-                            }
+                            },
                         },
                     }
                 ]

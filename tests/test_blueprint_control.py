@@ -121,7 +121,7 @@ def _dispatch_authority(
                             "cli_prompt": {
                                 "command": "worker-a",
                                 "worker_ack_protocol": "omo-worker-origin-ack/v1",
-                            }
+                            },
                         },
                         "capabilities": worker_capabilities or ["workflow.execute", "python"],
                         "lease_policy": {"lease_expired_after_seconds": 2592000},

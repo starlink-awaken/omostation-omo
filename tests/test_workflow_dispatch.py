@@ -43,7 +43,7 @@ def _task(tmp_path: Path, *, approval_ref: str | None = None) -> None:
                             "cli_prompt": {
                                 "command": "worker-a",
                                 "worker_ack_protocol": "omo-worker-origin-ack/v1",
-                            }
+                            },
                         },
                         "capabilities": ["workflow.execute", "runtime"],
                     }
