@@ -2114,6 +2114,8 @@ def test_default_supervisor_forwards_deterministic_start_idempotency_key(
         prompt_digest="sha256:" + "b" * 64,
         agent_id=CLONE_AGENT_ID,
         idempotency_key="orca-codex-start:stable",
+        _worker_ack_context={"workflow_run_id": "wf-001"},
+        _worker_ack_origin_proof="p" * 43,
     )
 
     assert observed[0][-4:] == [
@@ -2360,35 +2362,16 @@ def test_cli_observe_and_execute_input_ack_never_claim_model_success(
         ]
     )
     executed_output = json.loads(capsys.readouterr().out)
-    assert executed == 0
-    assert executed_output["ok"] is True
-    assert executed_output["state"] == "awaiting_human_action"
-    assert executed_output["human_action_required"] is True
+    assert executed != 0
+    assert executed_output["ok"] is False
+    assert executed_output["error"] == "blueprint_command_failed"
     assert not (tmp_path / ".omo/workers/runs/blueprint-candidate.json").exists()
     assert "EvidenceRecorded" not in [event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()]
-
-    collected = cli_main(
-        [
-            "blueprint",
-            "collect",
-            "--root",
-            str(tmp_path),
-            "--packet-file",
-            packet_ref,
-            "--dispatch-file",
-            str(dispatched["dispatch_path"]),
-            "--candidate-file",
-            ".omo/workers/runs/blueprint-candidate.json",
-            "--timeout-seconds",
-            "5",
-        ]
-    )
-    collected_output = json.loads(capsys.readouterr().out)
-    assert collected != 0
-    assert collected_output["ok"] is False
-    assert collected_output["state"] == "awaiting_human_action"
-    assert collected_output["candidate_collected"] is False
-    assert not (tmp_path / ".omo/workers/runs/blueprint-candidate.json").exists()
+    assert [event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()] == [
+        "WorkflowRequested",
+        "WorkflowAdmitted",
+        "StepDispatched",
+    ]
 
 
 def test_cli_verifier_reject_and_rollback_mismatch_never_report_success(
