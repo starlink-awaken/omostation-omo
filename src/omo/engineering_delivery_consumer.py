@@ -506,7 +506,13 @@ def _read_shadow_observer_inputs(
     workspace_root = _workspace_root(omo_dir)
     workspace_fd = _open_shadow_observer_workspace(workspace_root)
     if workspace_fd is None:
-        return ({path: _ShadowObserverInputSnapshot(path, None, None, None, None) for path in _shadow_observer_input_paths(omo_dir)}, None)
+        return (
+            {
+                path: _ShadowObserverInputSnapshot(path, None, None, None, None)
+                for path in _shadow_observer_input_paths(omo_dir)
+            },
+            None,
+        )
     workspace_identity = _shadow_observer_identity(os.fstat(workspace_fd))
     total_bytes = 0
     try:

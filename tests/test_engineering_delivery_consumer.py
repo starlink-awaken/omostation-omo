@@ -673,12 +673,7 @@ def test_external_resources_cli_uses_query_only_shadow_observer(tmp_path, monkey
 
     monkeypatch.setattr(external_resources, "build_engineering_delivery_shadow_observer", observe)
 
-    assert (
-        external_resources.main(
-            ["engineering-delivery-shadow-observer", "--as-of", "2026-08-22T00:00:00Z"]
-        )
-        == 0
-    )
+    assert external_resources.main(["engineering-delivery-shadow-observer", "--as-of", "2026-08-22T00:00:00Z"]) == 0
     assert calls == [(tmp_path, "2026-08-22T00:00:00Z", True)]
     assert '"status": "collecting"' in capsys.readouterr().out
 
@@ -687,12 +682,7 @@ def test_external_resources_cli_shadow_observer_does_not_create_runtime_files(tm
     monkeypatch.setattr(external_resources, "find_omo_dir", lambda: tmp_path)
     before = sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*"))
 
-    assert (
-        external_resources.main(
-            ["engineering-delivery-shadow-observer", "--as-of", "2026-08-22T00:00:00Z"]
-        )
-        == 0
-    )
+    assert external_resources.main(["engineering-delivery-shadow-observer", "--as-of", "2026-08-22T00:00:00Z"]) == 0
 
     assert '"status": "collecting"' in capsys.readouterr().out
     assert sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*")) == before
@@ -720,12 +710,7 @@ def test_populated_shadow_observer_and_cli_preserve_all_input_and_lock_files(tmp
     assert _tree_snapshot(root) == before
 
     monkeypatch.setattr(external_resources, "find_omo_dir", lambda: root)
-    assert (
-        external_resources.main(
-            ["engineering-delivery-shadow-observer", "--as-of", "2026-08-22T00:00:00Z"]
-        )
-        == 0
-    )
+    assert external_resources.main(["engineering-delivery-shadow-observer", "--as-of", "2026-08-22T00:00:00Z"]) == 0
     assert '"status": "collecting"' in capsys.readouterr().out
     assert _tree_snapshot(root) == before
 
