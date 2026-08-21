@@ -195,7 +195,10 @@ class MOSBeliefManager:
             topic_beliefs = [b for b in state["beliefs"] if b.get("topic") == topic]
             if len(topic_beliefs) < CRYSTALLIZATION_THRESHOLD:
                 return
-            crystallizer = SkillCrystallizer()
+            # Persistence is a single-root contract: a manager created for an
+            # isolated workspace must never crystallize into the process-wide
+            # default Workspace.
+            crystallizer = SkillCrystallizer(skills_dir=self.root / ".agents" / "skills")
             crystallizer.check_and_crystallize(
                 beliefs=state["beliefs"],
                 lessons=state.get("lessons", []),

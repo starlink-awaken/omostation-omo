@@ -125,23 +125,25 @@ def test_crystallizer_batch_scan(tmp_path: Path):
 
 
 def test_auto_trigger_on_record_belief(tmp_path: Path):
-    """2nd belief for same topic triggers auto-crystallization via MOSBeliefManager."""
+    """Manager-root isolation also owns auto-crystallized skill output."""
     import omo.omo_crystallizer as crystallizer_mod
 
     original = crystallizer_mod.DEFAULT_SKILLS_DIR
-    skills_dir = tmp_path / "auto-skills"
-    crystallizer_mod.DEFAULT_SKILLS_DIR = skills_dir
+    leaked_default = tmp_path.parent / f"{tmp_path.name}-leaked-default"
+    crystallizer_mod.DEFAULT_SKILLS_DIR = leaked_default
 
     try:
         mos = MOSBeliefManager(root=tmp_path)
         mos.record_belief(topic="auto-test", belief_text="first belief")
 
+        skills_dir = tmp_path / ".agents" / "skills"
         skill_file = skills_dir / "auto-test" / "SKILL.md"
         assert not skill_file.exists(), "should not crystallize on 1st belief"
 
         mos.record_belief(topic="auto-test", belief_text="second belief")
 
         assert skill_file.exists(), "should auto-crystallize on 2nd belief"
+        assert not leaked_default.exists(), "manager root must contain every persistence effect"
         content = skill_file.read_text(encoding="utf-8")
         assert "auto-test" in content
     finally:
@@ -167,35 +169,26 @@ def test_auto_trigger_no_crystallize_below_threshold(tmp_path: Path):
 
 def test_auto_trigger_with_pitfall_and_solution(tmp_path: Path):
     """Beliefs with pitfall+solution should produce richer SKILL.md."""
-    import omo.omo_crystallizer as crystallizer_mod
+    mos = MOSBeliefManager(root=tmp_path)
+    mos.record_belief(
+        topic="rich-topic",
+        belief_text="first lesson",
+        pitfall="forgot to lock",
+        solution="always use fcntl_lock",
+    )
+    mos.record_belief(
+        topic="rich-topic",
+        belief_text="second lesson",
+        pitfall="race condition on write",
+        solution="use atomic write",
+    )
 
-    original = crystallizer_mod.DEFAULT_SKILLS_DIR
-    skills_dir = tmp_path / "rich-skills"
-    crystallizer_mod.DEFAULT_SKILLS_DIR = skills_dir
-
-    try:
-        mos = MOSBeliefManager(root=tmp_path)
-        mos.record_belief(
-            topic="rich-topic",
-            belief_text="first lesson",
-            pitfall="forgot to lock",
-            solution="always use fcntl_lock",
-        )
-        mos.record_belief(
-            topic="rich-topic",
-            belief_text="second lesson",
-            pitfall="race condition on write",
-            solution="use atomic write",
-        )
-
-        skill_file = skills_dir / "rich-topic" / "SKILL.md"
-        assert skill_file.exists()
-        content = skill_file.read_text(encoding="utf-8")
-        assert "forgot to lock" in content
-        assert "fcntl_lock" in content
-        assert "atomic write" in content
-    finally:
-        crystallizer_mod.DEFAULT_SKILLS_DIR = original
+    skill_file = tmp_path / ".agents/skills/rich-topic/SKILL.md"
+    assert skill_file.exists()
+    content = skill_file.read_text(encoding="utf-8")
+    assert "forgot to lock" in content
+    assert "fcntl_lock" in content
+    assert "atomic write" in content
 
 
 def test_threshold_constant():

@@ -56,6 +56,7 @@ from .core import (
     lock_state_dir,
     normalize_repo_path,
     path_matches,
+    registry_workspace_root,
     run_state_dir,
     substitute,
     utc_now,
@@ -740,7 +741,7 @@ def start_run(
             "objective": objective,
             "actor": context["actor"],
         },
-        workspace=WORKSPACE,
+        workspace=registry_workspace_root(registry),
     )
     return record
 
@@ -932,6 +933,8 @@ def close_run(
     status: str,
     evidence: list[str],
     release: bool,
+    *,
+    emit_mesh: bool = True,
 ) -> dict[str, Any]:
     path, payload = read_run(registry, run_id)
     payload["status"] = status
@@ -956,18 +959,94 @@ def close_run(
             "released_locks": payload.get("released_locks", []),
         },
     )
-    # Phase 5: Bridge close to Workflow Mesh (same as closeout_run)
-    emit_workflow_mesh_event(
-        "AgentWorkflowClosed",
-        payload["run_id"],
-        {
-            "status": status,
-            "ok": status == "ok",
-            "evidence_count": len(evidence),
-        },
-        workspace=WORKSPACE,
-    )
+    # Direct `close` owns its Mesh terminal event. `closeout` suppresses this
+    # narrow payload and emits one richer terminal event after verify/observe.
+    if emit_mesh:
+        emit_workflow_mesh_event(
+            "AgentWorkflowClosed",
+            payload["run_id"],
+            {
+                "status": status,
+                "ok": status == "ok",
+                "evidence_count": len(evidence),
+            },
+            workspace=registry_workspace_root(registry),
+        )
     return payload
+
+
+def _run_closeout_side_effects(
+    registry: dict[str, Any],
+    payload: dict[str, Any],
+    run_id: str,
+) -> None:
+    """Run best-effort closeout integrations under one registry-owned root."""
+    workspace = registry_workspace_root(registry)
+
+    def run_silently(command: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> None:
+        try:
+            subprocess.run(
+                command,
+                cwd=cwd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=env,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    smoke_script = workspace / "bin/gac/evidence-smoke.py"
+    if smoke_script.is_file():
+        run_silently([sys.executable, str(smoke_script), "--quiet"], cwd=workspace)
+
+    omo_project = workspace / "projects/omo"
+    if omo_project.is_dir():
+        env = os.environ.copy()
+        env["WORKSPACE_ROOT"] = str(workspace)
+        env["PYTHONPATH"] = str(omo_project / "src")
+        run_silently(
+            [sys.executable, "-m", "omo.cli", "state", "sync"],
+            cwd=omo_project,
+            env=env,
+        )
+
+    kos_cli_path = workspace / "projects/kairon/packages/kos/kos-cli.py"
+    env_kos = os.environ.copy()
+    env_kos["WORKSPACE_ROOT"] = str(workspace)
+    env_kos["KOS_HOME"] = str(workspace / "kos")
+    env_kos["PYTHONPATH"] = str(workspace / "projects/kairon/packages/kos/src")
+    if kos_cli_path.is_file():
+        run_silently(
+            [sys.executable, str(kos_cli_path), "ingress", "--snapshot", "latest", "--rebuild-ontology"],
+            cwd=workspace,
+            env=env_kos,
+        )
+
+    try:
+        from omo.omo_belief import MOSBeliefManager
+
+        belief_mgr = MOSBeliefManager(root=workspace)
+        obj_text = payload.get("objective") or "agent-workflow closeout"
+        wf_id = payload.get("workflow_id") or "general"
+        belief_mgr.record_belief(
+            topic=f"workflow:{wf_id}",
+            belief_text=f"Workflow run {run_id} achieved objective: {obj_text}",
+            pitfall="Unverified workflow closeout",
+            solution="Executed agent-workflow verify & observe pass",
+            scope_path=payload.get("path") or "*",
+            source_run_id=run_id,
+        )
+    except Exception:
+        # Preserve the historical recovery path without allowing it to escape
+        # the registry-owned root or fail when KOS is unavailable.
+        if kos_cli_path.is_file():
+            run_silently([sys.executable, str(kos_cli_path), "onto", "rebuild"], cwd=workspace, env=env_kos)
+            run_silently([sys.executable, str(kos_cli_path), "onto", "infer"], cwd=workspace, env=env_kos)
+            for script_name in ("gac-kos-sync.py", "gac-consensus-inject.py"):
+                script = workspace / "bin" / script_name
+                if script.is_file():
+                    run_silently([sys.executable, str(script)], cwd=workspace)
 
 
 def closeout_run(
@@ -1004,7 +1083,14 @@ def closeout_run(
         f"agent-workflow verify: {verify_report['check_count']} checks ok={verify_report['ok']}",
         f"agent-workflow observe: {observe_report['decision']}",
     ]
-    payload = close_run(registry, run_id, status, closeout_evidence, not keep_locks)
+    payload = close_run(
+        registry,
+        run_id,
+        status,
+        closeout_evidence,
+        not keep_locks,
+        emit_mesh=False,
+    )
     report = {
         "ok": status == "ok",
         "run": payload,
@@ -1023,114 +1109,7 @@ def closeout_run(
         },
     )
     if status == "ok":
-        try:
-            import subprocess
-
-            # 1. Loop Convergence: auto-run evidence-smoke.py (silently)
-            smoke_script = WORKSPACE / "bin/gac/evidence-smoke.py"
-            subprocess.run(
-                [sys.executable, str(smoke_script), "--quiet"],
-                cwd=WORKSPACE,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-            )
-            # 2. Sync state officially using omo CLI
-            omo_cmd = [
-                sys.executable,
-                "-m",
-                "omo.cli",
-                "state",
-                "sync",
-            ]
-            env = os.environ.copy()
-            env["PYTHONPATH"] = str(WORKSPACE / "projects/omo/src")
-            subprocess.run(
-                omo_cmd,
-                cwd=str(WORKSPACE / "projects/omo"),
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                env=env,
-                check=False,
-            )
-            # 3. KOS Knowledge Ingress Sync (Incremental + Ontology Rebuild)
-            # Refreshes L2 Knowledge Engine dynamically during closeout
-            kos_cli_path = WORKSPACE / "projects/kairon/packages/kos/kos-cli.py"
-            if kos_cli_path.is_file():
-                env_kos = os.environ.copy()
-                env_kos["KOS_HOME"] = str(WORKSPACE / "kos")
-                env_kos["PYTHONPATH"] = str(WORKSPACE / "projects/kairon/packages/kos/src")
-                subprocess.run(
-                    [
-                        sys.executable,
-                        str(kos_cli_path),
-                        "ingress",
-                        "--snapshot",
-                        "latest",
-                        "--rebuild-ontology",
-                    ],
-                    cwd=WORKSPACE,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    env=env_kos,
-                    check=False,
-                )
-            # 4. MOS Agent Belief Persistence (BET-Y1Q1-T3-01 Ecosystem Integration)
-            try:
-                from omo.omo_belief import MOSBeliefManager
-
-                belief_mgr = MOSBeliefManager(root=WORKSPACE)
-                obj_text = payload.get("objective") or "agent-workflow closeout"
-                wf_id = payload.get("workflow_id") or "general"
-                belief_mgr.record_belief(
-                    topic=f"workflow:{wf_id}",
-                    belief_text=f"Workflow run {run_id} achieved objective: {obj_text}",
-                    pitfall="Unverified workflow closeout",
-                    solution="Executed agent-workflow verify & observe pass",
-                    scope_path=payload.get("path") or "*",
-                    source_run_id=run_id,
-                )
-            except Exception:
-                # 3.2 Ontology Rebuild
-                subprocess.run(
-                    [sys.executable, str(kos_cli_path), "onto", "rebuild"],
-                    cwd=WORKSPACE,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    env=env_kos,
-                    check=False,
-                )
-                # 3.3 Ontology Infer (performs layer dependency reasoning)
-                subprocess.run(
-                    [sys.executable, str(kos_cli_path), "onto", "infer"],
-                    cwd=WORKSPACE,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    env=env_kos,
-                    check=False,
-                )
-                # 3.4 Sync KOS Reasoning Anomalies to OMO State (Active Feedback Loop via authorized broker)
-                gac_sync_path = WORKSPACE / "bin" / "gac-kos-sync.py"
-                if gac_sync_path.is_file():
-                    subprocess.run(
-                        [sys.executable, str(gac_sync_path)],
-                        cwd=WORKSPACE,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        check=False,
-                    )
-                # 3.5 Auto Consensus Gene Injection (Active Agent Evolution)
-                gac_consensus_path = WORKSPACE / "bin" / "gac-consensus-inject.py"
-                if gac_consensus_path.is_file():
-                    subprocess.run(
-                        [sys.executable, str(gac_consensus_path)],
-                        cwd=WORKSPACE,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        check=False,
-                    )
-        except Exception:
-            pass
+        _run_closeout_side_effects(registry, payload, run_id)
     # Phase 1b/5: Bridge to Workflow Mesh with event chain closure
     _closeout_scene = None
     try:
@@ -1151,7 +1130,7 @@ def closeout_run(
             "observe_decision": observe_report["decision"],
             "evidence_count": len(closeout_evidence),
         },
-        workspace=WORKSPACE,
+        workspace=registry_workspace_root(registry),
     )
     return report
 
