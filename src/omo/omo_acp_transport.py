@@ -13,9 +13,9 @@
 from __future__ import annotations
 
 import enum
-import re
 import json
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -156,12 +156,42 @@ def _classify_command(cmd_title: str) -> str:
     """
     t = cmd_title.strip()
     write_marks = (
-        ">>", ">", "tee ", "sed -i", "rm ", "mv ", "cp ", "touch ", "mkdir ",
-        "chmod ", "chown ", "git add", "git commit", "git push", "apply_patch", "install ", "ln ",
+        ">>",
+        ">",
+        "tee ",
+        "sed -i",
+        "rm ",
+        "mv ",
+        "cp ",
+        "touch ",
+        "mkdir ",
+        "chmod ",
+        "chown ",
+        "git add",
+        "git commit",
+        "git push",
+        "apply_patch",
+        "install ",
+        "ln ",
     )
     read_heads = (
-        "pwd", "ls", "cat ", "grep ", "rg ", "git status", "git diff", "git log",
-        "echo ", "printf ", "head ", "tail ", "find ", "sed -n", "wc ", "true", "which ",
+        "pwd",
+        "ls",
+        "cat ",
+        "grep ",
+        "rg ",
+        "git status",
+        "git diff",
+        "git log",
+        "echo ",
+        "printf ",
+        "head ",
+        "tail ",
+        "find ",
+        "sed -n",
+        "wc ",
+        "true",
+        "which ",
     )
     # 2>/dev/null 类 stderr 抑制不构成写盘, 先剥离再判写
     t_probe = re.sub(r"2>\s*(/dev/null|&1)", " ", t)
@@ -475,11 +505,7 @@ class AcpStdioSession:
                 option_id = _pick_permission_option(options, perm_response.decision)
                 # ACP v1: 对 server request 回 result; outcome 是 internally-tagged enum
                 # (RequestPermissionOutcome: selected{optionId} | cancelled)
-                outcome = (
-                    {"outcome": "selected", "optionId": option_id}
-                    if option_id
-                    else {"outcome": "cancelled"}
-                )
+                outcome = {"outcome": "selected", "optionId": option_id} if option_id else {"outcome": "cancelled"}
                 self._send_message(
                     {
                         "jsonrpc": "2.0",
