@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -31,6 +32,134 @@ def test_registry_workspace_root_anchors_relative_runtime_paths(tmp_path: Path) 
     assert core_mod.run_state_dir(registry) == tmp_path / "runs"
     assert core_mod.lock_state_dir(registry) == tmp_path / "locks"
     assert core_mod.ledger_path(registry) == tmp_path / "events.jsonl"
+
+
+def test_observe_matches_absolute_lock_ref_inside_registry_root(tmp_path: Path, monkeypatch) -> None:
+    runtime_workspace = tmp_path / "runtime-workspace"
+    registry = _registry(runtime_workspace)
+    run_id = "run-absolute-lock"
+    lock_path = runtime_workspace / "locks" / "path_foo.py.lock.yaml"
+    run_path = runtime_workspace / "runs" / f"{run_id}.yaml"
+    lock_path.parent.mkdir(parents=True)
+    run_path.parent.mkdir(parents=True)
+    lock_path.write_text(yaml.safe_dump({"run_id": run_id, "scope": "path:foo.py"}), encoding="utf-8")
+    run_path.write_text(
+        yaml.safe_dump(
+            {
+                "run_id": run_id,
+                "workflow_id": "mini",
+                "status": "active",
+                "locks": [str(lock_path.resolve())],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (runtime_workspace / "events.jsonl").write_text(
+        json.dumps({"event": "agent_workflow_start", "run_id": run_id}) + "\n",
+        encoding="utf-8",
+    )
+    # Simulate the source checkout differing from the registry-owned runtime root.
+    monkeypatch.setattr(core_mod, "WORKSPACE", runtime_workspace)
+
+    report = diagnostics_mod.build_observe_report(registry, run_id)
+
+    assert report["decision"] == "continue"
+    assert not any(item["kind"] == "active_run_missing_locks" for item in report["findings"])
+
+
+def test_observe_halts_absolute_lock_ref_outside_registry_root(tmp_path: Path, monkeypatch) -> None:
+    runtime_workspace = tmp_path / "runtime-workspace"
+    registry = _registry(runtime_workspace)
+    run_id = "run-external-lock"
+    run_path = runtime_workspace / "runs" / f"{run_id}.yaml"
+    run_path.parent.mkdir(parents=True)
+    external_ref = (tmp_path / "external-locks" / "path_foo.py.lock.yaml").resolve()
+    run_path.write_text(
+        yaml.safe_dump(
+            {
+                "run_id": run_id,
+                "workflow_id": "mini",
+                "status": "active",
+                "locks": [str(external_ref)],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (runtime_workspace / "events.jsonl").write_text(
+        json.dumps({"event": "agent_workflow_start", "run_id": run_id}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(core_mod, "WORKSPACE", runtime_workspace)
+
+    report = diagnostics_mod.build_observe_report(registry, run_id)
+
+    assert report["decision"] == "halt"
+    assert any(
+        item["kind"] == "lock_path_outside_registry_root" and item["severity"] == "halt" for item in report["findings"]
+    )
+
+
+def test_observe_halts_active_run_with_non_list_locks_payload(tmp_path: Path, monkeypatch) -> None:
+    runtime_workspace = tmp_path / "runtime-workspace"
+    registry = _registry(runtime_workspace)
+    run_id = "run-invalid-lock-payload"
+    run_path = runtime_workspace / "runs" / f"{run_id}.yaml"
+    run_path.parent.mkdir(parents=True)
+    run_path.write_text(
+        yaml.safe_dump(
+            {
+                "run_id": run_id,
+                "workflow_id": "mini",
+                "status": "active",
+                "locks": {"path": "locks/path_foo.py.lock.yaml"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (runtime_workspace / "events.jsonl").write_text(
+        json.dumps({"event": "agent_workflow_start", "run_id": run_id}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(core_mod, "WORKSPACE", runtime_workspace)
+
+    report = diagnostics_mod.build_observe_report(registry, run_id)
+
+    assert report["decision"] == "halt"
+    assert any(
+        item["kind"] == "invalid_lock_payload" and item["severity"] == "halt" and item["run_id"] == run_id
+        for item in report["findings"]
+    )
+
+
+def test_observe_halts_active_run_with_invalid_lock_entries(tmp_path: Path, monkeypatch) -> None:
+    runtime_workspace = tmp_path / "runtime-workspace"
+    registry = _registry(runtime_workspace)
+    run_id = "run-invalid-lock-entries"
+    run_path = runtime_workspace / "runs" / f"{run_id}.yaml"
+    run_path.parent.mkdir(parents=True)
+    run_path.write_text(
+        yaml.safe_dump(
+            {
+                "run_id": run_id,
+                "workflow_id": "mini",
+                "status": "active",
+                "locks": [None, "", "   ", 42],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (runtime_workspace / "events.jsonl").write_text(
+        json.dumps({"event": "agent_workflow_start", "run_id": run_id}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(core_mod, "WORKSPACE", runtime_workspace)
+
+    report = diagnostics_mod.build_observe_report(registry, run_id)
+
+    invalid_findings = [item for item in report["findings"] if item["kind"] == "invalid_lock_ref"]
+    assert report["decision"] == "halt"
+    assert [item["index"] for item in invalid_findings] == [0, 1, 2, 3]
+    assert all(item["severity"] == "halt" and item["run_id"] == run_id for item in invalid_findings)
 
 
 def test_heartbeat_resolves_legacy_relative_lock_from_registry_workspace(
