@@ -24,6 +24,8 @@ from omo.sovereignty import (
     EVT_ACTION_SUCCEEDED,
     EVT_MANDATE_GRANT,
     EVT_POLICY_DECISION,
+    OUTCOME_DENIED,
+    OUTCOME_SUCCEEDED,
     PDP_PRODUCER,
     REASON_ALLOWED,
     REASON_LEDGER_UNAVAILABLE,
@@ -203,6 +205,23 @@ class _FailingReadBroker:
         return self._broker.append(*args, **kwargs)
 
 
+class _SecondReadFailBroker:
+    """Permits history replay, then fails the later grant-timing read."""
+
+    def __init__(self, broker):
+        self._broker = broker
+        self._read_calls = 0
+
+    def read(self, *args, **kwargs):
+        self._read_calls += 1
+        if self._read_calls >= 2:
+            raise LedgerError("simulated second ledger read failure")
+        return self._broker.read(*args, **kwargs)
+
+    def append(self, *args, **kwargs):
+        return self._broker.append(*args, **kwargs)
+
+
 class _CountingProvider:
     def __init__(self, *, raise_error: Exception | None = None, result=None):
         self.calls = 0
@@ -270,6 +289,107 @@ def test_allowed_decision_occurs_after_its_mandate_grant(broker, svc):
     assert datetime.fromisoformat(decision["occurred_at"]) >= datetime.fromisoformat(grant["occurred_at"])
 
 
+def test_allowed_decision_clamps_a_backward_pdp_clock_to_mandate_grant(broker, svc):
+    grant_time = datetime(2026, 8, 21, 0, 7, 33, tzinfo=UTC)
+    manager = MandateManager(broker, clock=lambda: grant_time.isoformat())
+    _grant_mandate(svc, manager, grant_time)
+    pdp = PolicyEnforcementService(
+        broker,
+        manager=manager,
+        clock=lambda: (grant_time - timedelta(seconds=1)).isoformat(),
+    )
+
+    result = pdp.decide(_make_request())
+
+    decision = next(row for row in broker.read() if row["event_type"] == EVT_POLICY_DECISION)
+    assert result.decision.decision == "allow"
+    assert result.decision.issued_at == grant_time
+    assert decision["occurred_at"] == grant_time.isoformat()
+
+
+def test_decision_at_mandate_expiry_denies_before_provider(broker, svc):
+    grant_time = datetime(2026, 8, 21, 0, 7, 33, tzinfo=UTC)
+    manager = MandateManager(broker, clock=lambda: grant_time.isoformat())
+    expires_at = grant_time + timedelta(seconds=1)
+    _grant_mandate(svc, manager, grant_time, expires_at=expires_at)
+    pdp = PolicyEnforcementService(
+        broker,
+        manager=manager,
+        clock=lambda: (expires_at + timedelta(seconds=1)).isoformat(),
+    )
+    provider = _CountingProvider()
+
+    outcome = pdp.execute(_make_request(), provider)
+
+    decision = pdp.decision("action:draft-reply")
+    assert outcome.status == OUTCOME_DENIED
+    assert outcome.provider_calls == 0
+    assert provider.calls == 0
+    assert decision is not None
+    assert decision.reason == REASON_POLICY_DENIED
+    assert decision.issued_at == expires_at + timedelta(seconds=1)
+    assert decision.expires_at == decision.issued_at
+
+
+def test_receipts_clamp_backward_clock_to_their_causal_predecessors(broker, svc):
+    grant_time = datetime(2026, 8, 21, 0, 7, 33, tzinfo=UTC)
+    decision_time = grant_time + timedelta(seconds=2)
+    clock_values = iter(
+        (
+            decision_time,
+            decision_time - timedelta(seconds=1),
+            decision_time - timedelta(seconds=2),
+        )
+    )
+    manager = MandateManager(broker, clock=lambda: grant_time.isoformat())
+    _grant_mandate(svc, manager, grant_time)
+    pdp = PolicyEnforcementService(broker, manager=manager, clock=lambda: next(clock_values).isoformat())
+
+    outcome = pdp.execute(_make_request(), _CountingProvider())
+
+    events = pdp.replay_events()
+    receipts = pdp.replay_receipts("action:draft-reply")
+    assert outcome.status == OUTCOME_SUCCEEDED
+    assert events[0]["occurred_at"] == decision_time.isoformat()
+    assert events[1]["occurred_at"] == decision_time.isoformat()
+    assert events[2]["occurred_at"] == decision_time.isoformat()
+    assert receipts[0].started_at == decision_time
+    assert receipts[1].started_at == decision_time
+    assert receipts[1].completed_at == decision_time
+
+
+def test_idempotent_decision_replay_freezes_original_time_after_clock_regresses(broker, svc):
+    grant_time = datetime(2026, 8, 21, 0, 7, 33, tzinfo=UTC)
+    current_time = grant_time + timedelta(seconds=1)
+    manager = MandateManager(broker, clock=lambda: grant_time.isoformat())
+    _grant_mandate(svc, manager, grant_time)
+    pdp = PolicyEnforcementService(broker, manager=manager, clock=lambda: current_time.isoformat())
+
+    first = pdp.decide(_make_request())
+    current_time = grant_time - timedelta(days=1)
+    replay = pdp.decide(_make_request())
+
+    assert replay.reused is True
+    assert replay.decision.issued_at == first.decision.issued_at
+    assert len(pdp.replay_events()) == 1
+
+
+def test_hash_mismatch_decision_clamps_a_backward_clock_to_mandate_grant(broker, svc):
+    grant_time = datetime(2026, 8, 21, 0, 7, 33, tzinfo=UTC)
+    current_time = grant_time + timedelta(seconds=1)
+    manager = MandateManager(broker, clock=lambda: grant_time.isoformat())
+    _grant_mandate(svc, manager, grant_time)
+    pdp = PolicyEnforcementService(broker, manager=manager, clock=lambda: current_time.isoformat())
+
+    pdp.decide(_make_request())
+    current_time = grant_time - timedelta(days=1)
+    mismatch = pdp.decide(_make_request(request_hash="req-hash-different-002"))
+
+    assert mismatch.decision.decision == "deny"
+    assert mismatch.decision.issued_at == grant_time
+    assert pdp.replay_events()[-1]["occurred_at"] == grant_time.isoformat()
+
+
 def test_decide_no_mandate_is_policy_denied_and_durable(pdp, svc, mgr, now):
     _grant_mandate(svc, mgr, now)
     result = pdp.decide(_make_request(mandate_id="mandate:missing"))
@@ -323,6 +443,21 @@ def test_pdp_failure_denies_with_zero_calls(broker):
     outcome = pdp.execute(_make_request(), _CountingProvider())
     assert outcome.status == "denied"
     assert outcome.provider_calls == 0
+
+
+def test_second_grant_timing_read_failure_denies_without_persisting_or_calling_provider(broker, svc, now):
+    manager = MandateManager(broker)
+    _grant_mandate(svc, manager, now)
+    pdp = PolicyEnforcementService(_SecondReadFailBroker(broker), manager=manager)
+    provider = _CountingProvider()
+
+    outcome = pdp.execute(_make_request(), provider)
+
+    assert outcome.status == OUTCOME_DENIED
+    assert outcome.reason == REASON_PDP_UNAVAILABLE
+    assert outcome.provider_calls == 0
+    assert provider.calls == 0
+    assert list(broker.read(producer=PDP_PRODUCER)) == []
 
 
 def test_decision_append_failure_denies_with_zero_calls(broker, svc, mgr, now):

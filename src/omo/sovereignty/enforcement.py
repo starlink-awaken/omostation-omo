@@ -51,7 +51,7 @@ from ecos.ssot.mof.generated.control.mof_control_models import (
 from pydantic import ValidationError as PydanticValidationError
 
 from omo.event_ledger.broker import DuplicateEventError, LedgerBroker, LedgerError
-from omo.sovereignty.mandates import MandateManager
+from omo.sovereignty.mandates import EVT_MANDATE_GRANT, MANDATE_PRODUCER, MandateManager
 
 # ---------------------------------------------------------------------------
 # Identity / event constants
@@ -316,6 +316,7 @@ class PolicyEnforcementService:
                 if prior.request_hash == request_hash:
                     return DecisionResult(prior, persisted=False, reused=True)
             if history:
+                issued_at = self._request_mandate_grant_floor(request)
                 deny = self._build_decision(
                     request,
                     request_hash,
@@ -323,6 +324,7 @@ class PolicyEnforcementService:
                     decision="deny",
                     reason=REASON_POLICY_DENIED,
                     description=(f"request_hash_mismatch: {request.action_id} already decided under a different hash"),
+                    issued_at=issued_at,
                 )
                 return DecisionResult(deny, persisted=self._persist_decision(deny))
 
@@ -350,6 +352,19 @@ class PolicyEnforcementService:
             )
             return DecisionResult(deny, persisted=False)
 
+        try:
+            timing = self._mandate_decision_timing(admission.mandate) if admission.mandate is not None else None
+        except Exception as exc:
+            deny = self._build_decision(
+                request,
+                request_hash,
+                trace_id,
+                decision="deny",
+                reason=REASON_PDP_UNAVAILABLE,
+                description=str(exc),
+            )
+            return DecisionResult(deny, persisted=False)
+
         if not admission.allowed:
             deny = self._build_decision(
                 request,
@@ -359,6 +374,22 @@ class PolicyEnforcementService:
                 reason=REASON_POLICY_DENIED,
                 description=admission.reason,
                 mandate=admission.mandate,
+                issued_at=timing[0] if timing is not None else None,
+                expires_at=timing[1] if timing is not None else None,
+            )
+            return DecisionResult(deny, persisted=self._persist_decision(deny))
+
+        if timing[2]:
+            deny = self._build_decision(
+                request,
+                request_hash,
+                trace_id,
+                decision="deny",
+                reason=REASON_POLICY_DENIED,
+                description="mandate_expired_at_decision_time",
+                mandate=admission.mandate,
+                issued_at=timing[0],
+                expires_at=timing[1],
             )
             return DecisionResult(deny, persisted=self._persist_decision(deny))
 
@@ -370,6 +401,8 @@ class PolicyEnforcementService:
             reason=REASON_ALLOWED,
             description=None,
             mandate=admission.mandate,
+            issued_at=timing[0],
+            expires_at=timing[1],
         )
         try:
             self._append_decision(request, allow)
@@ -385,6 +418,8 @@ class PolicyEnforcementService:
                 reason=REASON_LEDGER_UNAVAILABLE,
                 description=str(exc),
                 mandate=admission.mandate,
+                issued_at=timing[0],
+                expires_at=timing[1],
             )
             return DecisionResult(deny, persisted=False)
 
@@ -574,14 +609,17 @@ class PolicyEnforcementService:
         reason: str,
         description: str | None,
         mandate: Any | None = None,
+        issued_at: datetime | None = None,
+        expires_at: datetime | None = None,
     ) -> PolicyDecision:
-        now = self._now()
+        now = issued_at or self._now()
         if mandate is not None:
             mandate_version = mandate.mandate_version
-            issued_at, expires_at = now, mandate.expires_at
+            issued_at = now
+            expires_at = expires_at or mandate.expires_at
         else:
             mandate_version = request.mandate_version
-            issued_at, expires_at = now, now + timedelta(seconds=self._ttl)
+            issued_at, expires_at = now, expires_at or now + timedelta(seconds=self._ttl)
         try:
             return PolicyDecision(
                 decision_id=f"decision:{uuid4().hex[:24]}",
@@ -610,6 +648,46 @@ class PolicyEnforcementService:
                 f"cannot build PolicyDecision for {request.action_id}: {exc.errors()}"
             ) from exc
 
+    def _mandate_decision_timing(self, mandate: Any) -> tuple[datetime, datetime, bool]:
+        """Clamp a mandate-bound decision to its durable grant boundary."""
+        grant_at = self._persisted_mandate_grant_at(mandate.mandate_id, mandate.principal_id)
+        issued_at = max(self._now(), grant_at)
+        if issued_at >= mandate.expires_at:
+            return issued_at, issued_at, True
+        return issued_at, mandate.expires_at, False
+
+    def _request_mandate_grant_floor(self, request: ActionRequest) -> datetime:
+        """Use a matching durable grant as the local lower bound when present."""
+        now = self._now()
+        for row in self._broker.read(producer=MANDATE_PRODUCER):
+            if (
+                row.get("event_type") == EVT_MANDATE_GRANT
+                and row.get("mandate_id") == request.mandate_id
+                and row.get("principal_id") == request.principal_id
+            ):
+                return max(now, self._parse_mandate_grant_occurred_at(row))
+        return now
+
+    def _persisted_mandate_grant_at(self, mandate_id: str, principal_id: str) -> datetime:
+        for row in self._broker.read(producer=MANDATE_PRODUCER):
+            if (
+                row.get("event_type") == EVT_MANDATE_GRANT
+                and row.get("mandate_id") == mandate_id
+                and row.get("principal_id") == principal_id
+            ):
+                return self._parse_mandate_grant_occurred_at(row)
+        raise PolicyEnforcementError("admitted mandate has no persisted grant event")
+
+    @staticmethod
+    def _parse_mandate_grant_occurred_at(row: Mapping[str, Any]) -> datetime:
+        try:
+            grant_at = datetime.fromisoformat(str(row["occurred_at"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise PolicyEnforcementError("persisted mandate grant has invalid occurred_at") from exc
+        if grant_at.tzinfo is None:
+            raise PolicyEnforcementError("persisted mandate grant occurred_at must be timezone-aware")
+        return grant_at
+
     def _build_receipt(
         self,
         decision: PolicyDecision,
@@ -621,7 +699,9 @@ class PolicyEnforcementService:
         result: dict[str, Any] | None = None,
         description: str | None = None,
     ) -> ActionReceipt:
-        started = started_at or self._now()
+        started = max(started_at or self._now(), decision.issued_at)
+        if completed_at is not None:
+            completed_at = max(completed_at, started)
         try:
             return ActionReceipt(
                 receipt_id=f"receipt:{uuid4().hex[:24]}",
@@ -687,7 +767,7 @@ class PolicyEnforcementService:
             episode_id=receipt.episode_id,
             mandate_id=receipt.mandate_id,
             causation_id=receipt.decision_id,
-            occurred_at=receipt.started_at.isoformat(),
+            occurred_at=(receipt.completed_at or receipt.started_at).isoformat(),
         )
 
     def _persist_decision(self, decision: PolicyDecision) -> bool:
