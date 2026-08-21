@@ -272,16 +272,39 @@ def display_path(path: Path) -> str:
         return str(path)
 
 
+def registry_workspace_root(registry: dict[str, Any]) -> Path:
+    """Resolve the single workspace root that owns a registry's effects.
+
+    Production registries retain the module-derived Workspace default. Tests
+    and isolated runners can bind an explicit root without redirecting only a
+    subset of run, lock, ledger, Mesh, or MOS writes.
+    """
+    configured = registry.get("runner", {}).get("workspace_root")
+    if not configured:
+        return WORKSPACE.resolve()
+    root = Path(str(configured)).expanduser()
+    if not root.is_absolute():
+        root = WORKSPACE / root
+    return root.resolve()
+
+
+def _runner_path(registry: dict[str, Any], key: str, default: str) -> Path:
+    configured = Path(str(registry.get("runner", {}).get(key, default))).expanduser()
+    if configured.is_absolute():
+        return configured
+    return registry_workspace_root(registry) / configured
+
+
 def run_state_dir(registry: dict[str, Any]) -> Path:
-    return WORKSPACE / registry.get("runner", {}).get("run_state_dir", ".omo/_delivery/agent-workflows/runs")
+    return _runner_path(registry, "run_state_dir", ".omo/_delivery/agent-workflows/runs")
 
 
 def lock_state_dir(registry: dict[str, Any]) -> Path:
-    return WORKSPACE / registry.get("runner", {}).get("lock_state_dir", ".omo/_delivery/agent-workflows/locks")
+    return _runner_path(registry, "lock_state_dir", ".omo/_delivery/agent-workflows/locks")
 
 
 def ledger_path(registry: dict[str, Any]) -> Path:
-    return WORKSPACE / registry.get("runner", {}).get("ledger_path", ".omo/_delivery/agent-workflows/events.jsonl")
+    return _runner_path(registry, "ledger_path", ".omo/_delivery/agent-workflows/events.jsonl")
 
 
 def workflow_rows(registry: dict[str, Any]) -> list[dict[str, Any]]:
