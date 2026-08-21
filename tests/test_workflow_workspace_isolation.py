@@ -33,6 +33,52 @@ def test_registry_workspace_root_anchors_relative_runtime_paths(tmp_path: Path) 
     assert core_mod.ledger_path(registry) == tmp_path / "events.jsonl"
 
 
+def test_heartbeat_resolves_legacy_relative_lock_from_registry_workspace(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runtime_workspace = tmp_path / "runtime-workspace"
+    source_workspace = tmp_path / "source-workspace"
+    registry = _registry(runtime_workspace)
+    lock_path = runtime_workspace / "locks/path_foo.py.lock.yaml"
+    lock_path.parent.mkdir(parents=True)
+    lock_path.write_text(
+        yaml.safe_dump(
+            {
+                "run_id": "run-relative-lock",
+                "actor": "agent-a",
+                "scope": "path:foo.py",
+                "created_at": "2026-08-21T00:00:00Z",
+                "last_heartbeat": "2026-08-21T00:00:00Z",
+                "expires_at": "2026-08-22T00:00:00Z",
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    run_path = runtime_workspace / "runs/run-relative-lock.yaml"
+    run_path.parent.mkdir(parents=True)
+    run_path.write_text(
+        yaml.safe_dump(
+            {
+                "run_id": "run-relative-lock",
+                "workflow_id": "mini",
+                "status": "active",
+                "locks": ["locks/path_foo.py.lock.yaml"],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(lifecycle_mod, "WORKSPACE", source_workspace)
+
+    receipt = lifecycle_mod.heartbeat_run(registry, "run-relative-lock")
+
+    assert receipt["renewed"] == ["locks/path_foo.py.lock.yaml"]
+    refreshed = yaml.safe_load(lock_path.read_text(encoding="utf-8"))
+    assert refreshed["last_heartbeat"] == receipt["heartbeat_at"]
+
+
 def test_closeout_side_effects_persist_only_under_registry_workspace(
     tmp_path: Path,
     monkeypatch,
