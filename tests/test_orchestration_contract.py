@@ -84,6 +84,10 @@ def _v2_packet(
     spec_path = workspace_root / "specs" / "orchestration-contract.md"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_bytes(content)
+    instruction_path = workspace_root / "docs" / "operations" / "blueprint-agent-instruction-pack-v1.md"
+    instruction_path.parent.mkdir(parents=True, exist_ok=True)
+    instruction_content = b"# Blueprint Agent Instruction Pack v1\n"
+    instruction_path.write_bytes(instruction_content)
     ledger_path = workspace_root / "docs" / "plans" / "3y-bet-ledger.yaml"
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
     digest = "sha256:" + hashlib.sha256(content).hexdigest()
@@ -113,6 +117,12 @@ def _v2_packet(
             "spec_version": "1.0.0",
             "content_digest": digest,
             "decision_ref": decision_ref,
+        },
+        "instruction_binding": {
+            "instruction_ref": "repo://docs/operations/blueprint-agent-instruction-pack-v1.md",
+            "instruction_version": "blueprint-agent-instruction-pack/v1",
+            "content_digest": "sha256:" + hashlib.sha256(instruction_content).hexdigest(),
+            "instruction_profile": "executor",
         },
     }
 

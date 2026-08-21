@@ -400,7 +400,14 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
             if missing_worker_fields:
                 raise WorkflowMeshEventError(f"{event_type} missing worker fields: {missing_worker_fields}")
             event_specific_fields = {
-                "WorkerAcknowledged": {"acknowledged_at", "lease_expires_at"},
+                "WorkerAcknowledged": {
+                    "acknowledged_at",
+                    "lease_expires_at",
+                    "packet_id",
+                    "packet_hash",
+                    "instruction_binding",
+                    "ack_decision",
+                },
                 "WorkerLeaseRenewed": {
                     "heartbeat_id",
                     "heartbeat_at",
@@ -433,6 +440,19 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
                 "acknowledged",
             }:
                 raise WorkflowMeshEventError("WorkerAcknowledged requires a dispatched worker")
+            if event_type == "WorkerAcknowledged":
+                if event["payload"].get("ack_decision") not in {"proceed", "stop"}:
+                    raise WorkflowMeshEventError("WorkerAcknowledged ack_decision must be proceed or stop")
+                dispatched_identity = {
+                    key: current_worker.get(key)
+                    for key in ("packet_id", "packet_hash", "instruction_binding")
+                }
+                acknowledged_identity = {
+                    key: event["payload"].get(key)
+                    for key in ("packet_id", "packet_hash", "instruction_binding")
+                }
+                if dispatched_identity != acknowledged_identity:
+                    raise WorkflowMeshEventError("WorkerAcknowledged delivery binding mismatch")
             if event_type == "WorkerLeaseRenewed" and worker_state not in {
                 "acknowledged",
                 "active",
@@ -541,6 +561,9 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
                 "worker_id": event["payload"].get("worker_id"),
                 "step_run_id": event["payload"].get("step_run_id"),
                 "admission_id": event["payload"].get("admission_id"),
+                "packet_id": event["payload"].get("packet_id"),
+                "packet_hash": event["payload"].get("packet_hash"),
+                "instruction_binding": event["payload"].get("instruction_binding"),
                 "state": "dispatched",
                 "dispatched_at": event["occurred_at"],
             }
@@ -554,6 +577,10 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
                         "state": "acknowledged",
                         "acknowledged_at": payload["acknowledged_at"],
                         "lease_expires_at": payload["lease_expires_at"],
+                        "packet_id": payload["packet_id"],
+                        "packet_hash": payload["packet_hash"],
+                        "instruction_binding": payload["instruction_binding"],
+                        "ack_decision": payload["ack_decision"],
                     }
                 )
             elif event_type == "WorkerLeaseRenewed":

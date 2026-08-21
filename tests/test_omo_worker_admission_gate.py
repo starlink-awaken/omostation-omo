@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import subprocess
 from pathlib import Path
 
@@ -242,6 +243,53 @@ def test_admitted_pi_worker_uses_one_shell_free_omo_transport(tmp_path: Path) ->
     assert not any(fragment in argument for argument in argv for fragment in ("&&", "||", "|"))
 
 
+@pytest.mark.parametrize("worker_id", ["pi", "omp"])
+def test_bound_worker_command_expands_delivery_identity_as_exact_argv_tokens(
+    tmp_path: Path, worker_id: str
+) -> None:
+    command = (
+        f'/usr/bin/{worker_id} "{{prompt}}" '
+        '--run-id "{run_id}" '
+        '--packet-id "{packet_id}" '
+        '--packet-hash "{packet_hash}" '
+        '--instruction-binding-json "{instruction_binding_json}"'
+    )
+    worker = _worker()
+    worker["id"] = worker_id
+    worker["transports"] = {"cli_prompt": {"command": command}}
+    instruction_binding = {
+        "instruction_ref": "repo://docs/operations/blueprint-agent-instruction-pack-v1.md",
+        "instruction_version": "blueprint-agent-instruction-pack/v1",
+        "content_digest": "sha256:" + "b" * 64,
+        "instruction_profile": "executor",
+    }
+
+    argv = _build_launch_argv(
+        {"workers": [worker]},
+        worker_id,
+        "cli_prompt",
+        "prompt with spaces",
+        workspace_root=tmp_path,
+        run_id="run-001",
+        packet_id="WP-BP-0123456789abcdef",
+        packet_hash="sha256:" + "a" * 64,
+        instruction_binding=instruction_binding,
+    )
+
+    assert argv == [
+        f"/usr/bin/{worker_id}",
+        "prompt with spaces",
+        "--run-id",
+        "run-001",
+        "--packet-id",
+        "WP-BP-0123456789abcdef",
+        "--packet-hash",
+        "sha256:" + "a" * 64,
+        "--instruction-binding-json",
+        json.dumps(instruction_binding, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+    ]
+
+
 @pytest.mark.parametrize(
     ("task_level", "allowed_paths", "task_capabilities", "packet", "reason"),
     [
@@ -436,7 +484,7 @@ def test_legacy_worker_must_declare_nonempty_required_capabilities() -> None:
         )
 
 
-def test_admitted_pi_worker_dispatch_without_launch_creates_only_governed_artifacts(
+def test_admitted_pi_worker_without_packet_is_observer_only(
     tmp_path: Path,
 ) -> None:
     pi = _admitted_pi_worker()
@@ -447,36 +495,18 @@ def test_admitted_pi_worker_dispatch_without_launch_creates_only_governed_artifa
     task_path.write_text(yaml.safe_dump(task, sort_keys=False), encoding="utf-8")
     before = _file_snapshot(tmp_path)
 
-    result = dispatch_task(
-        tmp_path,
-        task_id="TASK-ADMISSION-GATE",
-        worker_id="pi",
-        allowed_write_paths=[],
-        launch=False,
-        now="2026-08-13T01:02:03+00:00",
-    )
+    with pytest.raises(ValueError, match="observer-only"):
+        dispatch_task(
+            tmp_path,
+            task_id="TASK-ADMISSION-GATE",
+            worker_id="pi",
+            allowed_write_paths=[],
+            launch=False,
+            now="2026-08-13T01:02:03+00:00",
+        )
 
-    after = _file_snapshot(tmp_path)
-    changed_paths = {path for path, digest in after.items() if before.get(path) != digest}
-    expected_run_paths = {Path(path).as_posix() for name, path in result.items() if name.endswith("_path")}
-    assert expected_run_paths <= changed_paths
-    assert changed_paths <= {
-        str(task_path.relative_to(tmp_path)),
-        *expected_run_paths,
-        ".omo/_knowledge/workflow-mesh/events.jsonl",
-        ".omo/_knowledge/workflow-mesh/events.jsonl.lock",
-    }
-    assert not (tmp_path / ".omo" / "workers" / "runs" / f"{result['dispatch_id']}-stdout.log").exists()
-    dispatch = yaml.safe_load((tmp_path / result["dispatch_path"]).read_text(encoding="utf-8"))
-    launch_command = dispatch["execution"]["launch_command"]
-    assert "<workspace_root>/bin/gac/pi-worker-adapter.py" in launch_command
-    assert str(tmp_path.resolve()) not in launch_command
-    assert tmp_path.name not in launch_command
-    prompt = (tmp_path / result["prompt_path"]).read_text(encoding="utf-8")
-    assert "No repository writes are permitted." in prompt
-    assert "Return the result on stdout or the governed evidence channel." in prompt
-    assert "You may write to" not in prompt
-    assert "Required deliverable" not in prompt
+    assert _file_snapshot(tmp_path) == before
+    assert not (tmp_path / ".omo" / "workers" / "runs").exists()
 
 
 def test_invalid_command_template_is_rejected_before_run_artifacts(
@@ -505,7 +535,7 @@ def test_invalid_command_template_is_rejected_before_run_artifacts(
     assert not (tmp_path / ".omo" / "workers" / "runs").exists()
 
 
-def test_launch_failure_is_visible_and_keeps_redacted_stdout_evidence(
+def test_unbound_launch_is_rejected_before_provider_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pi = _admitted_pi_worker()
@@ -515,19 +545,11 @@ def test_launch_failure_is_visible_and_keeps_redacted_stdout_evidence(
     task["allowed_operation_level"] = "L0"
     task_path.write_text(yaml.safe_dump(task, sort_keys=False), encoding="utf-8")
 
-    monkeypatch.setattr(
-        "omo.omo_worker_dispatch.subprocess.run",
-        lambda *_args, **_kwargs: subprocess.CompletedProcess(
-            args=["pi"],
-            returncode=9,
-            stdout="partial result\n",
-            stderr="failed with api_key=secret-value\n",
-        ),
-    )
+    monkeypatch.setattr("omo.omo_worker_dispatch.subprocess.run", lambda *_args, **_kwargs: pytest.fail("no launch"))
 
     with pytest.raises(
-        RuntimeError,
-        match=r"worker launch failed: worker_id=pi returncode=9",
+        ValueError,
+        match="observer-only",
     ):
         dispatch_task(
             tmp_path,
@@ -538,12 +560,7 @@ def test_launch_failure_is_visible_and_keeps_redacted_stdout_evidence(
             now="2026-08-13T01:02:03+00:00",
         )
 
-    dispatch_path = next((tmp_path / ".omo" / "workers" / "runs").glob("*-dispatch.yaml"))
-    dispatch = yaml.safe_load(dispatch_path.read_text(encoding="utf-8"))
-    assert dispatch["dispatch_state"] != "active"
-    log = (tmp_path / dispatch["execution"]["log_ref"]).read_text(encoding="utf-8")
-    assert "partial result" in log
-    assert "secret-value" not in log
+    assert not (tmp_path / ".omo" / "workers" / "runs").exists()
 
 
 def test_interactive_supervisor_worker_rejects_legacy_direct_launch_without_writes(

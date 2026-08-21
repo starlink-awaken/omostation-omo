@@ -92,6 +92,19 @@ def test_task_and_workflow_mesh_closeout_converge_with_scene_binding(
         "journey_id": "task-to-pr-closeout",
         "outcome_metric": "verified_delivery",
     }
+    instruction_binding = {
+        "instruction_ref": "repo://docs/operations/blueprint-agent-instruction-pack-v1.md",
+        "instruction_version": "blueprint-agent-instruction-pack/v1",
+        "content_digest": "sha256:" + "b" * 64,
+        "instruction_profile": "executor",
+    }
+    request_identity = {
+        "bet_id": "BET-DOGFOOD-1",
+        "packet_id": "WP-DOGFOOD-0123456789abcdef",
+        "packet_hash": "sha256:" + "a" * 64,
+        "task_ref": ".omo/tasks/active/TASK-DOGFOOD-1.yaml",
+        "instruction_binding": instruction_binding,
+    }
     packet = dispatch_admitted_workflow(
         tmp_path,
         task_id="TASK-DOGFOOD-1",
@@ -111,6 +124,7 @@ def test_task_and_workflow_mesh_closeout_converge_with_scene_binding(
         workflow_run_id="run-task-dogfood-1",
         scene_binding=scene_binding,
         now="2026-08-02T12:02:00+00:00",
+        request_identity=request_identity,
     )
 
     grant = packet["admission"]
@@ -124,6 +138,10 @@ def test_task_and_workflow_mesh_closeout_converge_with_scene_binding(
         worker_id="worker-dogfood",
         step_run_id=step_run_id,
         admission_id=grant["admission_id"],
+        packet_id=request_identity["packet_id"],
+        packet_hash=request_identity["packet_hash"],
+        instruction_binding=instruction_binding,
+        ack_decision="proceed",
         now="2026-08-02T12:02:05Z",
     )
 

@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
+import re
 import shlex
 import subprocess
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -364,9 +367,17 @@ def _build_launch_argv(
     *,
     workspace_root: Path | None = None,
     redact_workspace_root: bool = False,
+    run_id: str | None = None,
+    packet_id: str | None = None,
+    packet_hash: str | None = None,
+    instruction_binding: Mapping[str, Any] | None = None,
 ) -> list[str]:
     prompt_sentinel = "__OMO_PROMPT__"
     workspace_sentinel = "__OMO_WORKSPACE_ROOT__"
+    run_sentinel = "__OMO_RUN_ID__"
+    packet_id_sentinel = "__OMO_PACKET_ID__"
+    packet_hash_sentinel = "__OMO_PACKET_HASH__"
+    instruction_sentinel = "__OMO_INSTRUCTION_BINDING_JSON__"
     command = _worker_command(registry, worker_id, transport)
     if "{workspace_root}" in command:
         if workspace_root is None:
@@ -376,10 +387,52 @@ def _build_launch_argv(
             raise ValueError(f"invalid workspace root: {resolved_root}")
     else:
         resolved_root = None
+    delivery_values = {
+        "run_id": run_id,
+        "packet_id": packet_id,
+        "packet_hash": packet_hash,
+    }
+    for field, value in delivery_values.items():
+        if "{" + field + "}" in command and (not isinstance(value, str) or not value.strip()):
+            raise ValueError(f"worker command requires {field}")
+    if "{packet_id}" in command and not str(packet_id).startswith("WP-"):
+        raise ValueError("worker command packet_id is invalid")
+    if "{packet_hash}" in command and not re.fullmatch(r"sha256:[0-9a-f]{64}", str(packet_hash)):
+        raise ValueError("worker command packet_hash is invalid")
+    instruction_fields = {
+        "instruction_ref",
+        "instruction_version",
+        "content_digest",
+        "instruction_profile",
+    }
+    if "{instruction_binding_json}" in command:
+        if not isinstance(instruction_binding, Mapping) or set(instruction_binding) != instruction_fields:
+            raise ValueError("worker command instruction_binding is invalid")
+        normalized_instruction = {
+            key: str(instruction_binding.get(key) or "").strip() for key in instruction_fields
+        }
+        if (
+            not all(normalized_instruction.values())
+            or not re.fullmatch(r"sha256:[0-9a-f]{64}", normalized_instruction["content_digest"])
+            or normalized_instruction["instruction_profile"] != "executor"
+        ):
+            raise ValueError("worker command instruction_binding is invalid")
+        instruction_json = json.dumps(
+            normalized_instruction,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    else:
+        instruction_json = None
     try:
         template = command.format(
             prompt=prompt_sentinel,
             workspace_root=workspace_sentinel,
+            run_id=run_sentinel,
+            packet_id=packet_id_sentinel,
+            packet_hash=packet_hash_sentinel,
+            instruction_binding_json=instruction_sentinel,
         )
     except (KeyError, ValueError) as exc:
         raise ValueError(f"invalid worker command template: {command}") from exc
@@ -397,6 +450,17 @@ def _build_launch_argv(
         if arg == prompt_sentinel:
             resolved_argv.append(prompt_text)
             continue
+        replacements = {
+            run_sentinel: str(run_id),
+            packet_id_sentinel: str(packet_id),
+            packet_hash_sentinel: str(packet_hash),
+            instruction_sentinel: str(instruction_json),
+        }
+        if instruction_sentinel in arg and arg != instruction_sentinel:
+            raise ValueError("instruction_binding_json must occupy one argv token")
+        for sentinel, value in replacements.items():
+            if sentinel in arg:
+                arg = arg.replace(sentinel, value)
         if workspace_sentinel in arg:
             if resolved_root is None:
                 raise ValueError("worker command requires a workspace root")

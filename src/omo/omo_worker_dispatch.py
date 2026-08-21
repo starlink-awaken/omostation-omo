@@ -57,6 +57,9 @@ def _bridge_dispatch_to_mesh(
         admission_id = str(grant.get("admission_id", ""))
         step_run_ids = grant.get("step_run_ids", [f"{run_id}:execute"])
         step_run_id = str(step_run_ids[0]) if step_run_ids else f"{run_id}:execute"
+        request_identity = workflow_packet.get("request_identity")
+        if not isinstance(request_identity, dict):
+            raise ValueError("bound workflow dispatch requires request_identity")
 
         store.append(
             new_workflow_event(
@@ -71,6 +74,7 @@ def _bridge_dispatch_to_mesh(
                     "step_run_id": step_run_id,
                     "step_name": "execute",
                     "admission_id": admission_id,
+                    **request_identity,
                 },
             )
         )
@@ -209,11 +213,15 @@ def dispatch_task(
     review_path = omo_ref / "workers" / "runs" / f"{dispatch_id}-review.md"
     stdout_path = omo_ref / "workers" / "runs" / f"{dispatch_id}-stdout.log"
     request_identity = workflow_packet.get("request_identity") if isinstance(workflow_packet, dict) else None
+    workflow_run_id = str(workflow_packet.get("workflow_run_id") or "") if isinstance(workflow_packet, dict) else ""
+    if workflow_packet is not None and not isinstance(request_identity, dict):
+        raise ValueError("bound workflow dispatch requires request_identity")
     blueprint = (
         {
             "packet_id": request_identity["packet_id"],
             "packet_hash": request_identity["packet_hash"],
             "bet_id": request_identity["bet_id"],
+            "instruction_binding": request_identity["instruction_binding"],
         }
         if isinstance(request_identity, dict)
         else None
@@ -235,7 +243,13 @@ def dispatch_task(
         f"<prompt:{prompt_path}>",
         workspace_root=root,
         redact_workspace_root=True,
+        run_id=workflow_run_id,
+        packet_id=request_identity.get("packet_id") if isinstance(request_identity, dict) else None,
+        packet_hash=request_identity.get("packet_hash") if isinstance(request_identity, dict) else None,
+        instruction_binding=request_identity.get("instruction_binding") if isinstance(request_identity, dict) else None,
     )
+    if workflow_packet is None:
+        raise ValueError("unbound legacy dispatch is observer-only and cannot create worker state")
     # A supervised blueprint must not project dispatch artifacts or mutate the
     # Task until StepDispatched is durable.  If this append fails, every file
     # remains exactly at its pre-dispatch state and the exception propagates.
@@ -483,6 +497,10 @@ def dispatch_task(
             transport,
             prompt_text,
             workspace_root=root,
+            run_id=workflow_run_id,
+            packet_id=request_identity.get("packet_id") if isinstance(request_identity, dict) else None,
+            packet_hash=request_identity.get("packet_hash") if isinstance(request_identity, dict) else None,
+            instruction_binding=request_identity.get("instruction_binding") if isinstance(request_identity, dict) else None,
         )
         result = subprocess.run(argv, cwd=root, capture_output=True, text=True)
         log_content = redact_sensitive_text((result.stdout or "") + (result.stderr or ""))
