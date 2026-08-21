@@ -16,6 +16,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from omo.engineering_delivery_consumer import (
+    EngineeringDeliveryConsumerError,
+    build_engineering_delivery_review_queue,
+    build_engineering_delivery_shadow_observer,
+    consume_engineering_delivery,
+)
 from omo.omo_external_evaluation import (
     ExternalResourceEvaluationError,
     record_external_resource_evaluation,
@@ -281,6 +287,24 @@ def main(argv: list[str] | None = None) -> int:
     )
     readiness.add_argument("--scene-id")
     readiness.add_argument("--json", action="store_true")
+    consume_delivery = sub.add_parser(
+        "consume-engineering-delivery",
+        help="record one safe merged-delivery metadata receipt",
+    )
+    consume_delivery.add_argument("--stdin", action="store_true")
+    consume_delivery.add_argument("--workflow-run-id", required=True)
+    delivery_queue = sub.add_parser(
+        "engineering-delivery-review-queue",
+        help="build the read-only engineering-delivery review queue",
+    )
+    delivery_queue.add_argument("--workflow-run-id")
+    delivery_queue.add_argument("--json", action="store_true")
+    delivery_observer = sub.add_parser(
+        "engineering-delivery-shadow-observer",
+        help="build the rolling seven-day qualified outcome observer",
+    )
+    delivery_observer.add_argument("--as-of")
+    delivery_observer.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     omo_dir = find_omo_dir()
 
@@ -417,6 +441,40 @@ def main(argv: list[str] | None = None) -> int:
             projection = build_external_scene_trial_promotion_readiness(omo_dir, scene_id=args.scene_id)
         except (OSError, ValueError, TypeError) as exc:
             print(f"external-resources scene-trial-readiness: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps(projection, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if args.command == "consume-engineering-delivery":
+        if not args.stdin:
+            print("external-resources consume-engineering-delivery requires --stdin", file=sys.stderr)
+            return 2
+        try:
+            result = consume_engineering_delivery(
+                omo_dir,
+                _payload_from_stdin(),
+                workflow_run_id=args.workflow_run_id,
+            )
+        except (EngineeringDeliveryConsumerError, OSError, ValueError) as exc:
+            print(f"external-resources consume-engineering-delivery: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if args.command == "engineering-delivery-review-queue":
+        try:
+            projection = build_engineering_delivery_review_queue(
+                omo_dir,
+                workflow_run_id=args.workflow_run_id,
+            )
+        except (EngineeringDeliveryConsumerError, OSError, ValueError, TypeError) as exc:
+            print(f"external-resources engineering-delivery-review-queue: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps(projection, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if args.command == "engineering-delivery-shadow-observer":
+        try:
+            projection = build_engineering_delivery_shadow_observer(omo_dir, as_of=args.as_of)
+        except (EngineeringDeliveryConsumerError, OSError, ValueError, TypeError) as exc:
+            print(f"external-resources engineering-delivery-shadow-observer: {exc}", file=sys.stderr)
             return 2
         print(json.dumps(projection, ensure_ascii=False, indent=2, sort_keys=True))
         return 0

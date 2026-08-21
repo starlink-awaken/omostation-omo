@@ -5,6 +5,7 @@ projects/omo/src/omo/omo_belief.py — MOS Agent Belief 三表 Schema 与写入�
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -85,6 +86,7 @@ class DecisionOutcome:
     actual_outcome: str = ""
     delta: str = ""
     source_run_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class MOSBeliefManager:
@@ -469,6 +471,7 @@ class MOSBeliefManager:
         actual_outcome: str,
         delta: str = "",
         source_run_id: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
     ) -> str:
         """记录因果模型 — 决策→结果的因果追踪"""
         state = self._load_state()
@@ -481,6 +484,7 @@ class MOSBeliefManager:
             actual_outcome=actual_outcome,
             delta=delta,
             source_run_id=source_run_id,
+            metadata=dict(metadata or {}),
         )
         state["decision_outcomes"].append(asdict(entry))
         write_yaml_atomic(self.state_file, state)
