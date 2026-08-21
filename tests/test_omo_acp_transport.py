@@ -257,19 +257,22 @@ class TestPermissionFlow:
     def test_permission_round_trip(self, mock_read, mock_send):
         """模拟 ACP 进程发起 permission request, 客户端回复决策."""
         responses = [
-            # First: permission request
+            # First: permission request (ACP v1 真实报文: toolCall + options)
             {
                 "jsonrpc": "2.0",
                 "method": "session/request_permission",
                 "id": 4,
                 "params": {
-                    "packet_id": "pkt-1",
-                    "assignment": "assign-1",
-                    "workflow_step": "execute",
-                    "agent_session": "sess-1",
-                    "operation": "read",
-                    "canonical_scope": "src/main.py",
-                    "policy_digest": "sha256:abc",
+                    "sessionId": "sess-1",
+                    "toolCall": {
+                        "toolCallId": "call-1",
+                        "kind": "execute",
+                        "title": "cat src/main.py",
+                    },
+                    "options": [
+                        {"optionId": "approved", "name": "Yes", "kind": "allow_once"},
+                        {"optionId": "rejected", "name": "No", "kind": "reject_once"},
+                    ],
                 },
             },
             # Second: turn result
@@ -296,8 +299,11 @@ class TestPermissionFlow:
         assert mock_send.call_count >= 2  # prompt + permission respond
         respond_call = mock_send.call_args_list[1]
         respond_msg = respond_call[0][0]
-        assert respond_msg["method"] == "permission/respond"
-        assert respond_msg["params"]["decision"] == "allow_once"
+        # ACP v1: 对 server request 直接回 result, outcome 为 tagged enum
+        assert "result" in respond_msg
+        assert respond_msg["id"] == 4
+        assert respond_msg["result"]["outcome"]["outcome"] == "selected"
+        assert respond_msg["result"]["outcome"]["optionId"] == "approved"
 
 
 # ── _build_permission_request Tests ──

@@ -268,7 +268,7 @@ def setup_worker_parser(subparsers: Any) -> None:
     dispatch_parser.add_argument("--worker", required=True, dest="worker_id")
     dispatch_parser.add_argument("--write-path", action="append", default=[], dest="write_paths")
     dispatch_parser.add_argument("--launch", action="store_true")
-    dispatch_parser.add_argument("--transport", default="cli_prompt")
+    dispatch_parser.add_argument("--transport", default="acp_stdio")
     dispatch_parser.add_argument("--omo-dir", default=".omo")
 
     reclaim_parser = worker_sub.add_parser("reclaim")
@@ -277,7 +277,7 @@ def setup_worker_parser(subparsers: Any) -> None:
     reclaim_parser.add_argument("--reason", required=True)
     reclaim_parser.add_argument("--write-path", action="append", default=[], dest="write_paths")
     reclaim_parser.add_argument("--launch", action="store_true")
-    reclaim_parser.add_argument("--transport", default="cli_prompt")
+    reclaim_parser.add_argument("--transport", default="acp_stdio")
     reclaim_parser.add_argument("--omo-dir", default=".omo")
 
     mesh_ack_parser = worker_sub.add_parser("mesh-ack")

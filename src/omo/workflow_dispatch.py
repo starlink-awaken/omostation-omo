@@ -722,7 +722,7 @@ def dispatch_admitted_workflow(
     required_capabilities: list[str],
     capability_health: dict[str, Any],
     launch: bool = False,
-    transport: str = "cli_prompt",
+    transport: str = "acp_stdio",
     **admission_options: Any,
 ) -> dict[str, Any]:
     """Admit first, then hand the immutable packet to the legacy worker bridge."""
@@ -884,7 +884,7 @@ def consume_pending_workflow_requests(
                     worker_id=worker_id,
                     allowed_write_paths=allowed_write_paths or [],
                     launch=False,
-                    transport="cli_prompt",
+                    transport="acp_stdio",
                     workflow_packet=packet,
                 )
         except Exception as exc:  # defensive: 单 run dispatch 失败不炸 tick

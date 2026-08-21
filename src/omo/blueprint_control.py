@@ -335,7 +335,7 @@ class BlueprintControlService:
         worker_id: str,
         capability_health: dict[str, Any],
         now: str | None = None,
-        transport: str = "cli_prompt",
+        transport: str = "acp_stdio",
     ) -> dict[str, Any]:
         """Admit and project a packet without launching a provider process."""
         packet = self._validate_compiled_packet(compiled)
@@ -2642,7 +2642,7 @@ def _parser() -> _BlueprintArgumentParser:
     dispatch_parser.add_argument("--worker-id", required=True)
     dispatch_parser.add_argument("--capability-health-file", required=True)
     dispatch_parser.add_argument("--now")
-    dispatch_parser.add_argument("--transport", default="cli_prompt")
+    dispatch_parser.add_argument("--transport", default="acp_stdio")
 
     observe_parser = commands.add_parser("observe")
     observe_parser.add_argument("--root", default=".")

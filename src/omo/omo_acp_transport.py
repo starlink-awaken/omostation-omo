@@ -15,6 +15,7 @@ from __future__ import annotations
 import enum
 import json
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -124,13 +125,117 @@ def _build_permission_request(
 
 
 def _scope_matches(scope: str, pattern: str) -> bool:
-    """scope 通配匹配 — 支持末尾 /** glob; 朴素 substring 兜底 (KISS)."""
-    import fnmatch
+    """scope 通配匹配 — 支持末尾 /** glob; 朴素 substring 兜底 (KISS).
 
-    if pattern.endswith("/**"):
-        prefix = pattern[:-3]
-        return scope.startswith(prefix)
-    return fnmatch.fnmatch(scope, pattern) or pattern in scope
+    toolCall.title 可能携带绝对路径 (Edit /abs/clone/docs/x.md);
+    匹配前把 cwd 前缀剥掉, 让相对 pattern (docs/**) 也能命中.
+    """
+    import fnmatch
+    from pathlib import PurePosixPath
+
+    candidates = [scope]
+    # 剥离已知 workspace 根前缀 (按 '/' 分段回退尝试)
+    parts = PurePosixPath(scope).parts
+    for i in range(1, len(parts)):
+        candidates.append("/".join(parts[i:]))
+    for cand in candidates:
+        if pattern.endswith("/**"):
+            if cand.startswith(pattern[:-3]):
+                return True
+        elif fnmatch.fnmatch(cand, pattern) or pattern in cand:
+            return True
+    return False
+
+
+def _classify_command(cmd_title: str) -> str:
+    """shell 命令链 → 权限等级.
+
+    真实 codex-acp 的 toolCall.title 是复合 shell 链 (pwd && cat X && if [...]); 逐段扫描:
+    含写操作符 (重定向/sed -i/rm/mv/cp/tee/git add...) → write;
+    纯读链 (pwd/cat/ls/git status...) → read; 其余 → exec.
+    """
+    t = cmd_title.strip()
+    write_marks = (
+        ">>",
+        ">",
+        "tee ",
+        "sed -i",
+        "rm ",
+        "mv ",
+        "cp ",
+        "touch ",
+        "mkdir ",
+        "chmod ",
+        "chown ",
+        "git add",
+        "git commit",
+        "git push",
+        "apply_patch",
+        "install ",
+        "ln ",
+    )
+    read_heads = (
+        "pwd",
+        "ls",
+        "cat ",
+        "grep ",
+        "rg ",
+        "git status",
+        "git diff",
+        "git log",
+        "echo ",
+        "printf ",
+        "head ",
+        "tail ",
+        "find ",
+        "sed -n",
+        "wc ",
+        "true",
+        "which ",
+    )
+    # 2>/dev/null 类 stderr 抑制不构成写盘, 先剥离再判写
+    t_probe = re.sub(r"2>\s*(/dev/null|&1)", " ", t)
+    t_probe = re.sub(r"&>\s*/dev/null", " ", t_probe)
+    if any(m in t_probe for m in write_marks):
+        return "write"
+    segments = re.split(r"(?:&&|\|\||;|\|)", t)
+    if segments and all(
+        seg.strip().startswith(read_heads)
+        or seg.strip().startswith(("if ", "then", "fi", "else", "git -C", "test ", "[ "))
+        or seg.strip() == ""
+        for seg in segments
+    ):
+        return "read"
+    return "exec"
+
+
+def _pick_permission_option(options: list, decision) -> str:
+    """决策 → ACP v1 options 里的 optionId.
+
+    allow_once → approved 类; deny/human_required → reject/cancel 类.
+    """
+    try:
+        want_allow = decision.value == "allow_once"
+    except AttributeError:
+        want_allow = str(decision) == "allow_once"
+    for opt in options or []:
+        kind = str(opt.get("kind", ""))
+        oid = str(opt.get("optionId", ""))
+        if want_allow and kind in ("allow_once", "allow_always"):
+            return oid
+        if not want_allow and kind in ("reject_once", "reject_always", "cancel"):
+            return oid
+    for opt in options or []:
+        oid = str(opt.get("optionId", ""))
+        if want_allow and "approved" in oid and "amendment" not in oid:
+            return oid
+        if not want_allow and any(k in oid for k in ("reject", "deny")):
+            return oid  # reject_once 优先: 会话存活, 仅本请求被拒
+    for opt in options or []:
+        oid = str(opt.get("optionId", ""))
+        if not want_allow and "cancel" in oid:
+            return oid
+    return "approved" if want_allow and options else "cancel"
 
 
 def _evaluate_permission(
@@ -376,35 +481,36 @@ class AcpStdioSession:
             elif method == "session/request_permission":
                 self._state = AcpState.PERMISSION_REQUESTED
                 perm_params = response.get("params", {})
+                tool_call = perm_params.get("toolCall") or {}
+                options = perm_params.get("options") or []
+                cmd_title = str(tool_call.get("title", ""))
                 perm_request = _build_permission_request(
-                    packet_id=perm_params.get("packet_id", packet_id),
-                    assignment=perm_params.get("assignment", assignment),
-                    workflow_step=perm_params.get("workflow_step", workflow_step),
-                    agent_session=perm_params.get("agent_session", ""),
-                    operation=perm_params.get("operation", ""),
-                    canonical_scope=perm_params.get("canonical_scope", ""),
-                    policy_digest=perm_params.get("policy_digest", ""),
+                    packet_id=packet_id,
+                    assignment=assignment,
+                    workflow_step=workflow_step,
+                    agent_session=str(perm_params.get("sessionId", "")),
+                    operation=_classify_command(cmd_title),
+                    canonical_scope=cmd_title,
+                    policy_digest="acp-v1-toolcall",
                 )
                 perm_response = _evaluate_permission(
                     perm_request,
                     allowed_write_paths=allowed_write_paths or [],
                     forbidden_write_paths=forbidden_write_paths or [],
-                    raw_scope=perm_params.get("canonical_scope", ""),
+                    raw_scope=cmd_title,
                 )
                 permission_responses.append(perm_response)
                 self._permission_log.append(perm_response)
 
-                # Send permission decision
+                option_id = _pick_permission_option(options, perm_response.decision)
+                # ACP v1: 对 server request 回 result; outcome 是 internally-tagged enum
+                # (RequestPermissionOutcome: selected{optionId} | cancelled)
+                outcome = {"outcome": "selected", "optionId": option_id} if option_id else {"outcome": "cancelled"}
                 self._send_message(
                     {
                         "jsonrpc": "2.0",
-                        "method": "permission/respond",
                         "id": response.get("id", 4),
-                        "params": {
-                            "decision": perm_response.decision.value,
-                            "reason": perm_response.reason,
-                            "request_id": perm_response.request_id,
-                        },
+                        "result": {"outcome": outcome},
                     }
                 )
                 self._state = AcpState.PERMISSION_DECIDED

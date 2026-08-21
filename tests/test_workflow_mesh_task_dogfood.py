@@ -56,10 +56,14 @@ def _worker_registry(root: Path) -> None:
                         "admission_state": "admitted",
                         "capabilities": ["workflow.execute", "runtime"],
                         "transports": {
+                            "acp_stdio": {
+                                "command": "worker-dogfood",
+                                "worker_ack_protocol": "omo-worker-origin-ack/v1",
+                            },
                             "cli_prompt": {
                                 "command": "worker-dogfood",
                                 "worker_ack_protocol": "omo-worker-origin-ack/v1",
-                            }
+                            },
                         },
                     }
                 ]

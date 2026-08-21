@@ -114,10 +114,14 @@ def _dispatch_authority(
                         "allowed_operation_level": "L1",
                         "write_scope": {"mode": "bounded"},
                         "transports": {
+                            "acp_stdio": {
+                                "command": "worker-a",
+                                "worker_ack_protocol": "omo-worker-origin-ack/v1",
+                            },
                             "cli_prompt": {
                                 "command": "worker-a",
                                 "worker_ack_protocol": "omo-worker-origin-ack/v1",
-                            }
+                            },
                         },
                         "capabilities": worker_capabilities or ["workflow.execute", "python"],
                         "lease_policy": {"lease_expired_after_seconds": 2592000},
@@ -2301,7 +2305,7 @@ def test_cli_observe_and_execute_input_ack_never_claim_model_success(
     runner.chmod(0o755)
     registry_path = tmp_path / ".omo" / "_truth" / "registry" / "workers.yaml"
     registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
-    registry["workers"][0]["transports"]["cli_prompt"]["command"] = str(runner)
+    registry["workers"][0]["transports"]["acp_stdio"]["command"] = str(runner)
     registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
     _commit_baseline(tmp_path)
     compiled = _compile(tmp_path)
