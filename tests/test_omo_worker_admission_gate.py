@@ -244,9 +244,7 @@ def test_admitted_pi_worker_uses_one_shell_free_omo_transport(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize("worker_id", ["pi", "omp"])
-def test_bound_worker_command_expands_delivery_identity_as_exact_argv_tokens(
-    tmp_path: Path, worker_id: str
-) -> None:
+def test_bound_worker_command_expands_delivery_identity_as_exact_argv_tokens(tmp_path: Path, worker_id: str) -> None:
     command = (
         f'/usr/bin/{worker_id} "{{prompt}}" '
         '--run-id "{run_id}" '
@@ -535,9 +533,7 @@ def test_invalid_command_template_is_rejected_before_run_artifacts(
     assert not (tmp_path / ".omo" / "workers" / "runs").exists()
 
 
-def test_unbound_launch_is_rejected_before_provider_call(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_unbound_launch_is_rejected_before_provider_call(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pi = _admitted_pi_worker()
     task_path = _task_fixture(tmp_path, worker=pi)
     task = yaml.safe_load(task_path.read_text(encoding="utf-8"))

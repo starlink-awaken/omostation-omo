@@ -105,9 +105,20 @@ def _require_admitted_worker(registry: dict, worker_id: str, transport: str) -> 
     return worker
 
 
-def _worker_command(registry: dict, worker_id: str, transport: str) -> str:
+def _worker_command(
+    registry: dict,
+    worker_id: str,
+    transport: str,
+    *,
+    command_key: str = "command",
+) -> str:
     worker = _require_admitted_worker(registry, worker_id, transport)
-    return str(worker["transports"][transport]["command"])
+    command = str(worker["transports"][transport].get(command_key) or "").strip()
+    if not command:
+        raise ValueError(
+            f"worker admission denied: worker_id={worker_id} reason={command_key}_missing transport={transport}"
+        )
+    return command
 
 
 def _capability_values(value: Any) -> list[str]:
@@ -371,6 +382,7 @@ def _build_launch_argv(
     packet_id: str | None = None,
     packet_hash: str | None = None,
     instruction_binding: Mapping[str, Any] | None = None,
+    command_key: str = "command",
 ) -> list[str]:
     prompt_sentinel = "__OMO_PROMPT__"
     workspace_sentinel = "__OMO_WORKSPACE_ROOT__"
@@ -378,7 +390,7 @@ def _build_launch_argv(
     packet_id_sentinel = "__OMO_PACKET_ID__"
     packet_hash_sentinel = "__OMO_PACKET_HASH__"
     instruction_sentinel = "__OMO_INSTRUCTION_BINDING_JSON__"
-    command = _worker_command(registry, worker_id, transport)
+    command = _worker_command(registry, worker_id, transport, command_key=command_key)
     if "{workspace_root}" in command:
         if workspace_root is None:
             raise ValueError("worker command requires a workspace root")
@@ -408,9 +420,7 @@ def _build_launch_argv(
     if "{instruction_binding_json}" in command:
         if not isinstance(instruction_binding, Mapping) or set(instruction_binding) != instruction_fields:
             raise ValueError("worker command instruction_binding is invalid")
-        normalized_instruction = {
-            key: str(instruction_binding.get(key) or "").strip() for key in instruction_fields
-        }
+        normalized_instruction = {key: str(instruction_binding.get(key) or "").strip() for key in instruction_fields}
         if (
             not all(normalized_instruction.values())
             or not re.fullmatch(r"sha256:[0-9a-f]{64}", normalized_instruction["content_digest"])

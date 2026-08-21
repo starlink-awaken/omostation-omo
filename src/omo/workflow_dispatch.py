@@ -134,9 +134,7 @@ def _validated_request_identity(
     if set(request_identity) != required:
         raise WorkflowDispatchError("request identity must contain the complete delivery binding")
     scalar_fields = required - {"instruction_binding"}
-    identity: dict[str, Any] = {
-        key: str(request_identity.get(key) or "").strip() for key in scalar_fields
-    }
+    identity: dict[str, Any] = {key: str(request_identity.get(key) or "").strip() for key in scalar_fields}
     if not all(identity.values()):
         raise WorkflowDispatchError("request identity fields must be non-empty")
     if not identity["packet_id"].startswith("WP-"):
@@ -155,9 +153,7 @@ def _validated_request_identity(
     }
     if not isinstance(instruction, Mapping) or set(instruction) != instruction_fields:
         raise WorkflowDispatchError("request identity instruction_binding is incomplete")
-    instruction_binding = {
-        key: str(instruction.get(key) or "").strip() for key in instruction_fields
-    }
+    instruction_binding = {key: str(instruction.get(key) or "").strip() for key in instruction_fields}
     if not all(instruction_binding.values()):
         raise WorkflowDispatchError("request identity instruction_binding fields must be non-empty")
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", instruction_binding["content_digest"]):

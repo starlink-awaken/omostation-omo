@@ -427,6 +427,7 @@ def execute_worker_command(args: argparse.Namespace) -> int:
                 packet_hash=args.packet_hash,
                 instruction_binding=instruction_binding,
                 ack_decision=args.ack_decision,
+                origin_proof=os.environ.get("OMO_WORKER_ACK_ORIGIN_PROOF"),
                 lease_seconds=args.lease_seconds,
                 now=args.now,
             )

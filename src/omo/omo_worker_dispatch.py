@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shlex
 import subprocess
 from datetime import datetime, timedelta
@@ -38,6 +39,7 @@ def _bridge_dispatch_to_mesh(
     worker_id: str,
     workflow_packet: dict[str, Any] | None,
     now: str,
+    ack_origin_proof: str,
 ) -> None:
     """Emit Workflow Mesh events for a worker dispatch.
 
@@ -61,22 +63,20 @@ def _bridge_dispatch_to_mesh(
         if not isinstance(request_identity, dict):
             raise ValueError("bound workflow dispatch requires request_identity")
 
-        store.append(
-            new_workflow_event(
-                "StepDispatched",
-                run_id,
-                trace_id=trace_id,
-                producer="omo.omo_worker_dispatch",
-                idempotency_key=f"{run_id}:step-dispatched:{dispatch_id}",
-                payload={
-                    "dispatch_id": dispatch_id,
-                    "worker_id": worker_id,
-                    "step_run_id": step_run_id,
-                    "step_name": "execute",
-                    "admission_id": admission_id,
-                    **request_identity,
-                },
-            )
+        from .worker_lifecycle import record_step_dispatch
+
+        record_step_dispatch(
+            omo,
+            workflow_run_id=run_id,
+            trace_id=trace_id,
+            dispatch_id=dispatch_id,
+            worker_id=worker_id,
+            step_run_id=step_run_id,
+            admission_id=admission_id,
+            packet_id=request_identity["packet_id"],
+            packet_hash=request_identity["packet_hash"],
+            instruction_binding=request_identity["instruction_binding"],
+            ack_origin_proof=ack_origin_proof,
         )
     else:
         run_id = f"dispatch-{dispatch_id}"
@@ -250,6 +250,9 @@ def dispatch_task(
     )
     if workflow_packet is None:
         raise ValueError("unbound legacy dispatch is observer-only and cannot create worker state")
+    from .worker_lifecycle import new_worker_ack_origin_proof
+
+    ack_origin_proof = new_worker_ack_origin_proof()
     # A supervised blueprint must not project dispatch artifacts or mutate the
     # Task until StepDispatched is durable.  If this append fails, every file
     # remains exactly at its pre-dispatch state and the exception propagates.
@@ -262,7 +265,61 @@ def dispatch_task(
             worker_id=worker_id,
             workflow_packet=workflow_packet,
             now=dispatch_now,
+            ack_origin_proof=ack_origin_proof,
         )
+        ack_argv = _build_launch_argv(
+            registry,
+            worker_id,
+            transport,
+            "",
+            workspace_root=root,
+            run_id=workflow_run_id,
+            packet_id=request_identity["packet_id"],
+            packet_hash=request_identity["packet_hash"],
+            instruction_binding=request_identity["instruction_binding"],
+            command_key="ack_command",
+        )
+        ack_argv.extend(
+            [
+                workflow_run_id,
+                "--trace-id",
+                str(workflow_packet.get("trace_id") or workflow_run_id),
+                "--dispatch-id",
+                dispatch_id,
+                "--worker",
+                worker_id,
+                "--step-run-id",
+                str(workflow_packet["admission"]["step_run_ids"][0]),
+                "--admission-id",
+                str(workflow_packet["admission"]["admission_id"]),
+                "--packet-id",
+                request_identity["packet_id"],
+                "--packet-hash",
+                request_identity["packet_hash"],
+                "--instruction-binding-json",
+                json.dumps(
+                    request_identity["instruction_binding"],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                "--ack-decision",
+                "proceed",
+                "--lease-seconds",
+                str((worker.get("lease_policy") or {}).get("lease_expired_after_seconds", 1200)),
+                "--omo-dir",
+                str(omo_ref),
+            ]
+        )
+        worker_env = {**os.environ, "OMO_WORKER_ACK_ORIGIN_PROOF": ack_origin_proof}
+        ack_result = subprocess.run(ack_argv, cwd=root, capture_output=True, text=True, env=worker_env)
+        if ack_result.returncode != 0:
+            raise RuntimeError(f"worker ACK preflight failed: worker_id={worker_id} returncode={ack_result.returncode}")
+        from .workflow_mesh import WorkflowMeshStore
+
+        ack_worker = WorkflowMeshStore(omo).worker_snapshot(workflow_run_id)
+        if not isinstance(ack_worker, dict) or ack_worker.get("ack_decision") != "proceed":
+            raise RuntimeError("worker ACK preflight did not durably acknowledge the dispatch")
     run_dir.mkdir(parents=True, exist_ok=True)
 
     source_docs = task.get("source_docs", [])
@@ -487,6 +544,7 @@ def dispatch_task(
             worker_id=worker_id,
             workflow_packet=workflow_packet,
             now=dispatch_now,
+            ack_origin_proof=ack_origin_proof,
         )
 
     if launch:
@@ -500,7 +558,9 @@ def dispatch_task(
             run_id=workflow_run_id,
             packet_id=request_identity.get("packet_id") if isinstance(request_identity, dict) else None,
             packet_hash=request_identity.get("packet_hash") if isinstance(request_identity, dict) else None,
-            instruction_binding=request_identity.get("instruction_binding") if isinstance(request_identity, dict) else None,
+            instruction_binding=request_identity.get("instruction_binding")
+            if isinstance(request_identity, dict)
+            else None,
         )
         result = subprocess.run(argv, cwd=root, capture_output=True, text=True)
         log_content = redact_sensitive_text((result.stdout or "") + (result.stderr or ""))

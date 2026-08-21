@@ -15,7 +15,6 @@ from omo.approval_lifecycle import request_approval as durable_request_approval
 from omo.blueprint_control import BlueprintControlError, BlueprintControlService
 from omo.cli import main as cli_main
 from omo.orchestration_contract import OrchestrationContractCoordinator
-from omo.worker_lifecycle import acknowledge_worker
 from omo.workflow_dispatch import WorkflowDispatchError
 from omo.workflow_mesh import WorkflowMeshStore
 
@@ -114,8 +113,14 @@ def _dispatch_authority(
                         "admission_state": "admitted",
                         "allowed_operation_level": "L1",
                         "write_scope": {"mode": "bounded"},
-                        "transports": {"cli_prompt": {"command": "worker-a"}},
+                        "transports": {
+                            "cli_prompt": {
+                                "command": "worker-a",
+                                "ack_command": "python -m omo.cli worker mesh-ack",
+                            }
+                        },
                         "capabilities": worker_capabilities or ["workflow.execute", "python"],
+                        "lease_policy": {"lease_expired_after_seconds": 2592000},
                     }
                 ]
             },
@@ -234,29 +239,13 @@ def _dispatched_repo(tmp_path: Path, *, now: str | None = None):
     _workspace(tmp_path)
     _dispatch_authority(tmp_path)
     _commit_baseline(tmp_path)
-    service = BlueprintControlService(tmp_path)
+    service = _service(tmp_path)
     compiled = _compile(tmp_path)
     dispatched = service.dispatch_packet(
         compiled,
         worker_id="worker-a",
         capability_health=_health(),
         now=now or datetime.now(UTC).isoformat(),
-    )
-    instruction_binding = compiled.packet["instruction_binding"]
-    acknowledge_worker(
-        tmp_path / ".omo",
-        workflow_run_id=dispatched["workflow_run_id"],
-        trace_id=dispatched["workflow_run_id"],
-        dispatch_id=dispatched["dispatch_id"],
-        worker_id="worker-a",
-        step_run_id=f"{dispatched['workflow_run_id']}:execute",
-        admission_id=dispatched["admission_id"],
-        packet_id=compiled.packet["packet_id"],
-        packet_hash=compiled.packet_hash,
-        instruction_binding=instruction_binding,
-        ack_decision="proceed",
-        lease_seconds=30 * 24 * 60 * 60,
-        now=now,
     )
     return service, compiled, dispatched
 
@@ -371,33 +360,28 @@ def test_compile_is_deterministic_and_contains_governed_contract(
     assert first.packet["instruction_binding"] == {
         "instruction_ref": INSTRUCTION_REF,
         "instruction_version": INSTRUCTION_VERSION,
-        "content_digest": "sha256:"
-        + hashlib.sha256((tmp_path / INSTRUCTION_PATH).read_bytes()).hexdigest(),
+        "content_digest": "sha256:" + hashlib.sha256((tmp_path / INSTRUCTION_PATH).read_bytes()).hexdigest(),
         "instruction_profile": "executor",
     }
 
 
-def test_supervised_start_requires_matching_live_worker_ack_before_side_effects(tmp_path: Path) -> None:
+def test_dispatch_rejects_transport_that_does_not_durably_ack(tmp_path: Path, monkeypatch) -> None:
     _workspace(tmp_path)
     _dispatch_authority(tmp_path)
     _commit_baseline(tmp_path)
-    service = BlueprintControlService(tmp_path)
+    service = _service(tmp_path)
     compiled = _compile(tmp_path)
-    dispatched = service.dispatch_packet(
-        compiled,
-        worker_id="worker-a",
-        capability_health=_health(),
+    monkeypatch.setattr(
+        "omo.omo_worker_dispatch.subprocess.run",
+        lambda *_args, **_kwargs: type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
     )
-
-    with pytest.raises(BlueprintControlError, match="worker ACK"):
-        service.start_supervised_execution(
+    with pytest.raises(RuntimeError, match="did not durably acknowledge"):
+        service.dispatch_packet(
             compiled,
-            dispatched,
-            clone_agent_id=CLONE_AGENT_ID,
-            supervisor=lambda **_kwargs: pytest.fail("supervisor must not be called"),
+            worker_id="worker-a",
+            capability_health=_health(),
         )
 
-    assert not service._execution_projection_path(dispatched).exists()
     assert [event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()] == [
         "WorkflowRequested",
         "WorkflowAdmitted",
@@ -466,7 +450,7 @@ def test_dispatch_records_exact_mesh_order_and_transport_only_state(
 ) -> None:
     _workspace(tmp_path)
     _dispatch_authority(tmp_path)
-    service = BlueprintControlService(tmp_path)
+    service = _service(tmp_path)
 
     result = service.dispatch_packet(
         _compile(tmp_path),
@@ -480,6 +464,7 @@ def test_dispatch_records_exact_mesh_order_and_transport_only_state(
         "WorkflowRequested",
         "WorkflowAdmitted",
         "StepDispatched",
+        "WorkerAcknowledged",
     ]
     identity = events[0]["payload"]
     assert identity["bet_id"] == BET_ID
@@ -523,7 +508,7 @@ def test_dispatch_fails_closed_for_invalid_approval(tmp_path: Path, approval_mod
         (tmp_path / ".omo" / "workers" / "runs" / "approval.yaml").unlink()
 
     with pytest.raises(WorkflowDispatchError, match=message):
-        BlueprintControlService(tmp_path).dispatch_packet(
+        _service(tmp_path).dispatch_packet(
             _compile(tmp_path),
             worker_id="worker-a",
             capability_health=_health(),
@@ -538,7 +523,7 @@ def test_dispatch_rejects_worker_capability_mismatch(tmp_path: Path) -> None:
     _dispatch_authority(tmp_path, worker_capabilities=["workflow.execute"])
 
     with pytest.raises(ValueError, match="capability_mismatch"):
-        BlueprintControlService(tmp_path).dispatch_packet(
+        _service(tmp_path).dispatch_packet(
             _compile(tmp_path),
             worker_id="worker-a",
             capability_health=_health(),
@@ -562,7 +547,7 @@ def test_mesh_append_failure_propagates_without_transport_acceptance(
         return original_append(self, event)
 
     monkeypatch.setattr(WorkflowMeshStore, "append", fail_step_append)
-    service = BlueprintControlService(tmp_path)
+    service = _service(tmp_path)
     compiled = _compile(tmp_path)
     task_path = tmp_path / ".omo" / "tasks" / "active" / f"{TASK_ID}.yaml"
     task_before = yaml.safe_load(task_path.read_text(encoding="utf-8"))
@@ -589,7 +574,7 @@ def test_mesh_append_failure_propagates_without_transport_acceptance(
 def test_observe_does_not_promote_exit_zero_to_readiness(tmp_path: Path) -> None:
     _workspace(tmp_path)
     _dispatch_authority(tmp_path)
-    service = BlueprintControlService(tmp_path)
+    service = _service(tmp_path)
     result = service.dispatch_packet(
         _compile(tmp_path),
         worker_id="worker-a",
@@ -1216,9 +1201,9 @@ def test_supervised_collect_passes_frozen_clone_attestation_back_to_supervisor(
             "workflow_run_id": dispatched["workflow_run_id"],
             "omo_task_id": TASK_ID,
             "packet_id": compiled.packet["packet_id"],
-                "packet_hash": compiled.packet_hash,
-                "omo_dispatch_id": dispatched["dispatch_id"],
-                "instruction_binding": compiled.packet["instruction_binding"],
+            "packet_hash": compiled.packet_hash,
+            "omo_dispatch_id": dispatched["dispatch_id"],
+            "instruction_binding": compiled.packet["instruction_binding"],
             "prompt_ref": dispatched["prompt_path"],
             "prompt_digest": started["prompt_digest"],
             "workspace_root": str(tmp_path.resolve()),
@@ -2282,24 +2267,11 @@ def test_cli_observe_and_execute_input_ack_never_claim_model_success(
     _commit_baseline(tmp_path)
     compiled = _compile(tmp_path)
     packet_ref = _write_cli_packet(tmp_path, compiled)
-    dispatched = BlueprintControlService(tmp_path).dispatch_packet(
+    dispatched = _service(tmp_path).dispatch_packet(
         compiled,
         worker_id="worker-a",
         capability_health=_health(),
         now=datetime.now(UTC).isoformat(),
-    )
-    acknowledge_worker(
-        tmp_path / ".omo",
-        workflow_run_id=dispatched["workflow_run_id"],
-        trace_id=dispatched["workflow_run_id"],
-        dispatch_id=dispatched["dispatch_id"],
-        worker_id="worker-a",
-        step_run_id=f"{dispatched['workflow_run_id']}:execute",
-        admission_id=dispatched["admission_id"],
-        packet_id=compiled.packet["packet_id"],
-        packet_hash=compiled.packet_hash,
-        instruction_binding=compiled.packet["instruction_binding"],
-        ack_decision="proceed",
     )
 
     observed = cli_main(
@@ -2459,3 +2431,7 @@ def test_cli_verifier_reject_and_rollback_mismatch_never_report_success(
     assert mismatch != 0
     assert mismatch_output["ok"] is False
     assert mismatch_output["state"] == "rollback_unconfirmed"
+
+
+def _service(root: Path) -> BlueprintControlService:
+    return BlueprintControlService(root)

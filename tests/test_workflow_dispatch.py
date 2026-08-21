@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 import json
 import shlex
+import subprocess
 
 import pytest
 import yaml
@@ -33,7 +34,12 @@ def _task(tmp_path: Path, *, approval_ref: str | None = None) -> None:
                         "id": "worker-a",
                         "enabled": True,
                         "admission_state": "admitted",
-                        "transports": {"cli_prompt": {"command": "worker-a"}},
+                        "transports": {
+                            "cli_prompt": {
+                                "command": "worker-a",
+                                "ack_command": "python -m omo.cli worker mesh-ack",
+                            }
+                        },
                         "capabilities": ["workflow.execute", "runtime"],
                     }
                 ]
@@ -298,8 +304,13 @@ def test_bound_dispatch_persists_and_launches_exact_delivery_argv(
     )
     registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
     launched: list[list[str]] = []
+    ack_secrets: list[str] = []
+    real_run = subprocess.run
 
-    def run(argv, **_kwargs):
+    def run(argv, **kwargs):
+        if "mesh-ack" in argv:
+            ack_secrets.append(kwargs["env"]["OMO_WORKER_ACK_ORIGIN_PROOF"])
+            return real_run(argv, **kwargs)
         launched.append(argv)
         return type("Result", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
 
@@ -317,19 +328,25 @@ def test_bound_dispatch_persists_and_launches_exact_delivery_argv(
         request_identity=_request_identity(),
     )
 
-    dispatch = yaml.safe_load(
-        (tmp_path / result["worker_dispatch"]["dispatch_path"]).read_text(encoding="utf-8")
-    )
+    dispatch = yaml.safe_load((tmp_path / result["worker_dispatch"]["dispatch_path"]).read_text(encoding="utf-8"))
     persisted = shlex.split(dispatch["execution"]["launch_command"])
     assert len(launched) == 1
+    assert len(ack_secrets) == 1
     assert launched[0][0] == persisted[0]
     assert launched[0][2:] == persisted[2:]
     assert launched[0][1].startswith("# Worker Prompt Contract")
     assert persisted[persisted.index("--run-id") + 1] == "run-bound-launch"
     assert persisted[persisted.index("--packet-id") + 1] == _request_identity()["packet_id"]
-    assert json.loads(persisted[persisted.index("--instruction-binding-json") + 1]) == _request_identity()[
-        "instruction_binding"
-    ]
+    assert (
+        json.loads(persisted[persisted.index("--instruction-binding-json") + 1])
+        == _request_identity()["instruction_binding"]
+    )
+    assert ack_secrets[0] not in json.dumps(result)
+    assert all(
+        ack_secrets[0] not in path.read_text(encoding="utf-8")
+        for path in (tmp_path / ".omo").rglob("*")
+        if path.is_file()
+    )
 
 
 def test_admit_workflow_requires_granted_approval(tmp_path: Path) -> None:
