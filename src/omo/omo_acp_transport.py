@@ -123,6 +123,16 @@ def _build_permission_request(
     )
 
 
+def _scope_matches(scope: str, pattern: str) -> bool:
+    """scope 通配匹配 — 支持末尾 /** glob; 朴素 substring 兜底 (KISS)."""
+    import fnmatch
+
+    if pattern.endswith("/**"):
+        prefix = pattern[:-3]
+        return scope.startswith(prefix)
+    return fnmatch.fnmatch(scope, pattern) or pattern in scope
+
+
 def _evaluate_permission(
     request: PermissionRequest,
     *,
@@ -154,8 +164,8 @@ def _evaluate_permission(
         )
 
     # R1: 写操作 — 检查 scope 是否在 allowed_write_paths 内
-    scope_in_allowed = any(scope.endswith(allowed) or allowed in scope for allowed in allowed_write_paths)
-    scope_in_forbidden = any(scope.endswith(forbidden) or forbidden in scope for forbidden in forbidden_write_paths)
+    scope_in_allowed = any(_scope_matches(scope, allowed) for allowed in allowed_write_paths)
+    scope_in_forbidden = any(_scope_matches(scope, forbidden) for forbidden in forbidden_write_paths)
 
     if scope_in_forbidden:
         return PermissionResponse(
@@ -198,6 +208,7 @@ class AcpStdioSession:
         self._config = config
         self._process: subprocess.Popen | None = None
         self._state = AcpState.NOT_STARTED
+        self._session_id: str = ""
         self._output_buffer: list[str] = []
         self._permission_log: list[PermissionResponse] = []
 
@@ -223,14 +234,24 @@ class AcpStdioSession:
             cwd=str(self._config.cwd),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,  # 避免 stderr 管道缓冲写满导致死锁
             env=env,
             start_new_session=True,  # shell=False, 独立进程组
         )
         self._state = AcpState.PROCESS_STARTED
 
-        # Send initialize request
-        self._send_message({"jsonrpc": "2.0", "method": "initialize", "id": 1})
+        # Send initialize request (ACP v1: protocolVersion + clientCapabilities 必填)
+        self._send_message(
+            {
+                "jsonrpc": "2.0",
+                "method": "initialize",
+                "id": 1,
+                "params": {
+                    "protocolVersion": 1,
+                    "clientCapabilities": {"fs": {"readTextFile": False, "writeTextFile": False}},
+                },
+            }
+        )
         response = self._read_message()
         if response and "error" not in response:
             self._state = AcpState.INITIALIZED
@@ -240,9 +261,9 @@ class AcpStdioSession:
         if self._state != AcpState.INITIALIZED:
             raise RuntimeError(f"cannot create session from state {self._state}")
 
-        params: dict[str, Any] = {}
+        params: dict[str, Any] = {"cwd": str(self._config.cwd), "mcpServers": []}
         if session_id:
-            params["session_id"] = session_id
+            params["sessionId"] = session_id
 
         self._send_message(
             {
@@ -254,6 +275,7 @@ class AcpStdioSession:
         )
         response = self._read_message()
         if response and "error" not in response:
+            self._session_id = response.get("result", {}).get("sessionId", "")
             self._state = AcpState.SESSION_CREATED
 
     def submit_turn(
@@ -278,13 +300,16 @@ class AcpStdioSession:
         start_time = time.monotonic()
         permission_responses: list[PermissionResponse] = []
 
-        # Send prompt
+        # Send prompt (ACP v1: sessionId + content-block 数组)
         self._send_message(
             {
                 "jsonrpc": "2.0",
                 "method": "session/prompt",
                 "id": 3,
-                "params": {"prompt": prompt},
+                "params": {
+                    "sessionId": self._session_id,
+                    "prompt": [{"type": "text", "text": prompt}],
+                },
             }
         )
 
@@ -332,7 +357,23 @@ class AcpStdioSession:
 
             method = response.get("method", "")
 
-            if method == "session/request_permission":
+            if method == "session/update":
+                # ACP v1: 输出在 update.sessionUpdate 里 (agent_message_chunk 等)
+                update_params = response.get("params", {}).get("update", {})
+                update_type = update_params.get("sessionUpdate", "")
+                content = update_params.get("content", {})
+                if update_type in ("agent_message_chunk", "agent_message"):
+                    if isinstance(content, dict):
+                        text = content.get("text", "")
+                    elif isinstance(content, list):
+                        text = "".join(blk.get("text", "") for blk in content if isinstance(blk, dict))
+                    else:
+                        text = str(content)
+                    if text:
+                        self._state = AcpState.MODEL_OUTPUT_OBSERVED
+                        self._output_buffer.append(text)
+
+            elif method == "session/request_permission":
                 self._state = AcpState.PERMISSION_REQUESTED
                 perm_params = response.get("params", {})
                 perm_request = _build_permission_request(
@@ -368,16 +409,8 @@ class AcpStdioSession:
                 )
                 self._state = AcpState.PERMISSION_DECIDED
 
-            elif method == "session/update":
-                update_params = response.get("params", {})
-                if update_params.get("type") == "model_output":
-                    self._state = AcpState.MODEL_OUTPUT_OBSERVED
-                    content = update_params.get("content", "")
-                    if content:
-                        self._output_buffer.append(content)
-
             elif "result" in response and response.get("id") == 3:
-                # Turn completed
+                # Turn completed — stopReason=end_turn 即成功
                 self._state = AcpState.TURN_COMPLETED
                 result_content = response.get("result", {}).get("content", "")
                 if result_content:
