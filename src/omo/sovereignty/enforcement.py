@@ -578,7 +578,7 @@ class PolicyEnforcementService:
         now = self._now()
         if mandate is not None:
             mandate_version = mandate.mandate_version
-            issued_at, expires_at = mandate.valid_from, mandate.expires_at
+            issued_at, expires_at = now, mandate.expires_at
         else:
             mandate_version = request.mandate_version
             issued_at, expires_at = now, now + timedelta(seconds=self._ttl)

@@ -22,6 +22,7 @@ from omo.event_ledger.broker import LedgerBroker, LedgerError
 from omo.sovereignty import (
     EVT_ACTION_STARTED,
     EVT_ACTION_SUCCEEDED,
+    EVT_MANDATE_GRANT,
     EVT_POLICY_DECISION,
     PDP_PRODUCER,
     REASON_ALLOWED,
@@ -249,6 +250,24 @@ def test_decide_allow_is_durable(pdp, svc, mgr, now):
     events = pdp.replay_events()
     assert [e["event_type"] for e in events] == [EVT_POLICY_DECISION]
     assert events[0]["producer"] == PDP_PRODUCER
+
+
+def test_allowed_decision_occurs_after_its_mandate_grant(broker, svc):
+    """An allowed decision records its own decision time, never valid_from."""
+    grant_time = datetime(2026, 8, 21, 0, 7, 33, 61360, tzinfo=UTC)
+    decision_time = datetime(2026, 8, 21, 0, 7, 34, tzinfo=UTC)
+    manager = MandateManager(broker, clock=lambda: grant_time.isoformat())
+    _grant_mandate(svc, manager, grant_time)
+    pdp = PolicyEnforcementService(broker, manager=manager, clock=lambda: decision_time.isoformat())
+
+    result = pdp.decide(_make_request())
+
+    rows = broker.read()
+    grant = next(row for row in rows if row["event_type"] == EVT_MANDATE_GRANT)
+    decision = next(row for row in rows if row["event_type"] == EVT_POLICY_DECISION)
+    assert result.decision.issued_at == decision_time
+    assert decision["occurred_at"] == decision_time.isoformat()
+    assert datetime.fromisoformat(decision["occurred_at"]) >= datetime.fromisoformat(grant["occurred_at"])
 
 
 def test_decide_no_mandate_is_policy_denied_and_durable(pdp, svc, mgr, now):
