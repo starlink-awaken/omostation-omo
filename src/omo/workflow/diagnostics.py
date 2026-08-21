@@ -18,8 +18,10 @@ from .core import (
     display_path,
     integration_rows,
     ledger_path,
+    lock_state_dir,
     normalize_repo_path,
     path_matches,
+    registry_workspace_root,
     substitute,
 )
 from .lifecycle import (
@@ -214,6 +216,23 @@ def _is_stale_run(payload: dict[str, Any]) -> bool:
     return age_hours > STALE_RUN_HOURS
 
 
+def _resolve_lock_ref(registry: dict[str, Any], raw_ref: Any) -> Path | None:
+    """Resolve lock refs only within the registry-owned lock directory."""
+    if not isinstance(raw_ref, str) or not raw_ref.strip():
+        return None
+    workspace_root = registry_workspace_root(registry).resolve()
+    lock_root = lock_state_dir(registry).resolve()
+    candidate = Path(raw_ref).expanduser()
+    if not candidate.is_absolute():
+        candidate = workspace_root / candidate
+    try:
+        resolved = candidate.resolve()
+        resolved.relative_to(lock_root)
+    except (OSError, ValueError):
+        return None
+    return resolved
+
+
 def build_observe_report(registry: dict[str, Any], run_id: str | None) -> dict[str, Any]:
     runs = load_run_records(registry)
     locks = load_lock_records(registry)
@@ -285,31 +304,72 @@ def build_observe_report(registry: dict[str, Any], run_id: str | None) -> dict[s
     lock_paths_by_run: dict[str, set[str]] = {}
     for lock_path, lock in locks:
         lock_run_id = str(lock.get("run_id") or "")
-        if lock_run_id:
-            lock_paths_by_run.setdefault(lock_run_id, set()).add(display_path(lock_path))
+        resolved_lock_path = _resolve_lock_ref(registry, str(lock_path))
+        if lock_run_id and resolved_lock_path is not None:
+            lock_paths_by_run.setdefault(lock_run_id, set()).add(str(resolved_lock_path))
 
     for current_run_id, (path, payload) in selected_runs.items():
-        expected_locks = set(payload.get("locks") or [])
-        if payload.get("status") == "active":
-            missing_locks = sorted(expected_locks - lock_paths_by_run.get(current_run_id, set()))
-            if missing_locks:
-                # Stale run downgrade: 若 active run 超过 STALE_RUN_HOURS 无更新,
-                # 视为僵尸 run (锁可能已被 TTL 清理但 run 状态未同步)。此时缺锁
-                # 降级为 warn 而非 halt, 防止僵尸 run 永久阻塞 observe/compliance。
-                # 活跃 run (近期更新) 缺锁仍 halt, 保留 fail-closed 保护。
-                stale = _is_stale_run(payload)
-                findings.append(
-                    {
-                        "severity": "warn" if stale else "halt",
-                        "kind": "active_run_missing_locks",
-                        "message": (
-                            f"active run is missing lock files: {current_run_id}"
-                            + (" (stale run, lock likely TTL-cleaned)" if stale else "")
-                        ),
-                        "run_id": current_run_id,
-                        "missing_locks": missing_locks,
-                    }
-                )
+        is_active = payload.get("status") == "active"
+        expected_locks: set[str] = set()
+        raw_lock_refs = payload.get("locks") if is_active else []
+        if not isinstance(raw_lock_refs, list):
+            findings.append(
+                {
+                    "severity": "halt",
+                    "kind": "invalid_lock_payload",
+                    "message": "active run locks payload must be a list",
+                    "path": display_path(path),
+                    "run_id": current_run_id,
+                }
+            )
+            raw_lock_refs = []
+        if is_active:
+            for index, raw_lock_ref in enumerate(raw_lock_refs):
+                if not isinstance(raw_lock_ref, str) or not raw_lock_ref.strip():
+                    findings.append(
+                        {
+                            "severity": "halt",
+                            "kind": "invalid_lock_ref",
+                            "message": "active run lock reference must be a non-empty string",
+                            "path": display_path(path),
+                            "run_id": current_run_id,
+                            "index": index,
+                        }
+                    )
+                    continue
+                resolved_lock_ref = _resolve_lock_ref(registry, raw_lock_ref)
+                if resolved_lock_ref is None:
+                    findings.append(
+                        {
+                            "severity": "halt",
+                            "kind": "lock_path_outside_registry_root",
+                            "message": f"run lock reference escapes registry lock directory: {raw_lock_ref}",
+                            "path": str(raw_lock_ref),
+                            "run_id": current_run_id,
+                            "index": index,
+                        }
+                    )
+                    continue
+                expected_locks.add(str(resolved_lock_ref))
+        missing_locks = sorted(expected_locks - lock_paths_by_run.get(current_run_id, set()))
+        if is_active and missing_locks:
+            # Stale run downgrade: 若 active run 超过 STALE_RUN_HOURS 无更新,
+            # 视为僵尸 run (锁可能已被 TTL 清理但 run 状态未同步)。此时缺锁
+            # 降级为 warn 而非 halt, 防止僵尸 run 永久阻塞 observe/compliance。
+            # 活跃 run (近期更新) 缺锁仍 halt, 保留 fail-closed 保护。
+            stale = _is_stale_run(payload)
+            findings.append(
+                {
+                    "severity": "warn" if stale else "halt",
+                    "kind": "active_run_missing_locks",
+                    "message": (
+                        f"active run is missing lock files: {current_run_id}"
+                        + (" (stale run, lock likely TTL-cleaned)" if stale else "")
+                    ),
+                    "run_id": current_run_id,
+                    "missing_locks": missing_locks,
+                }
+            )
         # ADR-0209 A2: self-heal missing ledger rows from run yaml before warn
         if not ledger_mentions_run(registry, current_run_id):
             healed = heal_ledger_for_run(registry, current_run_id, payload)
