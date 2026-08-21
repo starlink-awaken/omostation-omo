@@ -4,8 +4,12 @@ import hashlib
 import hmac
 import io
 import json
+import os
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -509,3 +513,382 @@ def test_rolling_observer_reports_unprovable_for_corrupt_primary_log(tmp_path):
     assert result["human_gate"] == "not_ready"
     assert result["error"] == "qualified_decision_outcomes_unreadable"
     assert "JSON" not in json.dumps(result)
+
+
+def test_query_only_shadow_observer_never_creates_a_lock_or_runtime_surface(tmp_path):
+    before = sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*"))
+
+    result = build_engineering_delivery_shadow_observer(
+        tmp_path,
+        as_of=datetime(2026, 8, 22, tzinfo=UTC),
+    )
+
+    assert result["status"] == "collecting"
+    assert sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*")) == before
+
+
+def _populated_shadow_observer_root(tmp_path):
+    _succeeded_run(tmp_path)
+    consume_engineering_delivery(tmp_path, _delivery(), workflow_run_id="run-delivery-1")
+    record_engineering_delivery_review(
+        tmp_path,
+        _review(),
+        workflow_run_id="run-delivery-1",
+        principal_assertion=_assertion(_review()),
+    )
+    return tmp_path
+
+
+def _tree_snapshot(root):
+    return {
+        path.relative_to(root): (
+            path.lstat().st_mode,
+            path.lstat().st_size,
+            path.lstat().st_mtime_ns,
+            path.read_bytes() if path.is_file() else None,
+        )
+        for path in root.rglob("*")
+    }
+
+
+@pytest.mark.parametrize(
+    "relative_path, replacement",
+    [
+        (consumer.WORKFLOW_MESH_LOG, b"\n"),
+        (Path(".omo/state/agent-beliefs/index.yaml"), b"decision_outcomes: []\n"),
+    ],
+)
+def test_query_only_shadow_observer_fails_closed_when_captured_input_changes(
+    tmp_path,
+    monkeypatch,
+    relative_path,
+    replacement,
+):
+    root = _populated_shadow_observer_root(tmp_path)
+    changed_path = root / relative_path
+    original_read = consumer._read_shadow_observer_input
+
+    def read_then_change(path, **kwargs):
+        snapshot = original_read(path, **kwargs)
+        if path == changed_path:
+            changed_path.write_bytes(replacement)
+        return snapshot
+
+    monkeypatch.setattr(consumer, "_read_shadow_observer_input", read_then_change)
+
+    result = build_engineering_delivery_shadow_observer(
+        root,
+        as_of=datetime(2026, 8, 22, tzinfo=UTC),
+        query_only=True,
+    )
+
+    assert result["status"] == "unprovable"
+    assert result["verdict"] == "UNPROVABLE"
+    assert result["error"] == "qualified_decision_outcomes_changed_during_read"
+
+
+def test_query_only_shadow_observer_fails_closed_for_irregular_input(tmp_path):
+    primary_path = tmp_path / consumer.QUALIFIED_DECISION_OUTCOME_LOG
+    primary_path.parent.mkdir(parents=True)
+    source_path = tmp_path / "source.jsonl"
+    source_path.write_text("\n", encoding="utf-8")
+    primary_path.symlink_to(source_path)
+
+    result = build_engineering_delivery_shadow_observer(
+        tmp_path,
+        as_of=datetime(2026, 8, 22, tzinfo=UTC),
+        query_only=True,
+    )
+
+    assert result["status"] == "unprovable"
+    assert result["verdict"] == "UNPROVABLE"
+    assert result["error"] == "qualified_decision_outcomes_unreadable"
+
+
+def test_query_only_shadow_observer_rejects_a_symlinked_root(tmp_path):
+    actual_root = tmp_path / "actual-root"
+    actual_root.mkdir()
+    symlinked_root = tmp_path / "symlinked-root"
+    symlinked_root.symlink_to(actual_root, target_is_directory=True)
+
+    result = build_engineering_delivery_shadow_observer(
+        symlinked_root,
+        as_of=datetime(2026, 8, 22, tzinfo=UTC),
+    )
+
+    assert result["status"] == "unprovable"
+    assert result["verdict"] == "UNPROVABLE"
+    assert result["error"] == "qualified_decision_outcomes_unreadable"
+
+
+def test_query_only_shadow_observer_rejects_an_unsafe_opt_out_without_writes(tmp_path):
+    before = _tree_snapshot(tmp_path)
+
+    result = build_engineering_delivery_shadow_observer(
+        tmp_path,
+        as_of=datetime(2026, 8, 22, tzinfo=UTC),
+        query_only=False,
+    )
+
+    assert result["status"] == "unprovable"
+    assert result["verdict"] == "UNPROVABLE"
+    assert result["error"] == "qualified_decision_outcomes_unreadable"
+    assert _tree_snapshot(tmp_path) == before
+
+
+def test_query_only_shadow_observer_closes_prior_descriptors_when_capture_fails(tmp_path, monkeypatch):
+    root = _populated_shadow_observer_root(tmp_path)
+    original_read = consumer._read_shadow_observer_input
+    captured_fds: list[int] = []
+
+    def read_or_fail(path, **kwargs):
+        if path == root / consumer.MOS_PROJECTION_RECEIPT_LOG:
+            raise consumer._ShadowObserverInputError("injected capture failure")
+        snapshot = original_read(path, **kwargs)
+        if snapshot.fd is not None:
+            captured_fds.append(snapshot.fd)
+        return snapshot
+
+    monkeypatch.setattr(consumer, "_read_shadow_observer_input", read_or_fail)
+
+    result = build_engineering_delivery_shadow_observer(
+        root,
+        as_of=datetime(2026, 8, 22, tzinfo=UTC),
+    )
+
+    assert result["status"] == "unprovable"
+    assert captured_fds
+    for fd in captured_fds:
+        with pytest.raises(OSError):
+            os.fstat(fd)
+
+
+def test_external_resources_cli_uses_query_only_shadow_observer(tmp_path, monkeypatch, capsys):
+    calls: list[tuple[object, object, object]] = []
+    monkeypatch.setattr(external_resources, "find_omo_dir", lambda: tmp_path)
+
+    def observe(omo_dir, *, as_of=None, query_only=False):
+        calls.append((omo_dir, as_of, query_only))
+        return {"status": "collecting", "verdict": "FAIL"}
+
+    monkeypatch.setattr(external_resources, "build_engineering_delivery_shadow_observer", observe)
+
+    assert (
+        external_resources.main(
+            ["engineering-delivery-shadow-observer", "--as-of", "2026-08-22T00:00:00Z"]
+        )
+        == 0
+    )
+    assert calls == [(tmp_path, "2026-08-22T00:00:00Z", True)]
+    assert '"status": "collecting"' in capsys.readouterr().out
+
+
+def test_external_resources_cli_shadow_observer_does_not_create_runtime_files(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(external_resources, "find_omo_dir", lambda: tmp_path)
+    before = sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*"))
+
+    assert (
+        external_resources.main(
+            ["engineering-delivery-shadow-observer", "--as-of", "2026-08-22T00:00:00Z"]
+        )
+        == 0
+    )
+
+    assert '"status": "collecting"' in capsys.readouterr().out
+    assert sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*")) == before
+
+
+def test_populated_shadow_observer_and_cli_preserve_all_input_and_lock_files(tmp_path, monkeypatch, capsys):
+    root = _populated_shadow_observer_root(tmp_path)
+    expected_inputs = {
+        consumer.QUALIFIED_DECISION_OUTCOME_LOG,
+        consumer.MOS_PROJECTION_RECEIPT_LOG,
+        consumer.OUTCOME_FEEDBACK_LOG,
+        consumer.WORKFLOW_MESH_LOG,
+        Path(".omo/state/agent-beliefs/index.yaml"),
+    }
+    assert all((root / path).is_file() for path in expected_inputs)
+    assert any(path.suffix == ".lock" for path in root.rglob("*"))
+    before = _tree_snapshot(root)
+
+    observer = build_engineering_delivery_shadow_observer(
+        root,
+        as_of=datetime(2026, 8, 22, tzinfo=UTC),
+    )
+
+    assert observer["status"] == "collecting"
+    assert _tree_snapshot(root) == before
+
+    monkeypatch.setattr(external_resources, "find_omo_dir", lambda: root)
+    assert (
+        external_resources.main(
+            ["engineering-delivery-shadow-observer", "--as-of", "2026-08-22T00:00:00Z"]
+        )
+        == 0
+    )
+    assert '"status": "collecting"' in capsys.readouterr().out
+    assert _tree_snapshot(root) == before
+
+
+def test_query_only_shadow_observer_accepts_a_workspace_omo_root(tmp_path):
+    omo_root = tmp_path / "workspace" / ".omo"
+    omo_root.mkdir(parents=True)
+    _populated_shadow_observer_root(omo_root)
+
+    result = build_engineering_delivery_shadow_observer(
+        omo_root,
+        as_of=datetime(2026, 8, 22, tzinfo=UTC),
+    )
+
+    assert result["status"] == "collecting"
+    assert result["qualifying_decision_outcomes"] == 1
+
+
+def test_query_only_shadow_observer_rejects_a_symlinked_input_ancestor(tmp_path):
+    root = tmp_path / "root"
+    target = tmp_path / "target"
+    root.mkdir()
+    target.mkdir()
+    (root / "_knowledge").symlink_to(target, target_is_directory=True)
+
+    result = build_engineering_delivery_shadow_observer(
+        root,
+        as_of=datetime(2026, 8, 22, tzinfo=UTC),
+    )
+
+    assert result["status"] == "unprovable"
+    assert result["verdict"] == "UNPROVABLE"
+    assert result["error"] == "qualified_decision_outcomes_unreadable"
+
+
+def test_query_only_shadow_observer_fails_closed_when_an_ancestor_is_replaced(tmp_path, monkeypatch):
+    root = _populated_shadow_observer_root(tmp_path)
+    original_read = consumer._read_shadow_observer_input
+    knowledge_dir = root / "_knowledge"
+    backup_dir = root / "_knowledge-before-replacement"
+
+    def read_then_replace(path, **kwargs):
+        snapshot = original_read(path, **kwargs)
+        if path == root / Path(".omo/state/agent-beliefs/index.yaml"):
+            knowledge_dir.rename(backup_dir)
+            knowledge_dir.mkdir()
+        return snapshot
+
+    monkeypatch.setattr(consumer, "_read_shadow_observer_input", read_then_replace)
+
+    result = build_engineering_delivery_shadow_observer(
+        root,
+        as_of=datetime(2026, 8, 22, tzinfo=UTC),
+    )
+
+    assert result["status"] == "unprovable"
+    assert result["verdict"] == "UNPROVABLE"
+    assert result["error"] == "qualified_decision_outcomes_changed_during_read"
+
+
+def test_query_only_shadow_observer_detects_same_identity_content_replacement(tmp_path, monkeypatch):
+    root = _populated_shadow_observer_root(tmp_path)
+    primary_path = root / consumer.QUALIFIED_DECISION_OUTCOME_LOG
+    original_read = consumer._read_shadow_observer_input
+
+    def read_then_replace(path, **kwargs):
+        snapshot = original_read(path, **kwargs)
+        if path == primary_path:
+            original_stat = primary_path.stat()
+            primary_path.write_bytes(b" " * original_stat.st_size)
+            os.utime(
+                primary_path,
+                ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+            )
+        return snapshot
+
+    monkeypatch.setattr(consumer, "_read_shadow_observer_input", read_then_replace)
+
+    result = build_engineering_delivery_shadow_observer(
+        root,
+        as_of=datetime(2026, 8, 22, tzinfo=UTC),
+    )
+
+    assert result["status"] == "unprovable"
+    assert result["verdict"] == "UNPROVABLE"
+    assert result["error"] == "qualified_decision_outcomes_changed_during_read"
+
+
+def test_query_only_shadow_observer_rejects_oversized_inputs_without_reading_them(tmp_path, monkeypatch):
+    root = _populated_shadow_observer_root(tmp_path)
+    monkeypatch.setattr(consumer, "_SHADOW_OBSERVER_INPUT_MAX_BYTES", 1)
+
+    result = build_engineering_delivery_shadow_observer(
+        root,
+        as_of=datetime(2026, 8, 22, tzinfo=UTC),
+    )
+
+    assert result["status"] == "unprovable"
+    assert result["verdict"] == "UNPROVABLE"
+    assert result["error"] == "qualified_decision_outcomes_unreadable"
+
+
+def test_query_only_shadow_observer_enforces_the_total_byte_budget(tmp_path, monkeypatch):
+    root = _populated_shadow_observer_root(tmp_path)
+    input_paths = [root / path for path in consumer._shadow_observer_input_paths(root)]
+    total_bytes = sum(path.stat().st_size for path in input_paths)
+    largest_input = max(path.stat().st_size for path in input_paths)
+    assert total_bytes > largest_input
+    monkeypatch.setattr(consumer, "_SHADOW_OBSERVER_INPUT_MAX_BYTES", largest_input + 1)
+    monkeypatch.setattr(consumer, "_SHADOW_OBSERVER_TOTAL_MAX_BYTES", total_bytes - 1)
+
+    result = build_engineering_delivery_shadow_observer(
+        root,
+        as_of=datetime(2026, 8, 22, tzinfo=UTC),
+    )
+
+    assert result["status"] == "unprovable"
+    assert result["verdict"] == "UNPROVABLE"
+    assert result["error"] == "qualified_decision_outcomes_unreadable"
+
+
+def test_query_only_shadow_observer_hides_malformed_yaml_details(tmp_path):
+    root = _populated_shadow_observer_root(tmp_path)
+    mos_path = root / ".omo/state/agent-beliefs/index.yaml"
+    malformed = "decision_outcomes: [unterminated\n"
+    mos_path.write_text(malformed, encoding="utf-8")
+
+    result = build_engineering_delivery_shadow_observer(
+        root,
+        as_of=datetime(2026, 8, 22, tzinfo=UTC),
+    )
+
+    assert result["status"] == "unprovable"
+    assert result["verdict"] == "UNPROVABLE"
+    assert result["error"] == "qualified_decision_outcomes_unreadable"
+    assert malformed not in json.dumps(result)
+
+
+def test_query_only_shadow_observer_rejects_a_fifo_without_blocking_or_writing(tmp_path):
+    root = tmp_path / "root"
+    fifo_path = root / consumer.QUALIFIED_DECISION_OUTCOME_LOG
+    fifo_path.parent.mkdir(parents=True)
+    os.mkfifo(fifo_path)
+    before = _tree_snapshot(root)
+    source_root = Path(__file__).resolve().parents[1] / "src"
+    command = (
+        "import json; "
+        "from pathlib import Path; "
+        "from omo.engineering_delivery_consumer import build_engineering_delivery_shadow_observer; "
+        f"print(json.dumps(build_engineering_delivery_shadow_observer(Path({str(root)!r}), as_of='2026-08-22T00:00:00Z')))"
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", command],
+        check=True,
+        capture_output=True,
+        env={**os.environ, "PYTHONPATH": str(source_root)},
+        text=True,
+        timeout=3,
+    )
+
+    result = json.loads(completed.stdout)
+    assert result["status"] == "unprovable"
+    assert result["verdict"] == "UNPROVABLE"
+    assert result["error"] == "qualified_decision_outcomes_unreadable"
+    assert _tree_snapshot(root) == before

@@ -472,7 +472,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "engineering-delivery-shadow-observer":
         try:
-            projection = build_engineering_delivery_shadow_observer(omo_dir, as_of=args.as_of)
+            projection = build_engineering_delivery_shadow_observer(omo_dir, as_of=args.as_of, query_only=True)
         except (EngineeringDeliveryConsumerError, OSError, ValueError, TypeError) as exc:
             print(f"external-resources engineering-delivery-shadow-observer: {exc}", file=sys.stderr)
             return 2

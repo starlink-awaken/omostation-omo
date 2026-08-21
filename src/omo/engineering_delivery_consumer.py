@@ -12,18 +12,27 @@ import hmac
 import json
 import os
 import re
+import stat
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+import yaml
+
 from .omo_belief import MOSBeliefManager
 from .omo_external_receipt import RECEIPT_SCHEMA, record_external_receipt
 from .omo_io import AppendOnlyLog, fcntl_lock
-from .omo_shared import load_yaml_value
-from .outcome_feedback import read_outcome_feedback, record_outcome_feedback
-from .workflow_mesh import WorkflowMeshStore
+from .omo_shared import load_yaml_value_docs
+from .outcome_feedback import (
+    OUTCOME_FEEDBACK_LOG,
+    read_outcome_feedback,
+    record_outcome_feedback,
+    validate_outcome_feedback,
+)
+from .workflow_mesh import WORKFLOW_MESH_LOG, WorkflowMeshStore, project_workflow_run
 
 CONSUMPTION_SCHEMA = "engineering-delivery-consumption/v1"
 REVIEW_SCHEMA = "engineering-delivery-review/v1"
@@ -32,6 +41,8 @@ QUALIFIED_DECISION_OUTCOME_SCHEMA = "qualified-decision-outcome/v1"
 SHADOW_OBSERVER_SCHEMA = "engineering-delivery-shadow-observer/v1"
 QUALIFIED_DECISION_OUTCOME_LOG = Path("_knowledge/workflow-mesh/engineering-delivery-decision-outcomes.jsonl")
 MOS_PROJECTION_RECEIPT_LOG = Path("_knowledge/workflow-mesh/engineering-delivery-mos-projections.jsonl")
+_SHADOW_OBSERVER_INPUT_MAX_BYTES = 64 * 1024 * 1024
+_SHADOW_OBSERVER_TOTAL_MAX_BYTES = 128 * 1024 * 1024
 
 SCENE_BINDING = {
     "scene_id": "engineering-delivery",
@@ -98,6 +109,23 @@ class EngineeringDeliveryConsumerError(ValueError):
 
 class EngineeringDeliveryProjectionError(OSError):
     """The primary human outcome is durable but its MOS projection degraded."""
+
+
+class _ShadowObserverInputError(EngineeringDeliveryConsumerError):
+    """One query-only observer input is unsafe or unreadable."""
+
+
+class _ShadowObserverInputChangedError(_ShadowObserverInputError):
+    """An observer input changed after its single-descriptor capture."""
+
+
+@dataclass
+class _ShadowObserverInputSnapshot:
+    path: Path
+    fd: int | None
+    identity: tuple[int, int, int, int, int] | None
+    digest: str | None
+    payload: bytes | None
 
 
 def _canonical(value: Any) -> str:
@@ -341,6 +369,246 @@ def _validate_projection_receipt(record: Mapping[str, Any]) -> dict[str, Any]:
 def _projection_records(omo_dir: Path) -> list[dict[str, Any]]:
     records = AppendOnlyLog(omo_dir / MOS_PROJECTION_RECEIPT_LOG).read_all()
     return [_validate_projection_receipt(record) for record in records]
+
+
+def _shadow_observer_input_paths(omo_dir: Path) -> tuple[Path, ...]:
+    """Return every durable input consumed by the query-only observer."""
+    return (
+        omo_dir / QUALIFIED_DECISION_OUTCOME_LOG,
+        omo_dir / MOS_PROJECTION_RECEIPT_LOG,
+        omo_dir / OUTCOME_FEEDBACK_LOG,
+        omo_dir / WORKFLOW_MESH_LOG,
+        _workspace_root(omo_dir) / ".omo" / "state" / "agent-beliefs" / "index.yaml",
+    )
+
+
+def _shadow_observer_identity(info: os.stat_result) -> tuple[int, int, int, int, int]:
+    return (info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode), info.st_size, info.st_mtime_ns)
+
+
+def _shadow_observer_relative_parts(path: Path, *, workspace_root: Path) -> tuple[str, ...]:
+    try:
+        relative = path.absolute().relative_to(workspace_root.absolute())
+    except ValueError as exc:
+        raise _ShadowObserverInputError("shadow observer input escapes its workspace") from exc
+    if not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
+        raise _ShadowObserverInputError("shadow observer input path is invalid")
+    return relative.parts
+
+
+def _shadow_observer_directory_flags() -> int:
+    if not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW"):
+        raise _ShadowObserverInputError("secure directory traversal is unavailable")
+    return os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+
+
+def _open_shadow_observer_workspace(workspace_root: Path) -> int | None:
+    try:
+        return os.open(workspace_root, _shadow_observer_directory_flags())
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise _ShadowObserverInputError("shadow observer workspace cannot be opened safely") from exc
+
+
+def _open_shadow_observer_leaf(workspace_fd: int, parts: tuple[str, ...]) -> int | None:
+    parent_fd = os.dup(workspace_fd)
+    try:
+        for part in parts[:-1]:
+            try:
+                child_fd = os.open(part, _shadow_observer_directory_flags(), dir_fd=parent_fd)
+            except FileNotFoundError:
+                return None
+            except OSError as exc:
+                raise _ShadowObserverInputError("shadow observer input traversal is unsafe") from exc
+            os.close(parent_fd)
+            parent_fd = child_fd
+        flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+        try:
+            return os.open(parts[-1], flags, dir_fd=parent_fd)
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise _ShadowObserverInputError("shadow observer input cannot be opened safely") from exc
+    finally:
+        os.close(parent_fd)
+
+
+def _read_shadow_observer_bytes(fd: int, *, max_bytes: int) -> bytes:
+    chunks: list[bytes] = []
+    size = 0
+    while True:
+        chunk = os.read(fd, 65_536)
+        if not chunk:
+            return b"".join(chunks)
+        size += len(chunk)
+        if size > max_bytes:
+            raise _ShadowObserverInputError("shadow observer input exceeds the byte limit")
+        chunks.append(chunk)
+
+
+def _digest_shadow_observer_bytes(fd: int, *, max_bytes: int) -> str:
+    digest = hashlib.sha256()
+    size = 0
+    while True:
+        chunk = os.read(fd, 65_536)
+        if not chunk:
+            return digest.hexdigest()
+        size += len(chunk)
+        if size > max_bytes:
+            raise _ShadowObserverInputError("shadow observer input exceeds the byte limit")
+        digest.update(chunk)
+
+
+def _read_shadow_observer_input(
+    path: Path,
+    *,
+    workspace_root: Path,
+    workspace_fd: int,
+    max_bytes: int,
+) -> _ShadowObserverInputSnapshot:
+    """Capture one regular file through exactly one read-only descriptor."""
+    fd = _open_shadow_observer_leaf(
+        workspace_fd,
+        _shadow_observer_relative_parts(path, workspace_root=workspace_root),
+    )
+    if fd is None:
+        return _ShadowObserverInputSnapshot(path, None, None, None, None)
+    keep_open = False
+    try:
+        before = os.fstat(fd)
+        if not stat.S_ISREG(before.st_mode):
+            raise _ShadowObserverInputError("shadow observer input is not a regular file")
+        if before.st_size > max_bytes:
+            raise _ShadowObserverInputError("shadow observer input exceeds the byte limit")
+        payload = _read_shadow_observer_bytes(fd, max_bytes=max_bytes)
+        after = os.fstat(fd)
+        if _shadow_observer_identity(before) != _shadow_observer_identity(after):
+            raise _ShadowObserverInputChangedError("shadow observer input changed during capture")
+        snapshot = _ShadowObserverInputSnapshot(
+            path,
+            fd,
+            _shadow_observer_identity(after),
+            hashlib.sha256(payload).hexdigest(),
+            payload,
+        )
+        keep_open = True
+        return snapshot
+    finally:
+        if not keep_open:
+            os.close(fd)
+
+
+def _read_shadow_observer_inputs(
+    omo_dir: Path,
+) -> tuple[dict[Path, _ShadowObserverInputSnapshot], tuple[int, int, int, int, int] | None]:
+    snapshots: dict[Path, _ShadowObserverInputSnapshot] = {}
+    workspace_root = _workspace_root(omo_dir)
+    workspace_fd = _open_shadow_observer_workspace(workspace_root)
+    if workspace_fd is None:
+        return ({path: _ShadowObserverInputSnapshot(path, None, None, None, None) for path in _shadow_observer_input_paths(omo_dir)}, None)
+    workspace_identity = _shadow_observer_identity(os.fstat(workspace_fd))
+    total_bytes = 0
+    try:
+        for path in _shadow_observer_input_paths(omo_dir):
+            remaining_bytes = _SHADOW_OBSERVER_TOTAL_MAX_BYTES - total_bytes
+            if remaining_bytes <= 0:
+                raise _ShadowObserverInputError("shadow observer inputs exceed the total byte limit")
+            snapshots[path] = _read_shadow_observer_input(
+                path,
+                workspace_root=workspace_root,
+                workspace_fd=workspace_fd,
+                max_bytes=min(_SHADOW_OBSERVER_INPUT_MAX_BYTES, remaining_bytes),
+            )
+            total_bytes += len(snapshots[path].payload or b"")
+    except Exception:
+        _close_shadow_observer_inputs(snapshots)
+        raise
+    finally:
+        os.close(workspace_fd)
+    return snapshots, workspace_identity
+
+
+def _read_shadow_observer_jsonl(snapshot: _ShadowObserverInputSnapshot) -> list[dict[str, Any]]:
+    if snapshot.payload is None:
+        return []
+    records: list[dict[str, Any]] = []
+    for line in snapshot.payload.decode("utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            records.append({"raw": line[:200]})
+    return records
+
+
+def _verify_shadow_observer_input(
+    snapshot: _ShadowObserverInputSnapshot,
+    *,
+    workspace_root: Path,
+    workspace_fd: int,
+) -> None:
+    """Fail closed if a captured input changed, appeared, or was replaced."""
+    current_fd = _open_shadow_observer_leaf(
+        workspace_fd,
+        _shadow_observer_relative_parts(snapshot.path, workspace_root=workspace_root),
+    )
+    if snapshot.fd is None:
+        if current_fd is None:
+            return
+        os.close(current_fd)
+        raise _ShadowObserverInputChangedError("shadow observer input appeared after capture")
+    if current_fd is None:
+        raise _ShadowObserverInputChangedError("shadow observer input disappeared after capture")
+    try:
+        current = os.fstat(current_fd)
+    finally:
+        os.close(current_fd)
+    os.lseek(snapshot.fd, 0, os.SEEK_SET)
+    captured_again_digest = _digest_shadow_observer_bytes(
+        snapshot.fd,
+        max_bytes=_SHADOW_OBSERVER_INPUT_MAX_BYTES,
+    )
+    descriptor = os.fstat(snapshot.fd)
+    if (
+        not stat.S_ISREG(current.st_mode)
+        or snapshot.identity != _shadow_observer_identity(current)
+        or snapshot.identity != _shadow_observer_identity(descriptor)
+        or snapshot.digest != captured_again_digest
+    ):
+        raise _ShadowObserverInputChangedError("shadow observer input changed after capture")
+
+
+def _verify_shadow_observer_inputs(
+    snapshots: Mapping[Path, _ShadowObserverInputSnapshot],
+    *,
+    workspace_root: Path,
+    workspace_identity: tuple[int, int, int, int, int] | None,
+) -> None:
+    workspace_fd = _open_shadow_observer_workspace(workspace_root)
+    if workspace_fd is None:
+        if workspace_identity is None:
+            return
+        raise _ShadowObserverInputChangedError("shadow observer workspace disappeared after capture")
+    try:
+        if workspace_identity is None or _shadow_observer_identity(os.fstat(workspace_fd)) != workspace_identity:
+            raise _ShadowObserverInputChangedError("shadow observer workspace changed after capture")
+        for snapshot in snapshots.values():
+            _verify_shadow_observer_input(
+                snapshot,
+                workspace_root=workspace_root,
+                workspace_fd=workspace_fd,
+            )
+    finally:
+        os.close(workspace_fd)
+
+
+def _close_shadow_observer_inputs(snapshots: Mapping[Path, _ShadowObserverInputSnapshot]) -> None:
+    for snapshot in snapshots.values():
+        if snapshot.fd is not None:
+            os.close(snapshot.fd)
 
 
 def _append_projection_status(
@@ -802,8 +1070,9 @@ def build_engineering_delivery_shadow_observer(
     omo_dir: Path | str,
     *,
     as_of: datetime | str | None = None,
+    query_only: bool = True,
 ) -> dict[str, Any]:
-    """Count qualified outcomes in the half-open rolling 7-day window."""
+    """Count qualified outcomes in the half-open rolling 7-day window without writes."""
     if as_of is None:
         end = datetime.now(UTC).replace(microsecond=0)
     elif isinstance(as_of, datetime):
@@ -825,21 +1094,33 @@ def build_engineering_delivery_shadow_observer(
         "threshold": 20,
         "human_gate": "not_ready",
     }
+    snapshots: dict[Path, _ShadowObserverInputSnapshot] = {}
+    workspace_identity: tuple[int, int, int, int, int] | None = None
     try:
         root = Path(omo_dir)
-        primary_path = root / QUALIFIED_DECISION_OUTCOME_LOG
-        lock = fcntl_lock(primary_path.with_suffix(primary_path.suffix + ".lock"))
-        with lock:
-            records = _validate_primary_records(AppendOnlyLog(primary_path).read_all())
-            projection_records = _projection_records(root)
-            feedback_records = read_outcome_feedback(root)
+        if not query_only:
+            raise _ShadowObserverInputError("shadow observer only supports query-only reads")
+        snapshots, workspace_identity = _read_shadow_observer_inputs(root)
+        records = _validate_primary_records(
+            _read_shadow_observer_jsonl(snapshots[root / QUALIFIED_DECISION_OUTCOME_LOG])
+        )
+        projection_records = [
+            _validate_projection_receipt(record)
+            for record in _read_shadow_observer_jsonl(snapshots[root / MOS_PROJECTION_RECEIPT_LOG])
+        ]
+        feedback_records = [
+            validate_outcome_feedback(record)
+            for record in _read_shadow_observer_jsonl(snapshots[root / OUTCOME_FEEDBACK_LOG])
+        ]
+        workflow_events = _read_shadow_observer_jsonl(snapshots[root / WORKFLOW_MESH_LOG])
         latest_projection = {str(item["decision_outcome_id"]): item for item in projection_records}
         projected_receipts = [item for item in latest_projection.values() if item.get("status") == "projected"]
         if projected_receipts:
             mos_state_path = _workspace_root(root) / ".omo" / "state" / "agent-beliefs" / "index.yaml"
-            if not mos_state_path.is_file():
+            mos_snapshot = snapshots[mos_state_path]
+            if mos_snapshot.payload is None:
                 raise EngineeringDeliveryConsumerError("MOS projection state is unavailable")
-            mos_state = load_yaml_value(mos_state_path) or {}
+            mos_state = load_yaml_value_docs(mos_snapshot.payload.decode("utf-8")) or {}
             mos_outcomes = mos_state.get("decision_outcomes")
             if not isinstance(mos_outcomes, list):
                 raise EngineeringDeliveryConsumerError("MOS decision outcomes are unreadable")
@@ -858,7 +1139,7 @@ def build_engineering_delivery_shadow_observer(
                     raise EngineeringDeliveryConsumerError("MOS projection is missing structured value isolation")
         qualifying = []
         for record in records:
-            snapshot = WorkflowMeshStore(root).snapshot(str(record["workflow_run_id"]))
+            snapshot = project_workflow_run(workflow_events, str(record["workflow_run_id"]))
             evidence = snapshot.get("evidence", {}).get(f"external:engineering-delivery:{record['delivery_id']}")
             source_feedback = next(
                 (item for item in feedback_records if item.get("feedback_id") == record["source_feedback_id"]),
@@ -880,14 +1161,25 @@ def build_engineering_delivery_shadow_observer(
             projection = latest_projection.get(str(record["decision_outcome_id"]))
             if start <= reviewed_at < end and projection and projection.get("status") == "projected":
                 qualifying.append(record)
-    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        _verify_shadow_observer_inputs(
+            snapshots,
+            workspace_root=_workspace_root(root),
+            workspace_identity=workspace_identity,
+        )
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError, yaml.YAMLError) as exc:
         return {
             **result,
             "status": "unprovable",
             "verdict": "UNPROVABLE",
             "qualifying_decision_outcomes": None,
-            "error": "qualified_decision_outcomes_unreadable",
+            "error": (
+                "qualified_decision_outcomes_changed_during_read"
+                if isinstance(exc, _ShadowObserverInputChangedError)
+                else "qualified_decision_outcomes_unreadable"
+            ),
         }
+    finally:
+        _close_shadow_observer_inputs(snapshots)
     count = len(qualifying)
     if count >= 20:
         status = "ready_for_human_review"
