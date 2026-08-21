@@ -179,6 +179,23 @@ class BlueprintControlService:
         digest = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
         return relative, digest
 
+    def _instruction_binding(self) -> dict[str, str]:
+        instruction_ref = "repo://docs/operations/blueprint-agent-instruction-pack-v1.md"
+        relative = _safe_relative_path(instruction_ref.removeprefix("repo://"), "instruction path")
+        try:
+            path = (self.root / relative).resolve(strict=True)
+            path.relative_to(self.root)
+        except (OSError, ValueError) as exc:
+            raise BlueprintControlError("Instruction Pack is missing or outside the Workspace") from exc
+        if not path.is_file() or path.is_symlink():
+            raise BlueprintControlError("Instruction Pack is not a regular file")
+        return {
+            "instruction_ref": instruction_ref,
+            "instruction_version": "blueprint-agent-instruction-pack/v1",
+            "content_digest": "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest(),
+            "instruction_profile": "executor",
+        }
+
     def compile_packet(
         self,
         *,
@@ -286,6 +303,7 @@ class BlueprintControlService:
                 **accepted,
                 "decision_ref": f"decision://accepted/{bet_id}",
             },
+            "instruction_binding": self._instruction_binding(),
         }
         seed_hash = compute_packet_hash(canonicalize(packet))
         packet["packet_id"] = f"WP-BP-{seed_hash.removeprefix('sha256:')[:16]}"
@@ -342,6 +360,7 @@ class BlueprintControlService:
             "packet_id": str(packet["packet_id"]),
             "packet_hash": compiled.packet_hash,
             "task_ref": task_ref,
+            "instruction_binding": dict(packet["instruction_binding"]),
         }
         workflow_run_id = f"blueprint-{str(packet['packet_id']).lower()}"
         admission = admit_workflow(
@@ -376,6 +395,7 @@ class BlueprintControlService:
             "packet_id": identity["packet_id"],
             "packet_hash": identity["packet_hash"],
             "bet_id": identity["bet_id"],
+            "instruction_binding": identity["instruction_binding"],
             **worker_dispatch,
         }
 
@@ -519,7 +539,7 @@ class BlueprintControlService:
         packet: Mapping[str, Any],
         compiled: CompiledBlueprintPacket,
         dispatch_result: Mapping[str, Any],
-    ) -> tuple[dict[str, str], dict[str, Any]]:
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         if dispatch_result.get("state") != "transport_accepted":
             raise BlueprintControlError("dispatch is not transport accepted")
         if (
@@ -541,6 +561,7 @@ class BlueprintControlService:
             "packet_hash": compiled.packet_hash,
             "bet_id": str(packet["bet_id"]),
             "omo_dispatch_id": dispatch_id,
+            "instruction_binding": dict(packet["instruction_binding"]),
         }
         prompt_binding = packet.get("spec_binding")
         if (
@@ -550,6 +571,26 @@ class BlueprintControlService:
         ):
             raise BlueprintControlError("packet prompt binding is invalid")
         return binding, dict(prompt_binding)
+
+    def _require_live_worker_ack(self, binding: Mapping[str, Any], *, now: str) -> None:
+        snapshot = WorkflowMeshStore(self.root / self.omo_dir).snapshot(binding["workflow_run_id"])
+        worker = snapshot.get("worker")
+        if (
+            not isinstance(worker, Mapping)
+            or worker.get("state") not in {"acknowledged", "active"}
+            or worker.get("dispatch_id") != binding["omo_dispatch_id"]
+            or worker.get("packet_id") != binding["packet_id"]
+            or worker.get("packet_hash") != binding["packet_hash"]
+            or worker.get("instruction_binding") != binding["instruction_binding"]
+            or worker.get("ack_decision") != "proceed"
+        ):
+            raise BlueprintControlError("matching worker ACK with proceed decision is required")
+        try:
+            lease_expires_at = _utc(str(worker.get("lease_expires_at") or ""))
+        except ValueError as exc:
+            raise BlueprintControlError("matching worker ACK lease is invalid") from exc
+        if _utc(now) >= lease_expires_at:
+            raise BlueprintControlError("matching worker ACK lease is expired")
 
     def _require_live_admission(self, binding: Mapping[str, str], *, now: str) -> None:
         snapshot = WorkflowMeshStore(self.root / self.omo_dir).snapshot(binding["workflow_run_id"])
@@ -663,13 +704,14 @@ class BlueprintControlService:
         return trace_id
 
     @staticmethod
-    def _supervisor_binding(binding: Mapping[str, str], prompt_binding: Mapping[str, Any]) -> dict[str, str]:
+    def _supervisor_binding(binding: Mapping[str, Any], prompt_binding: Mapping[str, Any]) -> dict[str, Any]:
         return {
             "workflow_run_id": binding["workflow_run_id"],
             "omo_task_id": binding["omo_task_id"],
             "packet_id": binding["packet_id"],
             "packet_hash": binding["packet_hash"],
             "omo_dispatch_id": binding["omo_dispatch_id"],
+            "instruction_binding": dict(binding["instruction_binding"]),
             "prompt_ref": _safe_relative_path(prompt_binding["prompt_ref"], "prompt reference"),
             "prompt_digest": str(prompt_binding["prompt_digest"]),
         }
@@ -720,6 +762,13 @@ class BlueprintControlService:
             str(values["packet_id"]),
             "--packet-hash",
             str(values["packet_hash"]),
+            "--instruction-binding-json",
+            json.dumps(
+                values["instruction_binding"],
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
             "--omo-dispatch-id",
             str(values["omo_dispatch_id"]),
             "--workspace-root",
@@ -1091,6 +1140,8 @@ class BlueprintControlService:
         """Freeze Git state, then start one Orca-owned interactive Codex worker."""
         packet = self._validate_compiled_packet(compiled)
         binding, spec_binding = self._execution_binding(packet, compiled, dispatch_result)
+        observed_at = _stamp(now)
+        self._require_live_worker_ack(binding, now=observed_at)
         prompt_ref, prompt_digest = self._dispatch_prompt_binding(dispatch_result)
         prompt_binding = {"prompt_ref": prompt_ref, "prompt_digest": prompt_digest}
         execution_path = self._execution_projection_path(dispatch_result)
@@ -1109,7 +1160,6 @@ class BlueprintControlService:
                 raise BlueprintControlError("clone agent identity mismatch")
             return execution
 
-        observed_at = _stamp(now)
         self._require_live_admission(binding, now=observed_at)
 
         allowed = _required_string_list(packet["scope"], "write_surfaces")
@@ -1337,6 +1387,7 @@ class BlueprintControlService:
         """Collect a settled Orca worker, then independently measure its Git delta."""
         packet = self._validate_compiled_packet(compiled)
         binding, _spec_binding = self._execution_binding(packet, compiled, dispatch_result)
+        self._require_live_worker_ack(binding, now=_stamp(now))
         prompt_ref, prompt_digest = self._dispatch_prompt_binding(dispatch_result)
         prompt_binding = {"prompt_ref": prompt_ref, "prompt_digest": prompt_digest}
         candidate_path = self._candidate_projection_path(dispatch_result)
@@ -1598,6 +1649,7 @@ class BlueprintControlService:
         manifest = {
             "packet_id": packet["packet_id"],
             "packet_hash": compiled.packet_hash,
+            "instruction_binding": dict(packet["instruction_binding"]),
             "assignment_id": assignment_id,
             "agent_id": str(execution["worker_id"]),
             "status": "candidate",
@@ -1625,6 +1677,7 @@ class BlueprintControlService:
             "bet_id": packet["bet_id"],
             "packet_id": packet["packet_id"],
             "packet_hash": compiled.packet_hash,
+            "instruction_binding": dict(packet["instruction_binding"]),
             "assignment_id": assignment_id,
             "dispatch_id": dispatch_id,
             "worker_id": str(execution["worker_id"]),
@@ -1714,6 +1767,7 @@ class BlueprintControlService:
             raise
         projection = {
             "state": "candidate_collected",
+            "instruction_binding": dict(packet["instruction_binding"]),
             "manifest": manifest,
             "transport_receipt": transport_receipt,
             "supervisor_receipt_digest": compute_packet_hash(canonicalize(receipt)),
@@ -1788,6 +1842,7 @@ class BlueprintControlService:
         """Execute one supervised worker and compile independently measured evidence."""
         packet = self._validate_compiled_packet(compiled)
         execution_binding, _spec_binding = self._execution_binding(packet, compiled, dispatch_result)
+        self._require_live_worker_ack(execution_binding, now=_stamp(None))
         run_id = execution_binding["workflow_run_id"]
         admission_id = execution_binding["admission_id"]
         dispatch_id = execution_binding["omo_dispatch_id"]
@@ -2061,6 +2116,7 @@ class BlueprintControlService:
         manifest = {
             "packet_id": packet["packet_id"],
             "packet_hash": compiled.packet_hash,
+            "instruction_binding": dict(packet["instruction_binding"]),
             "assignment_id": assignment_id,
             "agent_id": worker_id,
             "status": "candidate",
@@ -2088,6 +2144,7 @@ class BlueprintControlService:
             "bet_id": packet["bet_id"],
             "packet_id": packet["packet_id"],
             "packet_hash": compiled.packet_hash,
+            "instruction_binding": dict(packet["instruction_binding"]),
             "assignment_id": assignment_id,
             "dispatch_id": dispatch_id,
             "worker_id": worker_id,
@@ -2117,6 +2174,7 @@ class BlueprintControlService:
         )
         projection = {
             "state": "candidate_collected",
+            "instruction_binding": dict(packet["instruction_binding"]),
             "manifest": manifest,
             "transport_receipt": transport_receipt,
             "adapter_receipt_digest": receipt["receipt_sha256"],
@@ -2241,6 +2299,7 @@ class BlueprintControlService:
         packet_id = dispatch_result.get("packet_id")
         packet_hash = dispatch_result.get("packet_hash")
         bet_id = dispatch_result.get("bet_id")
+        instruction_binding = dispatch_result.get("instruction_binding")
         assignment_id = manifest.get("assignment_id")
         patch_ref = collected.get("patch_ref")
         artifact_refs = manifest.get("artifact_refs")
@@ -2265,12 +2324,15 @@ class BlueprintControlService:
             "packet_hash": packet_hash,
             "bet_id": bet_id,
             "assignment_id": assignment_id,
+            "instruction_binding": instruction_binding,
         }
         if any(receipt.get(key) != value for key, value in expected_receipt.items()):
             return False
         if (
             manifest.get("packet_id") != packet_id
             or manifest.get("packet_hash") != packet_hash
+            or manifest.get("instruction_binding") != instruction_binding
+            or collected.get("instruction_binding") != instruction_binding
             or not isinstance(assignment_id, str)
             or not assignment_id
         ):

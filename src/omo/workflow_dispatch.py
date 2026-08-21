@@ -127,13 +127,16 @@ def _validated_request_identity(
     task_id: str,
     task_file: Path,
     root: Path,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     if request_identity is None:
         return {}
-    required = {"bet_id", "packet_id", "packet_hash", "task_ref"}
+    required = {"bet_id", "packet_id", "packet_hash", "task_ref", "instruction_binding"}
     if set(request_identity) != required:
-        raise WorkflowDispatchError("request identity must contain exactly four fields")
-    identity = {key: str(request_identity.get(key) or "").strip() for key in required}
+        raise WorkflowDispatchError("request identity must contain the complete delivery binding")
+    scalar_fields = required - {"instruction_binding"}
+    identity: dict[str, Any] = {
+        key: str(request_identity.get(key) or "").strip() for key in scalar_fields
+    }
     if not all(identity.values()):
         raise WorkflowDispatchError("request identity fields must be non-empty")
     if not identity["packet_id"].startswith("WP-"):
@@ -143,6 +146,25 @@ def _validated_request_identity(
     task_ref = str(task_file.relative_to(root))
     if identity["task_ref"] != task_ref:
         raise WorkflowDispatchError("request identity task_ref mismatch")
+    instruction = request_identity.get("instruction_binding")
+    instruction_fields = {
+        "instruction_ref",
+        "instruction_version",
+        "content_digest",
+        "instruction_profile",
+    }
+    if not isinstance(instruction, Mapping) or set(instruction) != instruction_fields:
+        raise WorkflowDispatchError("request identity instruction_binding is incomplete")
+    instruction_binding = {
+        key: str(instruction.get(key) or "").strip() for key in instruction_fields
+    }
+    if not all(instruction_binding.values()):
+        raise WorkflowDispatchError("request identity instruction_binding fields must be non-empty")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", instruction_binding["content_digest"]):
+        raise WorkflowDispatchError("request identity instruction_binding digest is invalid")
+    if instruction_binding["instruction_profile"] != "executor":
+        raise WorkflowDispatchError("request identity instruction profile is invalid")
+    identity["instruction_binding"] = instruction_binding
     return identity
 
 
@@ -229,6 +251,7 @@ def _build_admission_grant(
     requested_budget: float,
     ttl_seconds: int,
     now: str | None,
+    request_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     issued_at = now or datetime.now(UTC).replace(microsecond=0).isoformat()
     if ttl_seconds <= 0:
@@ -253,6 +276,7 @@ def _build_admission_grant(
         "policy_digest": hashlib.sha256(_canonical(policy)).hexdigest(),
         "issued_at": issued_at,
         "expires_at": expires_at,
+        **({"request_identity": dict(request_identity)} if request_identity else {}),
     }
     grant["proof"] = _proof(grant)
     return grant
@@ -458,6 +482,12 @@ def admit_requested_workflow(
         requested_budget=requested_budget,
         ttl_seconds=ttl_seconds,
         now=now,
+        request_identity={
+            key: event["payload"][key]
+            for key in ("bet_id", "packet_id", "packet_hash", "task_ref", "instruction_binding")
+            if key in event["payload"]
+        }
+        or None,
     )
     admitted = store.append(
         new_workflow_event(
@@ -572,6 +602,7 @@ def admit_workflow(
         "policy_digest": hashlib.sha256(_canonical(policy)).hexdigest(),
         "issued_at": issued_at,
         "expires_at": expires_at,
+        **({"request_identity": identity} if identity else {}),
     }
     grant["proof"] = _proof(grant)
 
@@ -602,7 +633,7 @@ def admit_workflow(
             trace_id=trace,
             producer="omo.workflow_dispatch",
             idempotency_key=f"{run_id}:admitted",
-            payload={"admission": grant, **grant, "task_id": task_id},
+            payload={"admission": grant, **grant, "task_id": task_id, **identity},
         )
     )
     return {

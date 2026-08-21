@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+import json
+import shlex
 
 import pytest
 import yaml
@@ -75,6 +77,21 @@ def _health() -> dict:
     }
 
 
+def _request_identity() -> dict:
+    return {
+        "bet_id": "BET-1",
+        "packet_id": "WP-BP-0123456789abcdef",
+        "packet_hash": "sha256:" + "a" * 64,
+        "task_ref": ".omo/tasks/active/TASK-MESH-1.yaml",
+        "instruction_binding": {
+            "instruction_ref": "repo://docs/operations/blueprint-agent-instruction-pack-v1.md",
+            "instruction_version": "blueprint-agent-instruction-pack/v1",
+            "content_digest": "sha256:" + "b" * 64,
+            "instruction_profile": "executor",
+        },
+    }
+
+
 def test_admit_workflow_records_request_and_grant(tmp_path: Path) -> None:
     _task(tmp_path)
     packet = admit_workflow(
@@ -99,12 +116,7 @@ def test_admit_workflow_merges_validated_blueprint_identity_into_request(
     tmp_path: Path,
 ) -> None:
     _task(tmp_path)
-    identity = {
-        "bet_id": "BET-1",
-        "packet_id": "WP-BP-0123456789abcdef",
-        "packet_hash": "sha256:" + "a" * 64,
-        "task_ref": ".omo/tasks/active/TASK-MESH-1.yaml",
-    }
+    identity = _request_identity()
 
     admit_workflow(
         tmp_path,
@@ -137,6 +149,12 @@ def test_admit_workflow_rejects_invalid_blueprint_identity_before_mesh_write(
                 "packet_id": "WP-1",
                 "packet_hash": "not-a-hash",
                 "task_ref": ".omo/tasks/active/TASK-MESH-1.yaml",
+                "instruction_binding": {
+                    "instruction_ref": "repo://docs/operations/blueprint-agent-instruction-pack-v1.md",
+                    "instruction_version": "blueprint-agent-instruction-pack/v1",
+                    "content_digest": "sha256:" + "b" * 64,
+                    "instruction_profile": "executor",
+                },
             },
         )
     assert WorkflowMeshStore(tmp_path / ".omo").events() == []
@@ -259,12 +277,59 @@ def test_dispatch_bridge_records_step_dispatch_worker_context(tmp_path: Path) ->
         capability_health=_health(),
         workflow_run_id="run-dispatch-bridge",
         now="2026-08-01T10:00:00+00:00",
+        request_identity=_request_identity(),
     )
 
     snapshot = WorkflowMeshStore(tmp_path / ".omo").snapshot("run-dispatch-bridge")
     assert snapshot["state"] == "dispatched"
     assert snapshot["worker"]["dispatch_id"] == packet["worker_dispatch"]["dispatch_id"]
     assert snapshot["worker"]["worker_id"] == "worker-a"
+
+
+def test_bound_dispatch_persists_and_launches_exact_delivery_argv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _task(tmp_path)
+    registry_path = tmp_path / ".omo" / "_truth" / "registry" / "workers.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    registry["workers"][0]["transports"]["cli_prompt"]["command"] = (
+        'worker-a "{prompt}" --run-id "{run_id}" --packet-id "{packet_id}" '
+        '--packet-hash "{packet_hash}" --instruction-binding-json "{instruction_binding_json}"'
+    )
+    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+    launched: list[list[str]] = []
+
+    def run(argv, **_kwargs):
+        launched.append(argv)
+        return type("Result", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+
+    monkeypatch.setattr("omo.omo_worker_dispatch.subprocess.run", run)
+    result = dispatch_admitted_workflow(
+        tmp_path,
+        task_id="TASK-MESH-1",
+        worker_id="worker-a",
+        allowed_write_paths=["docs/"],
+        backend="runtime",
+        required_capabilities=["workflow.execute", "runtime"],
+        capability_health=_health(),
+        workflow_run_id="run-bound-launch",
+        launch=True,
+        request_identity=_request_identity(),
+    )
+
+    dispatch = yaml.safe_load(
+        (tmp_path / result["worker_dispatch"]["dispatch_path"]).read_text(encoding="utf-8")
+    )
+    persisted = shlex.split(dispatch["execution"]["launch_command"])
+    assert len(launched) == 1
+    assert launched[0][0] == persisted[0]
+    assert launched[0][2:] == persisted[2:]
+    assert launched[0][1].startswith("# Worker Prompt Contract")
+    assert persisted[persisted.index("--run-id") + 1] == "run-bound-launch"
+    assert persisted[persisted.index("--packet-id") + 1] == _request_identity()["packet_id"]
+    assert json.loads(persisted[persisted.index("--instruction-binding-json") + 1]) == _request_identity()[
+        "instruction_binding"
+    ]
 
 
 def test_admit_workflow_requires_granted_approval(tmp_path: Path) -> None:
@@ -300,34 +365,25 @@ def test_admit_workflow_rejects_budget_overrun(tmp_path: Path) -> None:
         )
 
 
-def test_legacy_dispatch_without_packet_emits_mesh_events(tmp_path: Path) -> None:
-    """Phase 2: dispatch_task without workflow_packet should emit Mesh events."""
+def test_legacy_dispatch_without_packet_is_observer_only(tmp_path: Path) -> None:
     _task(tmp_path)
     from omo.omo_worker_dispatch import dispatch_task
     from omo.workflow_mesh import WorkflowMeshStore
 
-    result = dispatch_task(
-        tmp_path,
-        task_id="TASK-MESH-1",
-        worker_id="worker-a",
-        allowed_write_paths=["docs/"],
-        launch=False,
-        transport="cli_prompt",
-        now="2026-08-02T10:00:00+00:00",
-    )
+    with pytest.raises(ValueError, match="observer-only"):
+        dispatch_task(
+            tmp_path,
+            task_id="TASK-MESH-1",
+            worker_id="worker-a",
+            allowed_write_paths=["docs/"],
+            launch=False,
+            transport="cli_prompt",
+            now="2026-08-02T10:00:00+00:00",
+        )
 
     store = WorkflowMeshStore(tmp_path / ".omo")
-    events = store.events()
-    event_types = [e["event_type"] for e in events]
-
-    assert "WorkflowRequested" in event_types
-    assert "WorkflowAdmitted" in event_types
-    assert "StepDispatched" in event_types
-
-    snapshot = store.snapshot(f"dispatch-{result['dispatch_id']}")
-    assert snapshot["state"] == "dispatched"
-    assert snapshot["worker"]["worker_id"] == "worker-a"
-    assert snapshot["worker"]["dispatch_id"] == result["dispatch_id"]
+    assert store.events() == []
+    assert not (tmp_path / ".omo" / "workers" / "runs").exists()
 
 
 def test_dispatch_with_packet_emits_step_dispatched(tmp_path: Path) -> None:
@@ -344,6 +400,7 @@ def test_dispatch_with_packet_emits_step_dispatched(tmp_path: Path) -> None:
         capability_health=_health(),
         workflow_run_id="run-packet-test",
         now="2026-08-02T10:00:00+00:00",
+        request_identity=_request_identity(),
     )
 
     dispatch_task(
@@ -384,6 +441,7 @@ def test_dispatch_admitted_workflow_no_double_step_dispatched(tmp_path: Path) ->
         capability_health=_health(),
         workflow_run_id="run-no-double",
         now="2026-08-02T10:00:00+00:00",
+        request_identity=_request_identity(),
     )
 
     store = WorkflowMeshStore(tmp_path / ".omo")

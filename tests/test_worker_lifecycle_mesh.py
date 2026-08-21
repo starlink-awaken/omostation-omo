@@ -58,6 +58,14 @@ def _context(tmp_path, run_id: str = "run-worker") -> dict[str, str]:
         worker_id="worker-a",
         step_run_id=step_run_id,
         admission_id=grant["admission_id"],
+        packet_id="WP-BP-0123456789abcdef",
+        packet_hash="sha256:" + "a" * 64,
+        instruction_binding={
+            "instruction_ref": "repo://docs/operations/blueprint-agent-instruction-pack-v1.md",
+            "instruction_version": "blueprint-agent-instruction-pack/v1",
+            "content_digest": "sha256:" + "b" * 64,
+            "instruction_profile": "executor",
+        },
     )
     return {
         "workflow_run_id": run_id,
@@ -69,10 +77,24 @@ def _context(tmp_path, run_id: str = "run-worker") -> dict[str, str]:
     }
 
 
+def _binding() -> dict:
+    return {
+        "packet_id": "WP-BP-0123456789abcdef",
+        "packet_hash": "sha256:" + "a" * 64,
+        "instruction_binding": {
+            "instruction_ref": "repo://docs/operations/blueprint-agent-instruction-pack-v1.md",
+            "instruction_version": "blueprint-agent-instruction-pack/v1",
+            "content_digest": "sha256:" + "b" * 64,
+            "instruction_profile": "executor",
+        },
+        "ack_decision": "proceed",
+    }
+
+
 def test_worker_lifecycle_is_durable_and_idempotent(tmp_path):
     context = _context(tmp_path)
-    ack = acknowledge_worker(tmp_path, **context, lease_seconds=60, now="2026-08-02T00:00:00Z")
-    assert acknowledge_worker(tmp_path, **context, lease_seconds=60, now="2026-08-02T00:00:00Z") == ack
+    ack = acknowledge_worker(tmp_path, **context, **_binding(), lease_seconds=60, now="2026-08-02T00:00:00Z")
+    assert acknowledge_worker(tmp_path, **context, **_binding(), lease_seconds=60, now="2026-08-02T00:00:00Z") == ack
 
     renewed = renew_worker_lease(
         tmp_path,
@@ -86,12 +108,15 @@ def test_worker_lifecycle_is_durable_and_idempotent(tmp_path):
     assert snapshot["state"] == "running"
     assert snapshot["worker"]["state"] == "active"
     assert snapshot["worker"]["heartbeat_id"] == "hb-1"
+    assert snapshot["worker"]["ack_decision"] == "proceed"
+    assert snapshot["worker"]["packet_hash"] == _binding()["packet_hash"]
+    assert snapshot["worker"]["instruction_binding"] == _binding()["instruction_binding"]
     assert len(snapshot["worker_events"]) == 2
 
 
 def test_worker_lease_expires_only_after_deadline_and_can_be_reclaimed(tmp_path):
     context = _context(tmp_path, "run-expiry")
-    acknowledge_worker(tmp_path, **context, lease_seconds=60, now="2026-08-02T00:00:00Z")
+    acknowledge_worker(tmp_path, **context, **_binding(), lease_seconds=60, now="2026-08-02T00:00:00Z")
     with pytest.raises(WorkerLifecycleError, match="not expired"):
         expire_worker_lease(tmp_path, **context, now="2026-08-02T00:00:30Z")
 
@@ -131,7 +156,7 @@ def test_worker_heartbeat_requires_ack_and_owner_context(tmp_path):
     with pytest.raises(WorkerLifecycleError, match="ACK"):
         renew_worker_lease(tmp_path, **context)  # type: ignore[reportArgumentType]
 
-    acknowledge_worker(tmp_path, **context, lease_seconds=60, now="2026-08-02T00:00:00Z")
+    acknowledge_worker(tmp_path, **context, **_binding(), lease_seconds=60, now="2026-08-02T00:00:00Z")
     with pytest.raises(WorkerLifecycleError, match="owner"):
         renew_worker_lease(
             tmp_path,
@@ -143,7 +168,7 @@ def test_worker_heartbeat_requires_ack_and_owner_context(tmp_path):
 
 def test_worker_reclaim_requires_expiry(tmp_path):
     context = _context(tmp_path, "run-reclaim-before-expiry")
-    acknowledge_worker(tmp_path, **context, lease_seconds=60, now="2026-08-02T00:00:00Z")
+    acknowledge_worker(tmp_path, **context, **_binding(), lease_seconds=60, now="2026-08-02T00:00:00Z")
     with pytest.raises(WorkerLifecycleError, match="expired"):
         reclaim_worker(
             tmp_path,
@@ -156,7 +181,7 @@ def test_worker_reclaim_requires_expiry(tmp_path):
 
 def test_mesh_watchdog_dry_run_is_read_only_and_apply_expires_once(tmp_path):
     context = _context(tmp_path, "run-watchdog")
-    acknowledge_worker(tmp_path, **context, lease_seconds=60, now="2026-08-02T00:00:00Z")
+    acknowledge_worker(tmp_path, **context, **_binding(), lease_seconds=60, now="2026-08-02T00:00:00Z")
 
     dry_run = scan_worker_leases(tmp_path, now="2026-08-02T00:01:00Z", apply=False)
 
@@ -186,7 +211,7 @@ def test_mesh_watchdog_dry_run_is_read_only_and_apply_expires_once(tmp_path):
 
 def test_mesh_watchdog_does_not_expire_a_live_lease(tmp_path):
     context = _context(tmp_path, "run-live")
-    acknowledge_worker(tmp_path, **context, lease_seconds=60, now="2026-08-02T00:00:00Z")
+    acknowledge_worker(tmp_path, **context, **_binding(), lease_seconds=60, now="2026-08-02T00:00:00Z")
 
     result = scan_worker_leases(tmp_path, now="2026-08-02T00:00:59Z", apply=True)
 
@@ -201,3 +226,44 @@ def test_mesh_watchdog_cli_uses_public_worker_command(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["schema"] == "workflow-mesh-watchdog/v1"
     assert payload["mode"] == "dry_run"
+
+
+def test_mesh_ack_cli_records_worker_originated_proceed_binding(tmp_path, capsys):
+    context = _context(tmp_path, "run-cli-ack")
+    binding = _binding()
+
+    assert (
+        cli_main(
+            [
+                "worker",
+                "mesh-ack",
+                context["workflow_run_id"],
+                "--trace-id",
+                context["trace_id"],
+                "--dispatch-id",
+                context["dispatch_id"],
+                "--worker",
+                context["worker_id"],
+                "--step-run-id",
+                context["step_run_id"],
+                "--admission-id",
+                context["admission_id"],
+                "--packet-id",
+                binding["packet_id"],
+                "--packet-hash",
+                binding["packet_hash"],
+                "--instruction-binding-json",
+                json.dumps(binding["instruction_binding"]),
+                "--ack-decision",
+                "proceed",
+                "--omo-dir",
+                str(tmp_path),
+            ]
+        )
+        == 0
+    )
+
+    assert "event_type=WorkerAcknowledged" in capsys.readouterr().out
+    ack = WorkflowMeshStore(tmp_path).snapshot(context["workflow_run_id"])["worker"]
+    assert ack["ack_decision"] == "proceed"
+    assert ack["instruction_binding"] == binding["instruction_binding"]
