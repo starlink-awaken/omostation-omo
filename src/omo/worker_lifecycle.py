@@ -7,15 +7,28 @@ as admission, step progress, recovery, and evidence.
 
 from __future__ import annotations
 
+import re
+import secrets
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from .workflow_mesh import WorkflowMeshEventError, WorkflowMeshStore, new_workflow_event
+from .workflow_mesh import (
+    WorkflowMeshEventError,
+    WorkflowMeshStore,
+    new_workflow_event,
+    worker_ack_origin_digest,
+)
 
 
 class WorkerLifecycleError(ValueError):
     """A worker lifecycle transition failed its mesh contract."""
+
+
+def new_worker_ack_origin_proof() -> str:
+    """Return a high-entropy capability delivered only to the worker transport."""
+    return secrets.token_urlsafe(32)
 
 
 def _utc(value: str | None = None) -> datetime:
@@ -106,17 +119,31 @@ def record_step_dispatch(
     worker_id: str,
     step_run_id: str,
     admission_id: str,
+    packet_id: str | None = None,
+    packet_hash: str | None = None,
+    instruction_binding: Mapping[str, Any] | None = None,
+    ack_origin_proof: str | None = None,
     step_name: str = "execute",
 ) -> dict[str, Any]:
     """Persist the coordinator-to-worker dispatch edge exactly once."""
     store = _store(omo_dir)
+    nonce = secrets.token_hex(16) if ack_origin_proof else None
     payload = {
         "dispatch_id": dispatch_id,
         "worker_id": worker_id,
         "step_run_id": step_run_id,
         "step_name": step_name,
         "admission_id": admission_id,
+        "packet_id": packet_id,
+        "packet_hash": packet_hash,
+        "instruction_binding": dict(instruction_binding) if instruction_binding is not None else None,
+        "ack_origin_nonce": nonce,
     }
+    if ack_origin_proof:
+        payload["ack_origin_commitment"] = worker_ack_origin_digest(
+            ack_origin_proof,
+            {**payload, "workflow_run_id": workflow_run_id},
+        )
     return _append(
         store,
         "StepDispatched",
@@ -137,18 +164,57 @@ def acknowledge_worker(
     worker_id: str,
     step_run_id: str,
     admission_id: str,
+    packet_id: str | None = None,
+    packet_hash: str | None = None,
+    instruction_binding: Mapping[str, Any] | None = None,
+    ack_decision: str = "stop",
+    origin_proof: str | None = None,
     lease_seconds: int = 1200,
     now: str | None = None,
 ) -> dict[str, Any]:
     """Record a worker ACK and establish its first durable lease."""
     if lease_seconds <= 0:
         raise WorkerLifecycleError("lease_seconds must be positive")
+    legacy_observer_ack = packet_id is None and packet_hash is None and instruction_binding is None
+    if not legacy_observer_ack and (
+        not isinstance(packet_id, str)
+        or not packet_id.startswith("WP-")
+        or not isinstance(packet_hash, str)
+        or not re.fullmatch(r"sha256:[0-9a-f]{64}", packet_hash)
+    ):
+        raise WorkerLifecycleError("worker ACK packet binding is invalid")
+    instruction_fields = {
+        "instruction_ref",
+        "instruction_version",
+        "content_digest",
+        "instruction_profile",
+    }
+    if not legacy_observer_ack and (
+        not isinstance(instruction_binding, Mapping) or set(instruction_binding) != instruction_fields
+    ):
+        raise WorkerLifecycleError("worker ACK instruction binding is invalid")
+    instruction = (
+        {key: str(instruction_binding.get(key) or "").strip() for key in instruction_fields}
+        if isinstance(instruction_binding, Mapping)
+        else None
+    )
+    if not legacy_observer_ack and (
+        instruction is None
+        or not all(instruction.values())
+        or not re.fullmatch(r"sha256:[0-9a-f]{64}", instruction["content_digest"])
+        or instruction["instruction_profile"] != "executor"
+    ):
+        raise WorkerLifecycleError("worker ACK instruction binding is invalid")
+    if legacy_observer_ack and ack_decision != "stop":
+        raise WorkerLifecycleError("unbound worker ACK must stop")
+    if ack_decision not in {"proceed", "stop"}:
+        raise WorkerLifecycleError("worker ACK decision must be proceed or stop")
     store = _store(omo_dir)
     event_key = f"{workflow_run_id}:worker-ack:{dispatch_id}"
     prior = _existing(store, event_key)
     if prior is not None:
-        return prior
-    _validate_context(
+        raise WorkerLifecycleError("worker ACK origin proof already consumed")
+    snapshot = _validate_context(
         store,
         workflow_run_id=workflow_run_id,
         dispatch_id=dispatch_id,
@@ -156,6 +222,20 @@ def acknowledge_worker(
         step_run_id=step_run_id,
         admission_id=admission_id,
     )
+    worker = snapshot.get("worker")
+    if not isinstance(worker, Mapping):
+        raise WorkerLifecycleError("worker ACK requires dispatch context")
+    if not legacy_observer_ack and (
+        worker.get("packet_id") != packet_id
+        or worker.get("packet_hash") != packet_hash
+        or worker.get("instruction_binding") != instruction
+    ):
+        raise WorkerLifecycleError("worker ACK delivery binding mismatch")
+    if not legacy_observer_ack and not origin_proof:
+        raise WorkerLifecycleError("worker ACK origin proof is required")
+    origin_commitment = str(worker.get("ack_origin_commitment") or "")
+    if not legacy_observer_ack and not origin_commitment:
+        raise WorkerLifecycleError("worker ACK dispatch has no origin proof commitment")
     acknowledged_at = _stamp(now)
     lease_expires_at = _stamp((_utc(now) + timedelta(seconds=lease_seconds)).isoformat())
     payload = {
@@ -165,9 +245,13 @@ def acknowledge_worker(
         "admission_id": admission_id,
         "acknowledged_at": acknowledged_at,
         "lease_expires_at": lease_expires_at,
+        "packet_id": packet_id,
+        "packet_hash": packet_hash,
+        "instruction_binding": instruction,
+        "ack_decision": ack_decision,
+        "ack_origin_proof_digest": origin_commitment or None,
     }
-    return _append(
-        store,
+    event = new_workflow_event(
         "WorkerAcknowledged",
         workflow_run_id,
         trace_id=trace_id,
@@ -175,6 +259,12 @@ def acknowledge_worker(
         idempotency_key=event_key,
         payload=payload,
     )
+    try:
+        if legacy_observer_ack:
+            return store.append(event)
+        return store.append_worker_ack(event, origin_proof=origin_proof or "")
+    except WorkflowMeshEventError as exc:
+        raise WorkerLifecycleError(str(exc)) from exc
 
 
 def renew_worker_lease(

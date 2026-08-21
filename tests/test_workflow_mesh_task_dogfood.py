@@ -13,7 +13,6 @@ from omo.omo_ingress_task_lifecycle import (
 from omo.omo_ingress_task_promotion import (
     promote_task_to_active,
 )
-from omo.worker_lifecycle import acknowledge_worker
 from omo.workflow_dispatch import dispatch_admitted_workflow
 from omo.workflow_mesh import WorkflowMeshStore, new_workflow_event
 
@@ -56,7 +55,12 @@ def _worker_registry(root: Path) -> None:
                         "enabled": True,
                         "admission_state": "admitted",
                         "capabilities": ["workflow.execute", "runtime"],
-                        "transports": {"cli_prompt": {"command": "worker-dogfood"}},
+                        "transports": {
+                            "cli_prompt": {
+                                "command": "worker-dogfood",
+                                "ack_command": "python -m omo.cli worker mesh-ack",
+                            }
+                        },
                     }
                 ]
             },
@@ -92,6 +96,19 @@ def test_task_and_workflow_mesh_closeout_converge_with_scene_binding(
         "journey_id": "task-to-pr-closeout",
         "outcome_metric": "verified_delivery",
     }
+    instruction_binding = {
+        "instruction_ref": "repo://docs/operations/blueprint-agent-instruction-pack-v1.md",
+        "instruction_version": "blueprint-agent-instruction-pack/v1",
+        "content_digest": "sha256:" + "b" * 64,
+        "instruction_profile": "executor",
+    }
+    request_identity = {
+        "bet_id": "BET-DOGFOOD-1",
+        "packet_id": "WP-DOGFOOD-0123456789abcdef",
+        "packet_hash": "sha256:" + "a" * 64,
+        "task_ref": ".omo/tasks/active/TASK-DOGFOOD-1.yaml",
+        "instruction_binding": instruction_binding,
+    }
     packet = dispatch_admitted_workflow(
         tmp_path,
         task_id="TASK-DOGFOOD-1",
@@ -111,22 +128,12 @@ def test_task_and_workflow_mesh_closeout_converge_with_scene_binding(
         workflow_run_id="run-task-dogfood-1",
         scene_binding=scene_binding,
         now="2026-08-02T12:02:00+00:00",
+        request_identity=request_identity,
     )
 
     grant = packet["admission"]
     dispatch = packet["worker_dispatch"]
     step_run_id = grant["step_run_ids"][0]
-    acknowledge_worker(
-        omo_dir,
-        workflow_run_id=packet["workflow_run_id"],
-        trace_id=packet["trace_id"],
-        dispatch_id=dispatch["dispatch_id"],
-        worker_id="worker-dogfood",
-        step_run_id=step_run_id,
-        admission_id=grant["admission_id"],
-        now="2026-08-02T12:02:05Z",
-    )
-
     store = WorkflowMeshStore(omo_dir)
     store.append(
         new_workflow_event(

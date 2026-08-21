@@ -7,6 +7,7 @@ JSONL 保存原始事件，并从事件重建可审计的运行态。
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timezone
@@ -212,6 +213,32 @@ def _canonical_admission(value: dict[str, Any]) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+def worker_ack_origin_digest(origin_proof: str, payload: Mapping[str, Any]) -> str:
+    """Bind a high-entropy one-time worker secret to one exact dispatch."""
+    context = {
+        key: payload.get(key)
+        for key in (
+            "ack_origin_nonce",
+            "workflow_run_id",
+            "dispatch_id",
+            "worker_id",
+            "step_run_id",
+            "admission_id",
+            "packet_id",
+            "packet_hash",
+            "instruction_binding",
+        )
+    }
+    return (
+        "sha256:"
+        + hmac.new(
+            origin_proof.encode("utf-8"),
+            _canonical_admission(context),
+            hashlib.sha256,
+        ).hexdigest()
+    )
+
+
 def _validate_admission_payload(payload: dict[str, Any]) -> dict[str, Any]:
     admission = payload.get("admission") or payload
     if not isinstance(admission, dict):
@@ -400,7 +427,15 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
             if missing_worker_fields:
                 raise WorkflowMeshEventError(f"{event_type} missing worker fields: {missing_worker_fields}")
             event_specific_fields = {
-                "WorkerAcknowledged": {"acknowledged_at", "lease_expires_at"},
+                "WorkerAcknowledged": {
+                    "acknowledged_at",
+                    "lease_expires_at",
+                    "packet_id",
+                    "packet_hash",
+                    "instruction_binding",
+                    "ack_decision",
+                    "ack_origin_proof_digest",
+                },
                 "WorkerLeaseRenewed": {
                     "heartbeat_id",
                     "heartbeat_at",
@@ -433,6 +468,17 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
                 "acknowledged",
             }:
                 raise WorkflowMeshEventError("WorkerAcknowledged requires a dispatched worker")
+            if event_type == "WorkerAcknowledged":
+                if event["payload"].get("ack_decision") not in {"proceed", "stop"}:
+                    raise WorkflowMeshEventError("WorkerAcknowledged ack_decision must be proceed or stop")
+                dispatched_identity = {
+                    key: current_worker.get(key) for key in ("packet_id", "packet_hash", "instruction_binding")
+                }
+                acknowledged_identity = {
+                    key: event["payload"].get(key) for key in ("packet_id", "packet_hash", "instruction_binding")
+                }
+                if dispatched_identity != acknowledged_identity:
+                    raise WorkflowMeshEventError("WorkerAcknowledged delivery binding mismatch")
             if event_type == "WorkerLeaseRenewed" and worker_state not in {
                 "acknowledged",
                 "active",
@@ -541,6 +587,11 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
                 "worker_id": event["payload"].get("worker_id"),
                 "step_run_id": event["payload"].get("step_run_id"),
                 "admission_id": event["payload"].get("admission_id"),
+                "packet_id": event["payload"].get("packet_id"),
+                "packet_hash": event["payload"].get("packet_hash"),
+                "instruction_binding": event["payload"].get("instruction_binding"),
+                "ack_origin_nonce": event["payload"].get("ack_origin_nonce"),
+                "ack_origin_commitment": event["payload"].get("ack_origin_commitment"),
                 "state": "dispatched",
                 "dispatched_at": event["occurred_at"],
             }
@@ -554,6 +605,12 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
                         "state": "acknowledged",
                         "acknowledged_at": payload["acknowledged_at"],
                         "lease_expires_at": payload["lease_expires_at"],
+                        "packet_id": payload["packet_id"],
+                        "packet_hash": payload["packet_hash"],
+                        "instruction_binding": payload["instruction_binding"],
+                        "ack_decision": payload["ack_decision"],
+                        "ack_origin_proof_digest": payload["ack_origin_proof_digest"],
+                        "ack_origin_proof_consumed": True,
                     }
                 )
             elif event_type == "WorkerLeaseRenewed":
@@ -670,23 +727,58 @@ class WorkflowMeshStore:
 
     def append(self, event: dict[str, Any]) -> dict[str, Any]:
         validate_workflow_event(event)
+        if event["event_type"] == "WorkerAcknowledged" and (
+            event["payload"].get("ack_decision") != "stop" or event["payload"].get("packet_id") is not None
+        ):
+            raise WorkflowMeshEventError("WorkerAcknowledged requires authenticated worker append")
+        with self._lock:
+            return self._append_locked(event)
+
+    def _append_locked(self, event: dict[str, Any]) -> dict[str, Any]:
+        current = self._log.read_all()
+        for existing in current:
+            if (
+                existing.get("event_id") != event["event_id"]
+                and existing.get("idempotency_key") != event["idempotency_key"]
+            ):
+                continue
+            if existing == event:
+                return existing
+            raise WorkflowMeshEventError(
+                f"Conflicting duplicate Workflow Mesh event: {event['event_id']} / {event['idempotency_key']}"
+            )
+        run_id = event["workflow_run_id"]
+        candidate = [*current, event]
+        project_workflow_run(candidate, run_id)
+        return self._log.append(event, sort_keys=True)
+
+    def append_worker_ack(self, event: dict[str, Any], *, origin_proof: str) -> dict[str, Any]:
+        """Atomically authenticate and consume a dispatch-scoped worker capability."""
+        validate_workflow_event(event)
+        if event["event_type"] != "WorkerAcknowledged":
+            raise WorkflowMeshEventError("authenticated append only accepts WorkerAcknowledged")
+        if not origin_proof:
+            raise WorkflowMeshEventError("WorkerAcknowledged requires worker origin proof")
         with self._lock:
             current = self._log.read_all()
             for existing in current:
-                if (
-                    existing.get("event_id") != event["event_id"]
-                    and existing.get("idempotency_key") != event["idempotency_key"]
-                ):
-                    continue
-                if existing == event:
-                    return existing
-                raise WorkflowMeshEventError(
-                    f"Conflicting duplicate Workflow Mesh event: {event['event_id']} / {event['idempotency_key']}"
-                )
-            run_id = event["workflow_run_id"]
-            candidate = [*current, event]
-            project_workflow_run(candidate, run_id)
-            return self._log.append(event, sort_keys=True)
+                if existing.get("idempotency_key") == event["idempotency_key"]:
+                    raise WorkflowMeshEventError("worker ACK origin proof already consumed")
+            snapshot = project_workflow_run(current, event["workflow_run_id"])
+            worker = snapshot.get("worker")
+            if not isinstance(worker, Mapping):
+                raise WorkflowMeshEventError("WorkerAcknowledged requires prior StepDispatched worker context")
+            context = {
+                **worker,
+                "workflow_run_id": event["workflow_run_id"],
+            }
+            expected = worker_ack_origin_digest(origin_proof, context)
+            commitment = str(worker.get("ack_origin_commitment") or "")
+            if not hmac.compare_digest(expected, commitment):
+                raise WorkflowMeshEventError("worker ACK origin proof mismatch")
+            if event["payload"].get("ack_origin_proof_digest") != commitment:
+                raise WorkflowMeshEventError("worker ACK origin proof digest mismatch")
+            return self._append_locked(event)
 
     def snapshot(self, workflow_run_id: str) -> dict[str, Any]:
         return project_workflow_run(self.events(), workflow_run_id)

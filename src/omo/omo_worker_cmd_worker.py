@@ -282,6 +282,10 @@ def setup_worker_parser(subparsers: Any) -> None:
 
     mesh_ack_parser = worker_sub.add_parser("mesh-ack")
     _add_mesh_worker_context(mesh_ack_parser)
+    mesh_ack_parser.add_argument("--packet-id", required=True)
+    mesh_ack_parser.add_argument("--packet-hash", required=True)
+    mesh_ack_parser.add_argument("--instruction-binding-json", required=True)
+    mesh_ack_parser.add_argument("--ack-decision", required=True, choices=("proceed", "stop"))
     mesh_ack_parser.add_argument("--lease-seconds", type=int, default=_mesh_lease_seconds())
     mesh_ack_parser.add_argument("--now")
 
@@ -410,9 +414,20 @@ def execute_worker_command(args: argparse.Namespace) -> int:
         "admission_id": getattr(args, "admission_id", None),
     }
     if args.worker_command == "mesh-ack":
+        try:
+            instruction_binding = json.loads(args.instruction_binding_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError("--instruction-binding-json must be valid JSON") from exc
+        if not isinstance(instruction_binding, dict):
+            raise ValueError("--instruction-binding-json must be a JSON object")
         return _print_mesh_event(
             acknowledge_worker(
                 **mesh_context,
+                packet_id=args.packet_id,
+                packet_hash=args.packet_hash,
+                instruction_binding=instruction_binding,
+                ack_decision=args.ack_decision,
+                origin_proof=os.environ.get("OMO_WORKER_ACK_ORIGIN_PROOF"),
                 lease_seconds=args.lease_seconds,
                 now=args.now,
             )

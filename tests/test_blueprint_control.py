@@ -24,6 +24,9 @@ CLONE_AGENT_ID = "clone-agent-a"
 SPEC_PATH = "docs/specs/blueprint.md"
 SPEC_REF = f"repo://{SPEC_PATH}"
 SPEC_VERSION = "1.0.0"
+INSTRUCTION_PATH = "docs/operations/blueprint-agent-instruction-pack-v1.md"
+INSTRUCTION_REF = f"repo://{INSTRUCTION_PATH}"
+INSTRUCTION_VERSION = "blueprint-agent-instruction-pack/v1"
 
 
 def _workspace(tmp_path: Path) -> tuple[dict, dict]:
@@ -31,6 +34,9 @@ def _workspace(tmp_path: Path) -> tuple[dict, dict]:
     spec.parent.mkdir(parents=True)
     spec.write_text("# Accepted blueprint\n", encoding="utf-8")
     digest = "sha256:" + hashlib.sha256(spec.read_bytes()).hexdigest()
+    instruction = tmp_path / INSTRUCTION_PATH
+    instruction.parent.mkdir(parents=True, exist_ok=True)
+    instruction.write_text("# Blueprint Agent Instruction Pack v1\n", encoding="utf-8")
 
     bet = {
         "id": BET_ID,
@@ -107,8 +113,14 @@ def _dispatch_authority(
                         "admission_state": "admitted",
                         "allowed_operation_level": "L1",
                         "write_scope": {"mode": "bounded"},
-                        "transports": {"cli_prompt": {"command": "worker-a"}},
+                        "transports": {
+                            "cli_prompt": {
+                                "command": "worker-a",
+                                "ack_command": "python -m omo.cli worker mesh-ack",
+                            }
+                        },
                         "capabilities": worker_capabilities or ["workflow.execute", "python"],
+                        "lease_policy": {"lease_expired_after_seconds": 2592000},
                     }
                 ]
             },
@@ -227,7 +239,7 @@ def _dispatched_repo(tmp_path: Path, *, now: str | None = None):
     _workspace(tmp_path)
     _dispatch_authority(tmp_path)
     _commit_baseline(tmp_path)
-    service = BlueprintControlService(tmp_path)
+    service = _service(tmp_path)
     compiled = _compile(tmp_path)
     dispatched = service.dispatch_packet(
         compiled,
@@ -262,6 +274,7 @@ def _supervisor_start_receipt(
             "packet_id": compiled.packet["packet_id"],
             "packet_hash": compiled.packet_hash,
             "omo_dispatch_id": dispatched["dispatch_id"],
+            "instruction_binding": compiled.packet["instruction_binding"],
             "prompt_ref": prompt_ref,
             "prompt_digest": prompt_digest,
             **placement,
@@ -344,6 +357,36 @@ def test_compile_is_deterministic_and_contains_governed_contract(
         }
     ]
     assert first.packet["acceptance"]["verify_commands"] == ["/usr/bin/true"]
+    assert first.packet["instruction_binding"] == {
+        "instruction_ref": INSTRUCTION_REF,
+        "instruction_version": INSTRUCTION_VERSION,
+        "content_digest": "sha256:" + hashlib.sha256((tmp_path / INSTRUCTION_PATH).read_bytes()).hexdigest(),
+        "instruction_profile": "executor",
+    }
+
+
+def test_dispatch_rejects_transport_that_does_not_durably_ack(tmp_path: Path, monkeypatch) -> None:
+    _workspace(tmp_path)
+    _dispatch_authority(tmp_path)
+    _commit_baseline(tmp_path)
+    service = _service(tmp_path)
+    compiled = _compile(tmp_path)
+    monkeypatch.setattr(
+        "omo.omo_worker_dispatch.subprocess.run",
+        lambda *_args, **_kwargs: type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
+    )
+    with pytest.raises(RuntimeError, match="did not durably acknowledge"):
+        service.dispatch_packet(
+            compiled,
+            worker_id="worker-a",
+            capability_health=_health(),
+        )
+
+    assert [event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()] == [
+        "WorkflowRequested",
+        "WorkflowAdmitted",
+        "StepDispatched",
+    ]
 
 
 def test_compile_requires_exact_accepted_spec_digest(tmp_path: Path) -> None:
@@ -407,7 +450,7 @@ def test_dispatch_records_exact_mesh_order_and_transport_only_state(
 ) -> None:
     _workspace(tmp_path)
     _dispatch_authority(tmp_path)
-    service = BlueprintControlService(tmp_path)
+    service = _service(tmp_path)
 
     result = service.dispatch_packet(
         _compile(tmp_path),
@@ -421,6 +464,7 @@ def test_dispatch_records_exact_mesh_order_and_transport_only_state(
         "WorkflowRequested",
         "WorkflowAdmitted",
         "StepDispatched",
+        "WorkerAcknowledged",
     ]
     identity = events[0]["payload"]
     assert identity["bet_id"] == BET_ID
@@ -435,6 +479,7 @@ def test_dispatch_records_exact_mesh_order_and_transport_only_state(
         "packet_id": result["packet_id"],
         "packet_hash": result["packet_hash"],
         "bet_id": BET_ID,
+        "instruction_binding": result["instruction_binding"],
     }
     assert dispatch["control_state"] == {
         "controller_approval": "granted",
@@ -463,7 +508,7 @@ def test_dispatch_fails_closed_for_invalid_approval(tmp_path: Path, approval_mod
         (tmp_path / ".omo" / "workers" / "runs" / "approval.yaml").unlink()
 
     with pytest.raises(WorkflowDispatchError, match=message):
-        BlueprintControlService(tmp_path).dispatch_packet(
+        _service(tmp_path).dispatch_packet(
             _compile(tmp_path),
             worker_id="worker-a",
             capability_health=_health(),
@@ -478,7 +523,7 @@ def test_dispatch_rejects_worker_capability_mismatch(tmp_path: Path) -> None:
     _dispatch_authority(tmp_path, worker_capabilities=["workflow.execute"])
 
     with pytest.raises(ValueError, match="capability_mismatch"):
-        BlueprintControlService(tmp_path).dispatch_packet(
+        _service(tmp_path).dispatch_packet(
             _compile(tmp_path),
             worker_id="worker-a",
             capability_health=_health(),
@@ -502,7 +547,7 @@ def test_mesh_append_failure_propagates_without_transport_acceptance(
         return original_append(self, event)
 
     monkeypatch.setattr(WorkflowMeshStore, "append", fail_step_append)
-    service = BlueprintControlService(tmp_path)
+    service = _service(tmp_path)
     compiled = _compile(tmp_path)
     task_path = tmp_path / ".omo" / "tasks" / "active" / f"{TASK_ID}.yaml"
     task_before = yaml.safe_load(task_path.read_text(encoding="utf-8"))
@@ -529,7 +574,7 @@ def test_mesh_append_failure_propagates_without_transport_acceptance(
 def test_observe_does_not_promote_exit_zero_to_readiness(tmp_path: Path) -> None:
     _workspace(tmp_path)
     _dispatch_authority(tmp_path)
-    service = BlueprintControlService(tmp_path)
+    service = _service(tmp_path)
     result = service.dispatch_packet(
         _compile(tmp_path),
         worker_id="worker-a",
@@ -628,7 +673,12 @@ def test_supervised_start_rejects_expired_admission_before_supervisor(
         )
 
     event_types = [event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()]
-    assert event_types == ["WorkflowRequested", "WorkflowAdmitted", "StepDispatched"]
+    assert event_types == [
+        "WorkflowRequested",
+        "WorkflowAdmitted",
+        "StepDispatched",
+        "WorkerAcknowledged",
+    ]
     assert not service._execution_projection_path(dispatched).exists()
 
 
@@ -1153,6 +1203,7 @@ def test_supervised_collect_passes_frozen_clone_attestation_back_to_supervisor(
             "packet_id": compiled.packet["packet_id"],
             "packet_hash": compiled.packet_hash,
             "omo_dispatch_id": dispatched["dispatch_id"],
+            "instruction_binding": compiled.packet["instruction_binding"],
             "prompt_ref": dispatched["prompt_path"],
             "prompt_digest": started["prompt_digest"],
             "workspace_root": str(tmp_path.resolve()),
@@ -1248,6 +1299,9 @@ def test_supervised_collect_settled_worker_builds_independent_candidate(
 
     assert collected["state"] == "candidate_collected"
     assert collected["manifest"]["changed_paths"] == ["src/omo/blueprint_control.py"]
+    assert collected["instruction_binding"] == compiled.packet["instruction_binding"]
+    assert collected["manifest"]["instruction_binding"] == compiled.packet["instruction_binding"]
+    assert collected["transport_receipt"]["instruction_binding"] == compiled.packet["instruction_binding"]
     assert collected["transport_receipt"]["output_digest"] == "7" * 64
     assert collected["transport_receipt"]["orca_dispatch_id"] == "orca-dispatch-001"
     assert collected["acceptance_measurements"][0]["source"] == ("deterministic-command")
@@ -1632,6 +1686,7 @@ def test_execute_collect_and_independent_verify_use_real_git_delta(
         "WorkflowRequested",
         "WorkflowAdmitted",
         "StepDispatched",
+        "WorkerAcknowledged",
         "StepStarted",
         "WorkflowSucceeded",
         "EvidenceRecorded",
@@ -2011,6 +2066,12 @@ def test_default_supervisor_forwards_deterministic_start_idempotency_key(
         omo_task_id=TASK_ID,
         packet_id="packet-001",
         packet_hash="sha256:" + "a" * 64,
+        instruction_binding={
+            "instruction_ref": INSTRUCTION_REF,
+            "instruction_version": INSTRUCTION_VERSION,
+            "content_digest": "sha256:" + "c" * 64,
+            "instruction_profile": "executor",
+        },
         omo_dispatch_id="dispatch-001",
         prompt_ref="prompts/task.md",
         prompt_digest="sha256:" + "b" * 64,
@@ -2025,6 +2086,8 @@ def test_default_supervisor_forwards_deterministic_start_idempotency_key(
         "12000",
     ]
     assert observed[0][observed[0].index("--agent-id") + 1] == CLONE_AGENT_ID
+    instruction_json = observed[0][observed[0].index("--instruction-binding-json") + 1]
+    assert json.loads(instruction_json)["instruction_ref"] == INSTRUCTION_REF
 
 
 def test_default_supervisor_forwards_collect_clone_attestation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2048,6 +2111,12 @@ def test_default_supervisor_forwards_collect_clone_attestation(tmp_path: Path, m
         "omo_task_id": TASK_ID,
         "packet_id": "packet-001",
         "packet_hash": "sha256:" + "a" * 64,
+        "instruction_binding": {
+            "instruction_ref": INSTRUCTION_REF,
+            "instruction_version": INSTRUCTION_VERSION,
+            "content_digest": "sha256:" + "e" * 64,
+            "instruction_profile": "executor",
+        },
         "omo_dispatch_id": "dispatch-001",
         "prompt_ref": "prompts/task.md",
         "prompt_digest": "sha256:" + "b" * 64,
@@ -2070,8 +2139,13 @@ def test_default_supervisor_forwards_collect_clone_attestation(tmp_path: Path, m
         ("canonical_root_digest", "--canonical-root-digest"),
         ("guard_receipt_digest", "--guard-receipt-digest"),
         ("orca_worktree_id", "--orca-worktree-id"),
+        ("instruction_binding", "--instruction-binding-json"),
     ):
-        assert command[command.index(option) + 1] == values[field]
+        actual = command[command.index(option) + 1]
+        if field == "instruction_binding":
+            assert json.loads(actual) == values[field]
+        else:
+            assert actual == values[field]
 
 
 def test_cli_compile_emits_json_and_persists_only_explicit_packet(
@@ -2193,7 +2267,7 @@ def test_cli_observe_and_execute_input_ack_never_claim_model_success(
     _commit_baseline(tmp_path)
     compiled = _compile(tmp_path)
     packet_ref = _write_cli_packet(tmp_path, compiled)
-    dispatched = BlueprintControlService(tmp_path).dispatch_packet(
+    dispatched = _service(tmp_path).dispatch_packet(
         compiled,
         worker_id="worker-a",
         capability_health=_health(),
@@ -2357,3 +2431,7 @@ def test_cli_verifier_reject_and_rollback_mismatch_never_report_success(
     assert mismatch != 0
     assert mismatch_output["ok"] is False
     assert mismatch_output["state"] == "rollback_unconfirmed"
+
+
+def _service(root: Path) -> BlueprintControlService:
+    return BlueprintControlService(root)
