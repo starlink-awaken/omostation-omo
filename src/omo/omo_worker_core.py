@@ -121,6 +121,15 @@ def _worker_command(
     return command
 
 
+def _require_worker_ack_protocol(registry: dict, worker_id: str, transport: str) -> None:
+    worker = _require_admitted_worker(registry, worker_id, transport)
+    transport_spec = worker["transports"][transport]
+    if transport_spec.get("worker_ack_protocol") != "omo-worker-origin-ack/v1":
+        raise ValueError(
+            f"worker admission denied: worker_id={worker_id} reason=worker_ack_protocol_missing transport={transport}"
+        )
+
+
 def _capability_values(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []

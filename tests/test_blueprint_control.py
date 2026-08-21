@@ -116,7 +116,7 @@ def _dispatch_authority(
                         "transports": {
                             "cli_prompt": {
                                 "command": "worker-a",
-                                "ack_command": "python -m omo.cli worker mesh-ack",
+                                "worker_ack_protocol": "omo-worker-origin-ack/v1",
                             }
                         },
                         "capabilities": worker_capabilities or ["workflow.execute", "python"],
@@ -250,11 +250,39 @@ def _dispatched_repo(tmp_path: Path, *, now: str | None = None):
     return service, compiled, dispatched
 
 
+def _ack_worker_transport(tmp_path: Path, worker_values: dict) -> None:
+    ack_context = worker_values.get("_worker_ack_context")
+    ack_origin_proof = worker_values.get("_worker_ack_origin_proof")
+    if isinstance(ack_context, dict) and isinstance(ack_origin_proof, str):
+        from omo.worker_lifecycle import acknowledge_worker
+
+        omo_dir = Path(ack_context["omo_dir"])
+        if not omo_dir.is_absolute():
+            omo_dir = Path(worker_values.get("workspace_root") or tmp_path) / omo_dir
+        acknowledge_worker(
+            omo_dir,
+            workflow_run_id=ack_context["workflow_run_id"],
+            trace_id=ack_context["trace_id"],
+            dispatch_id=ack_context["dispatch_id"],
+            worker_id=ack_context["worker_id"],
+            step_run_id=ack_context["step_run_id"],
+            admission_id=ack_context["admission_id"],
+            packet_id=ack_context["packet_id"],
+            packet_hash=ack_context["packet_hash"],
+            instruction_binding=ack_context["instruction_binding"],
+            ack_decision="proceed",
+            origin_proof=ack_origin_proof,
+            lease_seconds=ack_context["lease_seconds"],
+        )
+
+
 def _supervisor_start_receipt(
     tmp_path: Path,
     compiled,
     dispatched,
+    **worker_values,
 ):
+    _ack_worker_transport(tmp_path, worker_values)
     prompt_ref = str(dispatched["prompt_path"])
     prompt_digest = "sha256:" + hashlib.sha256((tmp_path / prompt_ref).read_bytes()).hexdigest()
     canonical_root_digest = "sha256:" + hashlib.sha256(str(tmp_path.resolve()).encode()).hexdigest()
@@ -365,7 +393,7 @@ def test_compile_is_deterministic_and_contains_governed_contract(
     }
 
 
-def test_dispatch_rejects_transport_that_does_not_durably_ack(tmp_path: Path, monkeypatch) -> None:
+def test_admission_only_dispatch_does_not_forge_worker_ack(tmp_path: Path, monkeypatch) -> None:
     _workspace(tmp_path)
     _dispatch_authority(tmp_path)
     _commit_baseline(tmp_path)
@@ -375,13 +403,13 @@ def test_dispatch_rejects_transport_that_does_not_durably_ack(tmp_path: Path, mo
         "omo.omo_worker_dispatch.subprocess.run",
         lambda *_args, **_kwargs: type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
     )
-    with pytest.raises(RuntimeError, match="did not durably acknowledge"):
-        service.dispatch_packet(
-            compiled,
-            worker_id="worker-a",
-            capability_health=_health(),
-        )
+    result = service.dispatch_packet(
+        compiled,
+        worker_id="worker-a",
+        capability_health=_health(),
+    )
 
+    assert result["state"] == "transport_accepted"
     assert [event["event_type"] for event in WorkflowMeshStore(tmp_path / ".omo").events()] == [
         "WorkflowRequested",
         "WorkflowAdmitted",
@@ -464,7 +492,6 @@ def test_dispatch_records_exact_mesh_order_and_transport_only_state(
         "WorkflowRequested",
         "WorkflowAdmitted",
         "StepDispatched",
-        "WorkerAcknowledged",
     ]
     identity = events[0]["payload"]
     assert identity["bet_id"] == BET_ID
@@ -606,7 +633,7 @@ def test_supervised_start_freezes_baseline_then_pauses_for_human(
         calls.append(kwargs)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 1\n", encoding="utf-8")
-        return _supervisor_start_receipt(tmp_path, compiled, dispatched)
+        return _supervisor_start_receipt(tmp_path, compiled, dispatched, **kwargs)
 
     started = service.start_supervised_execution(
         compiled,
@@ -677,7 +704,6 @@ def test_supervised_start_rejects_expired_admission_before_supervisor(
         "WorkflowRequested",
         "WorkflowAdmitted",
         "StepDispatched",
-        "WorkerAcknowledged",
     ]
     assert not service._execution_projection_path(dispatched).exists()
 
@@ -691,7 +717,7 @@ def test_supervised_start_records_durable_provider_approval_wait(
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
+        supervisor=lambda **kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched, **kwargs),
         now="2026-08-14T10:00:00+00:00",
     )
 
@@ -718,7 +744,7 @@ def test_supervised_collect_expires_wait_without_calling_supervisor(
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
+        supervisor=lambda **kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched, **kwargs),
         now="2026-08-14T10:00:00+00:00",
     )
 
@@ -747,7 +773,7 @@ def test_supervised_collect_rejects_legacy_projection_without_approval_wait(
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
+        supervisor=lambda **kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched, **kwargs),
     )
     execution_path = service._execution_projection_path(dispatched)
     execution = json.loads(execution_path.read_text(encoding="utf-8"))
@@ -775,7 +801,7 @@ def test_supervised_start_recovers_wait_projection_from_durable_mesh(
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
+        supervisor=lambda **kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched, **kwargs),
         now="2026-08-14T10:00:00+00:00",
     )
     execution_path = service._execution_projection_path(dispatched)
@@ -813,7 +839,7 @@ def test_supervised_start_recovers_request_after_step_started_crash(
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
+        supervisor=lambda **kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched, **kwargs),
         now="2026-08-14T10:00:00+00:00",
     )
     store = WorkflowMeshStore(tmp_path / ".omo")
@@ -863,7 +889,7 @@ def test_supervised_start_approval_request_failure_records_step_failure(
             compiled,
             dispatched,
             clone_agent_id=CLONE_AGENT_ID,
-            supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
+            supervisor=lambda **kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched, **kwargs),
         )
 
     store = WorkflowMeshStore(tmp_path / ".omo")
@@ -906,7 +932,7 @@ def test_supervised_start_recovers_when_request_and_step_failure_writes_fail_onc
             compiled,
             dispatched,
             clone_agent_id=CLONE_AGENT_ID,
-            supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
+            supervisor=lambda **kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched, **kwargs),
         )
 
     execution_path = service._execution_projection_path(dispatched)
@@ -939,7 +965,7 @@ def test_supervised_collect_rejects_forged_approval_wait_binding(
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
+        supervisor=lambda **kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched, **kwargs),
     )
     execution_path = service._execution_projection_path(dispatched)
     execution = json.loads(execution_path.read_text(encoding="utf-8"))
@@ -966,7 +992,7 @@ def test_supervised_recovery_rejects_forged_external_facts_without_mesh_write(
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
+        supervisor=lambda **kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched, **kwargs),
     )
     store = WorkflowMeshStore(tmp_path / ".omo")
     events = store.events()
@@ -1019,7 +1045,7 @@ def test_supervised_start_marks_projection_failed_when_mesh_start_is_not_durable
             compiled,
             dispatched,
             clone_agent_id=CLONE_AGENT_ID,
-            supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
+            supervisor=lambda **kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched, **kwargs),
         )
     execution_path = service._execution_projection_path(dispatched)
     persisted = json.loads(execution_path.read_text(encoding="utf-8"))
@@ -1079,7 +1105,7 @@ def test_supervised_start_replay_rejects_cross_clone_agent_identity(
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
+        supervisor=lambda **kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched, **kwargs),
     )
 
     with pytest.raises(BlueprintControlError, match="clone agent identity mismatch"):
@@ -1139,7 +1165,7 @@ def test_supervised_collect_keeps_active_worker_paused_without_candidate(
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
+        supervisor=lambda **kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched, **kwargs),
     )
 
     active = service.collect_supervised_execution(
@@ -1177,7 +1203,7 @@ def test_supervised_collect_passes_frozen_clone_attestation_back_to_supervisor(
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
+        supervisor=lambda **kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched, **kwargs),
     )
     seen: list[dict] = []
 
@@ -1239,7 +1265,7 @@ def test_supervised_collect_rejects_clone_or_terminal_reattestation_drift(
     def start_supervisor(**_kwargs):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 20\n", encoding="utf-8")
-        return _supervisor_start_receipt(tmp_path, compiled, dispatched)
+        return _supervisor_start_receipt(tmp_path, compiled, dispatched, **_kwargs)
 
     service.start_supervised_execution(
         compiled,
@@ -1276,7 +1302,7 @@ def test_supervised_collect_settled_worker_builds_independent_candidate(
     def start_supervisor(**_kwargs):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 2\n", encoding="utf-8")
-        return _supervisor_start_receipt(tmp_path, compiled, dispatched)
+        return _supervisor_start_receipt(tmp_path, compiled, dispatched, **_kwargs)
 
     service.start_supervised_execution(
         compiled,
@@ -1328,7 +1354,7 @@ def test_supervised_collect_accepts_explicit_bounded_terminal_fallback(
     def start_supervisor(**_kwargs):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 2\n", encoding="utf-8")
-        return _supervisor_start_receipt(tmp_path, compiled, dispatched)
+        return _supervisor_start_receipt(tmp_path, compiled, dispatched, **_kwargs)
 
     service.start_supervised_execution(
         compiled,
@@ -1359,7 +1385,7 @@ def test_supervised_collect_evidence_failure_transitions_to_auditable_failure(
     def start_supervisor(**_kwargs):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 3\n", encoding="utf-8")
-        return _supervisor_start_receipt(tmp_path, compiled, dispatched)
+        return _supervisor_start_receipt(tmp_path, compiled, dispatched, **_kwargs)
 
     service.start_supervised_execution(
         compiled,
@@ -1410,7 +1436,7 @@ def test_supervised_collect_rejects_execution_projection_not_backed_by_external_
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
+        supervisor=lambda **kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched, **kwargs),
     )
     execution_path = tmp_path / started["execution_projection"]
     projection = json.loads(execution_path.read_text(encoding="utf-8"))
@@ -1442,7 +1468,7 @@ def test_supervised_candidate_replay_rejects_forged_projection_and_cross_dispatc
     def start_supervisor(**_kwargs):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 4\n", encoding="utf-8")
-        return _supervisor_start_receipt(tmp_path, compiled, dispatched)
+        return _supervisor_start_receipt(tmp_path, compiled, dispatched, **_kwargs)
 
     service.start_supervised_execution(
         compiled,
@@ -1492,7 +1518,7 @@ def test_supervised_collect_rejects_live_clone_branch_identity_drift_before_orca
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
+        supervisor=lambda **kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched, **kwargs),
     )
     identity_path = tmp_path / ".git" / "agent-clone-identity.json"
     identity = json.loads(identity_path.read_text(encoding="utf-8"))
@@ -1530,7 +1556,7 @@ def test_supervised_candidate_replay_rejects_rehashed_clone_attestation_tamper(
     def start_supervisor(**_kwargs):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 21\n", encoding="utf-8")
-        return _supervisor_start_receipt(tmp_path, compiled, dispatched)
+        return _supervisor_start_receipt(tmp_path, compiled, dispatched, **_kwargs)
 
     service.start_supervised_execution(
         compiled,
@@ -1566,7 +1592,7 @@ def test_supervised_candidate_replay_rejects_fully_rehashed_cross_clone_forgery(
     def start_supervisor(**_kwargs):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("VALUE = 22\n", encoding="utf-8")
-        return _supervisor_start_receipt(tmp_path, compiled, dispatched)
+        return _supervisor_start_receipt(tmp_path, compiled, dispatched, **_kwargs)
 
     service.start_supervised_execution(
         compiled,
@@ -1617,7 +1643,7 @@ def test_supervised_collect_rejects_rehashed_binding_tamper_before_orca_call(
         compiled,
         dispatched,
         clone_agent_id=CLONE_AGENT_ID,
-        supervisor=lambda **_kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched),
+        supervisor=lambda **kwargs: _supervisor_start_receipt(tmp_path, compiled, dispatched, **kwargs),
     )
     execution_path = tmp_path / started["execution_projection"]
     projection = json.loads(execution_path.read_text(encoding="utf-8"))
@@ -1653,6 +1679,7 @@ def test_execute_collect_and_independent_verify_use_real_git_delta(
     service, compiled, dispatched = _dispatched_repo(tmp_path)
 
     def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):
+        _ack_worker_transport(tmp_path, _kwargs)
         on_process_started()
         target = workspace_root / "src" / "omo" / "blueprint_control.py"
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -1712,6 +1739,7 @@ def test_collect_refuses_to_invent_acceptance_claims_without_direct_measurement(
     service, compiled, dispatched = _dispatched_repo(tmp_path)
 
     def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):
+        _ack_worker_transport(tmp_path, _kwargs)
         on_process_started()
         target = workspace_root / "src" / "omo" / "blueprint_control.py"
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -1742,6 +1770,7 @@ def test_baseline_is_frozen_before_runner_can_modify_workspace(tmp_path: Path) -
         target = workspace_root / "src" / "omo" / "blueprint_control.py"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("PRE_CALLBACK = True\n", encoding="utf-8")
+        _ack_worker_transport(tmp_path, _kwargs)
         on_process_started()
         target.write_text("FINAL = True\n", encoding="utf-8")
         receipt_path.write_text(json.dumps(_adapter_receipt(workspace_root)), encoding="utf-8")
@@ -1768,6 +1797,7 @@ def test_collect_replay_returns_persisted_candidate_without_rerunning(
     def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):
         nonlocal calls
         calls += 1
+        _ack_worker_transport(tmp_path, _kwargs)
         on_process_started()
         target = workspace_root / "src" / "omo" / "blueprint_control.py"
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -1799,6 +1829,7 @@ def test_collect_rejects_untrusted_adapter_receipt_without_evidence(
     service, compiled, dispatched = _dispatched_repo(tmp_path)
 
     def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):
+        _ack_worker_transport(tmp_path, _kwargs)
         on_process_started()
         target = workspace_root / "src" / "omo" / "blueprint_control.py"
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -1857,6 +1888,7 @@ def test_started_provider_human_review_fails_step_without_candidate(
     service, compiled, dispatched = _dispatched_repo(tmp_path)
 
     def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):
+        _ack_worker_transport(tmp_path, _kwargs)
         on_process_started()
         target = workspace_root / "src" / "omo" / "blueprint_control.py"
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -1887,6 +1919,7 @@ def test_transport_ack_without_receipt_fails_started_step_without_evidence(
     service, compiled, dispatched = _dispatched_repo(tmp_path)
 
     def runner(*, on_process_started, **_kwargs):
+        _ack_worker_transport(tmp_path, _kwargs)
         on_process_started()
         return {"returncode": 0, "transport": "accepted"}
 
@@ -1902,6 +1935,7 @@ def test_out_of_scope_git_delta_is_measured_and_rejected(tmp_path: Path) -> None
     service, compiled, dispatched = _dispatched_repo(tmp_path)
 
     def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):
+        _ack_worker_transport(tmp_path, _kwargs)
         on_process_started()
         allowed = workspace_root / "src" / "omo" / "blueprint_control.py"
         allowed.parent.mkdir(parents=True, exist_ok=True)
@@ -1934,6 +1968,7 @@ def test_failed_verifier_compensates_and_restores_exact_baseline(
     baseline = _git(tmp_path, "status", "--porcelain=v1", "-z").stdout
 
     def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):
+        _ack_worker_transport(tmp_path, _kwargs)
         on_process_started()
         target = workspace_root / "src" / "omo" / "blueprint_control.py"
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -1966,6 +2001,7 @@ def test_tampered_patch_leaves_rejected_run_unclosed(tmp_path: Path) -> None:
     service, compiled, dispatched = _dispatched_repo(tmp_path)
 
     def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):
+        _ack_worker_transport(tmp_path, _kwargs)
         on_process_started()
         target = workspace_root / "src" / "omo" / "blueprint_control.py"
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -1992,6 +2028,7 @@ def test_candidate_from_other_run_cannot_compensate_or_close_current_run(
     service_b, compiled_b, dispatched_b = _dispatched_repo(root_b, now="2026-08-14T10:01:00+00:00")
 
     def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):
+        _ack_worker_transport(tmp_path, _kwargs)
         on_process_started()
         target = workspace_root / "src" / "omo" / "blueprint_control.py"
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -2290,7 +2327,7 @@ def test_cli_observe_and_execute_input_ack_never_claim_model_success(
 
     def supervisor(self, *, action, **_kwargs):
         if action == "start":
-            return _supervisor_start_receipt(tmp_path, compiled, dispatched)
+            return _supervisor_start_receipt(tmp_path, compiled, dispatched, **_kwargs)
         return {
             **_supervisor_start_receipt(tmp_path, compiled, dispatched),
             "ok": False,
@@ -2363,6 +2400,7 @@ def test_cli_verifier_reject_and_rollback_mismatch_never_report_success(
     packet_ref = _write_cli_packet(tmp_path, compiled)
 
     def runner(*, workspace_root, receipt_path, on_process_started, **_kwargs):
+        _ack_worker_transport(tmp_path, _kwargs)
         on_process_started()
         target = workspace_root / "src" / "omo" / "blueprint_control.py"
         target.parent.mkdir(parents=True, exist_ok=True)

@@ -726,7 +726,7 @@ def dispatch_admitted_workflow(
     **admission_options: Any,
 ) -> dict[str, Any]:
     """Admit first, then hand the immutable packet to the legacy worker bridge."""
-    from .omo_worker_core import _build_launch_argv
+    from .omo_worker_core import _build_launch_argv, _require_worker_ack_protocol
 
     request_identity = admission_options.get("request_identity")
     if not isinstance(request_identity, Mapping):
@@ -738,6 +738,7 @@ def dispatch_admitted_workflow(
         )
     )
     registry = load_yaml(root / Path(admission_options.get("omo_dir", ".omo")) / "_truth" / "registry" / "workers.yaml")
+    _require_worker_ack_protocol(registry, worker_id, transport)
     _build_launch_argv(
         registry,
         worker_id,
@@ -748,7 +749,6 @@ def dispatch_admitted_workflow(
         packet_id=request_identity.get("packet_id"),
         packet_hash=request_identity.get("packet_hash"),
         instruction_binding=request_identity.get("instruction_binding"),
-        command_key="ack_command",
     )
     packet = admit_workflow(
         root,

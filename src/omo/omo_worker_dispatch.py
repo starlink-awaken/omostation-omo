@@ -23,6 +23,7 @@ from .omo_worker_core import (
     _load_yaml,
     _omo_path,
     _require_admitted_worker,
+    _require_worker_ack_protocol,
     _require_worker_policy,
     _timestamp_slug,
     _utc_now,
@@ -157,6 +158,7 @@ def dispatch_task(
     prior_evidence: list[str] | None = None,
     prompt_addendum: list[str] | None = None,
     workflow_packet: dict[str, Any] | None = None,
+    worker_ack_origin_proof: str | None = None,
     now: str | None = None,
     omo_dir: str | Path = ".omo",
 ) -> dict[str, Any]:
@@ -216,22 +218,8 @@ def dispatch_task(
     workflow_run_id = str(workflow_packet.get("workflow_run_id") or "") if isinstance(workflow_packet, dict) else ""
     if workflow_packet is not None and not isinstance(request_identity, dict):
         raise ValueError("bound workflow dispatch requires request_identity")
-    ack_argv = (
-        _build_launch_argv(
-            registry,
-            worker_id,
-            transport,
-            "",
-            workspace_root=root,
-            run_id=workflow_run_id,
-            packet_id=request_identity["packet_id"],
-            packet_hash=request_identity["packet_hash"],
-            instruction_binding=request_identity["instruction_binding"],
-            command_key="ack_command",
-        )
-        if isinstance(request_identity, dict)
-        else None
-    )
+    if isinstance(request_identity, dict):
+        _require_worker_ack_protocol(registry, worker_id, transport)
     blueprint = (
         {
             "packet_id": request_identity["packet_id"],
@@ -268,7 +256,7 @@ def dispatch_task(
         raise ValueError("unbound legacy dispatch is observer-only and cannot create worker state")
     from .worker_lifecycle import new_worker_ack_origin_proof
 
-    ack_origin_proof = new_worker_ack_origin_proof()
+    ack_origin_proof = worker_ack_origin_proof or new_worker_ack_origin_proof()
     # A supervised blueprint must not project dispatch artifacts or mutate the
     # Task until StepDispatched is durable.  If this append fails, every file
     # remains exactly at its pre-dispatch state and the exception propagates.
@@ -283,48 +271,6 @@ def dispatch_task(
             now=dispatch_now,
             ack_origin_proof=ack_origin_proof,
         )
-        assert ack_argv is not None
-        ack_argv.extend(
-            [
-                workflow_run_id,
-                "--trace-id",
-                str(workflow_packet.get("trace_id") or workflow_run_id),
-                "--dispatch-id",
-                dispatch_id,
-                "--worker",
-                worker_id,
-                "--step-run-id",
-                str(workflow_packet["admission"]["step_run_ids"][0]),
-                "--admission-id",
-                str(workflow_packet["admission"]["admission_id"]),
-                "--packet-id",
-                request_identity["packet_id"],
-                "--packet-hash",
-                request_identity["packet_hash"],
-                "--instruction-binding-json",
-                json.dumps(
-                    request_identity["instruction_binding"],
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ),
-                "--ack-decision",
-                "proceed",
-                "--lease-seconds",
-                str((worker.get("lease_policy") or {}).get("lease_expired_after_seconds", 1200)),
-                "--omo-dir",
-                str(omo_ref),
-            ]
-        )
-        worker_env = {**os.environ, "OMO_WORKER_ACK_ORIGIN_PROOF": ack_origin_proof}
-        ack_result = subprocess.run(ack_argv, cwd=root, capture_output=True, text=True, env=worker_env)
-        if ack_result.returncode != 0:
-            raise RuntimeError(f"worker ACK preflight failed: worker_id={worker_id} returncode={ack_result.returncode}")
-        from .workflow_mesh import WorkflowMeshStore
-
-        ack_worker = WorkflowMeshStore(omo).worker_snapshot(workflow_run_id)
-        if not isinstance(ack_worker, dict) or ack_worker.get("ack_decision") != "proceed":
-            raise RuntimeError("worker ACK preflight did not durably acknowledge the dispatch")
     run_dir.mkdir(parents=True, exist_ok=True)
 
     source_docs = task.get("source_docs", [])
@@ -567,13 +513,43 @@ def dispatch_task(
             if isinstance(request_identity, dict)
             else None,
         )
-        result = subprocess.run(argv, cwd=root, capture_output=True, text=True)
-        log_content = redact_sensitive_text((result.stdout or "") + (result.stderr or ""))
+        ack_context = {
+            "workflow_run_id": workflow_run_id,
+            "trace_id": str(workflow_packet.get("trace_id") or workflow_run_id),
+            "dispatch_id": dispatch_id,
+            "worker_id": worker_id,
+            "step_run_id": str(workflow_packet["admission"]["step_run_ids"][0]),
+            "admission_id": str(workflow_packet["admission"]["admission_id"]),
+            "packet_id": request_identity["packet_id"],
+            "packet_hash": request_identity["packet_hash"],
+            "instruction_binding": request_identity["instruction_binding"],
+            "lease_seconds": int((worker.get("lease_policy") or {}).get("lease_expired_after_seconds", 1200)),
+            "omo_dir": str(omo_ref),
+        }
+        worker_env = {
+            **os.environ,
+            "OMO_WORKER_ACK_ORIGIN_PROOF": ack_origin_proof,
+            "OMO_WORKER_ACK_CONTEXT_JSON": json.dumps(
+                ack_context,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        }
+        result = subprocess.run(argv, cwd=root, capture_output=True, text=True, env=worker_env)
+        log_content = redact_sensitive_text((result.stdout or "") + (result.stderr or "")).replace(
+            ack_origin_proof, "[REDACTED]"
+        )
         write_text_atomic(root / stdout_path, log_content)
         if result.returncode != 0:
             raise RuntimeError(
                 f"worker launch failed: worker_id={worker_id} returncode={result.returncode} log={stdout_path}"
             )
+        from .workflow_mesh import WorkflowMeshStore
+
+        ack_worker = WorkflowMeshStore(omo).worker_snapshot(workflow_run_id)
+        if not isinstance(ack_worker, dict) or ack_worker.get("ack_decision") != "proceed":
+            raise RuntimeError("worker transport returned without a durable proceed ACK")
 
         # Phase 28 Step 3: Tri-Plane Bus - Broadcast event to Agora EventBus
         def push_log_to_agora(dispatch_id: str, content: str):
