@@ -58,7 +58,7 @@ def _worker_registry(root: Path) -> None:
                         "transports": {
                             "cli_prompt": {
                                 "command": "worker-dogfood",
-                                "ack_command": "python -m omo.cli worker mesh-ack",
+                                "worker_ack_protocol": "omo-worker-origin-ack/v1",
                             }
                         },
                     }

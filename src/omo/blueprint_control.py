@@ -10,6 +10,7 @@ import shlex
 import signal
 import subprocess
 import tempfile
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -33,7 +34,12 @@ from .approval_lifecycle import (
 from .omo_io import write_text_atomic
 from .omo_shared import load_yaml
 from .omo_task_schema import validate_task_file
-from .omo_worker_core import _build_launch_argv, _require_admitted_worker, _require_worker_policy
+from .omo_worker_core import (
+    _build_launch_argv,
+    _require_admitted_worker,
+    _require_worker_ack_protocol,
+    _require_worker_policy,
+)
 from .omo_worker_dispatch import dispatch_task
 from .orchestration_contract import OrchestrationContractCoordinator
 from .workflow_dispatch import admit_workflow
@@ -119,6 +125,7 @@ class BlueprintControlService:
     def __init__(self, root: Path, *, omo_dir: str | Path = ".omo") -> None:
         self.root = root.resolve()
         self.omo_dir = Path(omo_dir)
+        self._pending_worker_ack_proofs: dict[str, str] = {}
 
     def _load_bet(self, bet_id: str) -> dict[str, Any]:
         ledger_path = self.root / "docs" / "plans" / "3y-bet-ledger.yaml"
@@ -363,6 +370,7 @@ class BlueprintControlService:
             "instruction_binding": dict(packet["instruction_binding"]),
         }
         workflow_run_id = f"blueprint-{str(packet['packet_id']).lower()}"
+        _require_worker_ack_protocol(registry, worker_id, transport)
         _build_launch_argv(
             registry,
             worker_id,
@@ -373,7 +381,6 @@ class BlueprintControlService:
             packet_id=identity["packet_id"],
             packet_hash=identity["packet_hash"],
             instruction_binding=identity["instruction_binding"],
-            command_key="ack_command",
         )
         admission = admit_workflow(
             self.root,
@@ -386,6 +393,9 @@ class BlueprintControlService:
             request_identity=identity,
             omo_dir=self.omo_dir,
         )
+        from .worker_lifecycle import new_worker_ack_origin_proof
+
+        worker_ack_origin_proof = new_worker_ack_origin_proof()
         worker_dispatch = dispatch_task(
             self.root,
             task_id=task_id,
@@ -394,9 +404,11 @@ class BlueprintControlService:
             launch=False,
             transport=transport,
             workflow_packet=admission,
+            worker_ack_origin_proof=worker_ack_origin_proof,
             now=now,
             omo_dir=self.omo_dir,
         )
+        self._pending_worker_ack_proofs[admission["workflow_run_id"]] = worker_ack_origin_proof
         control_state = worker_dispatch.get("control_state")
         if not isinstance(control_state, Mapping) or control_state.get("transport") != "accepted":
             raise BlueprintControlError("transport acceptance was not durably projected")
@@ -822,10 +834,24 @@ class BlueprintControlService:
             )
         else:
             raise BlueprintControlError("supervisor action is invalid")
+        environment = os.environ.copy()
+        if action == "start":
+            ack_context = values.get("_worker_ack_context")
+            ack_origin_proof = values.get("_worker_ack_origin_proof")
+            if not isinstance(ack_context, Mapping) or not isinstance(ack_origin_proof, str):
+                raise BlueprintControlError("worker ACK capability is unavailable")
+            environment["OMO_WORKER_ACK_CONTEXT_JSON"] = json.dumps(
+                ack_context,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            environment["OMO_WORKER_ACK_ORIGIN_PROOF"] = ack_origin_proof
         try:
             completed = subprocess.run(
                 command,
                 cwd=self.root,
+                env=environment,
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
@@ -1153,7 +1179,6 @@ class BlueprintControlService:
         packet = self._validate_compiled_packet(compiled)
         binding, spec_binding = self._execution_binding(packet, compiled, dispatch_result)
         observed_at = _stamp(now)
-        self._require_live_worker_ack(binding, now=observed_at)
         prompt_ref, prompt_digest = self._dispatch_prompt_binding(dispatch_result)
         prompt_binding = {"prompt_ref": prompt_ref, "prompt_digest": prompt_digest}
         execution_path = self._execution_projection_path(dispatch_result)
@@ -1168,6 +1193,7 @@ class BlueprintControlService:
                 recovery_supervisor=supervisor or self._default_supervisor,
                 timeout_seconds=timeout_seconds,
             )
+            self._require_live_worker_ack(binding, now=observed_at)
             if execution.get("clone_agent_id") != clone_agent_id:
                 raise BlueprintControlError("clone agent identity mismatch")
             return execution
@@ -1179,6 +1205,24 @@ class BlueprintControlService:
         worker_id = str(dispatch_doc.get("worker_id") or "").strip()
         if not worker_id:
             raise BlueprintControlError("dispatch worker identity is missing")
+        ack_origin_proof = self._pending_worker_ack_proofs.get(binding["workflow_run_id"])
+        if not ack_origin_proof:
+            raise BlueprintControlError("worker ACK capability is unavailable")
+        registry = load_yaml(self.root / self.omo_dir / "_truth" / "registry" / "workers.yaml")
+        worker = _require_admitted_worker(registry, worker_id, str(dispatch_doc["transport_mode"]))
+        ack_context = {
+            "workflow_run_id": binding["workflow_run_id"],
+            "trace_id": binding["workflow_run_id"],
+            "dispatch_id": binding["omo_dispatch_id"],
+            "worker_id": worker_id,
+            "step_run_id": binding["step_run_id"],
+            "admission_id": binding["admission_id"],
+            "packet_id": binding["packet_id"],
+            "packet_hash": binding["packet_hash"],
+            "instruction_binding": binding["instruction_binding"],
+            "lease_seconds": int((worker.get("lease_policy") or {}).get("lease_expired_after_seconds", 1200)),
+            "omo_dir": str(self.root / self.omo_dir),
+        }
         if (
             not isinstance(clone_agent_id, str)
             or not clone_agent_id.strip()
@@ -1234,6 +1278,8 @@ class BlueprintControlService:
                 workspace_root=str(self.root),
                 agent_id=clone_agent_id,
                 idempotency_key=idempotency_key,
+                _worker_ack_context=ack_context,
+                _worker_ack_origin_proof=ack_origin_proof,
             )
         except Exception:
             projection["state"] = "startup_outcome_unknown"
@@ -1294,6 +1340,8 @@ class BlueprintControlService:
                 json.dumps(projection, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
             )
             raise BlueprintControlError("Orca Codex start receipt is invalid")
+        self._require_live_worker_ack(binding, now=observed_at)
+        self._pending_worker_ack_proofs.pop(binding["workflow_run_id"], None)
         projection.update(
             {
                 "state": "awaiting_human_action",
@@ -1808,11 +1856,22 @@ class BlueprintControlService:
         receipt_path: Path,
         timeout_seconds: int,
         on_process_started: Callable[[], None],
+        _worker_ack_context: Mapping[str, Any],
+        _worker_ack_origin_proof: str,
     ) -> Mapping[str, Any]:
         command = [*argv, "--receipt", str(receipt_path)]
+        environment = os.environ.copy()
+        environment["OMO_WORKER_ACK_CONTEXT_JSON"] = json.dumps(
+            _worker_ack_context,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        environment["OMO_WORKER_ACK_ORIGIN_PROOF"] = _worker_ack_origin_proof
         process = subprocess.Popen(
             command,
             cwd=workspace_root,
+            env=environment,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -1854,7 +1913,6 @@ class BlueprintControlService:
         """Execute one supervised worker and compile independently measured evidence."""
         packet = self._validate_compiled_packet(compiled)
         execution_binding, _spec_binding = self._execution_binding(packet, compiled, dispatch_result)
-        self._require_live_worker_ack(execution_binding, now=_stamp(None))
         run_id = execution_binding["workflow_run_id"]
         admission_id = execution_binding["admission_id"]
         dispatch_id = execution_binding["omo_dispatch_id"]
@@ -1880,6 +1938,15 @@ class BlueprintControlService:
             nonlocal step_started
             if step_started:
                 return
+            deadline = time.monotonic() + 5.0
+            while True:
+                try:
+                    self._require_live_worker_ack(execution_binding, now=_stamp(None))
+                    break
+                except BlueprintControlError:
+                    if time.monotonic() >= deadline:
+                        raise
+                    time.sleep(0.05)
             store.append(
                 new_workflow_event(
                     "StepStarted",
@@ -1922,6 +1989,24 @@ class BlueprintControlService:
             worker_id = str(dispatch_doc.get("worker_id") or "").strip()
             if not worker_id:
                 raise BlueprintControlError("dispatch worker identity is missing")
+            ack_origin_proof = self._pending_worker_ack_proofs.get(run_id)
+            if not ack_origin_proof:
+                raise BlueprintControlError("worker ACK capability is unavailable")
+            registry = load_yaml(self.root / self.omo_dir / "_truth" / "registry" / "workers.yaml")
+            worker = _require_admitted_worker(registry, worker_id, str(dispatch_doc["transport_mode"]))
+            ack_context = {
+                "workflow_run_id": run_id,
+                "trace_id": run_id,
+                "dispatch_id": dispatch_id,
+                "worker_id": worker_id,
+                "step_run_id": step_run_id,
+                "admission_id": admission_id,
+                "packet_id": execution_binding["packet_id"],
+                "packet_hash": execution_binding["packet_hash"],
+                "instruction_binding": execution_binding["instruction_binding"],
+                "lease_seconds": int((worker.get("lease_policy") or {}).get("lease_expired_after_seconds", 1200)),
+                "omo_dir": str(self.root / self.omo_dir),
+            }
             launch_command = str(dispatch_doc.get("execution", {}).get("launch_command") or "")
             argv = shlex.split(launch_command)
             if runner is None and not argv:
@@ -1935,6 +2020,8 @@ class BlueprintControlService:
                     receipt_path=receipt_path,
                     timeout_seconds=timeout_seconds,
                     on_process_started=on_process_started,
+                    _worker_ack_context=ack_context,
+                    _worker_ack_origin_proof=ack_origin_proof,
                 )
             except Exception:
                 if step_started:
@@ -1953,6 +2040,9 @@ class BlueprintControlService:
                         )
                     )
                 raise
+            if not step_started:
+                reject_execution("worker transport did not acknowledge process start", "worker_ack_missing")
+            self._pending_worker_ack_proofs.pop(run_id, None)
             if not receipt_path.is_file():
                 reject_execution("model output receipt is missing", "receipt_missing")
             try:

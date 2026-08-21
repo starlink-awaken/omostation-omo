@@ -7,6 +7,7 @@ from pathlib import Path
 import json
 import shlex
 import subprocess
+import sys
 
 import pytest
 import yaml
@@ -37,7 +38,7 @@ def _task(tmp_path: Path, *, approval_ref: str | None = None) -> None:
                         "transports": {
                             "cli_prompt": {
                                 "command": "worker-a",
-                                "ack_command": "python -m omo.cli worker mesh-ack",
+                                "worker_ack_protocol": "omo-worker-origin-ack/v1",
                             }
                         },
                         "capabilities": ["workflow.execute", "runtime"],
@@ -292,11 +293,11 @@ def test_dispatch_bridge_records_step_dispatch_worker_context(tmp_path: Path) ->
     assert snapshot["worker"]["worker_id"] == "worker-a"
 
 
-def test_missing_ack_command_is_zero_side_effect_and_retryable(tmp_path: Path) -> None:
+def test_missing_worker_ack_protocol_is_zero_side_effect_and_retryable(tmp_path: Path) -> None:
     _task(tmp_path)
     registry_path = tmp_path / ".omo" / "_truth" / "registry" / "workers.yaml"
     registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
-    ack_command = registry["workers"][0]["transports"]["cli_prompt"].pop("ack_command")
+    ack_protocol = registry["workers"][0]["transports"]["cli_prompt"].pop("worker_ack_protocol")
     registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
     before = {
         str(path.relative_to(tmp_path)): path.read_bytes() for path in (tmp_path / ".omo").rglob("*") if path.is_file()
@@ -313,7 +314,7 @@ def test_missing_ack_command_is_zero_side_effect_and_retryable(tmp_path: Path) -
         "request_identity": _request_identity(),
     }
 
-    with pytest.raises(ValueError, match="ack_command_missing"):
+    with pytest.raises(ValueError, match="worker_ack_protocol_missing"):
         dispatch_admitted_workflow(tmp_path, **options)
 
     after = {
@@ -321,7 +322,7 @@ def test_missing_ack_command_is_zero_side_effect_and_retryable(tmp_path: Path) -
     }
     assert after == before
 
-    registry["workers"][0]["transports"]["cli_prompt"]["ack_command"] = ack_command
+    registry["workers"][0]["transports"]["cli_prompt"]["worker_ack_protocol"] = ack_protocol
     registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
     result = dispatch_admitted_workflow(tmp_path, **options)
 
@@ -331,11 +332,10 @@ def test_missing_ack_command_is_zero_side_effect_and_retryable(tmp_path: Path) -
         "WorkflowRequested",
         "WorkflowAdmitted",
         "StepDispatched",
-        "WorkerAcknowledged",
     ]
 
 
-def test_bound_dispatch_persists_and_launches_exact_delivery_argv(
+def test_controller_cannot_self_ack_when_worker_returns_without_ack(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _task(tmp_path)
@@ -347,17 +347,54 @@ def test_bound_dispatch_persists_and_launches_exact_delivery_argv(
     )
     registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
     launched: list[list[str]] = []
-    ack_secrets: list[str] = []
-    real_run = subprocess.run
 
     def run(argv, **kwargs):
-        if "mesh-ack" in argv:
-            ack_secrets.append(kwargs["env"]["OMO_WORKER_ACK_ORIGIN_PROOF"])
-            return real_run(argv, **kwargs)
         launched.append(argv)
         return type("Result", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
 
     monkeypatch.setattr("omo.omo_worker_dispatch.subprocess.run", run)
+    with pytest.raises(RuntimeError, match="without a durable proceed ACK"):
+        dispatch_admitted_workflow(
+            tmp_path,
+            task_id="TASK-MESH-1",
+            worker_id="worker-a",
+            allowed_write_paths=["docs/"],
+            backend="runtime",
+            required_capabilities=["workflow.execute", "runtime"],
+            capability_health=_health(),
+            workflow_run_id="run-bound-launch",
+            launch=True,
+            request_identity=_request_identity(),
+        )
+
+    assert len(launched) == 1
+    events = WorkflowMeshStore(tmp_path / ".omo").events()
+    assert [event["event_type"] for event in events] == [
+        "WorkflowRequested",
+        "WorkflowAdmitted",
+        "StepDispatched",
+    ]
+
+
+def test_actual_worker_process_acknowledges_before_transport_returns(tmp_path: Path) -> None:
+    _task(tmp_path)
+    registry_path = tmp_path / ".omo" / "_truth" / "registry" / "workers.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    worker_code = (
+        "import json,os;from pathlib import Path;from omo.worker_lifecycle import acknowledge_worker;"
+        "c=json.loads(os.environ['OMO_WORKER_ACK_CONTEXT_JSON']);"
+        "acknowledge_worker(Path(c['omo_dir']),workflow_run_id=c['workflow_run_id'],"
+        "trace_id=c['trace_id'],dispatch_id=c['dispatch_id'],worker_id=c['worker_id'],"
+        "step_run_id=c['step_run_id'],admission_id=c['admission_id'],packet_id=c['packet_id'],"
+        "packet_hash=c['packet_hash'],instruction_binding=c['instruction_binding'],"
+        "ack_decision='proceed',origin_proof=os.environ['OMO_WORKER_ACK_ORIGIN_PROOF'],"
+        "lease_seconds=c['lease_seconds'])"
+    )
+    registry["workers"][0]["transports"]["cli_prompt"]["command"] = (
+        f"{shlex.quote(sys.executable)} -c {shlex.quote(worker_code)}"
+    )
+    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+
     result = dispatch_admitted_workflow(
         tmp_path,
         task_id="TASK-MESH-1",
@@ -366,30 +403,17 @@ def test_bound_dispatch_persists_and_launches_exact_delivery_argv(
         backend="runtime",
         required_capabilities=["workflow.execute", "runtime"],
         capability_health=_health(),
-        workflow_run_id="run-bound-launch",
+        workflow_run_id="run-worker-origin-ack",
         launch=True,
         request_identity=_request_identity(),
     )
 
-    dispatch = yaml.safe_load((tmp_path / result["worker_dispatch"]["dispatch_path"]).read_text(encoding="utf-8"))
-    persisted = shlex.split(dispatch["execution"]["launch_command"])
-    assert len(launched) == 1
-    assert len(ack_secrets) == 1
-    assert launched[0][0] == persisted[0]
-    assert launched[0][2:] == persisted[2:]
-    assert launched[0][1].startswith("# Worker Prompt Contract")
-    assert persisted[persisted.index("--run-id") + 1] == "run-bound-launch"
-    assert persisted[persisted.index("--packet-id") + 1] == _request_identity()["packet_id"]
-    assert (
-        json.loads(persisted[persisted.index("--instruction-binding-json") + 1])
-        == _request_identity()["instruction_binding"]
-    )
-    assert ack_secrets[0] not in json.dumps(result)
-    assert all(
-        ack_secrets[0] not in path.read_text(encoding="utf-8")
-        for path in (tmp_path / ".omo").rglob("*")
-        if path.is_file()
-    )
+    worker = WorkflowMeshStore(tmp_path / ".omo").worker_snapshot("run-worker-origin-ack")
+    assert worker is not None and worker["ack_decision"] == "proceed"
+    persisted = json.dumps(result, sort_keys=True)
+    events_text = (tmp_path / ".omo/_knowledge/workflow-mesh/events.jsonl").read_text(encoding="utf-8")
+    assert "OMO_WORKER_ACK_ORIGIN_PROOF" not in persisted
+    assert "OMO_WORKER_ACK_ORIGIN_PROOF" not in events_text
 
 
 def test_admit_workflow_requires_granted_approval(tmp_path: Path) -> None:
