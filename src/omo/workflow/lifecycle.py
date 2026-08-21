@@ -476,7 +476,7 @@ def _heartbeat_run_locked(registry: dict[str, Any], run_id: str) -> dict[str, An
     for lock_display in raw_locks:
         lock_path_raw = Path(lock_display)
         if not lock_path_raw.is_absolute():
-            lock_path_raw = WORKSPACE / lock_display
+            lock_path_raw = registry_workspace_root(registry) / lock_display
         try:
             lock_path = lock_path_raw.resolve()
         except OSError:
