@@ -929,11 +929,16 @@ def test_cli_submit_engineering_delivery_review(tmp_path, monkeypatch):
     result = external_resources.main(
         [
             "submit-engineering-delivery-review",
-            "--workflow-run-id", "run-delivery-1",
-            "--delivery-id", "delivery-1",
-            "--decision", "adopted",
-            "--principal-ref", "operator://reviewer-1",
-            "--evidence-ref", "evidence://human-review/1842",
+            "--workflow-run-id",
+            "run-delivery-1",
+            "--delivery-id",
+            "delivery-1",
+            "--decision",
+            "adopted",
+            "--principal-ref",
+            "operator://reviewer-1",
+            "--evidence-ref",
+            "evidence://human-review/1842",
         ]
     )
     assert result == 0

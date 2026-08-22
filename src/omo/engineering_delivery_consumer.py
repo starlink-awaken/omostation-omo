@@ -847,8 +847,7 @@ def build_principal_assertion(
     signing_key = os.environ.get(_ENGINEERING_REVIEW_SIGNING_KEY_ENV, "")
     if len(signing_key) < 32:
         raise EngineeringDeliveryConsumerError(
-            "human principal assertion verifier is unavailable: "
-            f"set {_ENGINEERING_REVIEW_SIGNING_KEY_ENV}"
+            f"human principal assertion verifier is unavailable: set {_ENGINEERING_REVIEW_SIGNING_KEY_ENV}"
         )
     binding = {
         "workflow_run_id": workflow_run_id,
@@ -860,9 +859,7 @@ def build_principal_assertion(
         "principal_ref": principal_ref,
         "source_class": "real_human",
         "issued_at": issued_at or _utc_now(),
-        "binding_digest": hashlib.sha256(
-            _canonical(binding).encode("utf-8")
-        ).hexdigest(),
+        "binding_digest": hashlib.sha256(_canonical(binding).encode("utf-8")).hexdigest(),
     }
     signature = hmac.new(
         signing_key.encode("utf-8"),
