@@ -20,7 +20,9 @@ from omo.engineering_delivery_consumer import (
     EngineeringDeliveryConsumerError,
     build_engineering_delivery_review_queue,
     build_engineering_delivery_shadow_observer,
+    build_principal_assertion,
     consume_engineering_delivery,
+    record_engineering_delivery_review,
 )
 from omo.omo_external_evaluation import (
     ExternalResourceEvaluationError,
@@ -305,6 +307,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     delivery_observer.add_argument("--as-of")
     delivery_observer.add_argument("--json", action="store_true")
+    submit_review = sub.add_parser(
+        "submit-engineering-delivery-review",
+        help="record an explicit human verdict for an engineering-delivery receipt",
+    )
+    submit_review.add_argument("--workflow-run-id", required=True)
+    submit_review.add_argument("--delivery-id", required=True)
+    submit_review.add_argument("--decision", required=True, choices=["reviewed", "adopted", "rejected"])
+    submit_review.add_argument("--principal-ref", required=True)
+    submit_review.add_argument("--evidence-ref", action="append", required=True)
     args = parser.parse_args(argv)
     omo_dir = find_omo_dir()
 
@@ -477,6 +488,33 @@ def main(argv: list[str] | None = None) -> int:
             print(f"external-resources engineering-delivery-shadow-observer: {exc}", file=sys.stderr)
             return 2
         print(json.dumps(projection, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if args.command == "submit-engineering-delivery-review":
+        try:
+            review = {
+                "delivery_id": args.delivery_id,
+                "decision": args.decision,
+                "evidence_refs": list(args.evidence_ref),
+            }
+            # First candidate receipt id == delivery id is not sufficient; the
+            # record path resolves the true receipt id.  We pass the delivery id
+            # as the initial binding so the assertion is bound to the review.
+            assertion = build_principal_assertion(
+                principal_ref=args.principal_ref,
+                workflow_run_id=args.workflow_run_id,
+                candidate_receipt_id=args.delivery_id,
+                review=review,
+            )
+            result = record_engineering_delivery_review(
+                omo_dir,
+                review,
+                workflow_run_id=args.workflow_run_id,
+                principal_assertion=assertion,
+            )
+        except (EngineeringDeliveryConsumerError, OSError, ValueError, TypeError) as exc:
+            print(f"external-resources submit-engineering-delivery-review: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     if args.command != "observe":
         parser.print_help()

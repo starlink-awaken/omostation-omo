@@ -828,6 +828,47 @@ def _project_to_mos(omo_dir: Path, record: Mapping[str, Any]) -> dict[str, str]:
     return {"status": "projected", "decision_id": decision_id}
 
 
+def build_principal_assertion(
+    *,
+    principal_ref: str,
+    workflow_run_id: str,
+    candidate_receipt_id: str,
+    review: Mapping[str, Any],
+    issued_at: str | None = None,
+) -> dict[str, str]:
+    """Build a server-signed human principal assertion for a delivery review.
+
+    The caller (a human or a human-driven tool) supplies the principal and the
+    binding fields; this function HMAC-signs the canonical assertion with the
+    server-owned key (COCKPIT_ENGINEERING_REVIEW_SIGNING_KEY).  A client can
+    never forge the signature because it does not hold the key — the same
+    property enforced by ``_verify_principal_assertion`` on read.
+    """
+    signing_key = os.environ.get(_ENGINEERING_REVIEW_SIGNING_KEY_ENV, "")
+    if len(signing_key) < 32:
+        raise EngineeringDeliveryConsumerError(
+            f"human principal assertion verifier is unavailable: set {_ENGINEERING_REVIEW_SIGNING_KEY_ENV}"
+        )
+    binding = {
+        "workflow_run_id": workflow_run_id,
+        "candidate_receipt_id": candidate_receipt_id,
+        "review": dict(review),
+    }
+    body = {
+        "schema": _PRINCIPAL_ASSERTION_SCHEMA,
+        "principal_ref": principal_ref,
+        "source_class": "real_human",
+        "issued_at": issued_at or _utc_now(),
+        "binding_digest": hashlib.sha256(_canonical(binding).encode("utf-8")).hexdigest(),
+    }
+    signature = hmac.new(
+        signing_key.encode("utf-8"),
+        _canonical(body).encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return {**body, "signature": signature}
+
+
 def record_engineering_delivery_review(
     omo_dir: Path | str,
     payload: Mapping[str, Any],
