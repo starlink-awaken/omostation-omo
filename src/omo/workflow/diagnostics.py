@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
 import os
+import subprocess
 import sys
 import time
 from datetime import UTC, datetime
@@ -78,7 +77,6 @@ def run_check_command(check: dict[str, Any], context: dict[str, str]) -> dict[st
 
 def subprocess_run(command: list[str], cwd: Path, env: dict[str, str]) -> Any:
     # Helper to execute subprocess
-    import subprocess
 
     return subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True, check=False)
 
