@@ -69,12 +69,8 @@ PROVIDER_ATTEMPT_KEYS = frozenset(
         "receipt_digest",
     }
 )
-PROVIDER_ATTEMPT_BINDING_KEYS = frozenset(
-    {"run_id", "packet_id", "packet_hash", "instruction_digest"}
-)
-PROVIDER_ATTEMPT_AUTHORITY_KEYS = frozenset(
-    {"operation_level", "workspace_admission", "write_scope"}
-)
+PROVIDER_ATTEMPT_BINDING_KEYS = frozenset({"run_id", "packet_id", "packet_hash", "instruction_digest"})
+PROVIDER_ATTEMPT_AUTHORITY_KEYS = frozenset({"operation_level", "workspace_admission", "write_scope"})
 PROVIDER_ATTEMPT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:+-]{0,255}$")
 PROVIDER_ATTEMPT_PROFILES = {
     "codex_exec": {
@@ -894,9 +890,7 @@ class BlueprintControlService:
     @staticmethod
     def _provider_attempt_binds_execution(source: Any, execution_binding: Any) -> bool:
         instruction_binding = (
-            execution_binding.get("instruction_binding")
-            if isinstance(execution_binding, Mapping)
-            else None
+            execution_binding.get("instruction_binding") if isinstance(execution_binding, Mapping) else None
         )
         return (
             isinstance(source, Mapping)

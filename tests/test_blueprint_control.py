@@ -245,67 +245,73 @@ def _dispatched_provider_binding(tmp_path: Path) -> dict:
 
 
 def _awaiting_provider_attempt(binding: dict | None = None) -> dict:
-    return _seal_provider_attempt({
-        "schema": "provider-attempt/v1",
-        "attempt_id": "sha256:" + "1" * 64,
-        "provider_id": "codex",
-        "transport": "orca_manual_break_glass",
-        "route_ref": None,
-        "binding": binding or _default_provider_binding(),
-        "authority": {
-            "operation_level": "L1",
-            "workspace_admission": "verified_independent_clone",
-            "write_scope": "human_gated",
-        },
-        "state": "awaiting_human_action",
-        "outcome": "not_proven",
-        "error_code": None,
-        "human_action_required": True,
-        "completion_observed": False,
-        "evidence_digest": "sha256:" + "2" * 64,
-        "previous_attempt_id": None,
-        "previous_receipt_digest": None,
-        "revision": 1,
-    })
+    return _seal_provider_attempt(
+        {
+            "schema": "provider-attempt/v1",
+            "attempt_id": "sha256:" + "1" * 64,
+            "provider_id": "codex",
+            "transport": "orca_manual_break_glass",
+            "route_ref": None,
+            "binding": binding or _default_provider_binding(),
+            "authority": {
+                "operation_level": "L1",
+                "workspace_admission": "verified_independent_clone",
+                "write_scope": "human_gated",
+            },
+            "state": "awaiting_human_action",
+            "outcome": "not_proven",
+            "error_code": None,
+            "human_action_required": True,
+            "completion_observed": False,
+            "evidence_digest": "sha256:" + "2" * 64,
+            "previous_attempt_id": None,
+            "previous_receipt_digest": None,
+            "revision": 1,
+        }
+    )
 
 
 def _settled_provider_attempt(binding: dict | None = None) -> dict:
     previous = _awaiting_provider_attempt(binding)
-    return _seal_provider_attempt({
-        **previous,
-        "state": "settled_observed",
-        "outcome": "observed_not_adjudicated",
-        "completion_observed": True,
-        "evidence_digest": "sha256:" + "4" * 64,
-        "previous_attempt_id": None,
-        "previous_receipt_digest": previous["receipt_digest"],
-        "revision": 2,
-    })
+    return _seal_provider_attempt(
+        {
+            **previous,
+            "state": "settled_observed",
+            "outcome": "observed_not_adjudicated",
+            "completion_observed": True,
+            "evidence_digest": "sha256:" + "4" * 64,
+            "previous_attempt_id": None,
+            "previous_receipt_digest": previous["receipt_digest"],
+            "revision": 2,
+        }
+    )
 
 
 def _succeeded_codex_provider_attempt(binding: dict | None = None) -> dict:
-    return _seal_provider_attempt({
-        "schema": "provider-attempt/v1",
-        "attempt_id": "sha256:" + "6" * 64,
-        "provider_id": "codex",
-        "transport": "codex_exec",
-        "route_ref": None,
-        "binding": binding or _default_provider_binding(),
-        "authority": {
-            "operation_level": "L1",
-            "workspace_admission": "verified_independent_clone",
-            "write_scope": "bounded",
-        },
-        "state": "succeeded",
-        "outcome": "succeeded",
-        "error_code": None,
-        "human_action_required": False,
-        "completion_observed": True,
-        "evidence_digest": "sha256:" + "7" * 64,
-        "previous_attempt_id": None,
-        "previous_receipt_digest": None,
-        "revision": 1,
-    })
+    return _seal_provider_attempt(
+        {
+            "schema": "provider-attempt/v1",
+            "attempt_id": "sha256:" + "6" * 64,
+            "provider_id": "codex",
+            "transport": "codex_exec",
+            "route_ref": None,
+            "binding": binding or _default_provider_binding(),
+            "authority": {
+                "operation_level": "L1",
+                "workspace_admission": "verified_independent_clone",
+                "write_scope": "bounded",
+            },
+            "state": "succeeded",
+            "outcome": "succeeded",
+            "error_code": None,
+            "human_action_required": False,
+            "completion_observed": True,
+            "evidence_digest": "sha256:" + "7" * 64,
+            "previous_attempt_id": None,
+            "previous_receipt_digest": None,
+            "revision": 1,
+        }
+    )
 
 
 def test_provider_attempt_boundary_rejects_sensitive_fields_tampering_and_binding_drift() -> None:
@@ -331,18 +337,14 @@ def test_provider_attempt_boundary_rejects_sensitive_fields_tampering_and_bindin
     forged_digest = {**awaiting, "receipt_digest": "sha256:" + "0" * 64}
     assert not BlueprintControlService._provider_attempt_is_awaiting(forged_digest)
 
-    drifted_binding = _seal_provider_attempt(
-        {**awaiting, "binding": {**binding, "packet_id": "packet-other"}}
-    )
+    drifted_binding = _seal_provider_attempt({**awaiting, "binding": {**binding, "packet_id": "packet-other"}})
     assert BlueprintControlService._provider_attempt_is_awaiting(drifted_binding)
     assert not BlueprintControlService._provider_attempt_binds_execution(
         drifted_binding,
         execution_binding,
     )
 
-    wrong_predecessor = _seal_provider_attempt(
-        {**settled, "previous_receipt_digest": "sha256:" + "9" * 64}
-    )
+    wrong_predecessor = _seal_provider_attempt({**settled, "previous_receipt_digest": "sha256:" + "9" * 64})
     assert not BlueprintControlService._provider_attempt_is_settled(wrong_predecessor, awaiting)
 
 
@@ -800,9 +802,7 @@ def test_supervised_start_freezes_baseline_then_pauses_for_human(
     }
     assert started["input_accepted"] == "unproven"
     assert started["model_completion"] == "unproven"
-    assert started["provider_attempt"] == _awaiting_provider_attempt(
-        _compiled_provider_binding(compiled, dispatched)
-    )
+    assert started["provider_attempt"] == _awaiting_provider_attempt(_compiled_provider_binding(compiled, dispatched))
     assert started["spec_binding"] == compiled.packet["spec_binding"]
     assert started["prompt_ref"] == dispatched["prompt_path"]
     assert started["prompt_digest"] == started["prompt_binding"]["prompt_digest"]
