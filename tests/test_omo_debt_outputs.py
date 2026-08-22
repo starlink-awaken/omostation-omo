@@ -13,6 +13,8 @@ def test_debt_refresh_writes_dashboard_review_queue_and_action_packet(
 ) -> None:
     source = Path(__file__).resolve().parents[2] / ".omo" / "debt"
     shutil.copytree(source, tmp_path / ".omo" / "debt")
+    # 镜像目录: 预创建以验证 mirror 写入 (P79 治本).
+    (tmp_path / ".omo" / "_control" / "debt-dashboard").mkdir(parents=True, exist_ok=True)
 
     future_item = tmp_path / ".omo" / "debt" / "items" / "SB_UNTESTED_PKGS.yaml"
     future_payload = yaml.safe_load(future_item.read_text(encoding="utf-8"))
@@ -47,6 +49,12 @@ def test_debt_refresh_writes_dashboard_review_queue_and_action_packet(
 
     assert result.returncode == 0, result.stderr
     dashboard = yaml.safe_load((tmp_path / ".omo" / "debt" / "dashboard" / "current.yaml").read_text(encoding="utf-8"))
+    # 镜像: 同步写到 _control/debt-dashboard/current.yaml (tracked freshness snapshot).
+    mirror = tmp_path / ".omo" / "_control" / "debt-dashboard" / "current.yaml"
+    assert mirror.exists(), "P79: tracked mirror must be written by refresh"
+    mirror_data = yaml.safe_load(mirror.read_text(encoding="utf-8"))
+    assert mirror_data["generated_at"] == dashboard["generated_at"]
+    assert mirror_data["debt_metrics"] == dashboard["debt_metrics"]
     queue = yaml.safe_load((tmp_path / ".omo" / "debt" / "review-queue" / "current.yaml").read_text(encoding="utf-8"))
     review = (tmp_path / ".omo" / "debt" / "reviews" / "current.md").read_text(encoding="utf-8")
     action_yaml = yaml.safe_load(
@@ -149,6 +157,8 @@ def test_debt_dispatch_writes_current_and_immutable_run_artifacts(
 ) -> None:
     source = Path(__file__).resolve().parents[2] / ".omo" / "debt"
     shutil.copytree(source, tmp_path / ".omo" / "debt")
+    # 镜像目录: 预创建以验证 mirror 写入 (P79 治本).
+    (tmp_path / ".omo" / "_control" / "debt-dashboard").mkdir(parents=True, exist_ok=True)
     shutil.rmtree(tmp_path / ".omo" / "debt" / "dispatch", ignore_errors=True)
 
     result = subprocess.run(

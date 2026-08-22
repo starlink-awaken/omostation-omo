@@ -100,6 +100,13 @@ def write_dashboard(omo_dir: Path, metrics, review_queue: dict[str, Any], now: s
         "next_review_queue": [{"id": entry["id"], "next_review_at": entry["next_review_at"]} for entry in upcoming],
     }
     _write_yaml(omo_dir / "debt" / "dashboard" / "current.yaml", payload)
+    # 同步写到 tracked 镜像, 治 P79 (.omo/_control/debt-dashboard/current.yaml 25 天未更新
+    # 因 writer path 已迁到 .omo/debt/dashboard/, 但 freshness-check 仍看镜像).
+    # 镜像 = git-tracked snapshot, 保持 freshness + 可在历史 blame 里追溯.
+    # 注意: omo_dir 通常是 .omo (相对), 镜像在 omo_dir/_control/ 下, 不是 omo_dir.parent.
+    mirror = omo_dir / "_control" / "debt-dashboard" / "current.yaml"
+    if mirror.parent.is_dir():
+        _write_yaml(mirror, payload)
 
 
 def write_review_queue(omo_dir: Path, review_queue: dict[str, Any], _write_yaml) -> None:
