@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import os
 import sys
 import time
@@ -695,7 +697,29 @@ def requirement_iteration_report(registry: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _auto_fix_orphan_locks(registry: dict[str, Any]) -> list[dict[str, Any]]:
+    """自动修复孤儿锁，返回已修复列表."""
+    workspace_root = registry_workspace_root(registry)
+    fix_script = workspace_root / "bin" / "gac" / "fix-orphan-locks.py"
+    if not fix_script.exists():
+        return []
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(fix_script), "--apply", "--registry", str(workspace_root / ".omo")],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if proc.returncode == 0:
+            data = json.loads(proc.stdout)
+            return data.get("applied", [])
+    except Exception:
+        pass
+    return []
+
+
 def compliance_report(registry: dict[str, Any], run_id: str | None) -> dict[str, Any]:
+    _auto_fix_orphan_locks(registry)
     runs = load_run_records(registry)
     events = ledger_events(registry)
     observe_report = build_observe_report(registry, run_id)
