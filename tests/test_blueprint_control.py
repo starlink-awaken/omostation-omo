@@ -207,6 +207,145 @@ def _commit_baseline(tmp_path: Path) -> None:
     )
 
 
+def _seal_provider_attempt(receipt: dict) -> dict:
+    projected = {key: value for key, value in receipt.items() if key != "receipt_digest"}
+    encoded = json.dumps(projected, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return {**projected, "receipt_digest": "sha256:" + hashlib.sha256(encoded.encode()).hexdigest()}
+
+
+def _default_provider_binding() -> dict:
+    return {
+        "run_id": "wf-001",
+        "packet_id": "packet-001",
+        "packet_hash": "sha256:" + "a" * 64,
+        "instruction_digest": "sha256:" + "b" * 64,
+    }
+
+
+def _compiled_provider_binding(compiled, dispatched) -> dict:
+    return {
+        "run_id": dispatched["workflow_run_id"],
+        "packet_id": compiled.packet["packet_id"],
+        "packet_hash": compiled.packet_hash,
+        "instruction_digest": compiled.packet["instruction_binding"]["content_digest"],
+    }
+
+
+def _dispatched_provider_binding(tmp_path: Path) -> dict:
+    dispatch_path = next((tmp_path / ".omo" / "workers" / "runs").glob("*-dispatch.yaml"))
+    dispatch = yaml.safe_load(dispatch_path.read_text(encoding="utf-8"))
+    blueprint = dispatch["blueprint"]
+    workflow_mesh = dispatch["execution"]["workflow_mesh"]
+    return {
+        "run_id": workflow_mesh["workflow_run_id"],
+        "packet_id": blueprint["packet_id"],
+        "packet_hash": blueprint["packet_hash"],
+        "instruction_digest": blueprint["instruction_binding"]["content_digest"],
+    }
+
+
+def _awaiting_provider_attempt(binding: dict | None = None) -> dict:
+    return _seal_provider_attempt({
+        "schema": "provider-attempt/v1",
+        "attempt_id": "sha256:" + "1" * 64,
+        "provider_id": "codex",
+        "transport": "orca_manual_break_glass",
+        "route_ref": None,
+        "binding": binding or _default_provider_binding(),
+        "authority": {
+            "operation_level": "L1",
+            "workspace_admission": "verified_independent_clone",
+            "write_scope": "human_gated",
+        },
+        "state": "awaiting_human_action",
+        "outcome": "not_proven",
+        "error_code": None,
+        "human_action_required": True,
+        "completion_observed": False,
+        "evidence_digest": "sha256:" + "2" * 64,
+        "previous_attempt_id": None,
+        "previous_receipt_digest": None,
+        "revision": 1,
+    })
+
+
+def _settled_provider_attempt(binding: dict | None = None) -> dict:
+    previous = _awaiting_provider_attempt(binding)
+    return _seal_provider_attempt({
+        **previous,
+        "state": "settled_observed",
+        "outcome": "observed_not_adjudicated",
+        "completion_observed": True,
+        "evidence_digest": "sha256:" + "4" * 64,
+        "previous_attempt_id": None,
+        "previous_receipt_digest": previous["receipt_digest"],
+        "revision": 2,
+    })
+
+
+def _succeeded_codex_provider_attempt(binding: dict | None = None) -> dict:
+    return _seal_provider_attempt({
+        "schema": "provider-attempt/v1",
+        "attempt_id": "sha256:" + "6" * 64,
+        "provider_id": "codex",
+        "transport": "codex_exec",
+        "route_ref": None,
+        "binding": binding or _default_provider_binding(),
+        "authority": {
+            "operation_level": "L1",
+            "workspace_admission": "verified_independent_clone",
+            "write_scope": "bounded",
+        },
+        "state": "succeeded",
+        "outcome": "succeeded",
+        "error_code": None,
+        "human_action_required": False,
+        "completion_observed": True,
+        "evidence_digest": "sha256:" + "7" * 64,
+        "previous_attempt_id": None,
+        "previous_receipt_digest": None,
+        "revision": 1,
+    })
+
+
+def test_provider_attempt_boundary_rejects_sensitive_fields_tampering_and_binding_drift() -> None:
+    binding = _default_provider_binding()
+    execution_binding = {
+        "workflow_run_id": binding["run_id"],
+        "packet_id": binding["packet_id"],
+        "packet_hash": binding["packet_hash"],
+        "instruction_binding": {"content_digest": binding["instruction_digest"]},
+    }
+    awaiting = _awaiting_provider_attempt(binding)
+    succeeded = _succeeded_codex_provider_attempt(binding)
+    settled = _settled_provider_attempt(binding)
+
+    assert BlueprintControlService._provider_attempt_is_awaiting(awaiting)
+    assert BlueprintControlService._provider_attempt_is_succeeded(succeeded)
+    assert BlueprintControlService._provider_attempt_is_settled(settled, awaiting)
+    assert BlueprintControlService._provider_attempt_binds_execution(awaiting, execution_binding)
+
+    sensitive = _seal_provider_attempt({**awaiting, "prompt": "private task"})
+    assert not BlueprintControlService._provider_attempt_is_awaiting(sensitive)
+
+    forged_digest = {**awaiting, "receipt_digest": "sha256:" + "0" * 64}
+    assert not BlueprintControlService._provider_attempt_is_awaiting(forged_digest)
+
+    drifted_binding = _seal_provider_attempt(
+        {**awaiting, "binding": {**binding, "packet_id": "packet-other"}}
+    )
+    assert BlueprintControlService._provider_attempt_is_awaiting(drifted_binding)
+    assert not BlueprintControlService._provider_attempt_binds_execution(
+        drifted_binding,
+        execution_binding,
+    )
+
+    wrong_predecessor = _seal_provider_attempt(
+        {**settled, "previous_receipt_digest": "sha256:" + "9" * 64}
+    )
+    assert not BlueprintControlService._provider_attempt_is_settled(wrong_predecessor, awaiting)
+
+
 def _adapter_receipt(
     tmp_path: Path,
     *,
@@ -225,6 +364,7 @@ def _adapter_receipt(
         "output_sha256": hashlib.sha256(b"final model output").hexdigest(),
         "patch_digest": "sha256:" + hashlib.sha256(patch).hexdigest(),
         "post_digest": "sha256:" + "2" * 64,
+        "provider_attempt": _succeeded_codex_provider_attempt(_dispatched_provider_binding(tmp_path)),
         "readiness": readiness,
         "schema": "codex-worker-receipt/v1",
         "status": "succeeded",
@@ -326,6 +466,7 @@ def _supervisor_start_receipt(
         },
         "input_accepted": "unproven",
         "model_completion": "unproven",
+        "provider_attempt": _awaiting_provider_attempt(_compiled_provider_binding(compiled, dispatched)),
     }
 
 
@@ -342,6 +483,7 @@ def _supervisor_collect_receipt(
         "model_output_source": "structured_transcript",
         "model_output_digest": "sha256:" + "7" * 64,
         "transcript_digest": "sha256:" + "7" * 64,
+        "provider_attempt": _settled_provider_attempt(_compiled_provider_binding(compiled, dispatched)),
     }
 
 
@@ -360,6 +502,7 @@ def _supervisor_terminal_collect_receipt(
         "model_output_digest": "sha256:" + "8" * 64,
         "completion_receipt_digest": "sha256:" + "9" * 64,
         "source_identity_digest": "sha256:" + "a" * 64,
+        "provider_attempt": _settled_provider_attempt(_compiled_provider_binding(compiled, dispatched)),
     }
 
 
@@ -657,6 +800,9 @@ def test_supervised_start_freezes_baseline_then_pauses_for_human(
     }
     assert started["input_accepted"] == "unproven"
     assert started["model_completion"] == "unproven"
+    assert started["provider_attempt"] == _awaiting_provider_attempt(
+        _compiled_provider_binding(compiled, dispatched)
+    )
     assert started["spec_binding"] == compiled.packet["spec_binding"]
     assert started["prompt_ref"] == dispatched["prompt_path"]
     assert started["prompt_digest"] == started["prompt_binding"]["prompt_digest"]
@@ -1246,6 +1392,7 @@ def test_supervised_collect_passes_frozen_clone_attestation_back_to_supervisor(
             "orca_task_id": "orca-task-001",
             "orca_dispatch_id": "orca-dispatch-001",
             "terminal_handle": "terminal-001",
+            "previous_provider_attempt": started["provider_attempt"],
         }
     ]
 
@@ -2172,6 +2319,7 @@ def test_default_supervisor_forwards_collect_clone_attestation(tmp_path: Path, m
         "orca_task_id": "task-001",
         "orca_dispatch_id": "orca-dispatch-001",
         "terminal_handle": "terminal-001",
+        "previous_provider_attempt": _awaiting_provider_attempt(),
     }
 
     BlueprintControlService(tmp_path)._default_supervisor(action="collect", timeout_seconds=12, **values)
@@ -2183,12 +2331,52 @@ def test_default_supervisor_forwards_collect_clone_attestation(tmp_path: Path, m
         ("guard_receipt_digest", "--guard-receipt-digest"),
         ("orca_worktree_id", "--orca-worktree-id"),
         ("instruction_binding", "--instruction-binding-json"),
+        ("previous_provider_attempt", "--previous-provider-attempt-json"),
     ):
         actual = command[command.index(option) + 1]
-        if field == "instruction_binding":
+        if field in {"instruction_binding", "previous_provider_attempt"}:
             assert json.loads(actual) == values[field]
         else:
             assert actual == values[field]
+
+
+def test_bounded_runner_injects_isolated_receipt_path_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[list[str]] = []
+    started: list[bool] = []
+
+    class Process:
+        pid = 43210
+        returncode = 0
+
+        def communicate(self, timeout=None):
+            return b"model output", b""
+
+        def poll(self):
+            return self.returncode
+
+    def popen(command, **_kwargs):
+        observed.append(command)
+        return Process()
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    receipt_path = tmp_path / "isolated-adapter-receipt.json"
+
+    result = BlueprintControlService._default_runner(
+        argv=["adapter", "run", "--execute"],
+        workspace_root=tmp_path,
+        receipt_path=receipt_path,
+        timeout_seconds=5,
+        on_process_started=lambda: started.append(True),
+        _worker_ack_context={"workflow_run_id": "wf-001"},
+        _worker_ack_origin_proof="opaque-origin-proof",
+    )
+
+    assert observed == [["adapter", "run", "--execute", "--receipt", str(receipt_path)]]
+    assert started == [True]
+    assert result == {"returncode": 0, "stdout": b"model output", "stderr": b""}
 
 
 def test_cli_compile_emits_json_and_persists_only_explicit_packet(
