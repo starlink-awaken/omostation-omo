@@ -877,3 +877,68 @@ def test_query_only_shadow_observer_rejects_a_fifo_without_blocking_or_writing(t
     assert result["verdict"] == "UNPROVABLE"
     assert result["error"] == "qualified_decision_outcomes_unreadable"
     assert _tree_snapshot(root) == before
+
+
+def test_build_principal_assertion_signs_valid_assertion(tmp_path):
+    """build_principal_assertion produces an assertion _verify accepts."""
+    _succeeded_run(tmp_path)
+    consume_engineering_delivery(tmp_path, _delivery(), workflow_run_id="run-delivery-1")
+
+    review = _review()
+    assertion = consumer.build_principal_assertion(
+        principal_ref="operator://reviewer-1",
+        workflow_run_id="run-delivery-1",
+        candidate_receipt_id="delivery-1",
+        review=review,
+        issued_at="2026-08-21T10:00:00Z",
+    )
+    assert assertion["schema"] == "cockpit-human-principal-assertion/v2"
+    assert assertion["principal_ref"] == "operator://reviewer-1"
+    assert assertion["source_class"] == "real_human"
+    assert assertion["binding_digest"]
+    assert assertion["signature"]
+
+    # A forged signature (different key) must be rejected by the record path.
+    result = record_engineering_delivery_review(
+        tmp_path,
+        review,
+        workflow_run_id="run-delivery-1",
+        principal_assertion=assertion,
+    )
+    assert result["status"] == "recorded"
+    assert result["qualified_decision_outcome"]["adjudication_assertion"]["source_class"] == "real_human"
+
+
+def test_build_principal_assertion_requires_signing_key(tmp_path, monkeypatch):
+    monkeypatch.delenv("COCKPIT_ENGINEERING_REVIEW_SIGNING_KEY", raising=False)
+    with pytest.raises(EngineeringDeliveryConsumerError, match="verifier is unavailable"):
+        consumer.build_principal_assertion(
+            principal_ref="operator://reviewer-1",
+            workflow_run_id="run-delivery-1",
+            candidate_receipt_id="delivery-1",
+            review=_review(),
+        )
+
+
+def test_cli_submit_engineering_delivery_review(tmp_path, monkeypatch):
+    """End-to-end: consume machine metadata, then submit a human review via CLI."""
+    _succeeded_run(tmp_path)
+    consume_engineering_delivery(tmp_path, _delivery(), workflow_run_id="run-delivery-1")
+    monkeypatch.setattr(external_resources, "find_omo_dir", lambda: tmp_path)
+
+    result = external_resources.main(
+        [
+            "submit-engineering-delivery-review",
+            "--workflow-run-id", "run-delivery-1",
+            "--delivery-id", "delivery-1",
+            "--decision", "adopted",
+            "--principal-ref", "operator://reviewer-1",
+            "--evidence-ref", "evidence://human-review/1842",
+        ]
+    )
+    assert result == 0
+    records = consumer._qualified_records(tmp_path)
+    assert len(records) == 1
+    assert records[0]["human_verdict"] == "adopted"
+    assert records[0]["human_actor_ref"] == "operator://reviewer-1"
+    assert records[0]["value_indicator_policy"] is False
