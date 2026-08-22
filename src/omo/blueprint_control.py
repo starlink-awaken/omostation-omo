@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -47,6 +48,55 @@ from .workflow_mesh import WorkflowMeshStore, new_workflow_event
 
 EXECUTABLE_BET_STATES = frozenset({"candidate", "in_progress", "review", "done"})
 PROVIDER_APPROVAL_TIMEOUT_SECONDS = 604_800
+PROVIDER_ATTEMPT_KEYS = frozenset(
+    {
+        "schema",
+        "attempt_id",
+        "provider_id",
+        "transport",
+        "route_ref",
+        "binding",
+        "authority",
+        "state",
+        "outcome",
+        "error_code",
+        "human_action_required",
+        "completion_observed",
+        "evidence_digest",
+        "previous_attempt_id",
+        "previous_receipt_digest",
+        "revision",
+        "receipt_digest",
+    }
+)
+PROVIDER_ATTEMPT_BINDING_KEYS = frozenset({"run_id", "packet_id", "packet_hash", "instruction_digest"})
+PROVIDER_ATTEMPT_AUTHORITY_KEYS = frozenset({"operation_level", "workspace_admission", "write_scope"})
+PROVIDER_ATTEMPT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:+-]{0,255}$")
+PROVIDER_ATTEMPT_PROFILES = {
+    "codex_exec": {
+        "provider_id": "codex",
+        "route_ref": None,
+        "authority": {
+            "operation_level": "L1",
+            "workspace_admission": "verified_independent_clone",
+            "write_scope": "bounded",
+        },
+    },
+    "orca_manual_break_glass": {
+        "provider_id": "codex",
+        "route_ref": None,
+        "authority": {
+            "operation_level": "L1",
+            "workspace_admission": "verified_independent_clone",
+            "write_scope": "human_gated",
+        },
+    },
+}
+PROVIDER_ATTEMPT_STATES = {
+    "succeeded": ("succeeded", False, True),
+    "awaiting_human_action": ("not_proven", True, False),
+    "settled_observed": ("observed_not_adjudicated", True, True),
+}
 
 
 class BlueprintControlError(ValueError):
@@ -765,6 +815,116 @@ class BlueprintControlService:
             "orca_worktree_id": orca_worktree_id,
         }
 
+    @staticmethod
+    def _provider_attempt_is_valid(source: Any, *, transport: str, state: str) -> bool:
+        if not isinstance(source, Mapping) or set(source) != PROVIDER_ATTEMPT_KEYS:
+            return False
+        profile = PROVIDER_ATTEMPT_PROFILES[transport]
+        binding = source.get("binding")
+        authority = source.get("authority")
+        state_policy = PROVIDER_ATTEMPT_STATES[state]
+        if (
+            source.get("schema") != "provider-attempt/v1"
+            or source.get("provider_id") != profile["provider_id"]
+            or source.get("transport") != transport
+            or source.get("route_ref") != profile["route_ref"]
+            or source.get("state") != state
+            or (
+                source.get("outcome"),
+                source.get("human_action_required"),
+                source.get("completion_observed"),
+            )
+            != state_policy
+            or source.get("error_code") is not None
+            or not _is_sha256(source.get("attempt_id"), prefixed=True)
+            or not _is_sha256(source.get("evidence_digest"), prefixed=True)
+            or not isinstance(binding, Mapping)
+            or set(binding) != PROVIDER_ATTEMPT_BINDING_KEYS
+            or not isinstance(binding.get("run_id"), str)
+            or PROVIDER_ATTEMPT_ID_RE.fullmatch(binding["run_id"]) is None
+            or not isinstance(binding.get("packet_id"), str)
+            or PROVIDER_ATTEMPT_ID_RE.fullmatch(binding["packet_id"]) is None
+            or not _is_sha256(binding.get("packet_hash"), prefixed=True)
+            or not _is_sha256(binding.get("instruction_digest"), prefixed=True)
+            or not isinstance(authority, Mapping)
+            or set(authority) != PROVIDER_ATTEMPT_AUTHORITY_KEYS
+            or authority != profile["authority"]
+        ):
+            return False
+        previous_attempt_id = source.get("previous_attempt_id")
+        previous_receipt_digest = source.get("previous_receipt_digest")
+        if previous_attempt_id is not None and not _is_sha256(previous_attempt_id, prefixed=True):
+            return False
+        if previous_receipt_digest is not None and not _is_sha256(previous_receipt_digest, prefixed=True):
+            return False
+        revision = source.get("revision")
+        if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
+            return False
+        if revision == 1 and ((previous_attempt_id is None) != (previous_receipt_digest is None)):
+            return False
+        if revision > 1 and (previous_attempt_id is not None or previous_receipt_digest is None):
+            return False
+        projected = {key: value for key, value in source.items() if key != "receipt_digest"}
+        try:
+            encoded = json.dumps(projected, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        except (TypeError, ValueError):
+            return False
+        return source.get("receipt_digest") == _sha256(encoded.encode("utf-8"))
+
+    @classmethod
+    def _provider_attempt_is_awaiting(cls, source: Any) -> bool:
+        return cls._provider_attempt_is_valid(
+            source,
+            transport="orca_manual_break_glass",
+            state="awaiting_human_action",
+        )
+
+    @classmethod
+    def _provider_attempt_is_succeeded(cls, source: Any) -> bool:
+        return cls._provider_attempt_is_valid(
+            source,
+            transport="codex_exec",
+            state="succeeded",
+        )
+
+    @staticmethod
+    def _provider_attempt_binds_execution(source: Any, execution_binding: Any) -> bool:
+        instruction_binding = (
+            execution_binding.get("instruction_binding") if isinstance(execution_binding, Mapping) else None
+        )
+        return (
+            isinstance(source, Mapping)
+            and isinstance(execution_binding, Mapping)
+            and isinstance(instruction_binding, Mapping)
+            and source.get("binding")
+            == {
+                "run_id": execution_binding.get("workflow_run_id"),
+                "packet_id": execution_binding.get("packet_id"),
+                "packet_hash": execution_binding.get("packet_hash"),
+                "instruction_digest": instruction_binding.get("content_digest"),
+            }
+        )
+
+    @classmethod
+    def _provider_attempt_is_settled(cls, source: Any, previous: Any) -> bool:
+        return (
+            cls._provider_attempt_is_awaiting(previous)
+            and cls._provider_attempt_is_valid(
+                source,
+                transport="orca_manual_break_glass",
+                state="settled_observed",
+            )
+            and source.get("provider_id") == previous.get("provider_id")
+            and source.get("transport") == previous.get("transport")
+            and source.get("route_ref") == previous.get("route_ref")
+            and source.get("binding") == previous.get("binding")
+            and source.get("authority") == previous.get("authority")
+            and source.get("attempt_id") == previous.get("attempt_id")
+            and source.get("revision") == previous.get("revision") + 1
+            and source.get("previous_attempt_id") is None
+            and source.get("previous_receipt_digest") == previous.get("receipt_digest")
+        )
+
     def _default_supervisor(
         self,
         *,
@@ -830,6 +990,13 @@ class BlueprintControlService:
                     str(values["guard_receipt_digest"]),
                     "--orca-worktree-id",
                     str(values["orca_worktree_id"]),
+                    "--previous-provider-attempt-json",
+                    json.dumps(
+                        values["previous_provider_attempt"],
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
                 ]
             )
         else:
@@ -945,6 +1112,7 @@ class BlueprintControlService:
         except (OSError, json.JSONDecodeError) as exc:
             raise BlueprintControlError("execution clone identity mismatch") from exc
         branch = self._git(["branch", "--show-current"], check=False).stdout.decode().strip()
+        provider_attempt = execution.get("provider_attempt")
         if (
             object_type != "tree"
             or execution.get("baseline_digest") != self._tree_scope_digest(baseline_tree, expected_surfaces)
@@ -958,6 +1126,8 @@ class BlueprintControlService:
             or clone_identity.get("canonical_root") != str(self.root)
             or clone_identity.get("working_branch") != branch
             or execution.get("canonical_root_digest") != _sha256(str(self.root).encode())
+            or not self._provider_attempt_is_awaiting(provider_attempt)
+            or not self._provider_attempt_binds_execution(provider_attempt, execution.get("binding"))
             or not isinstance(orca, Mapping)
             or set(orca) != {"run_id", "task_id", "dispatch_id", "terminal_handle"}
             or not all(isinstance(value, str) and value for value in orca.values())
@@ -1007,6 +1177,7 @@ class BlueprintControlService:
                 orca_task_id=orca["task_id"],
                 orca_dispatch_id=orca["dispatch_id"],
                 terminal_handle=orca["terminal_handle"],
+                previous_provider_attempt=dict(execution["provider_attempt"]),
             )
             receipt_binding = receipt.get("binding")
             receipt_placement = self._clone_attestation(
@@ -1024,6 +1195,10 @@ class BlueprintControlService:
                         receipt.get("ok") is True
                         and receipt.get("state") == "settled"
                         and receipt.get("model_completion") == "observed"
+                        and self._provider_attempt_is_settled(
+                            receipt.get("provider_attempt"),
+                            execution.get("provider_attempt"),
+                        )
                     )
                 )
             ):
@@ -1292,6 +1467,7 @@ class BlueprintControlService:
             raise
         orca = receipt.get("orca")
         approval = receipt.get("approval")
+        provider_attempt = receipt.get("provider_attempt")
         receipt_binding = receipt.get("binding")
         placement = self._clone_attestation(
             receipt_binding if isinstance(receipt_binding, Mapping) else {},
@@ -1321,6 +1497,8 @@ class BlueprintControlService:
             }
             or receipt.get("input_accepted") != "unproven"
             or receipt.get("model_completion") != "unproven"
+            or not self._provider_attempt_is_awaiting(provider_attempt)
+            or not self._provider_attempt_binds_execution(provider_attempt, binding)
         ):
             projection.update(
                 {
@@ -1347,6 +1525,7 @@ class BlueprintControlService:
                 "state": "awaiting_human_action",
                 "orca": dict(orca),
                 "approval": dict(approval),
+                "provider_attempt": dict(provider_attempt),
                 **placement,
                 "supervisor_receipt_digest": compute_packet_hash(canonicalize(receipt)),
             }
@@ -1506,6 +1685,7 @@ class BlueprintControlService:
             orca_task_id=orca["task_id"],
             orca_dispatch_id=orca["dispatch_id"],
             terminal_handle=orca["terminal_handle"],
+            previous_provider_attempt=dict(execution["provider_attempt"]),
         )
         receipt_binding = receipt.get("binding")
         receipt_placement = self._clone_attestation(
@@ -1544,6 +1724,10 @@ class BlueprintControlService:
             or receipt.get("model_completion") != "observed"
             or not _is_sha256(model_output_digest, prefixed=True)
             or not (structured_output_valid or terminal_fallback_valid)
+            or not self._provider_attempt_is_settled(
+                receipt.get("provider_attempt"),
+                execution.get("provider_attempt"),
+            )
         ):
             raise BlueprintControlError("Orca Codex collect receipt is invalid")
 
@@ -1748,6 +1932,7 @@ class BlueprintControlService:
             **placement,
             "output_digest": str(model_output_digest).removeprefix("sha256:"),
             "model_output_source": str(model_output_source),
+            "provider_attempt": dict(receipt["provider_attempt"]),
             "changed_paths": changed_paths,
             "observed_at": datetime.now().astimezone().isoformat(),
             "provenance_ref": f"receipt://orca/{orca['dispatch_id']}",
@@ -2076,6 +2261,10 @@ class BlueprintControlService:
                 reject_execution("provider review is unresolved", "provider_review_unresolved")
             if receipt.get("worker") != "codex":
                 reject_execution("adapter worker identity mismatch", "worker_mismatch")
+            if not self._provider_attempt_is_succeeded(receipt.get("provider_attempt")):
+                reject_execution("provider conformance receipt is invalid", "provider_conformance_rejected")
+            if not self._provider_attempt_binds_execution(receipt.get("provider_attempt"), execution_binding):
+                reject_execution("provider conformance binding is invalid", "provider_conformance_rejected")
             if not all(
                 (
                     _is_sha256(receipt.get("baseline_digest"), prefixed=True),
@@ -2251,6 +2440,7 @@ class BlueprintControlService:
             "dispatch_id": dispatch_id,
             "worker_id": worker_id,
             "output_digest": str(receipt["output_sha256"]),
+            "provider_attempt": dict(receipt["provider_attempt"]),
             "changed_paths": changed_paths,
             "observed_at": str(receipt.get("completed_at") or datetime.now().astimezone().isoformat()),
             "provenance_ref": f"receipt://codex/{dispatch_id}",
