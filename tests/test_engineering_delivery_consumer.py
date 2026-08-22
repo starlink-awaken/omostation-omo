@@ -911,6 +911,7 @@ def test_build_principal_assertion_signs_valid_assertion(tmp_path):
 
 def test_build_principal_assertion_requires_signing_key(tmp_path, monkeypatch):
     monkeypatch.delenv("COCKPIT_ENGINEERING_REVIEW_SIGNING_KEY", raising=False)
+    monkeypatch.setattr(consumer, "_signing_key", lambda root=None: "")
     with pytest.raises(EngineeringDeliveryConsumerError, match="verifier is unavailable"):
         consumer.build_principal_assertion(
             principal_ref="operator://reviewer-1",

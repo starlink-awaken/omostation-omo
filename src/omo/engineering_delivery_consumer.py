@@ -96,7 +96,26 @@ _OPAQUE_REF_SCHEMES = frozenset({"evidence", "github", "ci", "workflow", "receip
 _HUMAN_ACTOR_SCHEMES = frozenset({"human", "operator", "principal"})
 _PRINCIPAL_ASSERTION_SCHEMA = "cockpit-human-principal-assertion/v2"
 _ENGINEERING_REVIEW_SIGNING_KEY_ENV = "COCKPIT_ENGINEERING_REVIEW_SIGNING_KEY"
+# Server-owned persistent key file (gitignored); used as a fallback when the
+# environment variable is not set so the observer can verify recorded
+# assertions in a later process without re-exporting the key.
+_ENGINEERING_REVIEW_SIGNING_KEY_FILE = "_knowledge/workflow-mesh/engineering-review-signing.key"
 _PRINCIPAL_ASSERTION_MAX_AGE = timedelta(minutes=5)
+
+
+def _signing_key(root: Path | None = None) -> str:
+    """Resolve the server-owned review signing key (env wins, file fallback)."""
+    from_env = os.environ.get(_ENGINEERING_REVIEW_SIGNING_KEY_ENV, "")
+    if len(from_env) >= 32:
+        return from_env
+    key_path = (root if root is not None else Path(".omo")) / _ENGINEERING_REVIEW_SIGNING_KEY_FILE
+    try:
+        candidate = key_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    return candidate if len(candidate) >= 32 else ""
+
+
 _NON_HUMAN_EVIDENCE = re.compile(
     r"(?:^|[/_.:-])(test|synthetic|user[-_]?provided)(?:$|[/_.:-])",
     re.IGNORECASE,
@@ -276,6 +295,7 @@ def _verify_principal_assertion(
     binding: Mapping[str, Any],
     *,
     enforce_freshness: bool,
+    root: Path | None = None,
 ) -> tuple[str, str]:
     required = {
         "schema",
@@ -297,7 +317,7 @@ def _verify_principal_assertion(
     expected_binding_digest = hashlib.sha256(_canonical(binding).encode("utf-8")).hexdigest()
     if not hmac.compare_digest(str(assertion.get("binding_digest") or ""), expected_binding_digest):
         raise EngineeringDeliveryConsumerError("human principal assertion delivery binding mismatch")
-    signing_key = os.environ.get(_ENGINEERING_REVIEW_SIGNING_KEY_ENV, "")
+    signing_key = _signing_key(root)
     if len(signing_key) < 32:
         raise EngineeringDeliveryConsumerError("human principal assertion verifier is unavailable")
     signed_body = {key: assertion[key] for key in required if key != "signature"}
@@ -329,11 +349,11 @@ def _qualified_log(omo_dir: Path) -> AppendOnlyLog:
 
 def _qualified_records(omo_dir: Path) -> list[dict[str, Any]]:
     records = _qualified_log(omo_dir).read_all()
-    return _validate_primary_records(records)
+    return _validate_primary_records(records, omo_dir)
 
 
-def _validate_primary_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    validated = [_validate_qualified_record(record) for record in records]
+def _validate_primary_records(records: list[dict[str, Any]], root: Path) -> list[dict[str, Any]]:
+    validated = [_validate_qualified_record(record, root) for record in records]
     ids = [record["decision_outcome_id"] for record in validated]
     if len(set(ids)) != len(ids):
         raise EngineeringDeliveryConsumerError("duplicate qualified decision-outcome identity")
@@ -647,7 +667,7 @@ def _append_projection_status(
     return receipt
 
 
-def _validate_qualified_record(record: Mapping[str, Any]) -> dict[str, Any]:
+def _validate_qualified_record(record: Mapping[str, Any], root: Path) -> dict[str, Any]:
     required = {
         "schema",
         "decision_outcome_id",
@@ -696,6 +716,7 @@ def _validate_qualified_record(record: Mapping[str, Any]) -> dict[str, Any]:
             "review": review,
         },
         enforce_freshness=False,
+        root=root,
     )
     if asserted_actor != record.get("human_actor_ref"):
         raise EngineeringDeliveryConsumerError("qualified decision-outcome actor assertion mismatch")
@@ -844,7 +865,7 @@ def build_principal_assertion(
     never forge the signature because it does not hold the key — the same
     property enforced by ``_verify_principal_assertion`` on read.
     """
-    signing_key = os.environ.get(_ENGINEERING_REVIEW_SIGNING_KEY_ENV, "")
+    signing_key = _signing_key()
     if len(signing_key) < 32:
         raise EngineeringDeliveryConsumerError(
             f"human principal assertion verifier is unavailable: set {_ENGINEERING_REVIEW_SIGNING_KEY_ENV}"
@@ -895,6 +916,7 @@ def record_engineering_delivery_review(
             "review": review,
         },
         enforce_freshness=True,
+        root=root,
     )
 
     outcome_id = f"outcome:engineering-delivery:{review['delivery_id']}"
@@ -919,7 +941,7 @@ def record_engineering_delivery_review(
         ]
         if not submitted:
             raise EngineeringDeliveryConsumerError("review requires existing submitted feedback")
-        existing_records = _validate_primary_records(log.read_all())
+        existing_records = _validate_primary_records(log.read_all(), root)
         decision_outcome_id = f"engineering-delivery-outcome:{_sha256({'run': run_id, 'delivery': receipt_id})}"
         existing_record = next(
             (item for item in existing_records if item.get("decision_outcome_id") == decision_outcome_id),
@@ -977,7 +999,7 @@ def record_engineering_delivery_review(
                 "source_receipt_id": str(evidence["receipt_id"]),
                 "recorded_at": reviewed_at,
             }
-            _validate_qualified_record(qualified)
+            _validate_qualified_record(qualified, root)
             log.append(qualified, sort_keys=True)
 
         projection_records = _projection_records(root)
@@ -1149,7 +1171,8 @@ def build_engineering_delivery_shadow_observer(
             raise _ShadowObserverInputError("shadow observer only supports query-only reads")
         snapshots, workspace_identity = _read_shadow_observer_inputs(root)
         records = _validate_primary_records(
-            _read_shadow_observer_jsonl(snapshots[root / QUALIFIED_DECISION_OUTCOME_LOG])
+            _read_shadow_observer_jsonl(snapshots[root / QUALIFIED_DECISION_OUTCOME_LOG]),
+            root,
         )
         projection_records = [
             _validate_projection_receipt(record)
