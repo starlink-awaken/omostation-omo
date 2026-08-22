@@ -30,12 +30,21 @@ def _resolve_ref_path(repo_root: Path, ref: str) -> Path:
     return repo_root / ref_path
 
 
+TERMINAL_STATES = frozenset({"closed", "resolved"})
+"""治理词汇契约: resolved 与 closed 同为终结态.
+
+历史背景: .omo/debt/items/ 先例文件混用两种词汇 (D-* 用 resolved,
+ATTIC_ORPHAN 用 closed)。度量引擎必须双认, 否则已解决债务被误计为
+开放项 → pointer_entropy 虚高 → debt_health 归零假象 (2026-08-22)。
+"""
+
+
 def collect_stale_evidence_item_ids(items: tuple[DebtItem, ...], repo_root: Path | None = None) -> set[str]:
     repo_root = repo_root or Path(__file__).resolve().parents[1]
     stale_ids: set[str] = set()
 
     for item in items:
-        if item.lifecycle_state == "closed":
+        if item.lifecycle_state in TERMINAL_STATES:
             continue
         if not item.evidence_refs or not item.mitigation_refs:
             stale_ids.add(item.id)
@@ -55,7 +64,7 @@ def collect_stale_evidence_item_ids(items: tuple[DebtItem, ...], repo_root: Path
 
 def compute_debt_metrics(items: tuple[DebtItem, ...], now: str, repo_root: Path | None = None) -> DebtMetrics:
     current = datetime.fromisoformat(now)
-    open_items = [item for item in items if item.lifecycle_state != "closed"]
+    open_items = [item for item in items if item.lifecycle_state not in TERMINAL_STATES]
     overdue = [
         item for item in open_items if item.next_review_at and datetime.fromisoformat(item.next_review_at) < current
     ]
