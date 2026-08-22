@@ -1,4 +1,5 @@
 """词汇契约单测 — resolved 与 closed 同为终结态 (2026-08-22 health=0 假象修复)."""
+
 import importlib.util
 from datetime import datetime, timezone
 from pathlib import Path
