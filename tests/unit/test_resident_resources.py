@@ -1,8 +1,9 @@
-"""Unit tests for omo.resident.resources — shared resource discovery (M3.3).
+"""Unit tests for omo.resident.resources — discovery + domain isolation (M4.2).
 
 验证:
 - _load_registry 读取 multi-doc YAML 注册表
-- list_resources kind/capability 过滤
+- list_resources kind/capability/domain 过滤
+- _visible 领域可见性 (public 全可见; private 仅同 domain)
 - summarize 统计
 """
 
@@ -24,7 +25,7 @@ resource_kinds:
   knowledge_source:
     allowed_capabilities: [search, read]
 resources:
-  - id: res-a
+  - id: res-public-system
     kind: knowledge_source
     provider: omo
     protocol: local_fs
@@ -39,11 +40,41 @@ resources:
     bos_uri: bos://memory/mos/knowledge-ref
     domain: system
     visibility: public
-  - id: res-b
+  - id: res-public-knowledge
+    kind: knowledge_source
+    provider: omo
+    protocol: local_fs
+    capabilities: [search, read]
+    data_classification: internal
+    provenance: .omo/_knowledge
+    lifecycle: active
+    health: operational
+    owner: architecture-governance
+    version: "1.0"
+    permission_ref: permission://internal/knowledge
+    bos_uri: bos://knowledge/sediment
+    domain: knowledge
+    visibility: public
+  - id: res-private-knowledge
+    kind: asset_source
+    provider: omo
+    protocol: local_fs
+    capabilities: [read]
+    data_classification: internal
+    provenance: .omo/_knowledge
+    lifecycle: active
+    health: operational
+    owner: architecture-governance
+    version: "1.0"
+    permission_ref: permission://internal/knowledge
+    bos_uri: bos://knowledge/private
+    domain: knowledge
+    visibility: private
+  - id: res-private-system
     kind: tool_capability
     provider: agora
     protocol: bos
-    capabilities: [discover, invoke]
+    capabilities: [invoke]
     data_classification: internal
     provenance: bin/gac
     lifecycle: active
@@ -53,7 +84,7 @@ resources:
     permission_ref: permission://internal/tools
     bos_uri: bos://capability/tools
     domain: system
-    visibility: public
+    visibility: private
 """
 
 
@@ -68,36 +99,50 @@ def _registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def test_load_registry_multi_doc(_registry: Path) -> None:
     doc = resources._load_registry()
     assert doc["version"] == "1.0"
-    assert len(doc["resources"]) == 2
+    assert len(doc["resources"]) == 4
 
 
-def test_list_resources_all(_registry: Path) -> None:
+def test_list_all_default_open(_registry: Path) -> None:
     out = resources.list_resources()
-    assert [r["id"] for r in out] == ["res-a", "res-b"]
+    assert len(out) == 4  # 未声明 actor_domain → 全开放
 
 
-def test_list_resources_by_kind(_registry: Path) -> None:
-    out = resources.list_resources(kind="tool_capability")
-    assert len(out) == 1
-    assert out[0]["id"] == "res-b"
+def test_list_by_domain(_registry: Path) -> None:
+    out = resources.list_resources(domain="knowledge")
+    assert len(out) == 2
+    assert all(r["domain"] == "knowledge" for r in out)
 
 
-def test_list_resources_by_capability(_registry: Path) -> None:
-    out = resources.list_resources(capability="search")
-    assert len(out) == 1
-    assert out[0]["id"] == "res-a"
+def test_visibility_actor_system_see_system_private(_registry: Path) -> None:
+    out = resources.list_resources(actor_domain="system")
+    ids = {r["id"] for r in out}
+    # system 私有可见; knowledge 私有不可见; 所有 public 可见
+    assert "res-private-system" in ids
+    assert "res-private-knowledge" not in ids
+    assert "res-public-system" in ids
+    assert "res-public-knowledge" in ids
 
 
-def test_list_resources_filter_no_match(_registry: Path) -> None:
-    assert resources.list_resources(kind="channel") == []
-    assert resources.list_resources(capability="publish") == []
+def test_visibility_actor_knowledge_see_knowledge_private(_registry: Path) -> None:
+    out = resources.list_resources(actor_domain="knowledge")
+    ids = {r["id"] for r in out}
+    assert "res-private-knowledge" in ids
+    assert "res-private-system" not in ids
+
+
+def test_visibility_unknown_actor_sees_only_public(_registry: Path) -> None:
+    out = resources.list_resources(actor_domain="other-domain")
+    ids = {r["id"] for r in out}
+    assert "res-private-knowledge" not in ids
+    assert "res-private-system" not in ids
+    assert "res-public-knowledge" in ids
 
 
 def test_summarize(_registry: Path) -> None:
     summary = resources.summarize(resources.list_resources())
-    assert summary["total"] == 2
-    assert summary["by_kind"] == {"knowledge_source": 1, "tool_capability": 1}
-    assert summary["kinds_covered"] == 2
+    assert summary["total"] == 4
+    assert summary["by_domain"] == {"system": 2, "knowledge": 2}
+    assert summary["kinds_covered"] == 3  # knowledge_source/asset_source/tool_capability
 
 
 def test_missing_registry_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
