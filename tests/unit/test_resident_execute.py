@@ -98,3 +98,80 @@ def test_execute_exception_returns_error_with_binding(monkeypatch: pytest.Monkey
     receipt = execute._execute(event, execute=True)
     assert receipt["error"].startswith("execution_failed: RuntimeError: boom")
     assert receipt["binding"]["instruction_binding"] == "resident-workpacket-v1"
+
+
+class _FakeCompleted:
+    """Minimal subprocess.CompletedProcess stand-in for multica CLI calls."""
+
+    def __init__(self, *, returncode: int, stdout: str = "", stderr: str = "") -> None:
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def _stub_multica(monkeypatch: pytest.MonkeyPatch, create: _FakeCompleted, trigger: _FakeCompleted) -> list:
+    """Replace subprocess.run with a call recorder returning canned results."""
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):  # noqa: ANN001 - test stub
+        calls.append(list(cmd))
+        if cmd[1] == "autopilot" and cmd[2] == "create":
+            return create
+        return trigger
+
+    monkeypatch.setattr(execute.subprocess, "run", fake_run)
+    return calls
+
+
+def test_execute_multica_backend_dispatches(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _stub_multica(
+        monkeypatch,
+        create=_FakeCompleted(returncode=0, stdout='{"id": "ap-123"}'),
+        trigger=_FakeCompleted(returncode=0, stdout='{"ok": true}'),
+    )
+    event = {
+        "event_type": "ExecutionRequested",
+        "workflow_run_id": "run-77",
+        "payload": {"prompt": "do remote work", "backend": "multica"},
+    }
+    receipt = execute._execute(event, execute=True)
+    assert receipt["status"] == "dispatched"
+    assert receipt["backend"] == "multica"
+    assert receipt["autopilot_id"] == "ap-123"
+    assert receipt["agent"] == "Mika"
+    assert len(calls) == 2
+    assert calls[0][:4] == ["multica", "autopilot", "create", "--agent"]
+    assert calls[0][4] == "Mika"
+    assert calls[1][:4] == ["multica", "autopilot", "trigger", "ap-123"]
+
+
+def test_execute_multica_create_failure_reports_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_multica(
+        monkeypatch,
+        create=_FakeCompleted(returncode=1, stderr="no auth token"),
+        trigger=_FakeCompleted(returncode=0, stdout="{}"),
+    )
+    event = {"event_type": "ExecutionRequested", "payload": {"prompt": "p", "backend": "multica"}}
+    receipt = execute._execute(event, execute=True)
+    assert "multica_create_failed" in receipt["error"]
+
+
+def test_execute_multica_trigger_failure_reports_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub_multica(
+        monkeypatch,
+        create=_FakeCompleted(returncode=0, stdout='{"id": "ap-9"}'),
+        trigger=_FakeCompleted(returncode=1, stderr="trigger refused"),
+    )
+    event = {"event_type": "ExecutionRequested", "payload": {"prompt": "p", "backend": "multica"}}
+    receipt = execute._execute(event, execute=True)
+    assert "multica_trigger_failed" in receipt["error"]
+    assert receipt["autopilot_id"] == "ap-9"
+
+
+def test_execute_unknown_backend_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _FakePi()
+    monkeypatch.setattr(execute, "_load_pi_adapter", lambda: fake)
+    event = {"event_type": "ExecutionRequested", "payload": {"prompt": "p", "backend": "bogus"}}
+    receipt = execute._execute(event, execute=True)
+    assert receipt["error"] == "unknown_backend: bogus"
+    assert fake.last_kwargs is None  # never touched the pi adapter
