@@ -68,7 +68,9 @@ def _send_alert(event: dict[str, Any]) -> bool:
     title = str(event.get("title") or event.get("event_type") or "resident-alert")
     body = str(event.get("message") or event.get("description") or json.dumps(event, ensure_ascii=False)[:300])
     try:
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        connector_path = WORKSPACE / "bin" / "ssot"
+        if str(connector_path) not in sys.path:
+            sys.path.insert(0, str(connector_path))
         from alert_connectors import build_connectors, route_connector  # noqa: PLC0415
 
         conn = route_connector(severity, domain)
