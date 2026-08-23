@@ -12,13 +12,13 @@ WP-E: 监控事件 → 告警通道(复用 observability-events + alert-connecto
 
 from __future__ import annotations
 
-from omo.resident import WORKSPACE
-
 import argparse
 import json
 import sys
 from pathlib import Path
 from typing import Any
+
+from omo.resident import WORKSPACE
 
 OBS_EVENTS = WORKSPACE / ".omo" / "_delivery" / "observability" / "events.jsonl"
 WATERMARK_FILE = WORKSPACE / ".omo" / "_delivery" / "alert-forwarder" / "watermark.json"

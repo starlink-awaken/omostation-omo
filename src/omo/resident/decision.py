@@ -12,14 +12,14 @@ WP-F: 事件驱动决策 — 失败/债务事件 → 决策提案(可追溯)。
 
 from __future__ import annotations
 
-from omo.resident import WORKSPACE
-
 import importlib.util
 import json
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from omo.resident import WORKSPACE
 
 PROPOSAL_DIR = WORKSPACE / ".omo" / "_knowledge" / "evolution-proposals"
 TRIGGER_EVENTS = frozenset({"WorkflowFailed", "StepFailed", "StepTimeout"})

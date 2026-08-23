@@ -11,14 +11,14 @@ Input channel (WP-D): 个人文件 → 事件中心 → resident agents 可订�
 
 from __future__ import annotations
 
-from omo.resident import WORKSPACE
-
 import argparse
 import hashlib
 import json
 import sys
 from pathlib import Path
 from typing import Any
+
+from omo.resident import WORKSPACE
 
 DEFAULT_SIGNALS_DIR = Path.home() / ".codebuddy" / "personal-signals"
 WATERMARK_FILE = Path(__file__).resolve().parents[2] / ".omo" / "_delivery" / "personal-signals" / "watermark.json"
@@ -44,13 +44,6 @@ def _file_digest(path: Path) -> str:
 
 def _publish(topic: str, payload: dict[str, Any], trace_id: str) -> bool:
     try:
-        import sys as _sys  # noqa: PLC0415
-        from pathlib import Path as _P  # noqa: PLC0415
-
-        ws = _P(__file__).resolve().parents[2]
-        cand = ws / "projects" / "bus-foundation" / "src"
-        if cand.is_dir() and str(cand) not in _sys.path:
-            _sys.path.insert(0, str(cand))
         from bus_foundation.facade import event as bus_event  # noqa: PLC0415
 
         bus_event.publish(

@@ -13,12 +13,12 @@ Multica autopilot integration point is recorded here for later wiring.
 
 from __future__ import annotations
 
-from omo.resident import WORKSPACE
-
 import importlib.util
 import sys
 from pathlib import Path
 from typing import Any
+
+from omo.resident import WORKSPACE
 
 EXECUTE_EVENTS = frozenset({"ExecutionRequested", "WorkPacketDispatched"})
 MULTICA_INTEGRATION_NOTE = (

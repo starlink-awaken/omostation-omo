@@ -13,8 +13,6 @@ Design: 事件中心(ledger 持久) + checkpoint 消费水位(断点续传) + �
 
 from __future__ import annotations
 
-from omo.resident import WORKSPACE
-
 import argparse
 import json
 import os
@@ -24,6 +22,8 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, Callable
+
+from omo.resident import WORKSPACE
 
 DEFAULT_LEDGER = WORKSPACE / "runtime" / "omo" / "event-ledger.sqlite3"
 DEFAULT_EVENTS_JSONL = WORKSPACE / ".omo" / "_knowledge" / "workflow-mesh" / "events.jsonl"
@@ -267,8 +267,9 @@ def _register_default_handlers() -> None:
 
 def _connect_with_retry(ledger: Path, *, attempts: int = 5) -> Any:
     """Connect to the ledger with retry (SQLite cross-process init lock)."""
-    from omo.event_ledger.broker import LedgerBroker  # noqa: PLC0415
     import sqlite3  # noqa: PLC0415
+
+    from omo.event_ledger.broker import LedgerBroker  # noqa: PLC0415
 
     last_exc: Exception | None = None
     for attempt in range(attempts):

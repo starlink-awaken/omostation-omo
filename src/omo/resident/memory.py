@@ -11,8 +11,6 @@ Mapping: user→semantic, feedback→procedural, project→episodic, reference�
 
 from __future__ import annotations
 
-from omo.resident import WORKSPACE
-
 import argparse
 import re
 import subprocess
@@ -21,6 +19,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+from omo.resident import WORKSPACE
 
 DEFAULT_MEMORY_DIR = Path.home() / ".codebuddy" / "projects" / "Users-xiamingxing-Workspace" / "memory"
 

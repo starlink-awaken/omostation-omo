@@ -12,14 +12,14 @@ Wired into resident-orchestrator-daemon via register_with_daemon().
 
 from __future__ import annotations
 
-from omo.resident import WORKSPACE
-
 import json
 import re
 import sys
 import time
 from pathlib import Path
 from typing import Any
+
+from omo.resident import WORKSPACE
 
 SEDIMENT_ROOT = WORKSPACE / ".omo" / "_knowledge" / "sediment"
 SUCCESS_EVENTS = frozenset({"WorkflowSucceeded", "WorkflowClosed"})

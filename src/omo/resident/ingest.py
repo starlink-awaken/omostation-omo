@@ -13,13 +13,13 @@ reports the failure but does not advance the watermark (retry on next run).
 
 from __future__ import annotations
 
-from omo.resident import WORKSPACE
-
 import argparse
 import json
 import sys
 from pathlib import Path
 from typing import Any
+
+from omo.resident import WORKSPACE
 
 # ── topic mapping ────────────────────────────────────────────────────
 _EVENT_TYPE_TOPIC: dict[str, str] = {
