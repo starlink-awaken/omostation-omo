@@ -45,6 +45,26 @@ def test_consume_success_writes_runs_draft(tmp_path: Path) -> None:
     assert "20260823T0000Z-project-code-change-abc123" in text
 
 
+def test_consume_personal_signal_writes_signals_draft(tmp_path: Path) -> None:
+    """个人文件信号 → 信号沉淀草稿 (signals/ 目录)."""
+    event = {
+        "event_type": "PersonalSignal",
+        "event_id": "evt_sig1",
+        "trace_id": "personal-signal:idea",
+        "occurred_at": "2026-08-23T01:00:00Z",
+        "producer": "personal-signals",
+        "payload": {"file": "my-idea.md", "content_digest": "sha256:abc", "source": "personal-signals"},
+    }
+    path = sediment.consume_event(event)
+    assert path is not None
+    assert path.is_file()
+    assert path.parent == tmp_path / "signals"
+    assert path.name == "my-idea.md"
+    text = path.read_text(encoding="utf-8")
+    assert "个人信号沉淀" in text
+    assert "my-idea.md" in text
+
+
 def test_consume_failure_writes_failures_draft(tmp_path: Path) -> None:
     event = _success_event(event_type="StepFailed")
     path = sediment.consume_event(event)

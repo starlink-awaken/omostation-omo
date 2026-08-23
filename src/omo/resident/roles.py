@@ -25,9 +25,9 @@ from typing import Any
 ROLES: dict[str, dict[str, Any]] = {
     "sediment": {
         "projector": "resident-sediment",
-        "topic_filter": ["WorkflowClosed", "WorkflowSucceeded"],
+        "topic_filter": ["WorkflowClosed", "WorkflowSucceeded", "PersonalSignal"],
         "handler": "knowledge_sediment",
-        "desc": "记忆沉淀 — 成功运行 → 知识草稿",
+        "desc": "记忆沉淀 — 成功运行/个人信号 → 知识草稿",
     },
     "decision": {
         "projector": "resident-decision",

@@ -24,6 +24,8 @@ from omo.resident import WORKSPACE
 SEDIMENT_ROOT = WORKSPACE / ".omo" / "_knowledge" / "sediment"
 SUCCESS_EVENTS = frozenset({"WorkflowSucceeded", "WorkflowClosed"})
 FAILURE_EVENTS = frozenset({"WorkflowFailed", "StepFailed", "StepTimeout"})
+# 个人文件信号 (personal-signals 渠道) — 沉淀为知识草稿 (M3.1 输入渠道激活)
+SIGNAL_EVENTS = frozenset({"PersonalSignal"})
 
 
 def _safe_slug(value: str, max_len: int = 80) -> str:
@@ -79,6 +81,29 @@ def consume_event(event: dict[str, Any]) -> Path | None:
         return _sediment_run(event, kind="success")
     if event_type in FAILURE_EVENTS:
         return _sediment_run(event, kind="failure")
+    if event_type in SIGNAL_EVENTS:
+        # 个人文件信号 → 信号沉淀草稿 (slug 用文件名, 溯源 trace_id)
+        filename = str((event.get("payload") or {}).get("file") or "unknown")
+        slug = _safe_slug(filename.removesuffix(".md")) or "personal-signal"
+        target = SEDIMENT_ROOT / "signals" / f"{slug}.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        body = (
+            f"# 个人信号沉淀(事件驱动草稿)\n\n"
+            f"- event_type: {event_type}\n"
+            f"- trace_id: {event.get('trace_id')}\n"
+            f"- event_id: {event.get('event_id')}\n"
+            f"- occurred_at: {event.get('occurred_at')}\n"
+            f"- generated_at: {_utc()}\n"
+            f"- status: draft (个人文件信号, 待完善为笔记/决策/行动)\n\n"
+            f"## 信号内容 (payload)\n\n"
+            f"- source: personal-signals\n"
+            f"- file: {filename}\n"
+            f"- content_digest: {(event.get('payload') or {}).get('content_digest')}\n\n"
+            f"## 待补充\n\n"
+            f"- [ ] 信号要点\n- [ ] 关联上下文\n- [ ] 建议行动\n"
+        )
+        target.write_text(body, encoding="utf-8")
+        return target
     return None
 
 

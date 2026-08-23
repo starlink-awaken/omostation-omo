@@ -12,6 +12,11 @@ routes:
     topic: mesh:workflow:closed
     action: knowledge_sediment
     safe: true
+  # 个人文件信号 (personal-signals 渠道, M3.1) → 知识沉淀
+  - event_type: PersonalSignal
+    topic: mesh:personal:signal
+    action: knowledge_sediment
+    safe: true
   - event_type: WorkflowFailed
     topic: mesh:workflow:failed
     action: knowledge_sediment
