@@ -71,12 +71,15 @@ def _run_multica(*, prompt: str, run_id: str, timeout_seconds: int) -> dict[str,
         )
         if trigger.returncode != 0:
             return {"error": f"multica_trigger_failed: {trigger.stderr.strip()[:200]}", "autopilot_id": autopilot_id}
+        trigger_data: dict[str, Any] = json.loads(trigger.stdout) if trigger.stdout.strip() else {}
+        # agent runtime 可能离线 → 平台跳过运行; 如实反映到顶层 status 避免误读为已执行
+        top_status = "dispatched_skipped" if str(trigger_data.get("status")) == "skipped" else "dispatched"
         return {
-            "status": "dispatched",
+            "status": top_status,
             "backend": "multica",
             "autopilot_id": autopilot_id,
             "agent": MULTICA_AGENT,
-            "trigger": json.loads(trigger.stdout) if trigger.stdout.strip() else {},
+            "trigger": trigger_data,
         }
     except Exception as exc:  # noqa: BLE001 - execution is best-effort
         return {"error": f"multica_execution_failed: {type(exc).__name__}: {exc}"}

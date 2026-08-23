@@ -168,6 +168,22 @@ def test_execute_multica_trigger_failure_reports_error(monkeypatch: pytest.Monke
     assert receipt["autopilot_id"] == "ap-9"
 
 
+def test_execute_multica_skipped_reflected_in_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    """agent runtime 离线 → 平台跳过运行, 顶层 status 应为 dispatched_skipped 而非 dispatched."""
+    _stub_multica(
+        monkeypatch,
+        create=_FakeCompleted(returncode=0, stdout='{"id": "ap-77"}'),
+        trigger=_FakeCompleted(
+            returncode=0,
+            stdout='{"status": "skipped", "reason_code": "runtime_offline"}',
+        ),
+    )
+    event = {"event_type": "ExecutionRequested", "payload": {"prompt": "p", "backend": "multica"}}
+    receipt = execute._execute(event, execute=True)
+    assert receipt["status"] == "dispatched_skipped"
+    assert receipt["trigger"]["reason_code"] == "runtime_offline"
+
+
 def test_execute_unknown_backend_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _FakePi()
     monkeypatch.setattr(execute, "_load_pi_adapter", lambda: fake)
