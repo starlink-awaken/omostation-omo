@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 
-"""resident-resources — 共享资源层发现/消费入口 (M3.3).
+"""resident-resources — 共享资源层发现/消费入口 (M3.3) + 领域隔离 (M4.2).
 
 读取 `.omo/_truth/registry/external-connection-fabric.yaml` 的统一资源注册表
 (六类: knowledge_source / data_source / resource_provider / method_pack /
 tool_capability / channel / model_provider / asset_source), 提供按 kind /
-capability 检索的可消费清单。让 resident agent 体系能发现并路由到共享资源
-(bos_uri 定位, capabilities 能力契约), 完成"共享资源层 → 运行时消费"闭环。
+capability / domain 检索的可消费清单。
+
+M4.2 领域隔离:
+- 每个资源有 domain + visibility (public/private)
+- 调用者声明 actor_domain 后: public 全可见; private 仅同 domain 可见
+- 未声明 actor_domain 时默认全开放 (单用户兼容)
 """
 
 from __future__ import annotations
@@ -47,8 +51,26 @@ def _load_registry() -> dict[str, Any]:
     return doc
 
 
-def list_resources(*, kind: str | None = None, capability: str | None = None) -> list[dict[str, Any]]:
-    """按 kind / capability 过滤返回资源清单."""
+def _visible(res: dict[str, Any], actor_domain: str | None) -> bool:
+    """领域隔离可见性 (M4.2): public 全可见; private 仅同 domain 可见.
+
+    未声明 actor_domain → 默认全开放 (单用户兼容).
+    """
+    if not actor_domain:
+        return True
+    if str(res.get("visibility") or "public") == "public":
+        return True
+    return str(res.get("domain") or "") == actor_domain
+
+
+def list_resources(
+    *,
+    kind: str | None = None,
+    capability: str | None = None,
+    domain: str | None = None,
+    actor_domain: str | None = None,
+) -> list[dict[str, Any]]:
+    """按 kind / capability / domain 过滤 + 领域可见性返回资源清单."""
     registry = _load_registry()
     resources = registry.get("resources", []) if isinstance(registry, dict) else []
     out: list[dict[str, Any]] = []
@@ -59,6 +81,10 @@ def list_resources(*, kind: str | None = None, capability: str | None = None) ->
             continue
         if capability and capability not in (res.get("capabilities") or []):
             continue
+        if domain and res.get("domain") != domain:
+            continue
+        if not _visible(res, actor_domain):
+            continue
         out.append(res)
     return out
 
@@ -66,12 +92,16 @@ def list_resources(*, kind: str | None = None, capability: str | None = None) ->
 def summarize(resources: list[dict[str, Any]]) -> dict[str, Any]:
     """汇总统计 (按 kind 分布)."""
     by_kind: dict[str, int] = {}
+    by_domain: dict[str, int] = {}
     for res in resources:
         k = str(res.get("kind") or "unknown")
         by_kind[k] = by_kind.get(k, 0) + 1
+        d = str(res.get("domain") or "unknown")
+        by_domain[d] = by_domain.get(d, 0) + 1
     return {
         "total": len(resources),
         "by_kind": by_kind,
+        "by_domain": by_domain,
         "kinds_covered": len(by_kind),
     }
 
@@ -80,10 +110,17 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--kind", help="按资源类别过滤 (如 knowledge_source/tool_capability)")
     parser.add_argument("--capability", help="按能力过滤 (如 search/discover/invoke)")
+    parser.add_argument("--domain", help="按领域过滤 (如 system/knowledge)")
+    parser.add_argument("--actor-domain", help="调用者领域 (启用 private 资源可见性检查)")
     parser.add_argument("--json", action="store_true", help="输出 JSON")
     args = parser.parse_args(argv)
 
-    resources = list_resources(kind=args.kind, capability=args.capability)
+    resources = list_resources(
+        kind=args.kind,
+        capability=args.capability,
+        domain=args.domain,
+        actor_domain=args.actor_domain,
+    )
     if args.json:
         print(
             json.dumps(
@@ -96,15 +133,21 @@ def main(argv=None) -> int:
         return 0
 
     summary = summarize(resources)
-    print(f"共享资源: {summary['total']} 个, 覆盖 {summary['kinds_covered']} 类")
+    isolation = "领域隔离启用" if args.actor_domain else "全开放 (未声明 actor-domain)"
+    print(f"共享资源: {summary['total']} 个, 覆盖 {summary['kinds_covered']} 类 | {isolation}")
     if args.kind:
         print(f"  过滤: kind={args.kind}")
     if args.capability:
         print(f"  过滤: capability={args.capability}")
+    if args.domain:
+        print(f"  过滤: domain={args.domain}")
+    if args.actor_domain:
+        print(f"  actor-domain: {args.actor_domain}")
     for res in resources:
         label = KIND_LABELS.get(str(res.get("kind")), str(res.get("kind")))
         print(
             f"  - {res.get('id')} [{label}] "
+            f"domain={res.get('domain')} vis={res.get('visibility')} "
             f"provider={res.get('provider')} bos_uri={res.get('bos_uri')} "
             f"caps={','.join(res.get('capabilities') or [])}"
         )
