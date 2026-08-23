@@ -22,6 +22,7 @@ SUBCOMMANDS = {
     "status": "omo.resident.status",
     "promote": "omo.resident.promote",
     "resources": "omo.resident.resources",
+    "roles": "omo.resident.roles",
 }
 
 

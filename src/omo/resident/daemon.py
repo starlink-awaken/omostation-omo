@@ -351,17 +351,32 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--topic-filter", default="", help="comma-separated event types this daemon handles (empty = all)"
     )
+    parser.add_argument(
+        "--role",
+        default="",
+        help="resident 角色 (M4.3): sediment/decision/execute/monitor/heartbeat; 设置 projector+topic-filter",
+    )
     args = parser.parse_args(argv)
     if args.yes:
         global _APPROVAL_REQUIRED  # noqa: PLW0603
         _APPROVAL_REQUIRED = False
     topic_filter = {t.strip() for t in args.topic_filter.split(",") if t.strip()} or None
+    projector = args.projector
+    if args.role:
+        from omo.resident.roles import get_role  # noqa: PLC0415
+
+        role_cfg = get_role(args.role)
+        if role_cfg is None:
+            print(f"unknown role: {args.role} (可用: sediment/decision/execute/monitor/heartbeat)", file=sys.stderr)
+            return 1
+        projector = str(role_cfg["projector"])
+        topic_filter = set(role_cfg["topic_filter"])
     return run_daemon(
         ledger=args.ledger,
         events_jsonl=args.events_jsonl,
         interval=args.interval,
         once=args.once,
-        projector=args.projector,
+        projector=projector,
         topic_filter=topic_filter,
     )
 
