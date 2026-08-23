@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
 
-"""execution-adapter — wire execution workers (Pi) into the resident daemon (WP-G).
+"""execution-adapter — wire execution workers (Pi / multica) into the resident daemon (WP-G).
 
 Registers a non-safe ``execution_agent`` handler: a matching event's payload
 carries the instruction prompt; the handler builds a governed delivery_binding
-and calls pi-worker-adapter.run_worker to produce a worker receipt. Because this
-handler executes external work it is non-safe — the daemon's human-approval gate
-blocks it unless ``--yes`` is supplied.
+and dispatches to a backend worker:
 
-Multica autopilot integration point is recorded here for later wiring.
+- pi (默认): 本地 Pi 推理 (pi-worker-adapter.run_worker, 需 omlxc/AetherForge 认证)
+- multica: 托管 agent 自动化 (multica autopilot create+trigger, agent=Mika)
+
+Because this handler executes external work it is non-safe — the daemon's
+human-approval gate blocks it unless ``--yes`` is supplied.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -21,9 +25,64 @@ from typing import Any
 from omo.resident import WORKSPACE
 
 EXECUTE_EVENTS = frozenset({"ExecutionRequested", "WorkPacketDispatched"})
-MULTICA_INTEGRATION_NOTE = (
-    "multica autopilot integration point: bin/ 零引用; 待确认 multica CLI autopilot 触发接口后接入 (recorded WP-G)"
-)
+DEFAULT_BACKEND = "pi"
+MULTICA_AGENT = "Mika"  # multica 工作区默认执行 agent (runtime=local)
+MULTICA_INTEGRATION_NOTE = "multica autopilot 已接入: _run_multica() 走 autopilot create(run_only) + trigger"
+
+
+def _run_multica(*, prompt: str, run_id: str, timeout_seconds: int) -> dict[str, Any]:
+    """Create a run_only autopilot via multica CLI and trigger it once."""
+    try:
+        create = subprocess.run(
+            [
+                "multica",
+                "autopilot",
+                "create",
+                "--agent",
+                MULTICA_AGENT,
+                "--mode",
+                "run_only",
+                "--title",
+                f"resident-exec-{run_id[:24]}",
+                "--description",
+                prompt[:2000],
+                "--output",
+                "json",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=min(timeout_seconds + 10, 130),
+            check=False,
+        )
+        if create.returncode != 0:
+            return {"error": f"multica_create_failed: {create.stderr.strip()[:200]}"}
+        created = json.loads(create.stdout)
+        autopilot_id = str(
+            created.get("id") or (created.get("autopilot") or {}).get("id") if isinstance(created, dict) else ""
+        )
+        if not autopilot_id:
+            return {"error": f"multica_create_no_id: {create.stdout[:200]}"}
+        trigger = subprocess.run(
+            ["multica", "autopilot", "trigger", autopilot_id, "--output", "json"],
+            capture_output=True,
+            text=True,
+            timeout=min(timeout_seconds + 10, 130),
+            check=False,
+        )
+        if trigger.returncode != 0:
+            return {"error": f"multica_trigger_failed: {trigger.stderr.strip()[:200]}", "autopilot_id": autopilot_id}
+        trigger_data: dict[str, Any] = json.loads(trigger.stdout) if trigger.stdout.strip() else {}
+        # agent runtime 可能离线 → 平台跳过运行; 如实反映到顶层 status 避免误读为已执行
+        top_status = "dispatched_skipped" if str(trigger_data.get("status")) == "skipped" else "dispatched"
+        return {
+            "status": top_status,
+            "backend": "multica",
+            "autopilot_id": autopilot_id,
+            "agent": MULTICA_AGENT,
+            "trigger": trigger_data,
+        }
+    except Exception as exc:  # noqa: BLE001 - execution is best-effort
+        return {"error": f"multica_execution_failed: {type(exc).__name__}: {exc}"}
 
 
 def _load_pi_adapter() -> Any:
@@ -39,7 +98,12 @@ def _load_pi_adapter() -> Any:
 
 
 def _execute(event: dict[str, Any], *, execute: bool) -> dict[str, Any]:
-    """Build delivery_binding from event payload and run Pi worker (receipt)."""
+    """Build delivery_binding from event payload and run a worker backend (receipt).
+
+    M3.2 双载体: payload.backend 选择执行后端:
+    - pi (默认): 本地 Pi 推理 (pi-worker-adapter, 需 omlxc/AetherForge 认证)
+    - multica: 托管 agent 自动化 (multica autopilot create+trigger)
+    """
     payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
     prompt = str(payload.get("prompt") or payload.get("instruction") or "")
     if not prompt:
@@ -52,17 +116,23 @@ def _execute(event: dict[str, Any], *, execute: bool) -> dict[str, Any]:
         "packet_hash": str(payload.get("packet_hash") or "sha256:0" * 4),
         "instruction_binding": "resident-workpacket-v1",
     }
+    timeout = min(int(payload.get("timeout_seconds") or 30), 120)
+    backend = str(payload.get("backend") or DEFAULT_BACKEND)
     try:
+        if backend == "multica":
+            return _run_multica(prompt=prompt, run_id=binding["run_id"], timeout_seconds=timeout)
+        if backend != "pi":
+            return {"error": f"unknown_backend: {backend}", "binding": binding}
         pi = _load_pi_adapter()
         return pi.run_worker(
             prompt=prompt,
             execute=execute,
             workspace_root=WORKSPACE,
             delivery_binding=binding,
-            timeout_seconds=min(int(payload.get("timeout_seconds") or 30), 120),
+            timeout_seconds=timeout,
         )
     except Exception as exc:  # noqa: BLE001 - execution is best-effort
-        return {"error": f"execution_failed: {type(exc).__name__}: {exc}", "binding": binding}
+        return {"error": f"execution_failed: {type(exc).__name__}: {exc}", "binding": binding, "backend": backend}
 
 
 def register_with_daemon(daemon_module: Any) -> None:
