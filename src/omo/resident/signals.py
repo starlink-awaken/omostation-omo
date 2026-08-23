@@ -11,6 +11,8 @@ Input channel (WP-D): 个人文件 → 事件中心 → resident agents 可订�
 
 from __future__ import annotations
 
+from omo.resident import WORKSPACE
+
 import argparse
 import hashlib
 import json

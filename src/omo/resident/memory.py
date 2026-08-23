@@ -11,6 +11,8 @@ Mapping: user→semantic, feedback→procedural, project→episodic, reference�
 
 from __future__ import annotations
 
+from omo.resident import WORKSPACE
+
 import argparse
 import re
 import subprocess

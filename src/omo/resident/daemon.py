@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 """resident-orchestrator-daemon — subscribe→execute bridge for resident agents.
 
 Polls the event ledger from a persisted checkpoint (resume-safe), routes each
@@ -12,6 +13,8 @@ Design: 事件中心(ledger 持久) + checkpoint 消费水位(断点续传) + �
 
 from __future__ import annotations
 
+from omo.resident import WORKSPACE
+
 import argparse
 import json
 import os
@@ -22,7 +25,6 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from omo.resident import WORKSPACE  # noqa: E402
 DEFAULT_LEDGER = WORKSPACE / "runtime" / "omo" / "event-ledger.sqlite3"
 DEFAULT_EVENTS_JSONL = WORKSPACE / ".omo" / "_knowledge" / "workflow-mesh" / "events.jsonl"
 PID_FILE = WORKSPACE / ".omo" / "_delivery" / "resident-orchestrator" / "daemon.pid"

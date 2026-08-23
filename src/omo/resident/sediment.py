@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 """knowledge-sediment — turn workflow-mesh events into knowledge drafts.
 
 Consumes ledger events (success → run retro draft; failure → failure pattern
@@ -11,6 +12,8 @@ Wired into resident-orchestrator-daemon via register_with_daemon().
 
 from __future__ import annotations
 
+from omo.resident import WORKSPACE
+
 import json
 import re
 import sys
@@ -18,7 +21,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-from omo.resident import WORKSPACE  # noqa: E402
 SEDIMENT_ROOT = WORKSPACE / ".omo" / "_knowledge" / "sediment"
 SUCCESS_EVENTS = frozenset({"WorkflowSucceeded", "WorkflowClosed"})
 FAILURE_EVENTS = frozenset({"WorkflowFailed", "StepFailed", "StepTimeout"})

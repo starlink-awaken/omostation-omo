@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 """execution-adapter — wire execution workers (Pi) into the resident daemon (WP-G).
 
 Registers a non-safe ``execution_agent`` handler: a matching event's payload
@@ -12,12 +13,13 @@ Multica autopilot integration point is recorded here for later wiring.
 
 from __future__ import annotations
 
+from omo.resident import WORKSPACE
+
 import importlib.util
 import sys
 from pathlib import Path
 from typing import Any
 
-from omo.resident import WORKSPACE  # noqa: E402
 EXECUTE_EVENTS = frozenset({"ExecutionRequested", "WorkPacketDispatched"})
 MULTICA_INTEGRATION_NOTE = (
     "multica autopilot integration point: bin/ 零引用; 待确认 multica CLI autopilot 触发接口后接入 (recorded WP-G)"

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 """event-ingest-adapter — publish workflow-mesh JSONL events to the unified bus.
 
 Reads `.omo/_knowledge/workflow-mesh/events.jsonl` (append-only workflow-mesh
@@ -11,6 +12,8 @@ reports the failure but does not advance the watermark (retry on next run).
 """
 
 from __future__ import annotations
+
+from omo.resident import WORKSPACE
 
 import argparse
 import json
@@ -33,7 +36,6 @@ _EVENT_TYPE_TOPIC: dict[str, str] = {
 }
 _FALLBACK_TOPIC = "mesh:event:raw"
 
-from omo.resident import WORKSPACE  # noqa: E402
 EVENTS_JSONL = WORKSPACE / ".omo" / "_knowledge" / "workflow-mesh" / "events.jsonl"
 WATERMARK_FILE = WORKSPACE / ".omo" / "_delivery" / "event-ingest" / "watermark.json"
 
