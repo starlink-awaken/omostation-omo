@@ -20,6 +20,7 @@ SUBCOMMANDS = {
     "decision": "omo.resident.decision",
     "execute": "omo.resident.execute",
     "status": "omo.resident.status",
+    "promote": "omo.resident.promote",
 }
 
 
