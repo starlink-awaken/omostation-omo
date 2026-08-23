@@ -310,6 +310,7 @@ def run_daemon(
     if once:
         report = tick_once(broker, events_jsonl, projector=projector, topic_filter=topic_filter)
         broker.close()
+        PID_FILE.unlink(missing_ok=True)
         print(json.dumps(report, sort_keys=True))
         return 0
 
