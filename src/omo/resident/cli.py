@@ -19,6 +19,7 @@ SUBCOMMANDS = {
     "alert": "omo.resident.alert",
     "decision": "omo.resident.decision",
     "execute": "omo.resident.execute",
+    "status": "omo.resident.status",
 }
 
 
