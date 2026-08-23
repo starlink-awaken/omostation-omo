@@ -120,10 +120,16 @@ def register_with_daemon(daemon_module: Any) -> None:
 
 def _sediment_dispatch(event: dict[str, Any]) -> None:
     """Route one event to the correct sediment kind based on its type."""
-    if _event_type(event) in SUCCESS_EVENTS:
+    event_type = _event_type(event)
+    if event_type in SUCCESS_EVENTS:
         _success_handler(event)
-    elif _event_type(event) in FAILURE_EVENTS:
+    elif event_type in FAILURE_EVENTS:
         _failure_handler(event)
+    elif event_type in SIGNAL_EVENTS:
+        # 个人文件信号 → 信号沉淀草稿
+        path = consume_event(event)
+        if path is not None:
+            _log(f"sediment_written kind=signal file={path.name}")
 
 
 def _success_handler(event: dict[str, Any]) -> None:
