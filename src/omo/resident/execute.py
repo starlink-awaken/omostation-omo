@@ -17,10 +17,13 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from omo.resident import WORKSPACE
 
@@ -28,6 +31,12 @@ EXECUTE_EVENTS = frozenset({"ExecutionRequested", "WorkPacketDispatched"})
 DEFAULT_BACKEND = "pi"
 MULTICA_AGENT = "Mika"  # multica 工作区默认执行 agent (runtime=local)
 MULTICA_INTEGRATION_NOTE = "multica autopilot 已接入: _run_multica() 走 autopilot create(run_only) + trigger"
+
+# bet-ledger 契约常量 (与 bin/plan/bet-ledger.py 对齐, 不重复导入避免跨仓耦合)
+SHA256_REF_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+INSTRUCTION_BINDING_KEYS = frozenset(
+    {"instruction_ref", "instruction_version", "content_digest", "instruction_profile"}
+)
 
 
 def _run_multica(*, prompt: str, run_id: str, timeout_seconds: int) -> dict[str, Any]:
@@ -97,6 +106,55 @@ def _load_pi_adapter() -> Any:
     return mod
 
 
+def _default_binding(event: dict[str, Any], payload: dict[str, Any], run_id: str) -> dict[str, Any]:
+    """Best-effort binding used for multica / unknown backends (not pi)."""
+    return {
+        "run_id": run_id,
+        "packet_id": str(payload.get("packet_id") or f"packet-{str(event.get('event_id'))[:8]}"),
+        "packet_hash": str(payload.get("packet_hash") or "sha256:0" * 4),
+        "instruction_binding": "resident-workpacket-v1",
+    }
+
+
+def _resolve_run_binding(run_id: str) -> dict[str, Any] | None:
+    """Load the governed run file and build the exact bet-ledger binding.
+
+    Reads ``.omo/_delivery/agent-workflows/runs/<run_id>.yaml`` and returns a
+    delivery_binding whose fields come from the real run (packet_id from
+    work_packet, work_packet_hash, dict instruction_binding) so the
+    pi-worker-adapter's bet-ledger contract (run + packet + instruction triple)
+    can pass.  Missing / mismatched / incomplete runs fail closed by returning
+    None — the caller surfaces ``binding_run_unavailable`` instead of guessing.
+    """
+    run_path = WORKSPACE / ".omo" / "_delivery" / "agent-workflows" / "runs" / f"{run_id}.yaml"
+    if not run_path.is_file():
+        return None
+    try:
+        loaded = yaml.safe_load(run_path.read_text(encoding="utf-8")) or {}
+    except (OSError, UnicodeError, yaml.YAMLError):
+        return None
+    if not isinstance(loaded, dict) or loaded.get("run_id") != run_id:
+        return None
+    work_packet = loaded.get("work_packet")
+    work_packet_hash = loaded.get("work_packet_hash")
+    instruction_binding = loaded.get("instruction_binding")
+    if not isinstance(work_packet, dict) or not isinstance(work_packet_hash, str):
+        return None
+    if not isinstance(instruction_binding, dict) or set(instruction_binding) != INSTRUCTION_BINDING_KEYS:
+        return None
+    if SHA256_REF_RE.fullmatch(work_packet_hash) is None:
+        return None
+    packet_id = work_packet.get("packet_id")
+    if not isinstance(packet_id, str) or not packet_id:
+        return None
+    return {
+        "run_id": run_id,
+        "packet_id": packet_id,
+        "packet_hash": work_packet_hash,
+        "instruction_binding": instruction_binding,
+    }
+
+
 def _execute(event: dict[str, Any], *, execute: bool) -> dict[str, Any]:
     """Build delivery_binding from event payload and run a worker backend (receipt).
 
@@ -108,27 +166,32 @@ def _execute(event: dict[str, Any], *, execute: bool) -> dict[str, Any]:
     prompt = str(payload.get("prompt") or payload.get("instruction") or "")
     if not prompt:
         return {"error": "execution_requires_prompt"}
-    binding = {
-        "run_id": str(
-            event.get("workflow_run_id") or payload.get("run_id") or "exec-" + str(event.get("event_id", ""))[:8]
-        ),
-        "packet_id": str(payload.get("packet_id") or f"packet-{str(event.get('event_id'))[:8]}"),
-        "packet_hash": str(payload.get("packet_hash") or "sha256:0" * 4),
-        "instruction_binding": "resident-workpacket-v1",
-    }
+    run_id = str(
+        event.get("workflow_run_id") or payload.get("run_id") or "exec-" + str(event.get("event_id", ""))[:8]
+    )
+    binding = _default_binding(event, payload, run_id)
     timeout = min(int(payload.get("timeout_seconds") or 30), 120)
     backend = str(payload.get("backend") or DEFAULT_BACKEND)
     try:
         if backend == "multica":
-            return _run_multica(prompt=prompt, run_id=binding["run_id"], timeout_seconds=timeout)
+            return _run_multica(prompt=prompt, run_id=run_id, timeout_seconds=timeout)
         if backend != "pi":
             return {"error": f"unknown_backend: {backend}", "binding": binding}
+        resolved = _resolve_run_binding(run_id)
+        if resolved is None:
+            return {
+                "error": "binding_run_unavailable",
+                "run_id": run_id,
+                "backend": backend,
+                "hint": "pi 执行须有含完整 work_packet + instruction_binding 的真实 run 文件",
+            }
+        binding = resolved  # 异常时保留真实 run binding 以便排查
         pi = _load_pi_adapter()
         return pi.run_worker(
             prompt=prompt,
             execute=execute,
             workspace_root=WORKSPACE,
-            delivery_binding=binding,
+            delivery_binding=resolved,
             timeout_seconds=timeout,
         )
     except Exception as exc:  # noqa: BLE001 - execution is best-effort
