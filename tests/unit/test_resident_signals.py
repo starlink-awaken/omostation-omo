@@ -19,6 +19,7 @@ from omo.resident import signals
 @pytest.fixture(autouse=True)
 def _isolate_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(signals, "WATERMARK_FILE", tmp_path / "personal-signals" / "watermark.json")
+    monkeypatch.setattr(signals, "EVENTS_JSONL", tmp_path / "workflow-mesh" / "events.jsonl")
 
 
 @pytest.fixture
@@ -57,6 +58,26 @@ def test_poll_publish_and_watermark(signals_dir: Path, monkeypatch: pytest.Monke
     assert trace_id == "personal-signal:idea"
     # 水位已写
     assert signals.WATERMARK_FILE.is_file()
+
+
+def test_poll_appends_personal_signal_event_to_events_jsonl(
+    signals_dir: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """个人信号发布后追加到统一事件流 (PersonalSignal 事件)."""
+    import json as _json
+
+    (signals_dir / "idea.md").write_text("# idea", encoding="utf-8")
+    monkeypatch.setattr(signals, "_publish", lambda topic, payload, trace_id: True)
+    signals.poll(signals_dir=signals_dir, dry_run=False)
+
+    assert signals.EVENTS_JSONL.is_file()
+    lines = signals.EVENTS_JSONL.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    event = _json.loads(lines[0])
+    assert event["event_type"] == "PersonalSignal"
+    assert event["producer"] == "personal-signals"
+    assert event["payload"]["file"] == "idea.md"
+    assert event["idempotency_key"] == "personal-signal:idea:PersonalSignal"
 
 
 def test_poll_idempotent_second_run(signals_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:

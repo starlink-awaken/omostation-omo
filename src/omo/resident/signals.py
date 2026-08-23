@@ -15,6 +15,8 @@ import argparse
 import hashlib
 import json
 import sys
+import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +25,9 @@ from omo.resident import WORKSPACE
 DEFAULT_SIGNALS_DIR = Path.home() / ".codebuddy" / "personal-signals"
 WATERMARK_FILE = WORKSPACE / ".omo" / "_delivery" / "personal-signals" / "watermark.json"
 TOPIC = "mesh:personal:signal"
+# 个人信号事件进入 daemon 统一事件流 (workflow-mesh), 由 sediment 沉淀为知识
+EVENTS_JSONL = WORKSPACE / ".omo" / "_knowledge" / "workflow-mesh" / "events.jsonl"
+PERSONAL_SIGNAL_TYPE = "PersonalSignal"
 
 
 def _load_watermark() -> dict[str, str]:
@@ -55,6 +60,22 @@ def _publish(topic: str, payload: dict[str, Any], trace_id: str) -> bool:
         return False
 
 
+def _append_to_events_jsonl(payload: dict[str, Any], trace_id: str) -> None:
+    """将个人信号事件追加到 daemon 统一事件流 (workflow-mesh/events.jsonl)."""
+    event = {
+        "event_id": uuid.uuid4().hex,
+        "event_type": PERSONAL_SIGNAL_TYPE,
+        "idempotency_key": f"{trace_id}:PersonalSignal",
+        "occurred_at": time.strftime("%Y-%m-%dT%H:%M:%S.%fZ", time.gmtime()),
+        "payload": payload,
+        "producer": "personal-signals",
+        "schema_version": "workflow-mesh/v1",
+    }
+    EVENTS_JSONL.parent.mkdir(parents=True, exist_ok=True)
+    with EVENTS_JSONL.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+
 def poll(*, signals_dir: Path, dry_run: bool = False) -> dict[str, Any]:
     watermark = _load_watermark()
     files = sorted(signals_dir.glob("*.md"))
@@ -74,6 +95,8 @@ def poll(*, signals_dir: Path, dry_run: bool = False) -> dict[str, Any]:
             print(f"  [dry-run] {path.name} → {TOPIC}")
         elif _publish(TOPIC, payload, trace_id):
             report["published"] += 1
+            # 同时进入 daemon 统一事件流 (sediment 会沉淀为知识草稿)
+            _append_to_events_jsonl(payload, trace_id)
         watermark[path.name] = digest
     if not dry_run:
         _save_watermark(watermark)
