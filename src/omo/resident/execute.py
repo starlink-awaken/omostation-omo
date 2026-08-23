@@ -166,9 +166,7 @@ def _execute(event: dict[str, Any], *, execute: bool) -> dict[str, Any]:
     prompt = str(payload.get("prompt") or payload.get("instruction") or "")
     if not prompt:
         return {"error": "execution_requires_prompt"}
-    run_id = str(
-        event.get("workflow_run_id") or payload.get("run_id") or "exec-" + str(event.get("event_id", ""))[:8]
-    )
+    run_id = str(event.get("workflow_run_id") or payload.get("run_id") or "exec-" + str(event.get("event_id", ""))[:8])
     binding = _default_binding(event, payload, run_id)
     timeout = min(int(payload.get("timeout_seconds") or 30), 120)
     backend = str(payload.get("backend") or DEFAULT_BACKEND)
