@@ -61,17 +61,53 @@ def _read_incremental() -> tuple[list[dict[str, Any]], int]:
     return events, file_size
 
 
+def _event_title(event: dict[str, Any]) -> str:
+    """Extract a readable title from an observability event."""
+    for key in ("title", "event_type", "type"):
+        value = event.get(key)
+        if value:
+            return str(value)
+    return "resident-alert"
+
+
+def _event_body(event: dict[str, Any]) -> str:
+    """Extract a readable body, preferring payload detail over raw dump."""
+    for key in ("message", "description"):
+        value = event.get(key)
+        if value:
+            return str(value)
+    payload = event.get("payload")
+    if payload:
+        return json.dumps(payload, ensure_ascii=False)[:300]
+    return json.dumps(event, ensure_ascii=False)[:300]
+
+
+def _load_alert_connectors() -> Any:
+    """Load bin/ssot/alert-connectors.py by file path (dash name, not importable)."""
+    import importlib.util
+
+    connector_file = WORKSPACE / "bin" / "ssot" / "alert-connectors.py"
+    if not connector_file.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location("alert_connectors", connector_file)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
 def _send_alert(event: dict[str, Any]) -> bool:
     """Route one alert via alert-connectors; returns success."""
     severity = str(event.get("severity") or "")
     domain = str(event.get("domain") or "governance")
-    title = str(event.get("title") or event.get("event_type") or "resident-alert")
-    body = str(event.get("message") or event.get("description") or json.dumps(event, ensure_ascii=False)[:300])
+    title = _event_title(event)
+    body = _event_body(event)
     try:
-        connector_path = WORKSPACE / "bin" / "ssot"
-        if str(connector_path) not in sys.path:
-            sys.path.insert(0, str(connector_path))
-        from alert_connectors import build_connectors, route_connector  # noqa: PLC0415
+        connectors = _load_alert_connectors()
+        if connectors is None:
+            return False
+        build_connectors = connectors.build_connectors
+        route_connector = connectors.route_connector
 
         conn = route_connector(severity, domain)
         if conn is None:
@@ -81,8 +117,8 @@ def _send_alert(event: dict[str, Any]) -> bool:
                     break
         if conn is None:
             return False
-        conn.send(severity=severity, title=title, body=body)
-        return True
+        receipt = conn.deliver({"severity": severity, "title": title, "body": body, "domain": domain})
+        return receipt.get("result_state") == "delivered"
     except Exception as exc:  # noqa: BLE001 - alert is best-effort
         print(f"  alert_send_failed {severity}: {exc}", file=sys.stderr)
         return False
@@ -98,7 +134,7 @@ def forward(*, dry_run: bool = False) -> dict[str, Any]:
         alerted += 1
         if dry_run:
             print(
-                f"  [dry-run] alert {event.get('severity')} trace={event.get('trace_id')} title={event.get('title', '')[:40]}"
+                f"  [dry-run] alert {event.get('severity')} trace={event.get('trace_id')} title={_event_title(event)[:40]}"
             )
         elif _send_alert(event):
             sent += 1
