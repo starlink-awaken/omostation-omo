@@ -37,7 +37,7 @@ def _write_proposal(result: dict[str, Any], trace_id: str) -> str | None:
 def _scan_proposals() -> list[dict[str, Any]]:
     """Reuse evolution-agent's scan_internal to surface improvement opportunities."""
     try:
-        agent_path = Path(__file__).resolve().parent / "evolution-agent.py"
+        agent_path = WORKSPACE / "bin" / "ssot" / "evolution-agent.py"
         spec = importlib.util.spec_from_file_location("evolution_agent", agent_path)
         assert spec is not None and spec.loader is not None
         agent = importlib.util.module_from_spec(spec)

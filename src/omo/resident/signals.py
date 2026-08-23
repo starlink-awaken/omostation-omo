@@ -21,7 +21,7 @@ from typing import Any
 from omo.resident import WORKSPACE
 
 DEFAULT_SIGNALS_DIR = Path.home() / ".codebuddy" / "personal-signals"
-WATERMARK_FILE = Path(__file__).resolve().parents[2] / ".omo" / "_delivery" / "personal-signals" / "watermark.json"
+WATERMARK_FILE = WORKSPACE / ".omo" / "_delivery" / "personal-signals" / "watermark.json"
 TOPIC = "mesh:personal:signal"
 
 

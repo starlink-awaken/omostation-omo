@@ -255,14 +255,24 @@ def _events_after(events: list[dict[str, Any]], last_event_id: str) -> list[dict
 
 
 def _register_default_handlers() -> None:
-    """Wire default handlers (omo.resident.sediment) if importable."""
-    try:
-        import omo.resident.sediment as sediment
+    """Wire default handlers (sediment/decision/execute) if importable.
 
-        sediment.register_with_daemon(sys.modules[__name__])
-        _log("default_handlers registered (knowledge-sediment)")
-    except Exception as exc:  # noqa: BLE001 - handlers are optional
-        _log(f"default_handlers skipped: {type(exc).__name__}: {exc}")
+    execute is registered non-safe so the human-approval gate blocks it unless
+    the daemon is started with --yes.
+    """
+    for module_name, action in (
+        ("omo.resident.sediment", "knowledge_sediment"),
+        ("omo.resident.decision", "decision_agent"),
+        ("omo.resident.execute", "execution_agent"),
+    ):
+        try:
+            import importlib
+
+            module = importlib.import_module(module_name)
+            module.register_with_daemon(sys.modules[__name__])
+            _log(f"default_handlers registered ({action})")
+        except Exception as exc:  # noqa: BLE001 - handlers are optional
+            _log(f"default_handlers skipped ({action}): {type(exc).__name__}: {exc}")
 
 
 def _connect_with_retry(ledger: Path, *, attempts: int = 5) -> Any:
