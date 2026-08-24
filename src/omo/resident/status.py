@@ -55,7 +55,10 @@ def _load_json(path: Path) -> dict[str, Any] | None:
 
 
 def _daemon_snapshot() -> dict[str, Any]:
-    watermark_files = list(DAEMON_WATERMARKS.glob("*.json"))
+    # 只统计五类角色水位 resident-{role}.json (由 daemon --once --role 每 2min 推进),
+    # 排除订阅层 resident-sub.json — subscribe 非 cron daemon tick 证据, 更新频率低,
+    # 混入会让健康体系被陈旧 sub 水位误判 degraded。
+    watermark_files = sorted(p for p in DAEMON_WATERMARKS.glob("resident-*.json") if p.name != "resident-sub.json")
     if not watermark_files:
         return {"ok": False, "detail": "no daemon watermark (daemon never ticked)", "tick_age_seconds": None}
     newest = min(watermark_files, key=lambda p: p.stat().st_mtime)
