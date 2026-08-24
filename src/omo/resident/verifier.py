@@ -2,8 +2,9 @@
 """Verifier — Agent Cell 验证者. 结果验证 → 质量评估 → 裁决."""
 
 from __future__ import annotations
+
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +22,15 @@ class Verifier:
         quality = self._assess_quality(results)
         score = (completeness["score"] + correctness["score"] + quality["score"]) / 3
         verdict = "accept" if score >= 0.7 else "revise" if score >= 0.4 else "reject"
-        v = {"schema": "verdict/v1", "verdict_id": f"verdict-{uuid.uuid4().hex[:12]}", "execution_id": execution_result.get("execution_id", ""), "verdict": verdict, "score": round(score, 2), "details": {"completeness": completeness, "correctness": correctness, "quality": quality}, "timestamp": datetime.now(timezone.utc).isoformat()}
+        v = {
+            "schema": "verdict/v1",
+            "verdict_id": f"verdict-{uuid.uuid4().hex[:12]}",
+            "execution_id": execution_result.get("execution_id", ""),
+            "verdict": verdict,
+            "score": round(score, 2),
+            "details": {"completeness": completeness, "correctness": correctness, "quality": quality},
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
         self.verdict_log.append(v)
         return v
 
@@ -34,7 +43,9 @@ class Verifier:
     def _check_correctness(self, results: list) -> dict:
         if not results:
             return {"score": 0.0, "message": "No results"}
-        valid = sum(1 for r in results if r.get("ok") and r.get("output") and "error" not in str(r.get("output", "")).lower())
+        valid = sum(
+            1 for r in results if r.get("ok") and r.get("output") and "error" not in str(r.get("output", "")).lower()
+        )
         return {"score": valid / len(results), "valid": valid, "total": len(results)}
 
     def _assess_quality(self, results: list) -> dict:
@@ -72,7 +83,9 @@ class Verifier:
 
 
 if __name__ == "__main__":
-    import argparse, json
+    import argparse
+    import json
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--result")
     parser.add_argument("--check")

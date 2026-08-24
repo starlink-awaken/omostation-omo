@@ -2,7 +2,8 @@
 """Governor — Agent Cell 治理器. 风险分级与审批决策."""
 
 from __future__ import annotations
-from datetime import datetime, timezone
+
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -12,10 +13,39 @@ RISK_R0, RISK_R1, RISK_R2, RISK_R3 = "R0", "R1", "R2", "R3"
 DECISION_AUTO, DECISION_APPROVE, DECISION_REJECT = "auto_execute", "human_approve", "reject"
 
 RISK_RULES = {
-    RISK_R0: {"description": "只读、无副作用", "actions": ["read_file", "list_files", "search", "query_status", "get_info", "scan", "check", "validate", "lint", "format"], "decision": DECISION_AUTO},
-    RISK_R1: {"description": "低风险、可逆", "actions": ["format_code", "generate_doc", "create_draft", "run_tests", "backup", "snapshot", "log"], "decision": DECISION_AUTO, "needs_audit": True},
-    RISK_R2: {"description": "中等风险、需审批", "actions": ["commit_code", "modify_config", "create_pr", "deploy_staging"], "decision": DECISION_APPROVE},
-    RISK_R3: {"description": "高风险、需同步确认", "actions": ["deploy_production", "delete_data", "modify_permissions", "push_main"], "decision": DECISION_APPROVE, "requires_sync": True},
+    RISK_R0: {
+        "description": "只读、无副作用",
+        "actions": [
+            "read_file",
+            "list_files",
+            "search",
+            "query_status",
+            "get_info",
+            "scan",
+            "check",
+            "validate",
+            "lint",
+            "format",
+        ],
+        "decision": DECISION_AUTO,
+    },
+    RISK_R1: {
+        "description": "低风险、可逆",
+        "actions": ["format_code", "generate_doc", "create_draft", "run_tests", "backup", "snapshot", "log"],
+        "decision": DECISION_AUTO,
+        "needs_audit": True,
+    },
+    RISK_R2: {
+        "description": "中等风险、需审批",
+        "actions": ["commit_code", "modify_config", "create_pr", "deploy_staging"],
+        "decision": DECISION_APPROVE,
+    },
+    RISK_R3: {
+        "description": "高风险、需同步确认",
+        "actions": ["deploy_production", "delete_data", "modify_permissions", "push_main"],
+        "decision": DECISION_APPROVE,
+        "requires_sync": True,
+    },
 }
 
 AUTO_ACTIONS = set(a for r in RISK_RULES.values() for a in r["actions"])
@@ -41,7 +71,14 @@ class Governor:
 
     def decide(self, risk_level: str, action_request: dict | None = None) -> dict:
         rule = RISK_RULES.get(risk_level, RISK_RULES[RISK_R2])
-        decision = {"schema": "governor-decision/v1", "action_id": (action_request or {}).get("action_id", "unknown"), "risk_level": risk_level, "decision": rule["decision"], "reason": rule["description"], "timestamp": datetime.now(timezone.utc).isoformat()}
+        decision = {
+            "schema": "governor-decision/v1",
+            "action_id": (action_request or {}).get("action_id", "unknown"),
+            "risk_level": risk_level,
+            "decision": rule["decision"],
+            "reason": rule["description"],
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
         if risk_level == RISK_R1:
             decision["audit_required"] = True
             self.audit_queue.append(decision)
@@ -75,7 +112,9 @@ def _is_auto_executable(event: dict) -> bool:
 
 
 if __name__ == "__main__":
-    import argparse, json
+    import argparse
+    import json
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--assess")
     parser.add_argument("--decide", action="store_true")

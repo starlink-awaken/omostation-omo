@@ -2,8 +2,9 @@
 """Cell Coordinator — Agent Cell 协调器."""
 
 from __future__ import annotations
+
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +36,13 @@ class CellCoordinator:
         self.context = {"intent": intent, "plan": None, "result": None, "verdict": None}
         self.state = CELL_PLANNING
         self.current_role = ROLE_PLANNER
-        return {"cell_id": self.cell_id, "episode_id": episode_id, "state": self.state, "current_role": self.current_role, "next_action": "plan"}
+        return {
+            "cell_id": self.cell_id,
+            "episode_id": episode_id,
+            "state": self.state,
+            "current_role": self.current_role,
+            "next_action": "plan",
+        }
 
     def handoff(self, from_role: str, to_role: str, artifacts: dict) -> dict:
         handoff_record = {
@@ -44,7 +51,7 @@ class CellCoordinator:
             "to_role": to_role,
             "context": self.context.copy(),
             "artifacts": artifacts,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "evidence_ref": f"evidence://cell/{self.cell_id}/handoff/{len(self.handoff_log)}",
         }
         self.handoff_log.append(handoff_record)
@@ -61,7 +68,13 @@ class CellCoordinator:
         self.state = CELL_COMPLETED
         self.context["verdict"] = verdict
         self.current_role = None
-        return {"cell_id": self.cell_id, "episode_id": self.episode_id, "state": self.state, "verdict": verdict, "handoff_count": len(self.handoff_log)}
+        return {
+            "cell_id": self.cell_id,
+            "episode_id": self.episode_id,
+            "state": self.state,
+            "verdict": verdict,
+            "handoff_count": len(self.handoff_log),
+        }
 
     def fail(self, error: str) -> dict:
         self.state = CELL_FAILED
@@ -70,11 +83,19 @@ class CellCoordinator:
         return {"cell_id": self.cell_id, "episode_id": self.episode_id, "state": self.state, "error": error}
 
     def get_status(self) -> dict:
-        return {"cell_id": self.cell_id, "episode_id": self.episode_id, "state": self.state, "current_role": self.current_role, "handoff_count": len(self.handoff_log)}
+        return {
+            "cell_id": self.cell_id,
+            "episode_id": self.episode_id,
+            "state": self.state,
+            "current_role": self.current_role,
+            "handoff_count": len(self.handoff_log),
+        }
 
 
 if __name__ == "__main__":
-    import argparse, json
+    import argparse
+    import json
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--episode")
     parser.add_argument("--action", choices=["plan", "execute", "verify"])

@@ -2,8 +2,9 @@
 """Memory Pipeline — Agent Cell 记忆整合管道. candidate → conflict → consolidate → forget."""
 
 from __future__ import annotations
+
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +24,18 @@ class MemoryPipeline:
         for r in episode.get("results", []):
             if not r.get("ok") or len(str(r.get("output", ""))) < 50:
                 continue
-            candidates.append({"schema": "memory-candidate/v1", "candidate_id": f"cand-{uuid.uuid4().hex[:12]}", "episode_id": episode.get("episode_id", "?"), "type": "semantic" if r.get("action") in ("read_file", "search") else "procedural", "content": str(r.get("output", ""))[:1000], "confidence": 0.5, "created_at": datetime.now(timezone.utc).isoformat(), "status": "pending"})
+            candidates.append(
+                {
+                    "schema": "memory-candidate/v1",
+                    "candidate_id": f"cand-{uuid.uuid4().hex[:12]}",
+                    "episode_id": episode.get("episode_id", "?"),
+                    "type": "semantic" if r.get("action") in ("read_file", "search") else "procedural",
+                    "content": str(r.get("output", ""))[:1000],
+                    "confidence": 0.5,
+                    "created_at": datetime.now(UTC).isoformat(),
+                    "status": "pending",
+                }
+            )
         if candidates:
             with open(CANDIDATE_FILE, "a") as f:
                 for c in candidates:
@@ -38,7 +50,15 @@ class MemoryPipeline:
             by_ep.setdefault(c.get("episode_id", ""), []).append(c)
         for ep, cands in by_ep.items():
             if len(cands) >= 2 and len(set(c.get("content", "") for c in cands)) > 1:
-                conflicts.append({"schema": "memory-conflict/v1", "conflict_id": f"conf-{uuid.uuid4().hex[:12]}", "candidates": [c["candidate_id"] for c in cands], "status": "unresolved", "detected_at": datetime.now(timezone.utc).isoformat()})
+                conflicts.append(
+                    {
+                        "schema": "memory-conflict/v1",
+                        "conflict_id": f"conf-{uuid.uuid4().hex[:12]}",
+                        "candidates": [c["candidate_id"] for c in cands],
+                        "status": "unresolved",
+                        "detected_at": datetime.now(UTC).isoformat(),
+                    }
+                )
         if conflicts:
             with open(CONFLICT_FILE, "a") as f:
                 for c in conflicts:
@@ -53,7 +73,18 @@ class MemoryPipeline:
         consolidated = []
         for t, cands in by_type.items():
             if len(cands) >= 2:
-                consolidated.append({"schema": "consolidated-memory/v1", "memory_id": f"mem-{uuid.uuid4().hex[:12]}", "type": t, "content": " | ".join(c.get("content", "") for c in cands)[:2000], "source_candidates": [c["candidate_id"] for c in cands], "confidence": min(1.0, sum(c.get("confidence", 0.5) for c in cands) / len(cands)), "created_at": datetime.now(timezone.utc).isoformat(), "access_count": 0})
+                consolidated.append(
+                    {
+                        "schema": "consolidated-memory/v1",
+                        "memory_id": f"mem-{uuid.uuid4().hex[:12]}",
+                        "type": t,
+                        "content": " | ".join(c.get("content", "") for c in cands)[:2000],
+                        "source_candidates": [c["candidate_id"] for c in cands],
+                        "confidence": min(1.0, sum(c.get("confidence", 0.5) for c in cands) / len(cands)),
+                        "created_at": datetime.now(UTC).isoformat(),
+                        "access_count": 0,
+                    }
+                )
         if consolidated:
             with open(MEMORY_FILE, "a") as f:
                 for m in consolidated:
@@ -62,7 +93,7 @@ class MemoryPipeline:
 
     def forget(self, max_age_days: int = 90, min_access: int = 1) -> list[dict]:
         memories = self._load_file(MEMORY_FILE)
-        cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+        cutoff = datetime.now(UTC) - timedelta(days=max_age_days)
         forgotten, kept = [], []
         for m in memories:
             created = datetime.fromisoformat(m.get("created_at", "2020-01-01T00:00:00+00:00"))
@@ -88,11 +119,17 @@ class MemoryPipeline:
         return items
 
     def get_stats(self) -> dict:
-        return {"candidates": len(self._load_file(CANDIDATE_FILE)), "memories": len(self._load_file(MEMORY_FILE)), "conflicts": len(self._load_file(CONFLICT_FILE))}
+        return {
+            "candidates": len(self._load_file(CANDIDATE_FILE)),
+            "memories": len(self._load_file(MEMORY_FILE)),
+            "conflicts": len(self._load_file(CONFLICT_FILE)),
+        }
 
 
 if __name__ == "__main__":
-    import argparse, json
+    import argparse
+    import json
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--process")
     parser.add_argument("--consolidate", action="store_true")

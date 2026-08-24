@@ -2,10 +2,11 @@
 """Executor — Agent Cell 执行者. 按计划执行 → 工具调用 → 产出收集."""
 
 from __future__ import annotations
+
 import subprocess
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +20,14 @@ class Executor:
 
     def execute_plan(self, plan: dict) -> dict:
         results = [self.execute_task(t) for t in plan.get("tasks", [])]
-        result = {"schema": "execution-result/v1", "execution_id": f"exec-{uuid.uuid4().hex[:12]}", "plan_id": plan.get("plan_id", ""), "results": results, "completed": all(r.get("ok") for r in results), "completed_at": datetime.now(timezone.utc).isoformat()}
+        result = {
+            "schema": "execution-result/v1",
+            "execution_id": f"exec-{uuid.uuid4().hex[:12]}",
+            "plan_id": plan.get("plan_id", ""),
+            "results": results,
+            "completed": all(r.get("ok") for r in results),
+            "completed_at": datetime.now(UTC).isoformat(),
+        }
         self.execution_log.append(result)
         return result
 
@@ -51,7 +59,15 @@ class Executor:
             return {"ok": False, "error": f"File not found: {target}"}
         if action == "search":
             docs_dir = ROOT / "docs"
-            results = [str(f.relative_to(ROOT)) for f in docs_dir.rglob("*.md") if target.lower() in f.read_text(encoding="utf-8", errors="ignore").lower()] if docs_dir.exists() else []
+            results = (
+                [
+                    str(f.relative_to(ROOT))
+                    for f in docs_dir.rglob("*.md")
+                    if target.lower() in f.read_text(encoding="utf-8", errors="ignore").lower()
+                ]
+                if docs_dir.exists()
+                else []
+            )
             return {"ok": True, "output": results[:20], "count": len(results)}
         if action == "query_status":
             return {"ok": True, "output": "System operational", "status": "healthy"}
@@ -59,7 +75,9 @@ class Executor:
 
 
 if __name__ == "__main__":
-    import argparse, json
+    import argparse
+    import json
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--plan")
     parser.add_argument("--task")
