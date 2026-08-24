@@ -95,7 +95,7 @@ class CellStateManager:
         if not STATE_FILE.exists():
             return {}
         try:
-            with open(STATE_FILE, "r", encoding="utf-8") as f:
+            with open(STATE_FILE, encoding="utf-8") as f:
                 return json.load(f)
         except (json.JSONDecodeError, OSError):
             return {}
@@ -143,7 +143,7 @@ if __name__ == "__main__":
         print(json.dumps(states, ensure_ascii=False, indent=2))
 
     elif args.action == "save" and args.file:
-        with open(args.file, "r", encoding="utf-8") as f:
+        with open(args.file, encoding="utf-8") as f:
             state = json.load(f)
         sid = manager.save_state(state)
         print(f"Saved state: {sid}")

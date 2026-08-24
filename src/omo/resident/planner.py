@@ -31,7 +31,8 @@ class Planner:
         raw = intent.get("raw_text", "")
         # Extract potential path from intent (e.g., "分析 README.md" → "README.md")
         import re
-        path_match = re.search(r'([\w./\-]+\.\w+)', raw)
+
+        path_match = re.search(r"([\w./\-]+\.\w+)", raw)
         target_path = path_match.group(1) if path_match else "."
         if "分析" in raw or "analysis" in raw.lower():
             tasks = [
