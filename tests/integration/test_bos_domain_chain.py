@@ -36,9 +36,9 @@ def test_bos_registry_5_domains_complete():
     """W0 验证: 5 Domain 完整覆盖 (memory/governance/analysis/persona/capability)."""
     regs = json.loads(BOS_REGISTRY.read_text())
     domains = {r.get("domain") for r in regs}
-    assert domains == {"memory", "governance", "analysis", "persona", "capability"}, (
-        f"Expected 5 domains, got {domains}"
-    )
+    expected = {"memory", "governance", "analysis", "persona", "capability"}
+    # 经典 5 域必须存在 (防删契约); 允许 bcos/resident 等新域扩展
+    assert expected.issubset(domains), f"Expected classic 5 domains present, missing: {expected - domains}"
 
 
 def test_each_domain_has_at_least_5_uris():

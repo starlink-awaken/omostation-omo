@@ -72,7 +72,10 @@ def test_40_uri_registry_loads():
     domains = Counter(r.get("domain") for r in regs)
     # Verify domain structure exists (counts may grow)
     expected_domains = {"memory", "governance", "analysis", "persona", "capability"}
-    assert set(domains.keys()) == expected_domains, f"Domain set drift: {set(domains.keys())}"
+    # 经典 5 域必须存在 (防删契约), 允许 bcos/resident 等新域扩展 (counts may grow)
+    assert expected_domains.issubset(set(domains.keys())), (
+        f"Classic domains missing: {expected_domains - set(domains.keys())}"
+    )
 
 
 @pytest.mark.bos_40
