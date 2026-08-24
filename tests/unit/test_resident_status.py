@@ -22,7 +22,10 @@ def _snapshot_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     delivery.mkdir()
     wm_dir = delivery / "resident-orchestrator" / "watermarks"
     wm_dir.mkdir(parents=True)
-    (wm_dir / "resident-sub.json").write_text(json.dumps({"byte_offset": 123}), encoding="utf-8")
+    # 角色水位 (daemon --once --role 每 2min 推进) — 活性判定的唯一依据
+    (wm_dir / "resident-sediment.json").write_text(json.dumps({"byte_offset": 123}), encoding="utf-8")
+    # 订阅层水位 (subscribe 非 cron daemon tick 证据, 更新频率低) — 必须被排除
+    (wm_dir / "resident-sub.json").write_text(json.dumps({"byte_offset": 999}), encoding="utf-8")
     monkeypatch.setattr(status, "DAEMON_WATERMARKS", wm_dir)
     monkeypatch.setattr(status, "EVENTS_JSONL", tmp_path / "events.jsonl")
     monkeypatch.setattr(status, "SEDIMENT_ROOT", tmp_path / "sediment")
@@ -44,7 +47,7 @@ def test_snapshot_daemon_fresh_is_recovered(_snapshot_paths: Path) -> None:
 
 
 def test_snapshot_daemon_stale_is_degraded(_snapshot_paths: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    wm_file = _snapshot_paths / "resident-orchestrator" / "watermarks" / "resident-sub.json"
+    wm_file = _snapshot_paths / "resident-orchestrator" / "watermarks" / "resident-sediment.json"
     import os
     import time
 
@@ -54,6 +57,22 @@ def test_snapshot_daemon_stale_is_degraded(_snapshot_paths: Path, monkeypatch: p
     assert report["components"]["daemon"]["ok"] is False
     assert report["health"] == "degraded"
     assert "daemon" in report["degraded_components"]
+
+
+def test_snapshot_daemon_sub_stale_role_fresh_is_recovered(
+    _snapshot_paths: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """回归: 订阅层 sub 水位陈旧但角色水位新鲜 → 不应误判 degraded."""
+    sub_file = _snapshot_paths / "resident-orchestrator" / "watermarks" / "resident-sub.json"
+    import os
+    import time
+
+    old = time.time() - 99999
+    os.utime(sub_file, (old, old))
+    report = status.snapshot()
+    assert report["components"]["daemon"]["ok"] is True
+    assert report["components"]["daemon"]["watermark_file"] == "resident-sediment.json"
+    assert "daemon" not in report["degraded_components"]
 
 
 def test_snapshot_sediment_counts(_snapshot_paths: Path, tmp_path: Path) -> None:
