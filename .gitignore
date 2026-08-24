@@ -70,3 +70,5 @@ debt/
 *.tmp
 runtime/omo/
 omo_self_evolve.py
+.omo/state/agent-cell-memory/
+.omo/state/agent-cell-replay/

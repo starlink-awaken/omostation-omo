@@ -55,6 +55,11 @@ def main(argv: list[str] | None = None) -> int:
         from omo.omo_ledger import main as ledger_main
 
         return ledger_main(args[1:])
+    if args and args[0] == "cell":
+        from omo.resident.cell_cli import main as cell_main
+
+        return cell_main(args[1:])
+
     if args and args[0] == "bridge":
         print("⚠️ DEPRECATED: 'omo bridge' 已迁移，建议改用 'workspace compass bet'。")
         from omo.omo_bridge import main as bridge_main

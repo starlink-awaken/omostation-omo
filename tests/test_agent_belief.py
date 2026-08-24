@@ -101,9 +101,7 @@ class TestDeltaFromPrevious:
 
     def test_delta_single_snapshot_no_change(self, tmp_path: Path):
         mgr = MOSBeliefManager(root=tmp_path)
-        mgr.record_world_snapshot(
-            source="ci", domain="governance", observations={"checks": 38}
-        )
+        mgr.record_world_snapshot(source="ci", domain="governance", observations={"checks": 38})
         result = mgr.delta_from_previous("governance")
         assert result["has_delta"] is False
         assert result["current"] is not None
