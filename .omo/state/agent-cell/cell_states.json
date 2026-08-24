@@ -1,0 +1,89 @@
+{
+  "cell-bcf19dc00d53": {
+    "cell_id": "cell-bcf19dc00d53",
+    "state": "planning",
+    "current_role": "planner",
+    "episode_id": "ep-latest-0",
+    "context": {
+      "intent": {
+        "goal": "test"
+      },
+      "plan": null,
+      "result": null,
+      "verdict": null
+    },
+    "handoff_log": [],
+    "state_id": "cell-bcf19dc00d53",
+    "saved_at": "2026-08-24T22:24:19.261778+00:00"
+  },
+  "cell-48278fff32b3": {
+    "cell_id": "cell-48278fff32b3",
+    "state": "planning",
+    "current_role": "planner",
+    "episode_id": "ep-latest-1",
+    "context": {
+      "intent": {
+        "goal": "test"
+      },
+      "plan": null,
+      "result": null,
+      "verdict": null
+    },
+    "handoff_log": [],
+    "state_id": "cell-48278fff32b3",
+    "saved_at": "2026-08-24T22:24:19.262064+00:00"
+  },
+  "cell-9f26a738a5a1": {
+    "cell_id": "cell-9f26a738a5a1",
+    "state": "planning",
+    "current_role": "planner",
+    "episode_id": "ep-latest-2",
+    "context": {
+      "intent": {
+        "goal": "test"
+      },
+      "plan": null,
+      "result": null,
+      "verdict": null
+    },
+    "handoff_log": [],
+    "state_id": "cell-9f26a738a5a1",
+    "saved_at": "2026-08-24T22:24:19.269942+00:00"
+  },
+  "cell-7be8a043d2b0": {
+    "cell_id": "cell-7be8a043d2b0",
+    "state": "executing",
+    "current_role": "executor",
+    "episode_id": "ep-persist",
+    "context": {
+      "intent": {
+        "goal": "test"
+      },
+      "plan": "test-plan",
+      "result": null,
+      "verdict": null
+    },
+    "handoff_log": [
+      {
+        "schema": "handoff/v1",
+        "from_role": "planner",
+        "to_role": "executor",
+        "context": {
+          "intent": {
+            "goal": "test"
+          },
+          "plan": null,
+          "result": null,
+          "verdict": null
+        },
+        "artifacts": {
+          "plan": "test-plan"
+        },
+        "timestamp": "2026-08-24T22:24:19.271286+00:00",
+        "evidence_ref": "evidence://cell/cell-7be8a043d2b0/handoff/0"
+      }
+    ],
+    "state_id": "cell-7be8a043d2b0",
+    "saved_at": "2026-08-24T22:24:19.271298+00:00"
+  }
+}

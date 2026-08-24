@@ -29,10 +29,14 @@ class Planner:
     def decompose_tasks(self, intent: dict) -> list[dict]:
         tasks = []
         raw = intent.get("raw_text", "")
+        # Extract potential path from intent (e.g., "分析 README.md" → "README.md")
+        import re
+        path_match = re.search(r'([\w./\-]+\.\w+)', raw)
+        target_path = path_match.group(1) if path_match else "."
         if "分析" in raw or "analysis" in raw.lower():
             tasks = [
-                {"id": "t1", "action": "scan", "target": "directory"},
-                {"id": "t2", "action": "read_file", "target": "*.md"},
+                {"id": "t1", "action": "scan", "target": target_path},
+                {"id": "t2", "action": "read_file", "target": target_path},
                 {"id": "t3", "action": "generate_doc", "target": "report"},
             ]
         elif "修复" in raw or "fix" in raw.lower():
