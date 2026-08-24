@@ -70,7 +70,7 @@ class Verifier:
             result["ok"] = False
             return result
         result["score"] += 0.3
-        if expected is not None and type(output) == type(expected):
+        if expected is not None and type(output) is type(expected):
             result["score"] += 0.3
         if len(str(output)) > 50:
             result["score"] += 0.2
