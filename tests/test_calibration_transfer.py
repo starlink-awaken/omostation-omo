@@ -85,8 +85,7 @@ def test_transfer_no_error_state_crosstalk(tmp_path: Path):
     # 迁移 (低 → 高)
     mos.transfer_calibration("ref://failing-scene", "ref://target-scene")
     state = mos._load_state()
-    target_cals = [c for c in state["capability_calibrations"]
-                   if c["capability_ref"] == "ref://target-scene"]
+    target_cals = [c for c in state["capability_calibrations"] if c["capability_ref"] == "ref://target-scene"]
     # 目标应有 2 条: 原始高 + 迁移低
     assert len(target_cals) == 2
     rates = sorted(c["success_rate"] for c in target_cals)
