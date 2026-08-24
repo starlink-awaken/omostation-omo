@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[3]
 def _run(script: str, args: list[str]) -> int:
     """运行脚本."""
     import subprocess
+
     script_path = ROOT / script
     if not script_path.exists():
         print(f"Error: Script not found: {script}", file=sys.stderr)
