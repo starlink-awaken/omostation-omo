@@ -204,9 +204,7 @@ def _global_breakdown(topics: dict[str, dict[str, Any]]) -> dict[str, Any]:
         "total_runs": total_runs,
         "total_failures": total_failures,
         "failure_rate": round(total_failures / max(1, total_runs + total_failures), 4),
-        "top_failure_event_types": dict(
-            sorted(global_by_event.items(), key=lambda kv: (-kv[1], kv[0]))
-        ),
+        "top_failure_event_types": dict(sorted(global_by_event.items(), key=lambda kv: (-kv[1], kv[0]))),
     }
 
 
