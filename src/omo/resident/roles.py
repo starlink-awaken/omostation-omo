@@ -25,9 +25,18 @@ from typing import Any
 ROLES: dict[str, dict[str, Any]] = {
     "sediment": {
         "projector": "resident-sediment",
-        "topic_filter": ["WorkflowClosed", "WorkflowSucceeded", "PersonalSignal"],
+        "topic_filter": [
+            "WorkflowClosed",
+            "WorkflowSucceeded",
+            "PersonalSignal",
+            "WorkflowRequested",
+            "WorkflowAdmitted",
+            "StepStarted",
+            "StepDispatched",
+            "EvidenceRecorded",
+        ],
         "handler": "knowledge_sediment",
-        "desc": "记忆沉淀 — 成功运行/个人信号 → 知识草稿",
+        "desc": "记忆沉淀 — 运行生命周期/成功/个人信号/证据 → 知识草稿",
     },
     "decision": {
         "projector": "resident-decision",

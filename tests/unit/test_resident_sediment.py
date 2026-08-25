@@ -79,7 +79,7 @@ def test_consume_failure_writes_failures_draft(tmp_path: Path) -> None:
 
 
 def test_consume_ignores_unrelated_event(tmp_path: Path) -> None:
-    event = _success_event(event_type="StepStarted")
+    event = _success_event(event_type="UnknownEventType")
     assert sediment.consume_event(event) is None
     assert not (tmp_path / "runs").exists()
     assert not (tmp_path / "failures").exists()
@@ -89,6 +89,70 @@ def test_consume_succeeded_in_success_set(tmp_path: Path) -> None:
     path = sediment.consume_event(_success_event(event_type="WorkflowSucceeded"))
     assert path is not None
     assert path.parent == tmp_path / "runs"
+
+
+def test_consume_admitted_is_success(tmp_path: Path) -> None:
+    """WorkflowAdmitted (T10-12) 归入 SUCCESS_EVENTS → runs 草稿."""
+    path = sediment.consume_event(_success_event(event_type="WorkflowAdmitted"))
+    assert path is not None
+    assert path.parent == tmp_path / "runs"
+    assert "运行复盘沉淀" in path.read_text(encoding="utf-8")
+
+
+def test_consume_lifecycle_writes_runs_draft(tmp_path: Path) -> None:
+    """生命周期事件 (WorkflowRequested) → runs 草稿 (生命周期沉淀)."""
+    event = _success_event(event_type="WorkflowRequested", workflow_run_id="20260825T0000Z-run-life")
+    path = sediment.consume_event(event)
+    assert path is not None
+    assert path.is_file()
+    assert path.parent == tmp_path / "runs"
+    assert path.name == "20260825T0000Z-run-life.md"
+    text = path.read_text(encoding="utf-8")
+    assert "生命周期沉淀" in text
+    assert "WorkflowRequested" in text
+
+
+def test_lifecycle_run_aggregation_idempotent(tmp_path: Path) -> None:
+    """同 run 多生命周期事件 → 同一草稿文件, exists 跳过不覆盖 (幂等聚合)."""
+    run_id = "20260825T0000Z-run-agg"
+    first = sediment.consume_event(
+        _success_event(event_type="WorkflowRequested", workflow_run_id=run_id, event_id="evt_req")
+    )
+    assert first is not None
+    first_text = first.read_text(encoding="utf-8")
+
+    # 同 run 后续 StepStarted / StepDispatched → 同文件, 不覆盖 (仍为 WorkflowRequested 内容)
+    second = sediment.consume_event(
+        _success_event(event_type="StepStarted", workflow_run_id=run_id, event_id="evt_step")
+    )
+    third = sediment.consume_event(
+        _success_event(event_type="StepDispatched", workflow_run_id=run_id, event_id="evt_disp")
+    )
+    assert second == first
+    assert third == first
+    runs = list((tmp_path / "runs").glob("*.md"))
+    assert len(runs) == 1
+    assert runs[0].read_text(encoding="utf-8") == first_text  # 幂等: 未覆盖
+    assert "WorkflowRequested" in runs[0].read_text(encoding="utf-8")
+
+
+def test_consume_evidence_writes_evidence_draft(tmp_path: Path) -> None:
+    """EvidenceRecorded → evidence/ 草稿, frontmatter 带 event_id 溯源."""
+    event = _success_event(
+        event_type="EvidenceRecorded",
+        workflow_run_id="delivery-run-pr-1893-v3",
+        event_id="external-evidence:pr-1893",
+    )
+    path = sediment.consume_event(event)
+    assert path is not None
+    assert path.is_file()
+    assert path.parent == tmp_path / "evidence"
+    text = path.read_text(encoding="utf-8")
+    assert "证据沉淀" in text
+    assert "external-evidence:pr-1893" in text
+    assert "delivery-run-pr-1893-v3" in text
+    # 文件名含 run slug + event_id 前缀 (溯源)
+    assert "delivery-run-pr-1893-v3" in path.name
 
 
 def test_consume_step_timeout_is_failure(tmp_path: Path) -> None:

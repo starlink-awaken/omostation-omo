@@ -17,6 +17,27 @@ routes:
     topic: mesh:personal:signal
     action: knowledge_sediment
     safe: true
+  # workflow 生命周期事件 (T10-12 消费端补全) → 知识沉淀 (safe, 只写知识草稿)
+  - event_type: WorkflowRequested
+    topic: mesh:workflow:requested
+    action: knowledge_sediment
+    safe: true
+  - event_type: WorkflowAdmitted
+    topic: mesh:workflow:started
+    action: knowledge_sediment
+    safe: true
+  - event_type: StepStarted
+    topic: mesh:step:started
+    action: knowledge_sediment
+    safe: true
+  - event_type: StepDispatched
+    topic: mesh:workflow:started
+    action: knowledge_sediment
+    safe: true
+  - event_type: EvidenceRecorded
+    topic: mesh:workflow:evidence
+    action: knowledge_sediment
+    safe: true
   - event_type: WorkflowFailed
     topic: mesh:workflow:failed
     action: knowledge_sediment
