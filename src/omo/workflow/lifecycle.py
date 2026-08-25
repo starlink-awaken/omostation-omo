@@ -354,7 +354,7 @@ def _complete_fresh_delivery_identity(
     try:
         result = start_preflight(run_id, deepcopy(identity))
     except Exception as exc:  # noqa: BLE001 - injected provider is a mandatory gate.
-        raise _preflight_error(f"FAILED: {exc}") from exc
+        raise _preflight_error("PROVIDER_FAILED") from exc
     completed = deepcopy(identity)
     completed["capability_preflight"] = dict(result) if isinstance(result, Mapping) else result
     validated = _validate_capability_preflight(completed, run_id)
