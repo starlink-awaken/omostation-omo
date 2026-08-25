@@ -22,10 +22,14 @@ from typing import Any
 from omo.resident import WORKSPACE
 
 SEDIMENT_ROOT = WORKSPACE / ".omo" / "_knowledge" / "sediment"
-SUCCESS_EVENTS = frozenset({"WorkflowSucceeded", "WorkflowClosed"})
+SUCCESS_EVENTS = frozenset({"WorkflowSucceeded", "WorkflowClosed", "WorkflowAdmitted"})
 FAILURE_EVENTS = frozenset({"WorkflowFailed", "StepFailed", "StepTimeout"})
 # 个人文件信号 (personal-signals 渠道) — 沉淀为知识草稿 (M3.1 输入渠道激活)
 SIGNAL_EVENTS = frozenset({"PersonalSignal"})
+# workflow 生命周期事件 (T10-12): 按 run_id 聚合 → runs 草稿 (幂等, 同 run 多事件不覆盖)
+LIFECYCLE_EVENTS = frozenset({"WorkflowRequested", "StepStarted", "StepDispatched"})
+# 外部证据记录 (T10-12): → evidence 草稿 (带 event_id 溯源)
+EVIDENCE_EVENTS = frozenset({"EvidenceRecorded"})
 
 
 def _safe_slug(value: str, max_len: int = 80) -> str:
@@ -42,7 +46,13 @@ def _event_type(event: dict[str, Any]) -> str:
 
 
 def _sediment_run(event: dict[str, Any], *, kind: str) -> Path | None:
-    """Write a sediment draft for one event; returns the file path or None."""
+    """Write a sediment draft for one event; returns the file path or None.
+
+    Idempotent: if the target already exists (same run already sedimented) we
+    return the path without rewriting, so a run's multiple lifecycle events
+    never overwrite the first (usually WorkflowRequested, which carries the
+    objective) draft.
+    """
     run_id = str(event.get("workflow_run_id") or event.get("trace_id") or "unknown")
     event_id = str(event.get("event_id") or "")
     slug = _safe_slug(run_id)
@@ -50,10 +60,16 @@ def _sediment_run(event: dict[str, Any], *, kind: str) -> Path | None:
         target = SEDIMENT_ROOT / "failures" / f"{slug}-{event_id[:8]}.md"
         title = "失败模式沉淀(事件驱动草稿)"
         section = "## 失败上下文"
+    elif kind == "lifecycle":
+        target = SEDIMENT_ROOT / "runs" / f"{slug}.md"
+        title = "生命周期沉淀(事件驱动草稿)"
+        section = "## 生命周期上下文"
     else:
         target = SEDIMENT_ROOT / "runs" / f"{slug}.md"
         title = "运行复盘沉淀(事件驱动草稿)"
         section = "## 运行上下文"
+    if target.exists():
+        return target  # 幂等: 同 run 多事件已归因, 不覆盖
     target.parent.mkdir(parents=True, exist_ok=True)
     body = (
         f"# {title}\n\n"
@@ -74,6 +90,33 @@ def _sediment_run(event: dict[str, Any], *, kind: str) -> Path | None:
     return target
 
 
+def _evidence_run(event: dict[str, Any]) -> Path | None:
+    """Write an evidence sediment draft (EvidenceRecorded) under evidence/."""
+    run_id = str(event.get("workflow_run_id") or event.get("trace_id") or "unknown")
+    event_id = str(event.get("event_id") or "")
+    slug = _safe_slug(run_id)
+    ev_slug = _safe_slug(event_id) or "unknown"
+    target = SEDIMENT_ROOT / "evidence" / f"{slug}-{ev_slug[:8]}.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    body = (
+        f"# 证据沉淀(事件驱动草稿)\n\n"
+        f"- event_type: {_event_type(event)}\n"
+        f"- workflow_run_id: {run_id}\n"
+        f"- trace_id: {event.get('trace_id')}\n"
+        f"- event_id: {event_id}\n"
+        f"- occurred_at: {event.get('occurred_at')}\n"
+        f"- generated_at: {_utc()}\n"
+        f"- status: draft (外部证据记录, 待完善为可复核证据条目)\n\n"
+        f"## 证据上下文\n\n"
+        f"- producer: {event.get('producer')}\n"
+        f"- payload: 证据元数据见 ledger sequence(可通过 event_id 追溯)\n\n"
+        f"## 待补充\n\n"
+        f"- [ ] 证据要点\n- [ ] 复核结论\n- [ ] 关联决策/行动\n"
+    )
+    target.write_text(body, encoding="utf-8")
+    return target
+
+
 def consume_event(event: dict[str, Any]) -> Path | None:
     """Route one event to a sediment draft; returns path or None if ignored."""
     event_type = _event_type(event)
@@ -81,6 +124,10 @@ def consume_event(event: dict[str, Any]) -> Path | None:
         return _sediment_run(event, kind="success")
     if event_type in FAILURE_EVENTS:
         return _sediment_run(event, kind="failure")
+    if event_type in LIFECYCLE_EVENTS:
+        return _sediment_run(event, kind="lifecycle")
+    if event_type in EVIDENCE_EVENTS:
+        return _evidence_run(event)
     if event_type in SIGNAL_EVENTS:
         # 个人文件信号 → 信号沉淀草稿 (slug 用文件名, 溯源 trace_id)
         filename = str((event.get("payload") or {}).get("file") or "unknown")
@@ -125,6 +172,10 @@ def _sediment_dispatch(event: dict[str, Any]) -> None:
         _success_handler(event)
     elif event_type in FAILURE_EVENTS:
         _failure_handler(event)
+    elif event_type in LIFECYCLE_EVENTS:
+        _lifecycle_handler(event)
+    elif event_type in EVIDENCE_EVENTS:
+        _evidence_handler(event)
     elif event_type in SIGNAL_EVENTS:
         # 个人文件信号 → 信号沉淀草稿
         path = consume_event(event)
@@ -142,6 +193,18 @@ def _failure_handler(event: dict[str, Any]) -> None:
     path = _sediment_run(event, kind="failure")
     if path is not None:
         _log(f"sediment_written kind=failure run={event.get('workflow_run_id')} path={path.name}")
+
+
+def _lifecycle_handler(event: dict[str, Any]) -> None:
+    path = _sediment_run(event, kind="lifecycle")
+    if path is not None:
+        _log(f"sediment_written kind=lifecycle run={event.get('workflow_run_id')} path={path.name}")
+
+
+def _evidence_handler(event: dict[str, Any]) -> None:
+    path = _evidence_run(event)
+    if path is not None:
+        _log(f"sediment_written kind=evidence run={event.get('workflow_run_id')} path={path.name}")
 
 
 def _log(msg: str) -> None:

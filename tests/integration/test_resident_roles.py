@@ -21,6 +21,12 @@ from omo.resident import daemon, roles
 _EVENT_ROLES = {
     "WorkflowClosed": "sediment",
     "WorkflowSucceeded": "sediment",
+    "PersonalSignal": "sediment",
+    "WorkflowRequested": "sediment",
+    "WorkflowAdmitted": "sediment",
+    "StepStarted": "sediment",
+    "StepDispatched": "sediment",
+    "EvidenceRecorded": "sediment",
     "WorkflowFailed": "decision",
     "StepFailed": "decision",
     "StepTimeout": "decision",
@@ -90,6 +96,19 @@ def test_roles_config_complete() -> None:
     assert set(cfg) == {"sediment", "decision", "execute", "monitor", "heartbeat"}
     assert cfg["sediment"]["projector"] == "resident-sediment"
     assert cfg["execute"]["topic_filter"] == ["ExecutionRequested", "WorkPacketDispatched"]
+    # T10-12: sediment 分片覆盖 8 种事件 (生命周期补全)
+    assert sorted(cfg["sediment"]["topic_filter"]) == sorted(
+        [
+            "WorkflowClosed",
+            "WorkflowSucceeded",
+            "PersonalSignal",
+            "WorkflowRequested",
+            "WorkflowAdmitted",
+            "StepStarted",
+            "StepDispatched",
+            "EvidenceRecorded",
+        ]
+    )
 
 
 def test_each_role_consumes_only_its_events(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _ledger) -> None:
