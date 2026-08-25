@@ -85,5 +85,52 @@
     ],
     "state_id": "cell-cb3582feff45",
     "saved_at": "2026-08-25T07:30:42.997478+00:00"
+  },
+  "cell-f3d4297616f9": {
+    "cell_id": "cell-f3d4297616f9",
+    "state": "idle",
+    "current_role": null,
+    "episode_id": null,
+    "context": {
+      "intent": {
+        "raw_text": "分析工作流 wf-002 失败原因: timeout",
+        "source": "resident",
+        "event_type": "WorkflowFailed"
+      },
+      "plan": null,
+      "result": null,
+      "verdict": "accept"
+    },
+    "handoff_log": [
+      {
+        "schema": "handoff/v1",
+        "from_role": "planner",
+        "to_role": "executor",
+        "context": {
+          "intent": {
+            "raw_text": "沉淀工作流 wf-001 的输出",
+            "source": "resident",
+            "event_type": "WorkflowClosed"
+          },
+          "plan": null,
+          "result": null,
+          "verdict": null
+        },
+        "artifacts": {
+          "plan": {
+            "tasks": [
+              {
+                "action": "generate_doc",
+                "target": "sediment-wf-001"
+              }
+            ]
+          }
+        },
+        "timestamp": "2026-08-25T07:37:06.583187+00:00",
+        "evidence_ref": "evidence://cell/cell-f3d4297616f9/handoff/0"
+      }
+    ],
+    "state_id": "cell-f3d4297616f9",
+    "saved_at": "2026-08-25T07:37:06.584569+00:00"
   }
 }

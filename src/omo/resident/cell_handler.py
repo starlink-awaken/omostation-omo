@@ -35,18 +35,23 @@ class CellHandler:
 
         # 创建 Episode 处理工作流输出
         episode_id = f"sediment-{workflow_id}"
-        dispatch = self.pool.dispatch_episode(episode_id, {
-            "raw_text": f"沉淀工作流 {workflow_id} 的输出",
-            "source": "resident",
-            "event_type": "WorkflowClosed",
-        })
+        dispatch = self.pool.dispatch_episode(
+            episode_id,
+            {
+                "raw_text": f"沉淀工作流 {workflow_id} 的输出",
+                "source": "resident",
+                "event_type": "WorkflowClosed",
+            },
+        )
 
         # 执行记忆沉淀
         cell = self.pool.get_cell(dispatch["cell_id"])
         if cell:
-            cell.handoff("planner", "executor", {"plan": {"tasks": [
-                {"action": "generate_doc", "target": f"sediment-{workflow_id}"}
-            ]}})
+            cell.handoff(
+                "planner",
+                "executor",
+                {"plan": {"tasks": [{"action": "generate_doc", "target": f"sediment-{workflow_id}"}]}},
+            )
 
         self.pool.complete_episode(episode_id, "accept")
 
@@ -75,11 +80,14 @@ class CellHandler:
             }
 
         episode_id = f"exec-{action_id}"
-        dispatch = self.pool.dispatch_episode(episode_id, {
-            "raw_text": action.get("instruction", ""),
-            "source": "resident",
-            "event_type": "ExecutionRequested",
-        })
+        dispatch = self.pool.dispatch_episode(
+            episode_id,
+            {
+                "raw_text": action.get("instruction", ""),
+                "source": "resident",
+                "event_type": "ExecutionRequested",
+            },
+        )
 
         self.pool.complete_episode(episode_id, "accept")
 
@@ -98,11 +106,14 @@ class CellHandler:
         error = event.get("error", "")
 
         episode_id = f"failure-{workflow_id}"
-        dispatch = self.pool.dispatch_episode(episode_id, {
-            "raw_text": f"分析工作流 {workflow_id} 失败原因: {error}",
-            "source": "resident",
-            "event_type": "WorkflowFailed",
-        })
+        dispatch = self.pool.dispatch_episode(
+            episode_id,
+            {
+                "raw_text": f"分析工作流 {workflow_id} 失败原因: {error}",
+                "source": "resident",
+                "event_type": "WorkflowFailed",
+            },
+        )
 
         self.pool.complete_episode(episode_id, "accept")
 
