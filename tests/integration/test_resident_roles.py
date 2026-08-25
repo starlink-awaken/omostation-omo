@@ -22,6 +22,7 @@ _EVENT_ROLES = {
     "WorkflowClosed": "sediment",
     "WorkflowSucceeded": "sediment",
     "PersonalSignal": "sediment",
+    "InboxSignal": "sediment",
     "WorkflowRequested": "sediment",
     "WorkflowAdmitted": "sediment",
     "StepStarted": "sediment",
@@ -96,12 +97,13 @@ def test_roles_config_complete() -> None:
     assert set(cfg) == {"sediment", "decision", "execute", "monitor", "heartbeat"}
     assert cfg["sediment"]["projector"] == "resident-sediment"
     assert cfg["execute"]["topic_filter"] == ["ExecutionRequested", "WorkPacketDispatched"]
-    # T10-12: sediment 分片覆盖 8 种事件 (生命周期补全)
+    # T10-15: sediment 分片覆盖 9 种事件 (感知文件夹信号 InboxSignal 加入)
     assert sorted(cfg["sediment"]["topic_filter"]) == sorted(
         [
             "WorkflowClosed",
             "WorkflowSucceeded",
             "PersonalSignal",
+            "InboxSignal",
             "WorkflowRequested",
             "WorkflowAdmitted",
             "StepStarted",

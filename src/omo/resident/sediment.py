@@ -26,6 +26,8 @@ SUCCESS_EVENTS = frozenset({"WorkflowSucceeded", "WorkflowClosed", "WorkflowAdmi
 FAILURE_EVENTS = frozenset({"WorkflowFailed", "StepFailed", "StepTimeout"})
 # 个人文件信号 (personal-signals 渠道) — 沉淀为知识草稿 (M3.1 输入渠道激活)
 SIGNAL_EVENTS = frozenset({"PersonalSignal"})
+# 感知文件夹信号 (perception-inbox 渠道) — 沉淀为感知信号草稿 (T10-15)
+INBOX_EVENTS = frozenset({"InboxSignal"})
 # workflow 生命周期事件 (T10-12): 按 run_id 聚合 → runs 草稿 (幂等, 同 run 多事件不覆盖)
 LIFECYCLE_EVENTS = frozenset({"WorkflowRequested", "StepStarted", "StepDispatched"})
 # 外部证据记录 (T10-12): → evidence 草稿 (带 event_id 溯源)
@@ -151,6 +153,29 @@ def consume_event(event: dict[str, Any]) -> Path | None:
         )
         target.write_text(body, encoding="utf-8")
         return target
+    if event_type in INBOX_EVENTS:
+        # 感知文件夹信号 → 感知信号沉淀草稿 (slug 用文件名, 溯源 trace_id)
+        filename = str((event.get("payload") or {}).get("file") or "unknown")
+        slug = _safe_slug(filename.removesuffix(".md")) or "perception-inbox"
+        target = SEDIMENT_ROOT / "inbox" / f"{slug}.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        body = (
+            f"# 感知信号沉淀(事件驱动草稿)\n\n"
+            f"- event_type: {event_type}\n"
+            f"- trace_id: {event.get('trace_id')}\n"
+            f"- event_id: {event.get('event_id')}\n"
+            f"- occurred_at: {event.get('occurred_at')}\n"
+            f"- generated_at: {_utc()}\n"
+            f"- status: draft (感知文件夹信号, 待完善为笔记/决策/行动)\n\n"
+            f"## 信号内容 (payload)\n\n"
+            f"- source: perception-inbox\n"
+            f"- file: {filename}\n"
+            f"- content_digest: {(event.get('payload') or {}).get('content_digest')}\n\n"
+            f"## 待补充\n\n"
+            f"- [ ] 信号要点\n- [ ] 关联上下文\n- [ ] 建议行动\n"
+        )
+        target.write_text(body, encoding="utf-8")
+        return target
     return None
 
 
@@ -181,6 +206,11 @@ def _sediment_dispatch(event: dict[str, Any]) -> None:
         path = consume_event(event)
         if path is not None:
             _log(f"sediment_written kind=signal file={path.name}")
+    elif event_type in INBOX_EVENTS:
+        # 感知文件夹信号 → 感知信号沉淀草稿
+        path = consume_event(event)
+        if path is not None:
+            _log(f"sediment_written kind=inbox file={path.name}")
 
 
 def _success_handler(event: dict[str, Any]) -> None:

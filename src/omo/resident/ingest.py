@@ -33,6 +33,8 @@ _EVENT_TYPE_TOPIC: dict[str, str] = {
     "WorkflowFailed": "mesh:workflow:failed",
     "StepFailed": "mesh:step:failed",
     "StepTimeout": "mesh:step:failed",
+    "PersonalSignal": "mesh:personal:signal",
+    "InboxSignal": "mesh:perception:inbox",
 }
 _FALLBACK_TOPIC = "mesh:event:raw"
 
