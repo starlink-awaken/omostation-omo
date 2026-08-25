@@ -16,6 +16,7 @@ SUBCOMMANDS = {
     "sediment": "omo.resident.sediment",
     "memory": "omo.resident.memory",
     "signals": "omo.resident.signals",
+    "inbox": "omo.resident.inbox",
     "alert": "omo.resident.alert",
     "decision": "omo.resident.decision",
     "execute": "omo.resident.execute",

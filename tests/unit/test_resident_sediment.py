@@ -65,6 +65,31 @@ def test_consume_personal_signal_writes_signals_draft(tmp_path: Path) -> None:
     assert "my-idea.md" in text
 
 
+def test_consume_inbox_signal_writes_inbox_draft(tmp_path: Path) -> None:
+    """感知文件夹信号 → 感知信号沉淀草稿 (inbox/ 目录, T10-15)."""
+    event = {
+        "event_type": "InboxSignal",
+        "event_id": "evt_inbox1",
+        "trace_id": "inbox:research-2026-08-19-001",
+        "occurred_at": "2026-08-25T00:00:00Z",
+        "producer": "perception-inbox",
+        "payload": {
+            "file": "research-2026-08-19-001.md",
+            "content_digest": "sha256:abc",
+            "source": "perception-inbox",
+        },
+    }
+    path = sediment.consume_event(event)
+    assert path is not None
+    assert path.is_file()
+    assert path.parent == tmp_path / "inbox"
+    assert path.name == "research-2026-08-19-001.md"
+    text = path.read_text(encoding="utf-8")
+    assert "感知信号沉淀" in text
+    assert "research-2026-08-19-001.md" in text
+    assert "perception-inbox" in text
+
+
 def test_consume_failure_writes_failures_draft(tmp_path: Path) -> None:
     event = _success_event(event_type="StepFailed")
     path = sediment.consume_event(event)

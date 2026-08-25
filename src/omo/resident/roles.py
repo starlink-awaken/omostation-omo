@@ -29,6 +29,7 @@ ROLES: dict[str, dict[str, Any]] = {
             "WorkflowClosed",
             "WorkflowSucceeded",
             "PersonalSignal",
+            "InboxSignal",
             "WorkflowRequested",
             "WorkflowAdmitted",
             "StepStarted",
@@ -36,7 +37,7 @@ ROLES: dict[str, dict[str, Any]] = {
             "EvidenceRecorded",
         ],
         "handler": "knowledge_sediment",
-        "desc": "记忆沉淀 — 运行生命周期/成功/个人信号/证据 → 知识草稿",
+        "desc": "记忆沉淀 — 运行生命周期/成功/个人信号/感知信号/证据 → 知识草稿",
     },
     "decision": {
         "projector": "resident-decision",

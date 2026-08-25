@@ -17,6 +17,11 @@ routes:
     topic: mesh:personal:signal
     action: knowledge_sediment
     safe: true
+  # 感知文件夹信号 (perception-inbox 渠道, T10-15) → 知识沉淀
+  - event_type: InboxSignal
+    topic: mesh:perception:inbox
+    action: knowledge_sediment
+    safe: true
   # workflow 生命周期事件 (T10-12 消费端补全) → 知识沉淀 (safe, 只写知识草稿)
   - event_type: WorkflowRequested
     topic: mesh:workflow:requested
