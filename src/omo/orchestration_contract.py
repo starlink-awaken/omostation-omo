@@ -32,6 +32,11 @@ from .omo_paths import WORKSPACE_ROOT
 from .workflow_mesh import WorkflowMeshEventError, WorkflowMeshStore, new_workflow_event
 
 EXECUTABLE_BET_STATES = frozenset({"candidate", "in_progress", "review", "done"})
+_CAPABILITY_ID_RE = re.compile(
+    r"^(?:skill|workflow|mcp-server|mcp-tool|bos-service):[A-Za-z0-9._:@/-]+$"
+)
+_CAPABILITY_OPERATIONS = frozenset({"find", "inspect", "load", "invoke"})
+_CAPABILITY_EFFECTS = frozenset({"read_only", "effectful"})
 
 
 class OrchestrationContractError(ValueError):
@@ -40,6 +45,42 @@ class OrchestrationContractError(ValueError):
     def __init__(self, reason: str, message: str | None = None) -> None:
         self.reason = reason
         super().__init__(f"{reason}: {message or reason}")
+
+
+def validate_capability_requirements(value: Any) -> list[dict[str, str]]:
+    """Return one ordered, duplicate-free exact capability requirement list."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise OrchestrationContractError(
+            "capability_requirements_invalid",
+            "capability requirements must be a list",
+        )
+
+    canonical: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for raw in value:
+        if not isinstance(raw, Mapping) or set(raw) != {"capability_id", "operation", "effect"}:
+            raise OrchestrationContractError(
+                "capability_requirements_invalid",
+                "capability requirement fields are invalid",
+            )
+        item = {key: str(raw[key]) for key in ("capability_id", "operation", "effect")}
+        capability_id = item["capability_id"]
+        if (
+            _CAPABILITY_ID_RE.fullmatch(capability_id) is None
+            or capability_id in seen
+            or item["operation"] not in _CAPABILITY_OPERATIONS
+            or item["effect"] not in _CAPABILITY_EFFECTS
+            or (capability_id.startswith("skill:") and item["operation"] == "invoke")
+        ):
+            raise OrchestrationContractError(
+                "capability_requirements_invalid",
+                "capability requirement is unsafe",
+            )
+        seen.add(capability_id)
+        canonical.append(item)
+    return canonical
 
 
 class OrchestratorAdapter(Protocol):
@@ -215,11 +256,20 @@ def _validate_candidate(
     workspace_root: Path | None,
 ) -> tuple[dict[str, Any], dict[str, Any], str]:
     _validate_spec_binding(packet, workspace_root)
+    requirements = validate_capability_requirements(packet.get("capability_requirements"))
+    packet_input = dict(packet)
+    if "capability_requirements" in packet_input:
+        packet_input["capability_requirements"] = requirements
     try:
-        packet_value = WorkPacket.model_validate(packet).model_dump(mode="json")
+        packet_value = WorkPacket.model_validate(packet_input).model_dump(mode="json")
         manifest_value = CompletionManifestModel.model_validate(manifest).model_dump(mode="json")
     except Exception as exc:  # Pydantic's error is intentionally boundary-local.
         raise OrchestrationContractError("verification_unprovable", "invalid ECOS contract") from exc
+    if "capability_requirements" in packet and packet_value.get("capability_requirements") != requirements:
+        raise OrchestrationContractError(
+            "capability_requirements_invalid",
+            "ECOS capability requirements changed during validation",
+        )
 
     expected_hash = compute_packet_hash(canonicalize(packet_value))
     if manifest_value["packet_hash"] != expected_hash:

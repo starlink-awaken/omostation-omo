@@ -17,10 +17,37 @@ from omo.orchestration_contract import (
     KandevFixtureAdapter,
     OrchestrationContractCoordinator,
     OrchestrationContractError,
+    validate_capability_requirements,
 )
 from omo.workflow_mesh import WorkflowMeshStore, new_workflow_event
 
 NOW = "2026-08-13T06:00:00Z"
+CAPABILITY_REQUIREMENTS = [
+    {"capability_id": "skill:git-discipline", "operation": "load", "effect": "read_only"},
+    {"capability_id": "workflow:bet-execution", "operation": "load", "effect": "read_only"},
+]
+
+
+@pytest.mark.parametrize(
+    "requirements",
+    [
+        [CAPABILITY_REQUIREMENTS[0], CAPABILITY_REQUIREMENTS[0]],
+        [{"capability_id": "skill:*", "operation": "load", "effect": "read_only"}],
+        [{"capability_id": "skill:git-discipline", "operation": "invoke", "effect": "effectful"}],
+        [{"capability_id": "workflow:bet-execution", "operation": "execute", "effect": "read_only"}],
+        [{"capability_id": "workflow:bet-execution", "operation": "load", "effect": "write"}],
+        [{"capability_id": "workflow:bet-execution", "operation": "load"}],
+        [{**CAPABILITY_REQUIREMENTS[0], "adapter": "caller-supplied"}],
+    ],
+)
+def test_v2_packet_rejects_invalid_capability_requirements(requirements) -> None:
+    with pytest.raises(OrchestrationContractError, match="capability_requirements_invalid"):
+        validate_capability_requirements(requirements)
+
+
+def test_capability_requirements_are_canonical_and_optional() -> None:
+    assert validate_capability_requirements(None) == []
+    assert validate_capability_requirements(CAPABILITY_REQUIREMENTS) == CAPABILITY_REQUIREMENTS
 
 
 def _packet() -> dict[str, object]:

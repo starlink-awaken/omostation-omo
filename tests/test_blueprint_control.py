@@ -14,7 +14,10 @@ from ecos.ssot.tools.work_packet_compiler import canonicalize, compute_packet_ha
 from omo.approval_lifecycle import request_approval as durable_request_approval
 from omo.blueprint_control import BlueprintControlError, BlueprintControlService
 from omo.cli import main as cli_main
-from omo.orchestration_contract import OrchestrationContractCoordinator
+from omo.orchestration_contract import (
+    OrchestrationContractCoordinator,
+    OrchestrationContractError,
+)
 from omo.workflow_dispatch import WorkflowDispatchError
 from omo.workflow_mesh import WorkflowMeshStore
 
@@ -27,6 +30,10 @@ SPEC_VERSION = "1.0.0"
 INSTRUCTION_PATH = "docs/operations/blueprint-agent-instruction-pack-v1.md"
 INSTRUCTION_REF = f"repo://{INSTRUCTION_PATH}"
 INSTRUCTION_VERSION = "blueprint-agent-instruction-pack/v1"
+CAPABILITY_REQUIREMENTS = [
+    {"capability_id": "skill:git-discipline", "operation": "load", "effect": "read_only"},
+    {"capability_id": "workflow:bet-execution", "operation": "load", "effect": "read_only"},
+]
 
 
 def _workspace(tmp_path: Path) -> tuple[dict, dict]:
@@ -57,6 +64,7 @@ def _workspace(tmp_path: Path) -> tuple[dict, dict]:
         "verify": [{"cmd": "pytest -q", "expect": "exit 0"}],
         "non_goals": ["no automatic merge"],
         "circuit_breaker": "stop on scope or approval drift",
+        "capability_requirements": CAPABILITY_REQUIREMENTS,
     }
     ledger = tmp_path / "docs" / "plans" / "3y-bet-ledger.yaml"
     ledger.parent.mkdir(parents=True)
@@ -524,6 +532,7 @@ def test_compile_is_deterministic_and_contains_governed_contract(
     assert first.packet["scope"]["read_surfaces"] == task["read_surfaces"]
     assert first.packet["scope"]["write_surfaces"] == task["write_surfaces"]
     assert first.packet["assignment"]["required_capabilities"] == task["required_capabilities"]
+    assert first.packet["capability_requirements"] == CAPABILITY_REQUIREMENTS
     assert first.packet["scope"]["non_goals"] == bet["non_goals"]
     assert first.packet["acceptance"]["evidence_requirements"] == task["evidence_required"]
     assert first.packet["acceptance"]["done_when"] == [
@@ -540,6 +549,25 @@ def test_compile_is_deterministic_and_contains_governed_contract(
         "content_digest": "sha256:" + hashlib.sha256((tmp_path / INSTRUCTION_PATH).read_bytes()).hexdigest(),
         "instruction_profile": "executor",
     }
+
+
+@pytest.mark.parametrize(
+    "requirements",
+    [
+        [CAPABILITY_REQUIREMENTS[0], CAPABILITY_REQUIREMENTS[0]],
+        [{"capability_id": "skill:*", "operation": "load", "effect": "read_only"}],
+        [{"capability_id": "skill:git-discipline", "operation": "invoke", "effect": "effectful"}],
+    ],
+)
+def test_compile_rejects_invalid_capability_requirements(tmp_path: Path, requirements) -> None:
+    _workspace(tmp_path)
+    ledger_path = tmp_path / "docs" / "plans" / "3y-bet-ledger.yaml"
+    ledger = yaml.safe_load(ledger_path.read_text(encoding="utf-8"))
+    ledger["bets"][0]["capability_requirements"] = requirements
+    ledger_path.write_text(yaml.safe_dump(ledger, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(OrchestrationContractError, match="capability_requirements_invalid"):
+        _compile(tmp_path)
 
 
 def test_admission_only_dispatch_does_not_forge_worker_ack(tmp_path: Path, monkeypatch) -> None:
@@ -643,9 +671,16 @@ def test_dispatch_records_exact_mesh_order_and_transport_only_state(
         "StepDispatched",
     ]
     identity = events[0]["payload"]
+    expected_requirements_digest = compute_packet_hash(
+        json.dumps(CAPABILITY_REQUIREMENTS, sort_keys=True, separators=(",", ":"))
+    )
     assert identity["bet_id"] == BET_ID
     assert identity["packet_id"] == result["packet_id"]
     assert identity["packet_hash"] == result["packet_hash"]
+    assert identity["capability_requirements"] == CAPABILITY_REQUIREMENTS
+    assert identity["capability_requirements_digest"] == expected_requirements_digest
+    assert result["capability_requirements"] == CAPABILITY_REQUIREMENTS
+    assert result["capability_requirements_digest"] == expected_requirements_digest
     assert result["state"] == "transport_accepted"
     assert "ready" not in result["state"]
     assert "succeeded" not in result["state"]

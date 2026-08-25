@@ -18,6 +18,10 @@ from uuid import uuid4
 
 from .omo_shared import load_yaml
 from .omo_task_schema import validate_task_file
+from .orchestration_contract import (
+    OrchestrationContractError,
+    validate_capability_requirements,
+)
 from .workflow_mesh import WorkflowMeshStore, new_workflow_event
 
 
@@ -130,10 +134,18 @@ def _validated_request_identity(
 ) -> dict[str, Any]:
     if request_identity is None:
         return {}
-    required = {"bet_id", "packet_id", "packet_hash", "task_ref", "instruction_binding"}
+    required = {
+        "bet_id",
+        "packet_id",
+        "packet_hash",
+        "task_ref",
+        "instruction_binding",
+        "capability_requirements",
+        "capability_requirements_digest",
+    }
     if set(request_identity) != required:
         raise WorkflowDispatchError("request identity must contain the complete delivery binding")
-    scalar_fields = required - {"instruction_binding"}
+    scalar_fields = required - {"instruction_binding", "capability_requirements"}
     identity: dict[str, Any] = {key: str(request_identity.get(key) or "").strip() for key in scalar_fields}
     if not all(identity.values()):
         raise WorkflowDispatchError("request identity fields must be non-empty")
@@ -160,7 +172,16 @@ def _validated_request_identity(
         raise WorkflowDispatchError("request identity instruction_binding digest is invalid")
     if instruction_binding["instruction_profile"] != "executor":
         raise WorkflowDispatchError("request identity instruction profile is invalid")
+    try:
+        capability_requirements = validate_capability_requirements(request_identity.get("capability_requirements"))
+    except OrchestrationContractError as exc:
+        raise WorkflowDispatchError("request identity capability requirements are invalid") from exc
+    canonical_requirements = json.dumps(capability_requirements, sort_keys=True, separators=(",", ":"))
+    expected_requirements_digest = "sha256:" + hashlib.sha256(canonical_requirements.encode()).hexdigest()
+    if identity["capability_requirements_digest"] != expected_requirements_digest:
+        raise WorkflowDispatchError("request identity capability requirements digest mismatch")
     identity["instruction_binding"] = instruction_binding
+    identity["capability_requirements"] = capability_requirements
     return identity
 
 
@@ -480,7 +501,15 @@ def admit_requested_workflow(
         now=now,
         request_identity={
             key: event["payload"][key]
-            for key in ("bet_id", "packet_id", "packet_hash", "task_ref", "instruction_binding")
+            for key in (
+                "bet_id",
+                "packet_id",
+                "packet_hash",
+                "task_ref",
+                "instruction_binding",
+                "capability_requirements",
+                "capability_requirements_digest",
+            )
             if key in event["payload"]
         }
         or None,
