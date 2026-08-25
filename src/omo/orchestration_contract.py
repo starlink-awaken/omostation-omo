@@ -32,9 +32,7 @@ from .omo_paths import WORKSPACE_ROOT
 from .workflow_mesh import WorkflowMeshEventError, WorkflowMeshStore, new_workflow_event
 
 EXECUTABLE_BET_STATES = frozenset({"candidate", "in_progress", "review", "done"})
-_CAPABILITY_ID_RE = re.compile(
-    r"^(?:skill|workflow|mcp-server|mcp-tool|bos-service):[A-Za-z0-9._:@/-]+$"
-)
+_CAPABILITY_ID_RE = re.compile(r"^(?:skill|workflow|mcp-server|mcp-tool|bos-service):[A-Za-z0-9._:@/-]+$")
 _CAPABILITY_OPERATIONS = frozenset({"find", "inspect", "load", "invoke"})
 _CAPABILITY_EFFECTS = frozenset({"read_only", "effectful"})
 
