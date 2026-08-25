@@ -4,7 +4,9 @@ import argparse
 import json
 import os
 import sys
+from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import Any
 
 from .core import (
     REGISTRY_PATH,
@@ -267,7 +269,11 @@ def _load_chain_bind():
     return mod
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(
+    argv: list[str] | None = None,
+    *,
+    start_preflight: Callable[[str, dict[str, Any]], Mapping[str, Any]] | None = None,
+) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
@@ -432,6 +438,7 @@ def main(argv: list[str] | None = None) -> int:
                 parent_agent=parent_agent,
                 bet_id=bet_id,
                 inherited_delivery_identity=inherited_delivery_identity,
+                start_preflight=start_preflight,
             )
             if args.json:
                 print(json.dumps(record, ensure_ascii=False, indent=2))
@@ -450,6 +457,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.objective or f"spawned from {args.parent_run_id}",
                 args.dry_run,
                 args.force_lock,
+                start_preflight=start_preflight,
             )
             if args.json:
                 print(json.dumps(record, ensure_ascii=False, indent=2))
