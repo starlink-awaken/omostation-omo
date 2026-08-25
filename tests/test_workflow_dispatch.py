@@ -152,6 +152,29 @@ def test_admit_workflow_merges_validated_blueprint_identity_into_request(
     assert {key: requested["payload"][key] for key in identity} == identity
 
 
+def test_admit_workflow_keeps_legacy_five_field_identity_readable(
+    tmp_path: Path,
+) -> None:
+    _task(tmp_path)
+    identity = _request_identity()
+    identity.pop("capability_requirements")
+    identity.pop("capability_requirements_digest")
+
+    admit_workflow(
+        tmp_path,
+        task_id="TASK-MESH-1",
+        backend="runtime",
+        required_capabilities=["runtime"],
+        capability_health=_health(),
+        workflow_run_id="run-legacy-identity",
+        request_identity=identity,
+    )
+
+    requested = WorkflowMeshStore(tmp_path / ".omo").events()[0]
+    assert {key: requested["payload"][key] for key in identity} == identity
+    assert "capability_requirements" not in requested["payload"]
+
+
 def test_admit_workflow_rejects_invalid_blueprint_identity_before_mesh_write(
     tmp_path: Path,
 ) -> None:

@@ -134,18 +134,24 @@ def _validated_request_identity(
 ) -> dict[str, Any]:
     if request_identity is None:
         return {}
-    required = {
+    legacy_required = {
         "bet_id",
         "packet_id",
         "packet_hash",
         "task_ref",
         "instruction_binding",
+    }
+    exact_fields = {
         "capability_requirements",
         "capability_requirements_digest",
     }
-    if set(request_identity) != required:
+    provided_fields = set(request_identity)
+    if provided_fields != legacy_required and provided_fields != legacy_required | exact_fields:
         raise WorkflowDispatchError("request identity must contain the complete delivery binding")
-    scalar_fields = required - {"instruction_binding", "capability_requirements"}
+    has_exact_requirements = exact_fields.issubset(provided_fields)
+    scalar_fields = legacy_required - {"instruction_binding"}
+    if has_exact_requirements:
+        scalar_fields.add("capability_requirements_digest")
     identity: dict[str, Any] = {key: str(request_identity.get(key) or "").strip() for key in scalar_fields}
     if not all(identity.values()):
         raise WorkflowDispatchError("request identity fields must be non-empty")
@@ -172,16 +178,17 @@ def _validated_request_identity(
         raise WorkflowDispatchError("request identity instruction_binding digest is invalid")
     if instruction_binding["instruction_profile"] != "executor":
         raise WorkflowDispatchError("request identity instruction profile is invalid")
-    try:
-        capability_requirements = validate_capability_requirements(request_identity.get("capability_requirements"))
-    except OrchestrationContractError as exc:
-        raise WorkflowDispatchError("request identity capability requirements are invalid") from exc
-    canonical_requirements = json.dumps(capability_requirements, sort_keys=True, separators=(",", ":"))
-    expected_requirements_digest = "sha256:" + hashlib.sha256(canonical_requirements.encode()).hexdigest()
-    if identity["capability_requirements_digest"] != expected_requirements_digest:
-        raise WorkflowDispatchError("request identity capability requirements digest mismatch")
     identity["instruction_binding"] = instruction_binding
-    identity["capability_requirements"] = capability_requirements
+    if has_exact_requirements:
+        try:
+            capability_requirements = validate_capability_requirements(request_identity.get("capability_requirements"))
+        except OrchestrationContractError as exc:
+            raise WorkflowDispatchError("request identity capability requirements are invalid") from exc
+        canonical_requirements = json.dumps(capability_requirements, sort_keys=True, separators=(",", ":"))
+        expected_requirements_digest = "sha256:" + hashlib.sha256(canonical_requirements.encode()).hexdigest()
+        if identity["capability_requirements_digest"] != expected_requirements_digest:
+            raise WorkflowDispatchError("request identity capability requirements digest mismatch")
+        identity["capability_requirements"] = capability_requirements
     return identity
 
 
