@@ -172,6 +172,7 @@ class TestCellPool(unittest.TestCase):
 
     def setUp(self):
         from omo.resident.cell_pool import CellPool
+
         self.CellPool = CellPool
         self.pool = CellPool(max_cells=3, enable_persistence=False)
 
@@ -232,6 +233,7 @@ class TestMemoryPipelineIntegration(unittest.TestCase):
 
     def setUp(self):
         from omo.resident.memory_pipeline import MemoryPipeline
+
         self.pipeline = MemoryPipeline()
 
     def test_full_memory_cycle(self):
@@ -264,5 +266,7 @@ if __name__ == "__main__":
     suite.addTests(loader.loadTestsFromTestCase(TestMemoryPipelineIntegration))
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
-    print(f"\nTests run: {result.testsRun}, Successes: {result.testsRun - len(result.failures) - len(result.errors)}, Failures: {len(result.failures)}, Errors: {len(result.errors)}")
+    print(
+        f"\nTests run: {result.testsRun}, Successes: {result.testsRun - len(result.failures) - len(result.errors)}, Failures: {len(result.failures)}, Errors: {len(result.errors)}"
+    )
     sys.exit(0 if result.wasSuccessful() else 1)

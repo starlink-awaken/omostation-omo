@@ -29,9 +29,9 @@ from omo.resident.memory_pipeline import MemoryPipeline
 
 
 def print_header(title: str):
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  {title}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
 
 def print_step(step: str, detail: str = ""):
@@ -42,9 +42,16 @@ def print_step(step: str, detail: str = ""):
         print(f"{prefix} {step}")
 
 
-def run_episode(pool: CellPool, episode_id: str, intent: str, planner: Planner,
-                executor: Executor, verifier: Verifier, governor: Governor,
-                memory: MemoryPipeline) -> dict:
+def run_episode(
+    pool: CellPool,
+    episode_id: str,
+    intent: str,
+    planner: Planner,
+    executor: Executor,
+    verifier: Verifier,
+    governor: Governor,
+    memory: MemoryPipeline,
+) -> dict:
     """运行单个 Episode 的完整流水线."""
     results = {"episode_id": episode_id, "intent": intent}
 
@@ -53,7 +60,9 @@ def run_episode(pool: CellPool, episode_id: str, intent: str, planner: Planner,
     results["cell_id"] = dispatch["cell_id"]
     results["strategy"] = dispatch["strategy"]
     results["pool_size"] = dispatch["pool_size"]
-    print_step("调度分配", f"cell={dispatch['cell_id'][:20]}... strategy={dispatch['strategy']} pool={dispatch['pool_size']}")
+    print_step(
+        "调度分配", f"cell={dispatch['cell_id'][:20]}... strategy={dispatch['strategy']} pool={dispatch['pool_size']}"
+    )
 
     cell = pool.get_cell(dispatch["cell_id"])
 
@@ -91,11 +100,13 @@ def run_episode(pool: CellPool, episode_id: str, intent: str, planner: Planner,
     memory_results = []
     for r in exec_result["results"]:
         if r.get("ok"):
-            memory_results.append({
-                "ok": True,
-                "output": str(r.get("output", "")),
-                "action": r.get("action", "unknown"),
-            })
+            memory_results.append(
+                {
+                    "ok": True,
+                    "output": str(r.get("output", "")),
+                    "action": r.get("action", "unknown"),
+                }
+            )
     episode_data = {
         "episode_id": episode_id,
         "intent": intent,
@@ -214,7 +225,9 @@ def main():
         risk = governor.assess_risk(action_req)
         decision = governor.decide(risk, action_req)
         status = "✓" if risk == expected_risk else "✗"
-        print_step(f"治理评估 {status}", f"action={action_req['action']} → risk={risk}, decision={decision['decision']}")
+        print_step(
+            f"治理评估 {status}", f"action={action_req['action']} → risk={risk}, decision={decision['decision']}"
+        )
 
     print_header("阶段 7: 记忆管道验证")
     # 完整记忆周期
@@ -254,9 +267,9 @@ def main():
 
     # 最终判定（核心功能全部验证通过）
     core_pass = (
-        completed == total_episodes          # 所有 Episode 完成
-        and len(saved_states) > 0             # 持久化成功
-        and total_episodes > 0                # 调度成功
+        completed == total_episodes  # 所有 Episode 完成
+        and len(saved_states) > 0  # 持久化成功
+        and total_episodes > 0  # 调度成功
     )
 
     if core_pass:

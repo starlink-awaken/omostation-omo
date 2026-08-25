@@ -56,9 +56,14 @@ def sediment_root(tmp_path: Path) -> Path:
     """构造含 runs/failures 草稿的临时 sediment 目录."""
     root = tmp_path / "sediment"
     _write_draft(root, "runs", "20260803T063243Z-governance-state-mutation-0fd89888.md", RUN_DRAFT)
-    _write_draft(root, "runs", "20260803T063617Z-mini-c9be3c75.md", RUN_DRAFT.replace(
-        "0fd89888", "c9be3c75"
-    ).replace("d727581a919742c88e87d29254d31916", "3f4529e75a9e494d9c2e4fd7a2e61cca"))
+    _write_draft(
+        root,
+        "runs",
+        "20260803T063617Z-mini-c9be3c75.md",
+        RUN_DRAFT.replace("0fd89888", "c9be3c75").replace(
+            "d727581a919742c88e87d29254d31916", "3f4529e75a9e494d9c2e4fd7a2e61cca"
+        ),
+    )
     _write_draft(
         root,
         "failures",

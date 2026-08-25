@@ -13,6 +13,7 @@ sys.path.insert(0, str(REPO / "src"))
 class TestCellCoordinator(unittest.TestCase):
     def setUp(self):
         from omo.resident.cell import CellCoordinator
+
         self.coordinator = CellCoordinator()
 
     def test_start_episode(self):
@@ -40,6 +41,7 @@ class TestCellCoordinator(unittest.TestCase):
 class TestGovernor(unittest.TestCase):
     def setUp(self):
         from omo.resident.governor import Governor
+
         self.governor = Governor()
 
     def test_assess_risk_r0(self):
@@ -60,6 +62,7 @@ class TestGovernor(unittest.TestCase):
 class TestPlanner(unittest.TestCase):
     def setUp(self):
         from omo.resident.planner import Planner
+
         self.planner = Planner()
 
     def test_create_plan(self):
@@ -70,6 +73,7 @@ class TestPlanner(unittest.TestCase):
 class TestExecutor(unittest.TestCase):
     def setUp(self):
         from omo.resident.executor import Executor
+
         self.executor = Executor(backend="local")
 
     def test_execute_scan(self):
@@ -84,6 +88,7 @@ class TestExecutor(unittest.TestCase):
 class TestVerifier(unittest.TestCase):
     def setUp(self):
         from omo.resident.verifier import Verifier
+
         self.verifier = Verifier()
 
     def test_verify_success(self):
@@ -99,6 +104,7 @@ class TestVerifier(unittest.TestCase):
 class TestMemoryPipeline(unittest.TestCase):
     def setUp(self):
         from omo.resident.memory_pipeline import MemoryPipeline
+
         self.pipeline = MemoryPipeline()
 
     def test_generate_candidates(self):
@@ -110,6 +116,7 @@ class TestMemoryPipeline(unittest.TestCase):
 class TestReplayFramework(unittest.TestCase):
     def setUp(self):
         from omo.resident.replay import ReplayFramework
+
         self.framework = ReplayFramework()
 
     def test_replay_episode(self):
@@ -134,5 +141,7 @@ if __name__ == "__main__":
     suite.addTests(loader.loadTestsFromTestCase(TestReplayFramework))
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
-    print(f"\nTests run: {result.testsRun}, Successes: {result.testsRun - len(result.failures) - len(result.errors)}, Failures: {len(result.failures)}, Errors: {len(result.errors)}")
+    print(
+        f"\nTests run: {result.testsRun}, Successes: {result.testsRun - len(result.failures) - len(result.errors)}, Failures: {len(result.failures)}, Errors: {len(result.errors)}"
+    )
     sys.exit(0 if result.wasSuccessful() else 1)

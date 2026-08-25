@@ -1,6 +1,6 @@
 {
-  "cell-bcf19dc00d53": {
-    "cell_id": "cell-bcf19dc00d53",
+  "cell-89c04f2d68d1": {
+    "cell_id": "cell-89c04f2d68d1",
     "state": "planning",
     "current_role": "planner",
     "episode_id": "ep-latest-0",
@@ -13,11 +13,11 @@
       "verdict": null
     },
     "handoff_log": [],
-    "state_id": "cell-bcf19dc00d53",
-    "saved_at": "2026-08-24T22:24:19.261778+00:00"
+    "state_id": "cell-89c04f2d68d1",
+    "saved_at": "2026-08-25T07:30:42.994045+00:00"
   },
-  "cell-48278fff32b3": {
-    "cell_id": "cell-48278fff32b3",
+  "cell-129f23cba9af": {
+    "cell_id": "cell-129f23cba9af",
     "state": "planning",
     "current_role": "planner",
     "episode_id": "ep-latest-1",
@@ -30,11 +30,11 @@
       "verdict": null
     },
     "handoff_log": [],
-    "state_id": "cell-48278fff32b3",
-    "saved_at": "2026-08-24T22:24:19.262064+00:00"
+    "state_id": "cell-129f23cba9af",
+    "saved_at": "2026-08-25T07:30:42.994560+00:00"
   },
-  "cell-9f26a738a5a1": {
-    "cell_id": "cell-9f26a738a5a1",
+  "cell-f27c928158a6": {
+    "cell_id": "cell-f27c928158a6",
     "state": "planning",
     "current_role": "planner",
     "episode_id": "ep-latest-2",
@@ -47,11 +47,11 @@
       "verdict": null
     },
     "handoff_log": [],
-    "state_id": "cell-9f26a738a5a1",
-    "saved_at": "2026-08-24T22:24:19.269942+00:00"
+    "state_id": "cell-f27c928158a6",
+    "saved_at": "2026-08-25T07:30:42.995037+00:00"
   },
-  "cell-7be8a043d2b0": {
-    "cell_id": "cell-7be8a043d2b0",
+  "cell-cb3582feff45": {
+    "cell_id": "cell-cb3582feff45",
     "state": "executing",
     "current_role": "executor",
     "episode_id": "ep-persist",
@@ -79,11 +79,11 @@
         "artifacts": {
           "plan": "test-plan"
         },
-        "timestamp": "2026-08-24T22:24:19.271286+00:00",
-        "evidence_ref": "evidence://cell/cell-7be8a043d2b0/handoff/0"
+        "timestamp": "2026-08-25T07:30:42.997473+00:00",
+        "evidence_ref": "evidence://cell/cell-cb3582feff45/handoff/0"
       }
     ],
-    "state_id": "cell-7be8a043d2b0",
-    "saved_at": "2026-08-24T22:24:19.271298+00:00"
+    "state_id": "cell-cb3582feff45",
+    "saved_at": "2026-08-25T07:30:42.997478+00:00"
   }
 }
