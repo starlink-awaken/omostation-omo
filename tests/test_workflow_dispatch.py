@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+import hashlib
 import json
 import shlex
 import subprocess
@@ -89,6 +90,11 @@ def _health() -> dict:
 
 
 def _request_identity() -> dict:
+    capability_requirements = [
+        {"capability_id": "skill:git-discipline", "operation": "load", "effect": "read_only"},
+        {"capability_id": "workflow:bet-execution", "operation": "load", "effect": "read_only"},
+    ]
+    canonical_requirements = json.dumps(capability_requirements, sort_keys=True, separators=(",", ":"))
     return {
         "bet_id": "BET-1",
         "packet_id": "WP-BP-0123456789abcdef",
@@ -100,6 +106,8 @@ def _request_identity() -> dict:
             "content_digest": "sha256:" + "b" * 64,
             "instruction_profile": "executor",
         },
+        "capability_requirements": capability_requirements,
+        "capability_requirements_digest": "sha256:" + hashlib.sha256(canonical_requirements.encode()).hexdigest(),
     }
 
 
@@ -144,6 +152,29 @@ def test_admit_workflow_merges_validated_blueprint_identity_into_request(
     assert {key: requested["payload"][key] for key in identity} == identity
 
 
+def test_admit_workflow_keeps_legacy_five_field_identity_readable(
+    tmp_path: Path,
+) -> None:
+    _task(tmp_path)
+    identity = _request_identity()
+    identity.pop("capability_requirements")
+    identity.pop("capability_requirements_digest")
+
+    admit_workflow(
+        tmp_path,
+        task_id="TASK-MESH-1",
+        backend="runtime",
+        required_capabilities=["runtime"],
+        capability_health=_health(),
+        workflow_run_id="run-legacy-identity",
+        request_identity=identity,
+    )
+
+    requested = WorkflowMeshStore(tmp_path / ".omo").events()[0]
+    assert {key: requested["payload"][key] for key in identity} == identity
+    assert "capability_requirements" not in requested["payload"]
+
+
 def test_admit_workflow_rejects_invalid_blueprint_identity_before_mesh_write(
     tmp_path: Path,
 ) -> None:
@@ -168,6 +199,26 @@ def test_admit_workflow_rejects_invalid_blueprint_identity_before_mesh_write(
                 },
             },
         )
+    assert WorkflowMeshStore(tmp_path / ".omo").events() == []
+
+
+def test_admit_workflow_rejects_capability_requirements_digest_mismatch_before_mesh_write(
+    tmp_path: Path,
+) -> None:
+    _task(tmp_path)
+    identity = _request_identity()
+    identity["capability_requirements_digest"] = "sha256:" + "0" * 64
+
+    with pytest.raises(WorkflowDispatchError, match="capability requirements digest mismatch"):
+        admit_workflow(
+            tmp_path,
+            task_id="TASK-MESH-1",
+            backend="runtime",
+            required_capabilities=["runtime"],
+            capability_health=_health(),
+            request_identity=identity,
+        )
+
     assert WorkflowMeshStore(tmp_path / ".omo").events() == []
 
 
@@ -223,6 +274,33 @@ def test_admit_requested_workflow_uses_explicit_now_for_approval_expiry(
         )
 
     assert [event["event_type"] for event in store.events()] == ["WorkflowRequested"]
+
+
+def test_admit_requested_workflow_preserves_exact_capability_identity(
+    tmp_path: Path,
+) -> None:
+    _task(tmp_path)
+    identity = _request_identity()
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    store.append(
+        new_workflow_event(
+            "WorkflowRequested",
+            "run-exact-identity",
+            producer="test",
+            idempotency_key="run-exact-identity:requested",
+            payload={"task_id": "TASK-MESH-1", **identity},
+        )
+    )
+
+    admitted = admit_requested_workflow(
+        tmp_path,
+        workflow_run_id="run-exact-identity",
+        backend="runtime",
+        required_capabilities=["runtime"],
+        capability_health=_health(),
+    )
+
+    assert admitted["admission"]["request_identity"] == identity
 
 
 def test_admit_workflow_accepts_same_task_promotion_approval_ref(

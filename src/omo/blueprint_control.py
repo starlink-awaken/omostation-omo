@@ -42,7 +42,10 @@ from .omo_worker_core import (
     _require_worker_policy,
 )
 from .omo_worker_dispatch import dispatch_task
-from .orchestration_contract import OrchestrationContractCoordinator
+from .orchestration_contract import (
+    OrchestrationContractCoordinator,
+    validate_capability_requirements,
+)
 from .workflow_dispatch import admit_workflow
 from .workflow_mesh import WorkflowMeshStore, new_workflow_event
 
@@ -293,6 +296,7 @@ class BlueprintControlService:
         if spec_path not in [surface.rstrip("/") for surface in read_surfaces]:
             raise BlueprintControlError("accepted specification is outside read surfaces")
         capabilities = _required_string_list(task, "required_capabilities")
+        capability_requirements = validate_capability_requirements(bet.get("capability_requirements"))
         evidence = _required_string_list(task, "evidence_required")
         acceptance_criteria = _required_string_list(task, "acceptance_criteria")
         verify_commands = _required_string_list(task, "test_plan")
@@ -361,6 +365,7 @@ class BlueprintControlService:
                 "decision_ref": f"decision://accepted/{bet_id}",
             },
             "instruction_binding": self._instruction_binding(),
+            "capability_requirements": capability_requirements,
         }
         seed_hash = compute_packet_hash(canonicalize(packet))
         packet["packet_id"] = f"WP-BP-{seed_hash.removeprefix('sha256:')[:16]}"
@@ -397,6 +402,10 @@ class BlueprintControlService:
         if packet.get("dependencies", {}).get("task_ref") != task_ref:
             raise BlueprintControlError("packet Task binding mismatch")
         capabilities = _required_string_list(packet.get("assignment", {}), "required_capabilities")
+        capability_requirements = validate_capability_requirements(packet.get("capability_requirements"))
+        capability_requirements_digest = compute_packet_hash(
+            json.dumps(capability_requirements, sort_keys=True, separators=(",", ":"))
+        )
         write_surfaces = [
             _safe_relative_path(path, "write surface")
             for path in _required_string_list(packet.get("scope", {}), "write_surfaces")
@@ -409,7 +418,10 @@ class BlueprintControlService:
             worker,
             task,
             allowed_write_paths=write_surfaces,
-            workflow_packet={"required_capabilities": capabilities},
+            workflow_packet={
+                "required_capabilities": capabilities,
+                "capability_requirements": capability_requirements,
+            },
         )
 
         identity = {
@@ -418,6 +430,8 @@ class BlueprintControlService:
             "packet_hash": compiled.packet_hash,
             "task_ref": task_ref,
             "instruction_binding": dict(packet["instruction_binding"]),
+            "capability_requirements": capability_requirements,
+            "capability_requirements_digest": capability_requirements_digest,
         }
         workflow_run_id = f"blueprint-{str(packet['packet_id']).lower()}"
         _require_worker_ack_protocol(registry, worker_id, transport)
@@ -470,6 +484,8 @@ class BlueprintControlService:
             "packet_hash": identity["packet_hash"],
             "bet_id": identity["bet_id"],
             "instruction_binding": identity["instruction_binding"],
+            "capability_requirements": identity["capability_requirements"],
+            "capability_requirements_digest": identity["capability_requirements_digest"],
             **worker_dispatch,
         }
 
