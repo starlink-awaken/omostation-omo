@@ -127,11 +127,7 @@ def _state_snapshot(registry: dict[str, Any]) -> dict[str, bytes]:
     snapshot: dict[str, bytes] = {}
     for directory in (root / "runs", root / "locks"):
         snapshot.update(
-            {
-                str(path.relative_to(root)): path.read_bytes()
-                for path in directory.rglob("*")
-                if path.is_file()
-            }
+            {str(path.relative_to(root)): path.read_bytes() for path in directory.rglob("*") if path.is_file()}
         )
     ledger = root / registry["runner"]["ledger_path"]
     if ledger.exists():
@@ -307,7 +303,13 @@ def test_inherited_exact_identity_is_byte_identical_and_does_not_rerun(
     )
 
     assert calls == [parent["run_id"]]
-    for key in ("spec_binding", "work_packet", "work_packet_hash", "capability_requirements_digest", "capability_preflight"):
+    for key in (
+        "spec_binding",
+        "work_packet",
+        "work_packet_hash",
+        "capability_requirements_digest",
+        "capability_preflight",
+    ):
         assert child[key] == parent[key]
 
 
@@ -394,11 +396,15 @@ def test_cli_threads_start_preflight_into_start_run(
         return {"run_id": "run-test"}
 
     monkeypatch.setattr(cli_mod, "start_run", fake_start_run)
-    monkeypatch.setattr(cli_mod, "load_registry", lambda _path: {
-        "runner": {},
-        "workflows": [{"id": "test-workflow", "lock_scopes": [], "phases": {}}],
-        "agent_profiles": {},
-    })
+    monkeypatch.setattr(
+        cli_mod,
+        "load_registry",
+        lambda _path: {
+            "runner": {},
+            "workflows": [{"id": "test-workflow", "lock_scopes": [], "phases": {}}],
+            "agent_profiles": {},
+        },
+    )
     monkeypatch.setattr(cli_mod, "_load_chain_bind", lambda: None)
 
     provider = lambda run_id, identity: _preflight(run_id, identity)
