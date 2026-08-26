@@ -255,15 +255,18 @@ def _events_after(events: list[dict[str, Any]], last_event_id: str) -> list[dict
 
 
 def _register_default_handlers() -> None:
-    """Wire default handlers (sediment/decision/execute) if importable.
+    """Wire default handlers (sediment/decision/execute/monitor/heartbeat) if importable.
 
     execute is registered non-safe so the human-approval gate blocks it unless
-    the daemon is started with --yes.
+    the daemon is started with --yes; monitor/heartbeat are safe (只读观测 +
+    非破坏性沉淀).
     """
     for module_name, action in (
         ("omo.resident.sediment", "knowledge_sediment"),
         ("omo.resident.decision", "decision_agent"),
         ("omo.resident.execute", "execution_agent"),
+        ("omo.resident.monitor", "alert"),
+        ("omo.resident.heartbeat", "heartbeat"),
     ):
         try:
             import importlib
@@ -291,6 +294,31 @@ def _connect_with_retry(ledger: Path, *, attempts: int = 5) -> Any:
     raise RuntimeError(f"ledger connect failed after {attempts} attempts: {last_exc}")
 
 
+# 角色私有 tick 的发布侧: projector → (模块名, publish 函数名)。
+# 发布在 tick_once 之后执行 → 本 tick 消费上一 tick 发布的事件, 本 tick 发布的
+# 下一 tick 被消费 (天然形成 2min 节律, T10-16)。用 importlib 动态加载避免循环 import。
+_ROLE_PUBLISHERS: dict[str, tuple[str, str]] = {
+    "resident-monitor": ("omo.resident.monitor", "publish_monitor"),
+    "resident-heartbeat": ("omo.resident.heartbeat", "publish_heartbeat"),
+}
+
+
+def _role_publish(projector: str) -> None:
+    """Per-role publish hook: 把本角色的事件源发布进统一事件流 (tick 之后)."""
+    entry = _ROLE_PUBLISHERS.get(projector)
+    if entry is None:
+        return
+    module_name, fn_name = entry
+    try:
+        import importlib  # noqa: PLC0415
+
+        module = importlib.import_module(module_name)
+        report = getattr(module, fn_name)()
+        _log(f"role_publish projector={projector} published={report.get('published')}")
+    except Exception as exc:  # noqa: BLE001 - publish is best-effort
+        _log(f"role_publish_failed projector={projector} err={type(exc).__name__}: {exc}")
+
+
 def run_daemon(
     *,
     ledger: Path,
@@ -309,6 +337,7 @@ def run_daemon(
 
     if once:
         report = tick_once(broker, events_jsonl, projector=projector, topic_filter=topic_filter)
+        _role_publish(projector)  # 单次 tick 也发布 (下一 tick 消费)
         broker.close()
         PID_FILE.unlink(missing_ok=True)
         print(json.dumps(report, sort_keys=True))
@@ -330,6 +359,7 @@ def run_daemon(
             _log(
                 f"tick_done projector={projector} processed={report['processed']} events_in_file={report['events_in_file']}"
             )
+            _role_publish(projector)
             stop_event.wait(interval)
     finally:
         broker.close()
