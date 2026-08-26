@@ -47,6 +47,24 @@ def _event_type(event: dict[str, Any]) -> str:
     return str(event.get("event_type") or "")
 
 
+def _payload_summary_lines(event: dict[str, Any]) -> str:
+    """从事件 payload 提取可确定字段, 渲染为草稿内嵌的 markdown 行 (BET-Y1Q3-T10-17).
+
+    只提取存在且非空/非 None 的字段 (objective/error/status/ok/evidence_count/step_name),
+    不读取事件流文件, 仅用当前事件自带 payload, 保证幂等草稿不受影响。
+    """
+    payload = event.get("payload")
+    if not isinstance(payload, dict):
+        payload = {}
+    keys = ("objective", "workflow_id", "step_name", "error", "ok", "status", "evidence_count")
+    rows = []
+    for key in keys:
+        value = payload.get(key)
+        if value is not None and value != "":
+            rows.append(f"- {key}: {value}")
+    return "\n".join(rows) if rows else "- (无 payload 可确定字段)"
+
+
 def _sediment_run(event: dict[str, Any], *, kind: str) -> Path | None:
     """Write a sediment draft for one event; returns the file path or None.
 
@@ -85,6 +103,8 @@ def _sediment_run(event: dict[str, Any], *, kind: str) -> Path | None:
         f"{section}\n\n"
         f"- producer: {event.get('producer')}\n"
         f"- payload: 事件侧元数据见 ledger sequence(可通过 event_id 追溯)\n\n"
+        f"## 事件 payload 摘要(确定性)\n\n"
+        f"{_payload_summary_lines(event)}\n\n"
         f"## 待补充(五问/模式提炼)\n\n"
         f"- [ ] 计划 vs 实际\n- [ ] 结果与证据\n- [ ] 关键发现\n- [ ] 净增减\n- [ ] 交接建议\n"
     )
