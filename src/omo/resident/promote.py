@@ -27,10 +27,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-from omo.resident import WORKSPACE
+from omo.resident import WORKSPACE, ledger_trace
 
 SEDIMENT_ROOT = WORKSPACE / ".omo" / "_knowledge" / "sediment"
 RETRO_ROOT = WORKSPACE / ".omo" / "_knowledge" / "retros" / "resident"
+EVENTS_PATH = WORKSPACE / ".omo" / "_knowledge" / "workflow-mesh" / "events.jsonl"
 # 文件名: {ts}Z-{workflow-type}-{run_id}[(-{event_id})].md
 TOPIC_PATTERN = re.compile(r"^\d{8}T\d{6}Z-(.+?)(?:-[a-f0-9]{6,})?\.md$")
 # 草稿顶部 frontmatter: `- key: value` 行 (事件侧元数据)
@@ -143,8 +144,14 @@ def _counts_frontmatter(topic: str, bucket: dict[str, Any], failure_bd: dict[str
     return "\n".join(lines) + "\n"
 
 
-def _write_retro(topic: str, bucket: dict[str, Any], dry_run: bool) -> Path | None:
-    """为单个主题生成增强聚合 retro 文档 (frontmatter + 失败根因画像)."""
+def _write_retro(
+    topic: str,
+    bucket: dict[str, Any],
+    dry_run: bool,
+    fill_five_q: bool = True,
+    skeletons: dict[str, dict[str, Any]] | None = None,
+) -> Path | None:
+    """为单个主题生成增强聚合 retro 文档 (frontmatter + 失败根因画像 + 五问骨架)."""
     runs = bucket["runs"]
     failures = bucket["failures"]
     failure_bd = _failure_breakdown(bucket)
@@ -168,7 +175,18 @@ def _write_retro(topic: str, bucket: dict[str, Any], dry_run: bool) -> Path | No
         body += "- (无)\n"
     body += "\n## 失败根因画像 (确定性启发式)\n\n"
     body += _render_failure_breakdown(failure_bd)
-    body += "\n## 待完善(运营 agent/人工)\n\n- [ ] 计划 vs 实际\n- [ ] 结果与证据\n- [ ] 关键发现\n- [ ] 净增减\n- [ ] 交接建议\n"
+    five_q_filled_here = 0
+    if fill_five_q and skeletons:
+        five_q, five_q_filled_here = _render_deterministic_five_q(bucket, skeletons)
+        if five_q_filled_here:
+            body += "\n## 确定性五问骨架 (ledger 追溯, 自动填充)\n\n"
+            body += five_q
+            body += "\n> 上节为事件流确定性提取 (计划/实际/结果/失败/指标); 语义项见下待人工完善。\n"
+    body += "\n## 待完善(运营 agent/人工)\n\n"
+    if five_q_filled_here:
+        body += "- [ ] 关键发现\n- [ ] 净增减\n- [ ] 交接建议\n"
+    else:
+        body += "- [ ] 计划 vs 实际\n- [ ] 结果与证据\n- [ ] 关键发现\n- [ ] 净增减\n- [ ] 交接建议\n"
     if dry_run:
         return None
     target = RETRO_ROOT / f"{topic}.md"
@@ -192,6 +210,54 @@ def _render_failure_breakdown(failure_bd: dict[str, Any]) -> str:
     return rows + "\n" + trace_line + "\n"
 
 
+def _topic_run_ids(bucket: dict[str, Any]) -> list[str]:
+    """从 bucket 草稿 frontmatter 的 workflow_run_id 收集去重 run 列表."""
+    seen: list[str] = []
+    for kind in ("runs_meta", "failures_meta"):
+        for item in bucket.get(kind, []):
+            rid = str(item.get("meta", {}).get("workflow_run_id") or "")
+            if rid and rid not in seen:
+                seen.append(rid)
+    return seen
+
+
+def _render_deterministic_five_q(bucket: dict[str, Any], skeletons: dict[str, dict[str, Any]]) -> tuple[str, int]:
+    """渲染确定性五问骨架段 (ledger 追溯); 返回 (markdown, 关联到骨架的 run 数).
+
+    只渲染能在 events.jsonl 中定位到完整事件序列的 run; 语义项 (关键发现/交接建议)
+    不在此渲染, 保持人工兜底。
+    """
+    lines: list[str] = []
+    filled = 0
+    for run_id in _topic_run_ids(bucket):
+        sk = skeletons.get(run_id)
+        if sk is None:
+            continue
+        filled += 1
+        lines.append(f"- **{sk['run_id']}**")
+        if sk["objective"]:
+            lines.append(f"  - 计划 (objective): {sk['objective']}")
+        if sk["workflow_id"]:
+            lines.append(f"  - workflow: {sk['workflow_id']}")
+        if sk["steps"]:
+            lines.append(f"  - 实际步骤: {', '.join(sk['steps'])}")
+        if sk["outcome"]:
+            oc = sk["outcome"]
+            lines.append(
+                "  - 结果与证据: "
+                f"ok={oc.get('ok')}, status={oc.get('status')}, "
+                f"evidence_count={oc.get('evidence_count')}"
+            )
+        if sk["failure"]:
+            fa = sk["failure"]
+            lines.append(f"  - 失败根因: step={fa.get('step_name')}, error={fa.get('error')}")
+        m = sk["metrics"]
+        lines.append(f"  - 指标: event_count={m.get('event_count')}, duration_s={m.get('duration_s')}")
+    if not lines:
+        return "- (无 ledger 可确定骨架)\n", 0
+    return "\n".join(lines) + "\n", filled
+
+
 def _global_breakdown(topics: dict[str, dict[str, Any]]) -> dict[str, Any]:
     """全局失败画像: 跨主题失败率 + top 失败 event_type."""
     total_runs = sum(len(b["runs"]) for b in topics.values())
@@ -208,23 +274,40 @@ def _global_breakdown(topics: dict[str, dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def promote(*, dry_run: bool = False, limit: int | None = None) -> dict[str, Any]:
-    """聚合 sediment 草稿 → 主题 retro 文档; 返回统计报告 (含失败画像)."""
+def promote(
+    *,
+    dry_run: bool = False,
+    limit: int | None = None,
+    fill_five_q: bool = True,
+    events_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """聚合 sediment 草稿 → 主题 retro 文档; 返回统计报告 (含失败画像 + 五问骨架填充)."""
     topics = _aggregate()
     ordered = sorted(topics.items(), key=lambda kv: kv[1]["total"], reverse=True)
     if limit:
         ordered = ordered[:limit]
+    skeletons: dict[str, dict[str, Any]] = {}
+    if fill_five_q:
+        try:
+            path = Path(events_path) if events_path else EVENTS_PATH
+            skeletons = ledger_trace.load_run_skeletons(path)
+        except OSError:
+            skeletons = {}  # 事件流缺失时不阻断 promote, 退化为无骨架模式
     promoted = 0
+    five_q_filled = 0
     written_topics: list[str] = []
     for topic, bucket in ordered:
-        if _write_retro(topic, bucket, dry_run=dry_run) is not None:
+        if _write_retro(topic, bucket, dry_run=dry_run, fill_five_q=fill_five_q, skeletons=skeletons) is not None:
             promoted += 1
             written_topics.append(topic)
+        if fill_five_q and _render_deterministic_five_q(bucket, skeletons)[1] > 0:
+            five_q_filled += 1
     total_drafts = sum(b["total"] for b in topics.values())
     return {
         "drafts_scanned": total_drafts,
         "topics": len(topics),
         "promoted_topics": promoted,
+        "five_q_filled": five_q_filled,
         "written_to": str(RETRO_ROOT) if not dry_run else None,
         "topics_detail": {t: b["total"] for t, b in ordered},
         "coverage_ratio": round(min(1.0, len(topics) / max(1, total_drafts)), 4),
@@ -237,8 +320,32 @@ def main(argv=None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="只统计不落盘")
     parser.add_argument("--limit", type=int, help="只提升前 N 个主题")
     parser.add_argument("--json", action="store_true", help="输出 JSON 报告")
+    parser.add_argument(
+        "--fill-five-q",
+        action="store_true",
+        default=True,
+        dest="fill_five_q",
+        help="用 ledger 追溯填充确定性五问骨架 (默认开启)",
+    )
+    parser.add_argument(
+        "--no-fill-five-q",
+        action="store_false",
+        dest="fill_five_q",
+        help="不填充确定性五问骨架",
+    )
+    parser.add_argument(
+        "--events-path",
+        type=Path,
+        default=None,
+        help="events.jsonl 路径 (默认 worktree .omo/_knowledge/workflow-mesh/events.jsonl)",
+    )
     args = parser.parse_args(argv)
-    report = promote(dry_run=args.dry_run, limit=args.limit)
+    report = promote(
+        dry_run=args.dry_run,
+        limit=args.limit,
+        fill_five_q=args.fill_five_q,
+        events_path=args.events_path,
+    )
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
     else:
@@ -246,7 +353,7 @@ def main(argv=None) -> int:
         print(
             f"promote: {report['drafts_scanned']} 草稿 → {report['topics']} 主题, "
             f"提升 {report['promoted_topics']} 篇 retro (coverage {report['coverage_ratio']}, "
-            f"失败率 {fb['failure_rate']})"
+            f"失败率 {fb['failure_rate']}, five_q_filled {report['five_q_filled']})"
         )
     return 0
 
