@@ -1,3 +1,7 @@
+---
+last-reviewed: 2026-08-26
+---
+
 # OMO Documentation
 
 > L2 · 治理内核

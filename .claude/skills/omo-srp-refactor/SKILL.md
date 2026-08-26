@@ -1,7 +1,8 @@
 ---
 name: omo-srp-refactor
 description: Use when refactoring omo God Modules (omo_ingress/omo_governance_surfaces/omo_lint/omo_debt/omo_worker — all >1000 lines). Triggers on keywords: omo 拆分, God Module, SRP, omo_ingress 重构, broker 入口治理, 单一职责. 项目级 skill (projects/omo 专属, 因 omo 是 submodule 此 skill 随 omo 代码版本走).
----
+
+last-reviewed: 2026-08-26---
 
 # omo-srp-refactor
 

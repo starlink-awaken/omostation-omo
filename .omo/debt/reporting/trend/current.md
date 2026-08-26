@@ -1,3 +1,7 @@
+---
+last-reviewed: 2026-08-26
+---
+
 # Debt Reporting Trend
 
 Generated at: 2026-06-05T05:26:57Z

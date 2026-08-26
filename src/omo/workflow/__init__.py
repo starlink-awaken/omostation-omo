@@ -106,8 +106,6 @@ from .lifecycle import (
 )
 from .lifecycle_report import (
     claim_coverage_report,
-    recommended_next,
-    staged_lane_report,
 )
 from .lint import (
     agcp_drift_check,

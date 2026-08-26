@@ -1,3 +1,7 @@
+---
+last-reviewed: 2026-08-26
+---
+
 # omo Subsystem Map
 
 > **Generated**: 2026-06-20 (mof-analyze quality)

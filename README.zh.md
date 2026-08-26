@@ -1,3 +1,7 @@
+---
+last-reviewed: 2026-08-26
+---
+
 # Omo
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)

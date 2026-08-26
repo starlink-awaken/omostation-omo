@@ -1,3 +1,7 @@
+---
+last-reviewed: 2026-08-26
+---
+
 # CLAUDE.md — OMO AI Context
 
     > Session loader for AI work inside `omo`.

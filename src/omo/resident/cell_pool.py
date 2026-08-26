@@ -25,8 +25,9 @@ ROOT = Path(__file__).resolve().parents[3]
 class CellPool:
     """多 Cell 调度池. 管理多个 Cell 实例，智能分配 Episode + 自动扩缩容."""
 
-    def __init__(self, max_cells: int = 4, enable_persistence: bool = True,
-                 min_cells: int = 1, auto_scale: bool = True):
+    def __init__(
+        self, max_cells: int = 4, enable_persistence: bool = True, min_cells: int = 1, auto_scale: bool = True
+    ):
         self.max_cells = max_cells
         self.min_cells = min_cells
         self.auto_scale_enabled = auto_scale
@@ -235,7 +236,8 @@ class CellPool:
             "dispatch": {
                 "total_dispatches": len(self.dispatch_log),
                 "recent_1h": sum(
-                    1 for d in self.dispatch_log
+                    1
+                    for d in self.dispatch_log
                     if (now - datetime.fromisoformat(d.get("timestamp", now.isoformat()))).total_seconds() < 3600
                 ),
             },

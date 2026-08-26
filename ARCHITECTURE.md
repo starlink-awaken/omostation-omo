@@ -1,3 +1,7 @@
+---
+last-reviewed: 2026-08-26
+---
+
 # omo — Architecture
 
 > **Layer**: L2 引擎面  

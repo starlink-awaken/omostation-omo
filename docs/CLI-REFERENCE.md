@@ -1,3 +1,7 @@
+---
+last-reviewed: 2026-08-26
+---
+
 # omo CLI Reference
 
 > Auto-generated on 2026-07-07 05:56:45 UTC

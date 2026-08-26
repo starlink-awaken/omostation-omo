@@ -1,3 +1,7 @@
+---
+last-reviewed: 2026-08-26
+---
+
 # OMO Architecture
 
 > Architecture overview for **OMO**. For the full workspace architecture, see [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md).

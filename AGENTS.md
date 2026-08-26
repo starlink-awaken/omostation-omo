@@ -1,3 +1,7 @@
+---
+last-reviewed: 2026-08-26
+---
+
 # AGENTS.md — OMO
 
     > Scope: project-local developer guide for `omo`.

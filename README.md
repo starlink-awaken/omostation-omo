@@ -1,3 +1,7 @@
+---
+last-reviewed: 2026-08-26
+---
+
 # OMO
 
 🌐 [简体中文](README.zh.md)

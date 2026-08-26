@@ -1,3 +1,7 @@
+---
+last-reviewed: 2026-08-26
+---
+
 # Debt Campaign Packet
 
 Generated at: 2026-06-05T09:27:08Z

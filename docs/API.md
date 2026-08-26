@@ -1,3 +1,7 @@
+---
+last-reviewed: 2026-08-26
+---
+
 # OMO API / Usage Reference
 
 > Quick reference for using **OMO** programmatically and from the command line.

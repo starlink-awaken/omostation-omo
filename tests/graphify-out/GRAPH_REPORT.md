@@ -1,3 +1,7 @@
+---
+last-reviewed: 2026-08-26
+---
+
 # Graph Report - /Users/xiamingxing/Workspace/.omo/tests  (2026-06-03)
 
 ## Corpus Check

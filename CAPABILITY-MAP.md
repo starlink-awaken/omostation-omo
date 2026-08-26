@@ -1,3 +1,7 @@
+---
+last-reviewed: 2026-08-26
+---
+
 # OMO 能力地图
 
 > AI Agent OS · 治理 · 任务 · 债务

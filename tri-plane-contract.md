@@ -1,3 +1,7 @@
+---
+last-reviewed: 2026-08-26
+---
+
 # eCOS v6 L2 — Tri-Plane 协作契约
 
 > 定义 OMO(治理平面) / kairon(引擎平面) / gbrain(记忆平面) 的协作边界和接口。

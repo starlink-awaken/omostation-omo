@@ -1,3 +1,7 @@
+---
+last-reviewed: 2026-08-26
+---
+
 # Debt Review Pack
 
 Generated at: 2026-06-27T12:00:00Z

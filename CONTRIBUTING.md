@@ -1,3 +1,7 @@
+---
+last-reviewed: 2026-08-26
+---
+
 # Contributing to OMO
 
 > governance kernel: Phase/Task/Debt/Audit lifecycle

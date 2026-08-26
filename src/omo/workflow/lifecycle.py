@@ -1367,7 +1367,6 @@ from .lifecycle_claims import (  # noqa: F401 -- re-export
     normalize_claim_mode,
 )
 
-
 # 2026-08-27: report 函数组拆至 lifecycle_report.py (SRP 行数门)
 from .lifecycle_report import (  # noqa: F401 -- re-export
     claim_coverage_report,
