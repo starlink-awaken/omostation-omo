@@ -91,7 +91,6 @@ def _context(tmp_path, run_id: str = "run-runner") -> dict[str, str]:
             "content_digest": "sha256:" + "b" * 64,
             "instruction_profile": "executor",
         },
-
     }
 
 

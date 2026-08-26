@@ -84,6 +84,7 @@ def _bridge_dispatch_to_mesh(
             ack_origin_proof=ack_origin_proof,
         )
 
+
 def dispatch_task(
     root: Path,
     task_id: str,
