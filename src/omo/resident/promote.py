@@ -32,6 +32,8 @@ from omo.resident import WORKSPACE, ledger_trace
 SEDIMENT_ROOT = WORKSPACE / ".omo" / "_knowledge" / "sediment"
 RETRO_ROOT = WORKSPACE / ".omo" / "_knowledge" / "retros" / "resident"
 EVENTS_PATH = WORKSPACE / ".omo" / "_knowledge" / "workflow-mesh" / "events.jsonl"
+# 已聚合/超保留窗草稿的归档区 (gitignored, 可恢复)
+ARCHIVE_ROOT = WORKSPACE / ".omo" / "_knowledge" / "sediment-archive"
 # 文件名: {ts}Z-{workflow-type}-{run_id}[(-{event_id})].md
 TOPIC_PATTERN = re.compile(r"^\d{8}T\d{6}Z-(.+?)(?:-[a-f0-9]{6,})?\.md$")
 # 草稿顶部 frontmatter: `- key: value` 行 (事件侧元数据)
@@ -274,14 +276,89 @@ def _global_breakdown(topics: dict[str, dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _stale_draft_paths(retain_days: int) -> list[Path]:
+    """返回 mtime 超过保留窗口 (retain_days) 的 sediment 草稿路径 (runs+failures).
+
+    保留窗口从当前时间回退; 超窗草稿视为已被 promote 聚合消化, 可归档防无限堆积。
+    """
+    cutoff = time.time() - max(0, retain_days) * 86400
+    stale: list[Path] = []
+    for kind in ("runs", "failures"):
+        kind_dir = SEDIMENT_ROOT / kind
+        if not kind_dir.is_dir():
+            continue
+        for path in kind_dir.glob("*.md"):
+            try:
+                if path.stat().st_mtime < cutoff:
+                    stale.append(path)
+            except OSError:
+                continue
+    return sorted(stale, key=lambda p: p.name)
+
+
+def _archive_consumed_drafts(retain_days: int) -> int:
+    """把超窗草稿移入 gitignored `.omo/_knowledge/sediment-archive/<kind>/`; 返回归档数.
+
+    移动而非删除 (可恢复); 目标重名时加时间戳后缀避免覆盖。
+    """
+    archived = 0
+    for path in _stale_draft_paths(retain_days):
+        target_dir = ARCHIVE_ROOT / path.parent.name
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / path.name
+        if target.exists():
+            target = target_dir / f"{path.stem}-{int(time.time())}{path.suffix}"
+        try:
+            path.rename(target)
+            archived += 1
+        except OSError:
+            continue
+    return archived
+
+
+def _write_index(
+    topics: dict[str, dict[str, Any]],
+    five_q_filled: int,
+    generated_at: str,
+) -> Path | None:
+    """生成 `retros/resident/index.md` (主题/草稿数/失败率/五问/生成时间), 供检索消费."""
+    rows: list[str] = []
+    total_drafts = 0
+    for topic, bucket in sorted(topics.items(), key=lambda kv: (-kv[1]["total"], kv[0])):
+        runs = len(bucket["runs"])
+        failures = len(bucket["failures"])
+        total = bucket["total"]
+        total_drafts += total
+        rate = round(failures / max(1, total), 4)
+        rows.append(f"| {topic} | {total} | {runs} | {failures} | {rate} | {generated_at} |")
+    content = (
+        "# resident retro 索引 (promote 自动生成)\n\n"
+        f"- generated_at: {generated_at}\n"
+        f"- 主题数: {len(topics)} · 草稿总数: {total_drafts} · five_q_filled: {five_q_filled}\n\n"
+        "| 主题 | 草稿数 | runs | failures | failure_rate | 生成时间 |\n"
+        "|------|-------|------|----------|-------------|----------|\n" + "\n".join(rows) + "\n"
+    )
+    target = RETRO_ROOT / "index.md"
+    try:
+        target.write_text(content, encoding="utf-8")
+    except OSError:
+        return None
+    return target
+
+
 def promote(
     *,
     dry_run: bool = False,
     limit: int | None = None,
     fill_five_q: bool = True,
     events_path: str | Path | None = None,
+    retain_days: int = 30,
 ) -> dict[str, Any]:
-    """聚合 sediment 草稿 → 主题 retro 文档; 返回统计报告 (含失败画像 + 五问骨架填充)."""
+    """聚合 sediment 草稿 → 主题 retro 文档; 返回统计报告 (含失败画像 + 五问骨架填充).
+
+    retain_days>0 时: 落盘后把超过保留窗口的已聚合草稿移入 gitignored 归档区 (防无限堆积),
+    并生成 `retros/resident/index.md` 索引 (dry-run 不落盘, 但报告含 archivable_count)。
+    """
     topics = _aggregate()
     ordered = sorted(topics.items(), key=lambda kv: kv[1]["total"], reverse=True)
     if limit:
@@ -303,11 +380,21 @@ def promote(
         if fill_five_q and _render_deterministic_five_q(bucket, skeletons)[1] > 0:
             five_q_filled += 1
     total_drafts = sum(b["total"] for b in topics.values())
+    archivable = len(_stale_draft_paths(retain_days))
+    archived = 0
+    index_written: Path | None = None
+    if not dry_run:
+        if retain_days > 0:
+            archived = _archive_consumed_drafts(retain_days)
+        index_written = _write_index(topics, five_q_filled, _utc())
     return {
         "drafts_scanned": total_drafts,
         "topics": len(topics),
         "promoted_topics": promoted,
         "five_q_filled": five_q_filled,
+        "archivable_count": archivable,
+        "archived_count": archived,
+        "index_written": str(index_written) if index_written else None,
         "written_to": str(RETRO_ROOT) if not dry_run else None,
         "topics_detail": {t: b["total"] for t, b in ordered},
         "coverage_ratio": round(min(1.0, len(topics) / max(1, total_drafts)), 4),
@@ -339,12 +426,19 @@ def main(argv=None) -> int:
         default=None,
         help="events.jsonl 路径 (默认 worktree .omo/_knowledge/workflow-mesh/events.jsonl)",
     )
+    parser.add_argument(
+        "--retain-days",
+        type=int,
+        default=30,
+        help="草稿保留窗口天数 (默认 30): 落盘时把超过该窗口的已聚合草稿移入 gitignored 归档区",
+    )
     args = parser.parse_args(argv)
     report = promote(
         dry_run=args.dry_run,
         limit=args.limit,
         fill_five_q=args.fill_five_q,
         events_path=args.events_path,
+        retain_days=args.retain_days,
     )
     if args.json:
         print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -353,7 +447,8 @@ def main(argv=None) -> int:
         print(
             f"promote: {report['drafts_scanned']} 草稿 → {report['topics']} 主题, "
             f"提升 {report['promoted_topics']} 篇 retro (coverage {report['coverage_ratio']}, "
-            f"失败率 {fb['failure_rate']}, five_q_filled {report['five_q_filled']})"
+            f"失败率 {fb['failure_rate']}, five_q_filled {report['five_q_filled']}, "
+            f"archivable {report['archivable_count']}, archived {report['archived_count']})"
         )
     return 0
 

@@ -184,5 +184,5 @@ def test_promote_limit_restricts_topics(sediment_root: Path, tmp_path: Path):
     report = promote_mod.promote(dry_run=False, limit=1)
     assert report["promoted_topics"] == 1
     retro_dir = tmp_path / "retros" / "resident"
-    written = {p.stem for p in retro_dir.glob("*.md")}
+    written = {p.stem for p in retro_dir.glob("*.md") if p.stem != "index"}  # index.md 为自动生成索引
     assert written == {"governance-state-mutation"}  # 草稿最多的主题优先
