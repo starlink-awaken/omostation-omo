@@ -27,7 +27,6 @@ from .core import (
 )
 from .lifecycle import (
     append_ledger_event,
-    claim_coverage_report,
     claim_policy,
     heal_ledger_for_run,
     ledger_mentions_run,
@@ -35,8 +34,11 @@ from .lifecycle import (
     load_run_records,
     prune_stale_locks,
     read_run,
-    recommended_next,
     scan_locks,
+)
+from .lifecycle_report import (
+    claim_coverage_report,
+    recommended_next,
     staged_lane_report,
 )
 from .lint import agcp_drift_check, diff_check_rows
