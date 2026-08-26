@@ -23,16 +23,24 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class CellPool:
-    """多 Cell 调度池. 管理多个 Cell 实例，智能分配 Episode."""
+    """多 Cell 调度池. 管理多个 Cell 实例，智能分配 Episode + 自动扩缩容."""
 
-    def __init__(self, max_cells: int = 4, enable_persistence: bool = True):
+    def __init__(self, max_cells: int = 4, enable_persistence: bool = True,
+                 min_cells: int = 1, auto_scale: bool = True):
         self.max_cells = max_cells
+        self.min_cells = min_cells
+        self.auto_scale_enabled = auto_scale
         self.enable_persistence = enable_persistence
         self.cells: dict[str, CellCoordinator] = {}
         self.cell_states: dict[str, str] = {}  # cell_id -> state mapping
         self.episode_assignments: dict[str, str] = {}  # episode_id -> cell_id
         self.dispatch_log: list[dict] = []
         self.state_manager = CellStateManager() if enable_persistence else None
+        # 自动扩缩容阈值
+        self.scale_up_threshold = 0.8  # 80% 利用率时扩容
+        self.scale_down_threshold = 0.3  # 30% 利用率时缩容
+        self.scale_cooldown = 300  # 5分钟冷却期
+        self.last_scale_time = 0
 
     def create_cell(self, cell_id: str | None = None) -> CellCoordinator:
         """创建新的 Cell 实例."""
@@ -158,7 +166,10 @@ class CellPool:
         return {
             "total_cells": len(self.cells),
             "max_cells": self.max_cells,
+            "min_cells": self.min_cells,
             "active_episodes": len(self.episode_assignments),
+            "utilization": round(len(self.episode_assignments) / max(len(self.cells), 1), 2),
+            "auto_scale": self.auto_scale_enabled,
             "state_distribution": state_counts,
             "cells": [
                 {
@@ -169,6 +180,69 @@ class CellPool:
                 }
                 for c in self.cells.values()
             ],
+        }
+
+    def scale_up(self, increment: int = 1) -> bool:
+        """扩容: 增加 max_cells."""
+        new_max = self.max_cells + increment
+        if new_max > 16:  # 硬上限
+            return False
+        self.max_cells = new_max
+        self.last_scale_time = datetime.now(UTC).timestamp()
+        return True
+
+    def scale_down(self, decrement: int = 1) -> bool:
+        """缩容: 减少 max_cells."""
+        new_max = self.max_cells - decrement
+        if new_max < self.min_cells:
+            return False
+        self.max_cells = new_max
+        self.last_scale_time = datetime.now(UTC).timestamp()
+        return True
+
+    def auto_scale(self) -> dict:
+        """基于负载自动扩缩容."""
+        if not self.auto_scale_enabled:
+            return {"action": "disabled"}
+
+        now = datetime.now(UTC).timestamp()
+        if now - self.last_scale_time < self.scale_cooldown:
+            return {"action": "cooldown"}
+
+        utilization = len(self.episode_assignments) / max(len(self.cells), 1)
+
+        if utilization >= self.scale_up_threshold:
+            if self.scale_up():
+                return {"action": "scale_up", "max_cells": self.max_cells}
+        elif utilization <= self.scale_down_threshold:
+            if self.scale_down():
+                return {"action": "scale_down", "max_cells": self.max_cells}
+
+        return {"action": "stable", "utilization": round(utilization, 2)}
+
+    def get_metrics(self) -> dict:
+        """获取详细指标 (用于监控)."""
+        now = datetime.now(UTC)
+        return {
+            "timestamp": now.isoformat(),
+            "pool": {
+                "total_cells": len(self.cells),
+                "max_cells": self.max_cells,
+                "min_cells": self.min_cells,
+                "active_episodes": len(self.episode_assignments),
+                "utilization": round(len(self.episode_assignments) / max(len(self.cells), 1), 2),
+            },
+            "dispatch": {
+                "total_dispatches": len(self.dispatch_log),
+                "recent_1h": sum(
+                    1 for d in self.dispatch_log
+                    if (now - datetime.fromisoformat(d.get("timestamp", now.isoformat()))).total_seconds() < 3600
+                ),
+            },
+            "auto_scale": {
+                "enabled": self.auto_scale_enabled,
+                "last_scale": self.last_scale_time,
+            },
         }
 
     def get_cell(self, cell_id: str) -> CellCoordinator | None:
