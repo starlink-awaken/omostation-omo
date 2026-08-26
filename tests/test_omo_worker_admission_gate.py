@@ -15,6 +15,8 @@ from omo.omo_worker_core import (
     _require_worker_policy,
 )
 from omo.omo_worker_dispatch import dispatch_task
+from omo.worker_lifecycle import WorkerLifecycleError, record_step_dispatch
+from omo.workflow_mesh import WorkflowMeshStore
 
 
 def _task_fixture(root: Path, *, worker: dict) -> Path:
@@ -585,4 +587,33 @@ def test_interactive_supervisor_worker_rejects_legacy_direct_launch_without_writ
             now="2026-08-14T01:02:03+00:00",
         )
 
+    assert _file_snapshot(tmp_path) == before
+
+
+INSTRUCTION_BINDING = {
+    "instruction_ref": "repo://docs/operations/blueprint-agent-instruction-pack-v1.md",
+    "instruction_version": "blueprint-agent-instruction-pack/v1",
+    "content_digest": "sha256:" + "c" * 64,
+    "instruction_profile": "executor",
+}
+
+
+def test_step_dispatch_rejects_forged_admission_without_writing(tmp_path: Path) -> None:
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    del store
+    before = _file_snapshot(tmp_path)
+    with pytest.raises(WorkerLifecycleError, match="admission binding mismatch"):
+        record_step_dispatch(
+            tmp_path,
+            workflow_run_id="run-forged",
+            trace_id="trace-forged",
+            dispatch_id="dispatch-forged",
+            worker_id="worker-1",
+            step_run_id="step-1",
+            admission_id="admission-forged",
+            policy_digest="sha256:" + "a" * 64,
+            packet_id="WP-FORGED",
+            packet_hash="sha256:" + "b" * 64,
+            instruction_binding=INSTRUCTION_BINDING,
+        )
     assert _file_snapshot(tmp_path) == before

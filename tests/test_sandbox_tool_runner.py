@@ -10,6 +10,7 @@ from omo.sandbox_tool_runner import SandboxToolError, run_sandbox_tool
 from omo.worker_lifecycle import (
     acknowledge_worker,
     expire_worker_lease,
+    new_worker_ack_origin_proof,
     reclaim_worker,
     record_step_dispatch,
 )
@@ -30,6 +31,16 @@ def _grant(run_id: str, step_run_id: str, *, sandbox: bool = True) -> dict[str, 
         "step_run_ids": [step_run_id],
         "capabilities": capabilities,
         "policy_digest": "policy-sandbox",
+        "request_identity": {
+            "packet_id": "WP-BP-0123456789abcdef",
+            "packet_hash": "sha256:" + "a" * 64,
+            "instruction_binding": {
+                "instruction_ref": "repo://docs/operations/blueprint-agent-instruction-pack-v1.md",
+                "instruction_version": "blueprint-agent-instruction-pack/v1",
+                "content_digest": "sha256:" + "b" * 64,
+                "instruction_profile": "executor",
+            },
+        },
         "issued_at": "2026-08-03T00:00:00Z",
         "expires_at": "2026-08-03T01:00:00Z",
     }
@@ -55,6 +66,7 @@ def _context(tmp_path, run_id: str = "run-sandbox", *, sandbox: bool = True) -> 
         )
     )
     store.append(new_workflow_event("WorkflowAdmitted", run_id, payload={"admission": grant, **grant}))
+    origin_proof = new_worker_ack_origin_proof()
     record_step_dispatch(
         tmp_path,
         workflow_run_id=run_id,
@@ -63,6 +75,16 @@ def _context(tmp_path, run_id: str = "run-sandbox", *, sandbox: bool = True) -> 
         worker_id="worker-sandbox",
         step_run_id=step_run_id,
         admission_id=str(grant["admission_id"]),
+        policy_digest="policy-sandbox",
+        packet_id="WP-BP-0123456789abcdef",
+        packet_hash="sha256:" + "a" * 64,
+        instruction_binding={
+            "instruction_ref": "repo://docs/operations/blueprint-agent-instruction-pack-v1.md",
+            "instruction_version": "blueprint-agent-instruction-pack/v1",
+            "content_digest": "sha256:" + "b" * 64,
+            "instruction_profile": "executor",
+        },
+        ack_origin_proof=origin_proof,
     )
     acknowledge_worker(
         tmp_path,
@@ -72,6 +94,15 @@ def _context(tmp_path, run_id: str = "run-sandbox", *, sandbox: bool = True) -> 
         worker_id="worker-sandbox",
         step_run_id=step_run_id,
         admission_id=str(grant["admission_id"]),
+        packet_id="WP-BP-0123456789abcdef",
+        packet_hash="sha256:" + "a" * 64,
+        instruction_binding={
+            "instruction_ref": "repo://docs/operations/blueprint-agent-instruction-pack-v1.md",
+            "instruction_version": "blueprint-agent-instruction-pack/v1",
+            "content_digest": "sha256:" + "b" * 64,
+            "instruction_profile": "executor",
+        },
+        origin_proof=origin_proof,
         lease_seconds=60,
         now="2026-08-03T00:00:00Z",
     )
@@ -232,6 +263,7 @@ def test_sandbox_tool_replays_after_worker_reclaim_with_new_attempt(tmp_path):
         now="2026-08-03T00:01:01Z",
     )
     successor_step = f"{context['workflow_run_id']}:execute:attempt-2"
+    successor_proof = new_worker_ack_origin_proof()
     record_step_dispatch(
         tmp_path,
         workflow_run_id=context["workflow_run_id"],
@@ -240,6 +272,16 @@ def test_sandbox_tool_replays_after_worker_reclaim_with_new_attempt(tmp_path):
         worker_id="worker-successor",
         step_run_id=successor_step,
         admission_id=context["admission_id"],
+        policy_digest="policy-sandbox",
+        packet_id="WP-BP-0123456789abcdef",
+        packet_hash="sha256:" + "a" * 64,
+        instruction_binding={
+            "instruction_ref": "repo://docs/operations/blueprint-agent-instruction-pack-v1.md",
+            "instruction_version": "blueprint-agent-instruction-pack/v1",
+            "content_digest": "sha256:" + "b" * 64,
+            "instruction_profile": "executor",
+        },
+        ack_origin_proof=successor_proof,
     )
     acknowledge_worker(
         tmp_path,
@@ -249,6 +291,15 @@ def test_sandbox_tool_replays_after_worker_reclaim_with_new_attempt(tmp_path):
         worker_id="worker-successor",
         step_run_id=successor_step,
         admission_id=context["admission_id"],
+        packet_id="WP-BP-0123456789abcdef",
+        packet_hash="sha256:" + "a" * 64,
+        instruction_binding={
+            "instruction_ref": "repo://docs/operations/blueprint-agent-instruction-pack-v1.md",
+            "instruction_version": "blueprint-agent-instruction-pack/v1",
+            "content_digest": "sha256:" + "b" * 64,
+            "instruction_profile": "executor",
+        },
+        origin_proof=successor_proof,
         lease_seconds=60,
         now="2026-08-03T00:01:01Z",
     )

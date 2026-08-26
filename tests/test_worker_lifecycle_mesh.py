@@ -34,6 +34,16 @@ def _grant(run_id: str, step_run_id: str) -> dict:
         "step_run_ids": [step_run_id],
         "capabilities": ["execute"],
         "policy_digest": "policy-test",
+        "request_identity": {
+            "packet_id": "WP-BP-0123456789abcdef",
+            "packet_hash": "sha256:" + "a" * 64,
+            "instruction_binding": {
+                "instruction_ref": "repo://docs/operations/blueprint-agent-instruction-pack-v1.md",
+                "instruction_version": "blueprint-agent-instruction-pack/v1",
+                "content_digest": "sha256:" + "b" * 64,
+                "instruction_profile": "executor",
+            },
+        },
         "issued_at": datetime.now(UTC).isoformat(),
         "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
     }
@@ -63,6 +73,7 @@ def _context(tmp_path, run_id: str = "run-worker") -> dict[str, str]:
         worker_id="worker-a",
         step_run_id=step_run_id,
         admission_id=grant["admission_id"],
+        policy_digest="policy-test",
         packet_id="WP-BP-0123456789abcdef",
         packet_hash="sha256:" + "a" * 64,
         instruction_binding={

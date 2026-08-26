@@ -27,6 +27,16 @@ def _grant(run_id: str, step_run_id: str) -> dict:
         "step_run_ids": [step_run_id],
         "capabilities": ["execute"],
         "policy_digest": "policy-test",
+        "request_identity": {
+            "packet_id": "WP-BP-0123456789abcdef",
+            "packet_hash": "sha256:" + "a" * 64,
+            "instruction_binding": {
+                "instruction_ref": "repo://docs/operations/blueprint-agent-instruction-pack-v1.md",
+                "instruction_version": "blueprint-agent-instruction-pack/v1",
+                "content_digest": "sha256:" + "b" * 64,
+                "instruction_profile": "executor",
+            },
+        },
         "issued_at": "2026-08-02T00:00:00Z",
         "expires_at": "2026-08-02T01:00:00Z",
     }
@@ -52,6 +62,9 @@ def _running_run(tmp_path, run_id: str = "run-approval") -> None:
         worker_id="worker-a",
         step_run_id=step_run_id,
         admission_id=grant["admission_id"],
+        policy_digest="policy-test",
+        packet_id="WP-BP-0123456789abcdef",
+        packet_hash="sha256:" + "a" * 64,
     )
     store.append(
         new_workflow_event(
