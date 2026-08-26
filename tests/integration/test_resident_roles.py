@@ -34,7 +34,9 @@ _EVENT_ROLES = {
     "ExecutionRequested": "execute",
     "WorkPacketDispatched": "execute",
     "system.health": "monitor",
+    "alert": "monitor",
     "heartbeat": "heartbeat",
+    "system.alive": "heartbeat",
 }
 
 
@@ -97,6 +99,11 @@ def test_roles_config_complete() -> None:
     assert set(cfg) == {"sediment", "decision", "execute", "monitor", "heartbeat"}
     assert cfg["sediment"]["projector"] == "resident-sediment"
     assert cfg["execute"]["topic_filter"] == ["ExecutionRequested", "WorkPacketDispatched"]
+    # T10-16: monitor 分片覆盖告警事件, heartbeat 分片覆盖活性心跳
+    assert "alert" in cfg["monitor"]["topic_filter"]
+    assert "system.alive" in cfg["heartbeat"]["topic_filter"]
+    assert cfg["monitor"]["projector"] == "resident-monitor"
+    assert cfg["heartbeat"]["projector"] == "resident-heartbeat"
     # T10-15: sediment 分片覆盖 9 种事件 (感知文件夹信号 InboxSignal 加入)
     assert sorted(cfg["sediment"]["topic_filter"]) == sorted(
         [
@@ -212,3 +219,43 @@ def test_daemon_role_arg_maps_projector(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert rc == 0
     wm = json.loads((tmp_path / "watermarks" / "resident-sediment.json").read_text())
     assert wm["byte_offset"] == (tmp_path / "events.jsonl").stat().st_size
+
+
+def test_role_publish_hook_wires_monitor_heartbeat(monkeypatch: pytest.MonkeyPatch) -> None:
+    """per-role publish hook: 只对 monitor/heartbeat projector 调对应 publish (T10-16)."""
+    calls: dict[str, int] = {}
+    monkeypatch.setattr(daemon, "_ROLE_PUBLISHERS", {
+        "resident-monitor": ("omo.resident.monitor", "publish_monitor"),
+        "resident-heartbeat": ("omo.resident.heartbeat", "publish_heartbeat"),
+    })
+
+    import omo.resident.heartbeat as heartbeat_mod
+    import omo.resident.monitor as monitor_mod
+
+    monkeypatch.setattr(
+        monitor_mod, "publish_monitor", lambda **kw: calls.__setitem__("monitor", calls.get("monitor", 0) + 1) or {"published": 1}
+    )
+    monkeypatch.setattr(
+        heartbeat_mod,
+        "publish_heartbeat",
+        lambda **kw: calls.__setitem__("heartbeat", calls.get("heartbeat", 0) + 1) or {"published": 1},
+    )
+
+    daemon._role_publish("resident-monitor")
+    daemon._role_publish("resident-heartbeat")
+    daemon._role_publish("resident-sediment")  # 无发布侧 → 不调用
+    assert calls == {"monitor": 1, "heartbeat": 1}
+
+
+def test_role_publish_hook_tolerates_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """发布函数抛异常 → 只记日志, 不中断 (best-effort)."""
+    monkeypatch.setattr(daemon, "_ROLE_PUBLISHERS", {"resident-monitor": ("omo.resident.monitor", "publish_monitor")})
+
+    import omo.resident.monitor as monitor_mod
+
+    def boom(**kw):
+        raise RuntimeError("publish failed")
+
+    monkeypatch.setattr(monitor_mod, "publish_monitor", boom)
+    # 不应抛异常
+    daemon._role_publish("resident-monitor")

@@ -76,3 +76,13 @@ routes:
     topic: mesh:workflow:execution
     action: execution_agent
     safe: false
+  # monitor 角色: observability 严重事件 → 告警 (T10-16)
+  - event_type: alert
+    topic: mesh:observability:alert
+    action: alert
+    safe: true
+  # heartbeat 角色: 活性心跳事件 → 台账 (T10-16)
+  - event_type: system.alive
+    topic: mesh:system:alive
+    action: heartbeat
+    safe: true

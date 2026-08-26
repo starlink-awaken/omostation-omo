@@ -11,7 +11,7 @@ Q13: 常驻 5 类 agent (心脏心跳/眼睛监控/大脑决策/记忆沉淀/手
 - 大脑 decision: 失败事件 → decision_agent
 - 手   execute: 执行请求事件 → execution_agent
 - 眼睛 monitor: 可观测/告警事件 → alert
-- 心脏 heartbeat: 心跳事件 → heartbeat (placeholder 预留)
+- 心脏 heartbeat: 心跳事件 → heartbeat (活性台账)
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ ROLES: dict[str, dict[str, Any]] = {
         "projector": "resident-heartbeat",
         "topic_filter": ["heartbeat", "system.alive"],
         "handler": "heartbeat",
-        "desc": "心脏心跳 — 存活/心跳事件 (预留)",
+        "desc": "心脏心跳 — 存活/心跳事件 → 活性台账 (T10-16 已接线)",
     },
 }
 

@@ -18,6 +18,8 @@ SUBCOMMANDS = {
     "signals": "omo.resident.signals",
     "inbox": "omo.resident.inbox",
     "alert": "omo.resident.alert",
+    "monitor": "omo.resident.monitor",
+    "heartbeat": "omo.resident.heartbeat",
     "decision": "omo.resident.decision",
     "execute": "omo.resident.execute",
     "status": "omo.resident.status",
