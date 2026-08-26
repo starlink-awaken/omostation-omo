@@ -67,7 +67,6 @@ _ALLOWED_TRANSITIONS = {
     "unknown": {"planned"},
     "planned": {
         "admitted",
-        "dispatched",
         "running",
         "failed",
         "unavailable",
@@ -98,7 +97,6 @@ _ALLOWED_EVENTS = {
     "unknown": {"WorkflowRequested"},
     "planned": {
         "WorkflowAdmitted",
-        "StepDispatched",
         "StepStarted",
         "WorkflowFailed",
         "BackendUnavailable",

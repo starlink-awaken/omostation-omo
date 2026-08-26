@@ -51,6 +51,9 @@ def _bridge_dispatch_to_mesh(
     """
     from .workflow_mesh import WorkflowMeshStore, new_workflow_event
 
+    if not workflow_packet:
+        raise ValueError("unbound legacy dispatch is observer-only and cannot create worker state")
+
     store = WorkflowMeshStore(omo)
 
     if workflow_packet:
@@ -74,79 +77,12 @@ def _bridge_dispatch_to_mesh(
             worker_id=worker_id,
             step_run_id=step_run_id,
             admission_id=admission_id,
+            policy_digest=str(grant.get("policy_digest", "")),
             packet_id=request_identity["packet_id"],
             packet_hash=request_identity["packet_hash"],
             instruction_binding=request_identity["instruction_binding"],
             ack_origin_proof=ack_origin_proof,
         )
-    else:
-        run_id = f"dispatch-{dispatch_id}"
-        trace_id = run_id
-        step_run_id = f"{run_id}:execute"
-        admission_id = f"legacy-{uuid4().hex[:12]}"
-        issued_at = now
-        expires_at = (datetime.fromisoformat(now) + timedelta(seconds=1200)).isoformat()
-
-        grant = {
-            "admission_id": admission_id,
-            "status": "admitted",
-            "workflow_run_id": run_id,
-            "trace_id": trace_id,
-            "backend": "legacy-dispatch",
-            "step_run_ids": [step_run_id],
-            "capabilities": [],
-            "policy_digest": hashlib.sha256(
-                json.dumps(
-                    {"task_id": task_id, "worker_id": worker_id},
-                    sort_keys=True,
-                ).encode()
-            ).hexdigest(),
-            "issued_at": issued_at,
-            "expires_at": expires_at,
-        }
-        grant["proof"] = hashlib.sha256(json.dumps(grant, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-
-        store.append(
-            new_workflow_event(
-                "WorkflowRequested",
-                run_id,
-                trace_id=trace_id,
-                producer="omo.omo_worker_dispatch",
-                idempotency_key=f"{run_id}:requested",
-                payload={
-                    "task_id": task_id,
-                    "backend": "legacy-dispatch",
-                    "required_capabilities": [],
-                },
-            )
-        )
-        store.append(
-            new_workflow_event(
-                "WorkflowAdmitted",
-                run_id,
-                trace_id=trace_id,
-                producer="omo.omo_worker_dispatch",
-                idempotency_key=f"{run_id}:admitted",
-                payload={"admission": grant, **grant, "task_id": task_id},
-            )
-        )
-        store.append(
-            new_workflow_event(
-                "StepDispatched",
-                run_id,
-                trace_id=trace_id,
-                producer="omo.omo_worker_dispatch",
-                idempotency_key=f"{run_id}:step-dispatched:{dispatch_id}",
-                payload={
-                    "dispatch_id": dispatch_id,
-                    "worker_id": worker_id,
-                    "step_run_id": step_run_id,
-                    "step_name": "execute",
-                    "admission_id": admission_id,
-                },
-            )
-        )
-
 
 def dispatch_task(
     root: Path,

@@ -119,6 +119,7 @@ def record_step_dispatch(
     worker_id: str,
     step_run_id: str,
     admission_id: str,
+    policy_digest: str,
     packet_id: str | None = None,
     packet_hash: str | None = None,
     instruction_binding: Mapping[str, Any] | None = None,
@@ -127,6 +128,21 @@ def record_step_dispatch(
 ) -> dict[str, Any]:
     """Persist the coordinator-to-worker dispatch edge exactly once."""
     store = _store(omo_dir)
+    snapshot = store.snapshot(workflow_run_id)
+    admission = snapshot.get("admission")
+    request_identity = admission.get("request_identity") if isinstance(admission, Mapping) else None
+    if (
+        # Mesh-legal StepDispatched origins: admitted, dispatched (renewal
+        # self-loop), running (WorkerReclaimed replay).
+        snapshot.get("state") not in {"admitted", "dispatched", "running"}
+        or not isinstance(admission, dict)
+        or not isinstance(request_identity, Mapping)
+        or admission.get("admission_id") != admission_id
+        or admission.get("policy_digest") != policy_digest
+        or request_identity.get("packet_id") != packet_id
+        or request_identity.get("packet_hash") != packet_hash
+    ):
+        raise WorkerLifecycleError("admission binding mismatch")
     nonce = secrets.token_hex(16) if ack_origin_proof else None
     payload = {
         "dispatch_id": dispatch_id,
@@ -134,6 +150,7 @@ def record_step_dispatch(
         "step_run_id": step_run_id,
         "step_name": step_name,
         "admission_id": admission_id,
+        "policy_digest": policy_digest,
         "packet_id": packet_id,
         "packet_hash": packet_hash,
         "instruction_binding": dict(instruction_binding) if instruction_binding is not None else None,

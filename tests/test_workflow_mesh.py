@@ -262,7 +262,7 @@ def test_terminal_run_rejects_later_event(tmp_path):
 def test_unadmitted_step_is_rejected(tmp_path):
     store = WorkflowMeshStore(tmp_path)
     store.append(new_workflow_event("WorkflowRequested", "run-unadmitted"))
-    with pytest.raises(WorkflowMeshEventError, match="admitted StepRun"):
+    with pytest.raises(WorkflowMeshEventError, match=r"invalid transition planned -> dispatched"):
         store.append(
             new_workflow_event(
                 "StepDispatched",

@@ -12,7 +12,11 @@ from omo.mesh_watchdog_runner import (
     read_latest_mesh_watchdog_run,
     run_once,
 )
-from omo.worker_lifecycle import acknowledge_worker, record_step_dispatch
+from omo.worker_lifecycle import (
+    acknowledge_worker,
+    new_worker_ack_origin_proof,
+    record_step_dispatch,
+)
 from omo.workflow_mesh import WorkflowMeshStore, new_workflow_event
 
 
@@ -26,6 +30,16 @@ def _grant(run_id: str, step_run_id: str) -> dict:
         "step_run_ids": [step_run_id],
         "capabilities": ["execute"],
         "policy_digest": "policy-test",
+        "request_identity": {
+            "packet_id": "WP-BP-0123456789abcdef",
+            "packet_hash": "sha256:" + "a" * 64,
+            "instruction_binding": {
+                "instruction_ref": "repo://docs/operations/blueprint-agent-instruction-pack-v1.md",
+                "instruction_version": "blueprint-agent-instruction-pack/v1",
+                "content_digest": "sha256:" + "b" * 64,
+                "instruction_profile": "executor",
+            },
+        },
         "issued_at": "2026-08-02T00:00:00Z",
         "expires_at": "2026-08-02T01:00:00Z",
     }
@@ -41,6 +55,7 @@ def _context(tmp_path, run_id: str = "run-runner") -> dict[str, str]:
     store = WorkflowMeshStore(tmp_path)
     store.append(new_workflow_event("WorkflowRequested", run_id))
     store.append(new_workflow_event("WorkflowAdmitted", run_id, payload={"admission": grant, **grant}))
+    origin_proof = new_worker_ack_origin_proof()
     record_step_dispatch(
         tmp_path,
         workflow_run_id=run_id,
@@ -49,6 +64,16 @@ def _context(tmp_path, run_id: str = "run-runner") -> dict[str, str]:
         worker_id="worker-a",
         step_run_id=step_run_id,
         admission_id=grant["admission_id"],
+        policy_digest="policy-test",
+        packet_id="WP-BP-0123456789abcdef",
+        packet_hash="sha256:" + "a" * 64,
+        instruction_binding={
+            "instruction_ref": "repo://docs/operations/blueprint-agent-instruction-pack-v1.md",
+            "instruction_version": "blueprint-agent-instruction-pack/v1",
+            "content_digest": "sha256:" + "b" * 64,
+            "instruction_profile": "executor",
+        },
+        ack_origin_proof=origin_proof,
     )
     return {
         "workflow_run_id": run_id,
@@ -57,6 +82,16 @@ def _context(tmp_path, run_id: str = "run-runner") -> dict[str, str]:
         "worker_id": "worker-a",
         "step_run_id": step_run_id,
         "admission_id": grant["admission_id"],
+        "origin_proof": origin_proof,
+        "packet_id": "WP-BP-0123456789abcdef",
+        "packet_hash": "sha256:" + "a" * 64,
+        "instruction_binding": {
+            "instruction_ref": "repo://docs/operations/blueprint-agent-instruction-pack-v1.md",
+            "instruction_version": "blueprint-agent-instruction-pack/v1",
+            "content_digest": "sha256:" + "b" * 64,
+            "instruction_profile": "executor",
+        },
+
     }
 
 
