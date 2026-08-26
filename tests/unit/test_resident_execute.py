@@ -1,17 +1,28 @@
-"""Unit tests for omo.resident.execute — execution-adapter (WP-G).
+"""Unit tests for omo.resident.execute — execution-adapter (WP-G / M3.2 双载体).
 
-M2.1d: 覆盖执行链:
+M3.2 执行闭环契约 (对齐 bin/plan/bet-ledger.py validate_worker_instruction_binding):
+- pi 分支必须从真实 run 文件 (.omo/_delivery/agent-workflows/runs/<run_id>.yaml)
+  解析完整 delivery_binding (work_packet.packet_id + work_packet_hash + dict
+  instruction_binding), 否则 fail-closed → binding_run_unavailable
+- multica 分支走 autopilot create+trigger (默认 binding 兜底)
 - 缺 prompt → execution_requires_prompt (fail-closed)
-- 有 prompt → 构造 delivery_binding 并调用 pi adapter
-- binding 字段 (run_id/packet_id/packet_hash/instruction_binding)
-- 异常路径 → execution_failed 且保留 binding
+- 异常路径 → execution_failed 且保留真实 run binding 以便排查
 """
 
 from __future__ import annotations
 
 import pytest
+import yaml
 
 from omo.resident import execute
+
+REAL_IB = {
+    "instruction_ref": "resident-workpacket-v1",
+    "instruction_version": "1",
+    "content_digest": "sha256:" + "b" * 64,
+    "instruction_profile": "resident",
+}
+REAL_HASH = "sha256:" + "a" * 64
 
 
 class _FakePi:
@@ -29,9 +40,32 @@ class _FakePi:
 
 
 @pytest.fixture(autouse=True)
-def _isolate_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Stub out the pi adapter load so tests never touch the real worker."""
-    monkeypatch.setattr(execute, "WORKSPACE", __import__("pathlib").Path("/tmp/fake-workspace"))
+def _isolate_workspace(tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point WORKSPACE at a temp dir with an empty runs/ tree (never touch real runs)."""
+    runs_dir = tmp_path / ".omo" / "_delivery" / "agent-workflows" / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(execute, "WORKSPACE", tmp_path)
+
+
+def _write_run(
+    tmp_path,
+    run_id: str,
+    *,
+    packet_id: str = "WP-TEST-1",
+    hash_val: str | None = None,
+    ib=None,
+) -> object:
+    """Write a governed run file with complete work_packet + instruction_binding."""
+    runs_dir = tmp_path / ".omo" / "_delivery" / "agent-workflows" / "runs"
+    run_path = runs_dir / f"{run_id}.yaml"
+    data = {
+        "run_id": run_id,
+        "work_packet": {"packet_id": packet_id},
+        "work_packet_hash": hash_val if hash_val is not None else REAL_HASH,
+        "instruction_binding": ib if ib is not None else dict(REAL_IB),
+    }
+    run_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    return run_path
 
 
 def test_execute_missing_prompt_fails_closed() -> None:
@@ -44,14 +78,17 @@ def test_execute_missing_prompt_fails_closed() -> None:
         monkeypatch.undo()
 
 
-def test_execute_prompt_runs_pi_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_execute_prompt_runs_pi_adapter(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """pi 分支: 从真实 run 文件解析的 binding 含真实 packet_id / hash / dict ib."""
     fake = _FakePi()
     monkeypatch.setattr(execute, "_load_pi_adapter", lambda: fake)
+    run_id = "run-42"
+    _write_run(tmp_path, run_id, packet_id="WP-REAL-1")
     event = {
         "event_type": "ExecutionRequested",
-        "workflow_run_id": "run-42",
+        "workflow_run_id": run_id,
         "event_id": "evt-9",
-        "payload": {"prompt": "do the thing", "packet_id": "pkt-1", "packet_hash": "sha256:abcd"},
+        "payload": {"prompt": "do the thing"},
     }
     receipt = execute._execute(event, execute=True)
     assert receipt["status"] == "ok"
@@ -59,45 +96,90 @@ def test_execute_prompt_runs_pi_adapter(monkeypatch: pytest.MonkeyPatch) -> None
     assert fake.last_kwargs["prompt"] == "do the thing"
     assert fake.last_kwargs["execute"] is True
     binding = fake.last_kwargs["delivery_binding"]
-    assert binding["run_id"] == "run-42"
-    assert binding["packet_id"] == "pkt-1"
-    assert binding["packet_hash"] == "sha256:abcd"
-    assert binding["instruction_binding"] == "resident-workpacket-v1"
+    assert binding["run_id"] == run_id
+    assert binding["packet_id"] == "WP-REAL-1"
+    assert binding["packet_hash"] == REAL_HASH
+    assert isinstance(binding["instruction_binding"], dict)
+    assert binding["instruction_binding"] == REAL_IB
 
 
-def test_execute_defaults_binding_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_execute_pi_without_run_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """pi 分支缺真实 run 文件 → fail-closed binding_run_unavailable (不猜测)."""
     fake = _FakePi()
     monkeypatch.setattr(execute, "_load_pi_adapter", lambda: fake)
-    event = {"event_type": "WorkPacketDispatched", "event_id": "evt-5", "payload": {"prompt": "p"}}
-    execute._execute(event, execute=False)
-    assert fake.last_kwargs is not None
-    binding = fake.last_kwargs["delivery_binding"]
-    assert binding["run_id"].startswith("exec-")
-    assert binding["packet_id"].startswith("packet-")
-    assert binding["packet_hash"] == "sha256:0" * 4
-    assert fake.last_kwargs["execute"] is False
+    event = {
+        "event_type": "ExecutionRequested",
+        "workflow_run_id": "no-such-run",
+        "payload": {"prompt": "p"},
+    }
+    receipt = execute._execute(event, execute=True)
+    assert receipt["error"] == "binding_run_unavailable"
+    assert receipt["run_id"] == "no-such-run"
+    assert fake.last_kwargs is None  # never touched the pi adapter
 
 
-def test_execute_instruction_keyword_used() -> None:
-    monkeypatch = pytest.MonkeyPatch()
+def test_execute_pi_incomplete_run_fails_closed(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """run 存在但 instruction_binding 是字符串 (旧简化契约) → fail-closed."""
     fake = _FakePi()
     monkeypatch.setattr(execute, "_load_pi_adapter", lambda: fake)
-    try:
-        event = {"event_type": "ExecutionRequested", "payload": {"instruction": "do it"}}
-        receipt = execute._execute(event, execute=False)
-        assert receipt["status"] == "ok"
-        assert fake.last_kwargs["prompt"] == "do it"
-    finally:
-        monkeypatch.undo()
+    run_id = "run-ib-str"
+    _write_run(tmp_path, run_id, ib="resident-workpacket-v1")
+    event = {
+        "event_type": "ExecutionRequested",
+        "workflow_run_id": run_id,
+        "payload": {"prompt": "p"},
+    }
+    receipt = execute._execute(event, execute=True)
+    assert receipt["error"] == "binding_run_unavailable"
+    assert fake.last_kwargs is None
 
 
-def test_execute_exception_returns_error_with_binding(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_execute_pi_placeholder_hash_run_fails_closed(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """run 存在但 work_packet_hash 是占位符 (非 sha256:64hex) → fail-closed."""
+    fake = _FakePi()
+    monkeypatch.setattr(execute, "_load_pi_adapter", lambda: fake)
+    run_id = "run-ph"
+    _write_run(tmp_path, run_id, hash_val="sha256:0" * 4)
+    event = {
+        "event_type": "ExecutionRequested",
+        "workflow_run_id": run_id,
+        "payload": {"prompt": "p"},
+    }
+    receipt = execute._execute(event, execute=True)
+    assert receipt["error"] == "binding_run_unavailable"
+    assert fake.last_kwargs is None
+
+
+def test_execute_instruction_keyword_used(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    fake = _FakePi()
+    monkeypatch.setattr(execute, "_load_pi_adapter", lambda: fake)
+    run_id = "run-keyword"
+    _write_run(tmp_path, run_id)
+    event = {
+        "event_type": "ExecutionRequested",
+        "workflow_run_id": run_id,
+        "payload": {"instruction": "do it"},
+    }
+    receipt = execute._execute(event, execute=False)
+    assert receipt["status"] == "ok"
+    assert fake.last_kwargs["prompt"] == "do it"
+
+
+def test_execute_exception_returns_error_with_binding(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """异常路径保留真实 run binding (非默认兜底), 便于排查."""
     fake = _FakePi(error=True)
     monkeypatch.setattr(execute, "_load_pi_adapter", lambda: fake)
-    event = {"event_type": "ExecutionRequested", "payload": {"prompt": "boom"}}
+    run_id = "run-boom"
+    _write_run(tmp_path, run_id)
+    event = {
+        "event_type": "ExecutionRequested",
+        "workflow_run_id": run_id,
+        "payload": {"prompt": "boom"},
+    }
     receipt = execute._execute(event, execute=True)
     assert receipt["error"].startswith("execution_failed: RuntimeError: boom")
-    assert receipt["binding"]["instruction_binding"] == "resident-workpacket-v1"
+    assert isinstance(receipt["binding"]["instruction_binding"], dict)
+    assert receipt["binding"]["instruction_binding"] == REAL_IB
 
 
 class _FakeCompleted:
