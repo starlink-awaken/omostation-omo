@@ -93,8 +93,7 @@ def publish_monitor(*, dry_run: bool = False) -> dict[str, Any]:
             continue
         if dry_run:
             print(
-                f"  [dry-run] alert {severity} trace={event.get('trace_id')} "
-                f"title={_alert._event_title(event)[:40]}",
+                f"  [dry-run] alert {severity} trace={event.get('trace_id')} title={_alert._event_title(event)[:40]}",
                 file=sys.stderr,
             )
             continue
@@ -168,7 +167,7 @@ def main(argv=None) -> int:
     parser.add_argument("--dump", action="store_true", help="查看已沉淀的告警记录")
     args = parser.parse_args(argv)
     if args.dump:
-        for line in (ALERT_LEDGER.read_text(encoding="utf-8").splitlines() if ALERT_LEDGER.is_file() else []):
+        for line in ALERT_LEDGER.read_text(encoding="utf-8").splitlines() if ALERT_LEDGER.is_file() else []:
             print(line)
         return 0
     report = publish_monitor(dry_run=args.dry_run)

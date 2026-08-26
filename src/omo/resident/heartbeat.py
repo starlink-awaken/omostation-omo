@@ -66,9 +66,7 @@ def publish_heartbeat(*, dry_run: bool = False) -> dict[str, Any]:
     payload = {
         "health": snap.get("health"),
         "degraded_components": snap.get("degraded_components", []),
-        "components_summary": {
-            name: {"ok": bool(c.get("ok"))} for name, c in (snap.get("components") or {}).items()
-        },
+        "components_summary": {name: {"ok": bool(c.get("ok"))} for name, c in (snap.get("components") or {}).items()},
         "source": "resident-heartbeat",
         "ts": snap.get("ts"),
     }
@@ -127,7 +125,7 @@ def main(argv=None) -> int:
     parser.add_argument("--dump", action="store_true", help="查看已沉淀的活性台账")
     args = parser.parse_args(argv)
     if args.dump:
-        for line in (HEARTBEAT_LEDGER.read_text(encoding="utf-8").splitlines() if HEARTBEAT_LEDGER.is_file() else []):
+        for line in HEARTBEAT_LEDGER.read_text(encoding="utf-8").splitlines() if HEARTBEAT_LEDGER.is_file() else []:
             print(line)
         return 0
     report = publish_heartbeat(dry_run=args.dry_run)

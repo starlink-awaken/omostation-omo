@@ -224,16 +224,22 @@ def test_daemon_role_arg_maps_projector(monkeypatch: pytest.MonkeyPatch, tmp_pat
 def test_role_publish_hook_wires_monitor_heartbeat(monkeypatch: pytest.MonkeyPatch) -> None:
     """per-role publish hook: 只对 monitor/heartbeat projector 调对应 publish (T10-16)."""
     calls: dict[str, int] = {}
-    monkeypatch.setattr(daemon, "_ROLE_PUBLISHERS", {
-        "resident-monitor": ("omo.resident.monitor", "publish_monitor"),
-        "resident-heartbeat": ("omo.resident.heartbeat", "publish_heartbeat"),
-    })
+    monkeypatch.setattr(
+        daemon,
+        "_ROLE_PUBLISHERS",
+        {
+            "resident-monitor": ("omo.resident.monitor", "publish_monitor"),
+            "resident-heartbeat": ("omo.resident.heartbeat", "publish_heartbeat"),
+        },
+    )
 
     import omo.resident.heartbeat as heartbeat_mod
     import omo.resident.monitor as monitor_mod
 
     monkeypatch.setattr(
-        monitor_mod, "publish_monitor", lambda **kw: calls.__setitem__("monitor", calls.get("monitor", 0) + 1) or {"published": 1}
+        monitor_mod,
+        "publish_monitor",
+        lambda **kw: calls.__setitem__("monitor", calls.get("monitor", 0) + 1) or {"published": 1},
     )
     monkeypatch.setattr(
         heartbeat_mod,
