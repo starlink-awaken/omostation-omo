@@ -1,6 +1,6 @@
 {
-  "cell-89c04f2d68d1": {
-    "cell_id": "cell-89c04f2d68d1",
+  "cell-fa3dd94177cf": {
+    "cell_id": "cell-fa3dd94177cf",
     "state": "planning",
     "current_role": "planner",
     "episode_id": "ep-latest-0",
@@ -13,11 +13,11 @@
       "verdict": null
     },
     "handoff_log": [],
-    "state_id": "cell-89c04f2d68d1",
-    "saved_at": "2026-08-25T07:30:42.994045+00:00"
+    "state_id": "cell-fa3dd94177cf",
+    "saved_at": "2026-08-26T02:14:42.134185+00:00"
   },
-  "cell-129f23cba9af": {
-    "cell_id": "cell-129f23cba9af",
+  "cell-579d49589e9c": {
+    "cell_id": "cell-579d49589e9c",
     "state": "planning",
     "current_role": "planner",
     "episode_id": "ep-latest-1",
@@ -30,11 +30,11 @@
       "verdict": null
     },
     "handoff_log": [],
-    "state_id": "cell-129f23cba9af",
-    "saved_at": "2026-08-25T07:30:42.994560+00:00"
+    "state_id": "cell-579d49589e9c",
+    "saved_at": "2026-08-26T02:14:42.134359+00:00"
   },
-  "cell-f27c928158a6": {
-    "cell_id": "cell-f27c928158a6",
+  "cell-5b5c2b227e08": {
+    "cell_id": "cell-5b5c2b227e08",
     "state": "planning",
     "current_role": "planner",
     "episode_id": "ep-latest-2",
@@ -47,11 +47,11 @@
       "verdict": null
     },
     "handoff_log": [],
-    "state_id": "cell-f27c928158a6",
-    "saved_at": "2026-08-25T07:30:42.995037+00:00"
+    "state_id": "cell-5b5c2b227e08",
+    "saved_at": "2026-08-26T02:14:42.134532+00:00"
   },
-  "cell-cb3582feff45": {
-    "cell_id": "cell-cb3582feff45",
+  "cell-dcf6dd197705": {
+    "cell_id": "cell-dcf6dd197705",
     "state": "executing",
     "current_role": "executor",
     "episode_id": "ep-persist",
@@ -79,58 +79,11 @@
         "artifacts": {
           "plan": "test-plan"
         },
-        "timestamp": "2026-08-25T07:30:42.997473+00:00",
-        "evidence_ref": "evidence://cell/cell-cb3582feff45/handoff/0"
+        "timestamp": "2026-08-26T02:14:42.135873+00:00",
+        "evidence_ref": "evidence://cell/cell-dcf6dd197705/handoff/0"
       }
     ],
-    "state_id": "cell-cb3582feff45",
-    "saved_at": "2026-08-25T07:30:42.997478+00:00"
-  },
-  "cell-f3d4297616f9": {
-    "cell_id": "cell-f3d4297616f9",
-    "state": "idle",
-    "current_role": null,
-    "episode_id": null,
-    "context": {
-      "intent": {
-        "raw_text": "分析工作流 wf-002 失败原因: timeout",
-        "source": "resident",
-        "event_type": "WorkflowFailed"
-      },
-      "plan": null,
-      "result": null,
-      "verdict": "accept"
-    },
-    "handoff_log": [
-      {
-        "schema": "handoff/v1",
-        "from_role": "planner",
-        "to_role": "executor",
-        "context": {
-          "intent": {
-            "raw_text": "沉淀工作流 wf-001 的输出",
-            "source": "resident",
-            "event_type": "WorkflowClosed"
-          },
-          "plan": null,
-          "result": null,
-          "verdict": null
-        },
-        "artifacts": {
-          "plan": {
-            "tasks": [
-              {
-                "action": "generate_doc",
-                "target": "sediment-wf-001"
-              }
-            ]
-          }
-        },
-        "timestamp": "2026-08-25T07:37:06.583187+00:00",
-        "evidence_ref": "evidence://cell/cell-f3d4297616f9/handoff/0"
-      }
-    ],
-    "state_id": "cell-f3d4297616f9",
-    "saved_at": "2026-08-25T07:37:06.584569+00:00"
+    "state_id": "cell-dcf6dd197705",
+    "saved_at": "2026-08-26T02:14:42.135878+00:00"
   }
 }
