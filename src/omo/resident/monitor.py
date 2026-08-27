@@ -112,7 +112,7 @@ def _write_alive_heartbeat(*, events_scanned: int, published: int) -> None:
     monitor 是否活着。心跳按小时幂等 (monitor-alive:YYYYMMDDTHH), kind=heartbeat
     与真实告警记录区分, 不触发外发。
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)  # noqa: UP017 -- cron python3.9 兼容 (同 _utc_now)
     hour_key = f"monitor-alive:{now.strftime('%Y%m%dT%H')}"
     if ALERT_LEDGER.is_file():
         try:
