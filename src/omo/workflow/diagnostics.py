@@ -973,7 +973,7 @@ def run_doctor_check(check_item: dict[str, Any]) -> dict[str, Any]:
             env=env,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=120,
             check=False,
         )
         ok = completed.returncode == 0

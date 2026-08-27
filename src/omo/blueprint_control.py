@@ -105,13 +105,13 @@ PROVIDER_ATTEMPT_STATES = {
 from .blueprint_control_helpers import (
     BlueprintControlError,
     CompiledBlueprintPacket,
-    _sha256,
-    _utc,
-    _stamp,
     _canonical_receipt_digest,
     _is_sha256,
-    _safe_relative_path,
     _required_string_list,
+    _safe_relative_path,
+    _sha256,
+    _stamp,
+    _utc,
 )
 
 
@@ -1104,7 +1104,7 @@ class BlueprintControlService:
         packet: Mapping[str, Any],
         dispatch_result: Mapping[str, Any],
         now: str | None,
-        recovery_supervisor: Supervisor | None,
+        recovery_supervisor: Any | None,
         timeout_seconds: int,
     ) -> dict[str, Any]:
         execution = self._read_execution_projection(
@@ -1305,7 +1305,7 @@ class BlueprintControlService:
         dispatch_result: Mapping[str, Any],
         *,
         clone_agent_id: str,
-        supervisor: Supervisor | None = None,
+        supervisor: Any | None = None,
         timeout_seconds: int = 60,
         now: str | None = None,
     ) -> dict[str, Any]:
@@ -1577,8 +1577,8 @@ class BlueprintControlService:
         compiled: CompiledBlueprintPacket,
         dispatch_result: Mapping[str, Any],
         *,
-        supervisor: Supervisor | None = None,
-        acceptance_runner: Runner | None = None,
+        supervisor: Any | None = None,
+        acceptance_runner: Any | None = None,
         timeout_seconds: int = 120,
         now: str | None = None,
     ) -> dict[str, Any]:
@@ -2050,8 +2050,8 @@ class BlueprintControlService:
         compiled: CompiledBlueprintPacket,
         dispatch_result: Mapping[str, Any],
         *,
-        runner: Runner | None = None,
-        acceptance_runner: Runner | None = None,
+        runner: Any | None = None,
+        acceptance_runner: Any | None = None,
         timeout_seconds: int = 900,
     ) -> dict[str, Any]:
         """Execute one supervised worker and compile independently measured evidence."""
@@ -2471,7 +2471,7 @@ class BlueprintControlService:
         dispatch_result: Mapping[str, Any],
         collected: Mapping[str, Any],
         *,
-        verifier: Runner | None = None,
+        verifier: Any | None = None,
         timeout_seconds: int = 120,
     ) -> dict[str, Any]:
         """Directly replay packet checks; accept is the only verification path."""

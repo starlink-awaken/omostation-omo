@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from omo.resident.governor import Governor, RISK_R0, RISK_R1, RISK_R2, RISK_R3
+from omo.resident.governor import RISK_R0, RISK_R1, RISK_R2, RISK_R3, Governor
 from omo.resident.pdp_pep import PDP, PEP
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -175,7 +175,7 @@ class CellGovernance:
         """加载审计日志."""
         audits = []
         if AUDIT_FILE.exists():
-            with open(AUDIT_FILE, "r") as f:
+            with open(AUDIT_FILE) as f:
                 for line in f:
                     if not line.strip():
                         continue

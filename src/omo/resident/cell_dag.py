@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections import defaultdict
 from datetime import UTC, datetime

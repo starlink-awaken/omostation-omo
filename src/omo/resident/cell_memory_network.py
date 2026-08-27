@@ -64,7 +64,7 @@ class MemoryNetwork:
         if not PUBLISHED_FILE.exists():
             return results
 
-        with open(PUBLISHED_FILE, "r") as f:
+        with open(PUBLISHED_FILE) as f:
             for line in f:
                 if not line.strip():
                     continue
@@ -107,7 +107,7 @@ class MemoryNetwork:
         cells = set()
 
         if PUBLISHED_FILE.exists():
-            with open(PUBLISHED_FILE, "r") as f:
+            with open(PUBLISHED_FILE) as f:
                 for line in f:
                     if not line.strip():
                         continue
@@ -143,7 +143,7 @@ class MemoryNetwork:
         kept = []
         cleaned = 0
 
-        with open(PUBLISHED_FILE, "r") as f:
+        with open(PUBLISHED_FILE) as f:
             for line in f:
                 if not line.strip():
                     continue
@@ -169,7 +169,7 @@ class MemoryNetwork:
 
     def _load_subscriptions(self) -> dict:
         if SUBSCRIPTIONS_FILE.exists():
-            with open(SUBSCRIPTIONS_FILE, "r") as f:
+            with open(SUBSCRIPTIONS_FILE) as f:
                 return json.load(f)
         return {}
 
