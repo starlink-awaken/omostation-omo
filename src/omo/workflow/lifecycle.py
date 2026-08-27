@@ -1436,5 +1436,3 @@ def is_read_only_workflow(registry: dict[str, Any], workflow_id: str) -> bool:
     # Explicit empty write list => read-only. Missing write key is NOT exempt
     # (legacy workflows may omit surfaces entirely).
     return isinstance(write, list) and len(write) == 0
-
-
