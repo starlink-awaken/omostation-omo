@@ -38,26 +38,32 @@ class CellGovernance:
         # 1. 检查 max_cells 范围
         max_cells = cell_config.get("max_cells", 4)
         if max_cells < 1 or max_cells > 16:
-            findings.append({
-                "severity": "error",
-                "message": f"max_cells {max_cells} out of range [1, 16]",
-            })
+            findings.append(
+                {
+                    "severity": "error",
+                    "message": f"max_cells {max_cells} out of range [1, 16]",
+                }
+            )
 
         # 2. 检查 auto_scale 配置
         auto_scale = cell_config.get("auto_scale", True)
         if not isinstance(auto_scale, bool):
-            findings.append({
-                "severity": "warning",
-                "message": "auto_scale should be boolean",
-            })
+            findings.append(
+                {
+                    "severity": "warning",
+                    "message": "auto_scale should be boolean",
+                }
+            )
 
         # 3. 检查策略集
         policy_set = cell_config.get("policy_set", "default")
         if policy_set not in ["default", "cartridge", "batch"]:
-            findings.append({
-                "severity": "warning",
-                "message": f"Unknown policy_set: {policy_set}",
-            })
+            findings.append(
+                {
+                    "severity": "warning",
+                    "message": f"Unknown policy_set: {policy_set}",
+                }
+            )
 
         result = {
             "timestamp": datetime.now(UTC).isoformat(),
@@ -104,12 +110,14 @@ class CellGovernance:
             curr_val = current.get(key)
 
             if base_val != curr_val:
-                drift.append({
-                    "field": key,
-                    "baseline": base_val,
-                    "current": curr_val,
-                    "severity": "warning" if key != "max_cells" else "info",
-                })
+                drift.append(
+                    {
+                        "field": key,
+                        "baseline": base_val,
+                        "current": curr_val,
+                        "severity": "warning" if key != "max_cells" else "info",
+                    }
+                )
 
         return drift
 
@@ -190,8 +198,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Cell Governance")
-    parser.add_argument("--action", choices=["audit-config", "audit-action", "report", "drift"],
-                       default="report")
+    parser.add_argument("--action", choices=["audit-config", "audit-action", "report", "drift"], default="report")
     parser.add_argument("--config", help="Cell config JSON")
     parser.add_argument("--cell-action", help="Action to audit JSON")
     args = parser.parse_args()

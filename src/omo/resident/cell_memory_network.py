@@ -56,8 +56,7 @@ class MemoryNetwork:
         }
         self._save_subscriptions(subs)
 
-    def search(self, query: str, tags: list[str] | None = None,
-               limit: int = 10) -> list[dict]:
+    def search(self, query: str, tags: list[str] | None = None, limit: int = 10) -> list[dict]:
         """搜索网络中的记忆."""
         results = []
 
@@ -182,8 +181,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Cell Memory Network")
-    parser.add_argument("--action", choices=["publish", "search", "stats", "cleanup"],
-                       default="stats")
+    parser.add_argument("--action", choices=["publish", "search", "stats", "cleanup"], default="stats")
     parser.add_argument("--cell", help="Cell ID")
     parser.add_argument("--content", help="Memory content to publish")
     parser.add_argument("--query", help="Search query")
@@ -196,11 +194,14 @@ if __name__ == "__main__":
         if not args.cell or not args.content:
             print("Usage: --action publish --cell <id> --content <text>")
             exit(1)
-        memory_id = network.publish(args.cell, {
-            "content": args.content,
-            "type": "semantic",
-            "tags": args.tags.split(",") if args.tags else [],
-        })
+        memory_id = network.publish(
+            args.cell,
+            {
+                "content": args.content,
+                "type": "semantic",
+                "tags": args.tags.split(",") if args.tags else [],
+            },
+        )
         print(f"Published: {memory_id}")
 
     elif args.action == "search":
