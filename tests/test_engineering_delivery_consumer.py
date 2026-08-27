@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 import omo.engineering_delivery_consumer as consumer
+import omo.engineering_delivery_consumer_helpers as consumer_helpers
 import omo.omo_external_resources as external_resources
 from omo.engineering_delivery_consumer import (
     EngineeringDeliveryConsumerError,
@@ -39,7 +40,7 @@ SIGNING_KEY = "test-engineering-review-signing-key-0001"
 
 @pytest.fixture(autouse=True)
 def _fixed_review_clock(monkeypatch):
-    monkeypatch.setattr(consumer, "_utc_now", lambda: "2026-08-21T10:00:00Z")
+    monkeypatch.setattr(consumer_helpers, "_utc_now", lambda: "2026-08-21T10:00:00Z")
     monkeypatch.setenv("COCKPIT_ENGINEERING_REVIEW_SIGNING_KEY", SIGNING_KEY)
 
 
@@ -470,7 +471,7 @@ def test_rolling_observer_uses_half_open_window_and_never_auto_passes(tmp_path, 
         _succeeded_run(tmp_path, run_id)
         consume_engineering_delivery(tmp_path, _delivery(delivery_id), workflow_run_id=run_id)
         monkeypatch.setattr(
-            consumer,
+            consumer_helpers,
             "_utc_now",
             lambda value=reviewed_at: value.isoformat().replace("+00:00", "Z"),
         )
@@ -574,7 +575,7 @@ def test_query_only_shadow_observer_fails_closed_when_captured_input_changes(
             changed_path.write_bytes(replacement)
         return snapshot
 
-    monkeypatch.setattr(consumer, "_read_shadow_observer_input", read_then_change)
+    monkeypatch.setattr(consumer_helpers, "_read_shadow_observer_input", read_then_change)
 
     result = build_engineering_delivery_shadow_observer(
         root,
@@ -649,7 +650,7 @@ def test_query_only_shadow_observer_closes_prior_descriptors_when_capture_fails(
             captured_fds.append(snapshot.fd)
         return snapshot
 
-    monkeypatch.setattr(consumer, "_read_shadow_observer_input", read_or_fail)
+    monkeypatch.setattr(consumer_helpers, "_read_shadow_observer_input", read_or_fail)
 
     result = build_engineering_delivery_shadow_observer(
         root,
@@ -759,7 +760,7 @@ def test_query_only_shadow_observer_fails_closed_when_an_ancestor_is_replaced(tm
             knowledge_dir.mkdir()
         return snapshot
 
-    monkeypatch.setattr(consumer, "_read_shadow_observer_input", read_then_replace)
+    monkeypatch.setattr(consumer_helpers, "_read_shadow_observer_input", read_then_replace)
 
     result = build_engineering_delivery_shadow_observer(
         root,
@@ -787,7 +788,7 @@ def test_query_only_shadow_observer_detects_same_identity_content_replacement(tm
             )
         return snapshot
 
-    monkeypatch.setattr(consumer, "_read_shadow_observer_input", read_then_replace)
+    monkeypatch.setattr(consumer_helpers, "_read_shadow_observer_input", read_then_replace)
 
     result = build_engineering_delivery_shadow_observer(
         root,
@@ -801,7 +802,7 @@ def test_query_only_shadow_observer_detects_same_identity_content_replacement(tm
 
 def test_query_only_shadow_observer_rejects_oversized_inputs_without_reading_them(tmp_path, monkeypatch):
     root = _populated_shadow_observer_root(tmp_path)
-    monkeypatch.setattr(consumer, "_SHADOW_OBSERVER_INPUT_MAX_BYTES", 1)
+    monkeypatch.setattr(consumer_helpers, "_SHADOW_OBSERVER_INPUT_MAX_BYTES", 1)
 
     result = build_engineering_delivery_shadow_observer(
         root,
@@ -819,8 +820,8 @@ def test_query_only_shadow_observer_enforces_the_total_byte_budget(tmp_path, mon
     total_bytes = sum(path.stat().st_size for path in input_paths)
     largest_input = max(path.stat().st_size for path in input_paths)
     assert total_bytes > largest_input
-    monkeypatch.setattr(consumer, "_SHADOW_OBSERVER_INPUT_MAX_BYTES", largest_input + 1)
-    monkeypatch.setattr(consumer, "_SHADOW_OBSERVER_TOTAL_MAX_BYTES", total_bytes - 1)
+    monkeypatch.setattr(consumer_helpers, "_SHADOW_OBSERVER_INPUT_MAX_BYTES", largest_input + 1)
+    monkeypatch.setattr(consumer_helpers, "_SHADOW_OBSERVER_TOTAL_MAX_BYTES", total_bytes - 1)
 
     result = build_engineering_delivery_shadow_observer(
         root,
@@ -911,7 +912,7 @@ def test_build_principal_assertion_signs_valid_assertion(tmp_path):
 
 def test_build_principal_assertion_requires_signing_key(tmp_path, monkeypatch):
     monkeypatch.delenv("COCKPIT_ENGINEERING_REVIEW_SIGNING_KEY", raising=False)
-    monkeypatch.setattr(consumer, "_signing_key", lambda root=None: "")
+    monkeypatch.setattr(consumer_helpers, "_signing_key", lambda root=None: "")
     with pytest.raises(EngineeringDeliveryConsumerError, match="verifier is unavailable"):
         consumer.build_principal_assertion(
             principal_ref="operator://reviewer-1",
