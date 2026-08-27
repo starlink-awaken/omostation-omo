@@ -101,7 +101,41 @@ def publish_monitor(*, dry_run: bool = False) -> dict[str, Any]:
         published += 1
     if not dry_run:
         _alert._save_byte_offset(file_size)
+        _write_alive_heartbeat(events_scanned=len(events), published=published)
     return {"events_scanned": len(events), "published": published, "severities": sorted(ALERT_SEVERITIES)}
+
+
+def _write_alive_heartbeat(*, events_scanned: int, published: int) -> None:
+    """自证心跳 (2026-08-28 P1b, 深度复盘 F5): 每小时一条 alive 记录写入台账.
+
+    区分"安静"和"死亡": 无告警时 monitor 零痕迹, 台账超 N 小时无记录无法判断
+    monitor 是否活着。心跳按小时幂等 (monitor-alive:YYYYMMDDTHH), kind=heartbeat
+    与真实告警记录区分, 不触发外发。
+    """
+    now = datetime.now(timezone.utc)
+    hour_key = f"monitor-alive:{now.strftime('%Y%m%dT%H')}"
+    if ALERT_LEDGER.is_file():
+        try:
+            existing = {
+                str(json.loads(line).get("idempotency_key") or "")
+                for line in ALERT_LEDGER.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            }
+            if hour_key in existing:
+                return  # 本小时已写过
+        except (OSError, json.JSONDecodeError):
+            pass
+    entry = {
+        "idempotency_key": hour_key,
+        "ts": _utc_now(),
+        "kind": "heartbeat",
+        "events_scanned": events_scanned,
+        "published": published,
+        "source": "resident-monitor",
+    }
+    ALERT_LEDGER.parent.mkdir(parents=True, exist_ok=True)
+    with ALERT_LEDGER.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 def _alert_handler(event: dict[str, Any]) -> None:
