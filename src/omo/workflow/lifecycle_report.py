@@ -1,19 +1,58 @@
+"""Run-level reporting helpers extracted from lifecycle.py to keep god-module under 1500L."""
+
 from __future__ import annotations
 
 import json
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
-from ..omo_io import write_yaml_atomic
-from .core import WORKSPACE, path_matches
-from .lifecycle import read_run
-from .lifecycle_claims import (
+from omo.workflow.lifecycle import (
+    WORKSPACE,
     claim_covers_path,
     claim_policy,
     claimed_paths,
     is_read_only_workflow,
+    path_matches,
+    read_run,
 )
+
+
+def staged_lane_report() -> dict[str, object]:
+    completed = subprocess.run(
+        [sys.executable, "bin/change-lane-check.py", "--staged", "--json"],
+        cwd=WORKSPACE,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    try:
+        payload = json.loads(completed.stdout or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    return {
+        "ok": completed.returncode == 0,
+        "returncode": completed.returncode,
+        "lanes": payload.get("lanes", []),
+        "files": payload.get("files", []),
+        "message": payload.get("message") or completed.stderr.strip(),
+    }
+
+
+def recommended_next(status: dict[str, object]) -> str:
+    if status.get("stale_locks", 0) > 0:
+        return "Run `agent-workflow observe` and inspect stale locks before editing."
+    claim_coverage = status.get("claim_coverage")
+    if isinstance(claim_coverage, dict) and claim_coverage.get("missing_files"):
+        run_id = status.get("current_run_id") or "<run-id>"
+        return f"Claim missing files with `agent-workflow claim {run_id} --path <path>`."
+    if status.get("active_runs"):
+        run_id = status["active_runs"][0]
+        return f"Continue with `agent-workflow verify {run_id} --from-diff --execute` or closeout."
+    if not status.get("staged_lane", {}).get("ok"):
+        return "Resolve the staged lane split or use a run-scoped/file-scoped gate for AGCP work."
+    return "Start a governed run with `agent-workflow start <workflow-id> --profile <agent-profile>`."
 
 
 def claim_coverage_report(
@@ -85,39 +124,3 @@ def claim_coverage_report(
         "missing_advisory_files": sorted(missing_advisory),
         "warnings": warnings,
     }
-
-
-def staged_lane_report() -> dict[str, Any]:
-    completed = subprocess.run(
-        [sys.executable, "bin/change-lane-check.py", "--staged", "--json"],
-        cwd=WORKSPACE,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    try:
-        payload = json.loads(completed.stdout or "{}")
-    except json.JSONDecodeError:
-        payload = {}
-    return {
-        "ok": completed.returncode == 0,
-        "returncode": completed.returncode,
-        "lanes": payload.get("lanes", []),
-        "files": payload.get("files", []),
-        "message": payload.get("message") or completed.stderr.strip(),
-    }
-
-
-def recommended_next(status: dict[str, Any]) -> str:
-    if status["stale_locks"] > 0:
-        return "Run `agent-workflow observe` and inspect stale locks before editing."
-    claim_coverage = status.get("claim_coverage")
-    if isinstance(claim_coverage, dict) and claim_coverage.get("missing_files"):
-        run_id = status.get("current_run_id") or "<run-id>"
-        return f"Claim missing files with `agent-workflow claim {run_id} --path <path>`."
-    if status["active_runs"]:
-        run_id = status["active_runs"][0]
-        return f"Continue with `agent-workflow verify {run_id} --from-diff --execute` or closeout."
-    if not status["staged_lane"]["ok"]:
-        return "Resolve the staged lane split or use a run-scoped/file-scoped gate for AGCP work."
-    return "Start a governed run with `agent-workflow start <workflow-id> --profile <agent-profile>`."

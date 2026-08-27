@@ -60,12 +60,10 @@ from .diagnostics import (
     print_doctor_report,
     print_status_report,
     print_verify_report,
-    recommended_next,
     requirement_iteration_report,
     run_check_command,
     run_doctor_check,
     select_diff_checks,
-    staged_lane_report,
 )
 from .info import (
     _profile_hint,
@@ -106,6 +104,8 @@ from .lifecycle import (
 )
 from .lifecycle_report import (
     claim_coverage_report,
+    recommended_next,
+    staged_lane_report,
 )
 from .lint import (
     agcp_drift_check,
