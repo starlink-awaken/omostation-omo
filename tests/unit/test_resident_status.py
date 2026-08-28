@@ -9,6 +9,7 @@ M2.4: 验证状态快照:
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -91,3 +92,80 @@ def test_snapshot_no_files_not_crash(_snapshot_paths: Path) -> None:
     report = status.snapshot()
     assert report["components"]["events"]["lines"] == 0
     assert report["components"]["ledger"]["ok"] is False
+
+
+class _LockingBroker:
+    attempts = 0
+    closes = 0
+    failures_before_success = 2
+
+    @classmethod
+    def connect(cls, _path: str):
+        cls.attempts += 1
+        return cls()
+
+    def verify_chain(self):
+        if self.attempts <= self.failures_before_success:
+            raise sqlite3.OperationalError("database is locked")
+        return {"ok": True}
+
+    def last_sequence(self):
+        return 42
+
+    def close(self):
+        type(self).closes += 1
+
+
+class _AlwaysLockingBroker(_LockingBroker):
+    failures_before_success = 99
+
+
+def test_ledger_probe_retries_transient_lock_and_closes_each_broker(
+    _snapshot_paths: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(status, "_ledger_broker", lambda: _LockingBroker)
+    monkeypatch.setattr(status.time, "sleep", lambda _seconds: None)
+    _LockingBroker.attempts = 0
+    _LockingBroker.closes = 0
+    status.LEDGER.touch()
+
+    result = status._ledger_snapshot()
+
+    assert result == {"ok": True, "detail": "chain ok", "sequence": 42}
+    assert _LockingBroker.attempts == 3
+    assert _LockingBroker.closes == 3
+
+
+def test_ledger_probe_exhausts_lock_budget_truthfully(_snapshot_paths: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(status, "_ledger_broker", lambda: _AlwaysLockingBroker)
+    monkeypatch.setattr(status.time, "sleep", lambda _seconds: None)
+    _AlwaysLockingBroker.attempts = 0
+    _AlwaysLockingBroker.closes = 0
+    status.LEDGER.touch()
+
+    result = status._ledger_snapshot()
+
+    assert result["ok"] is False
+    assert "database is locked" in result["detail"]
+    assert "retry budget exhausted" in result["detail"]
+    assert _AlwaysLockingBroker.attempts == status.LEDGER_RETRY_ATTEMPTS
+    assert _AlwaysLockingBroker.closes == status.LEDGER_RETRY_ATTEMPTS
+
+
+def test_ledger_probe_does_not_retry_non_lock_errors(_snapshot_paths: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class BrokenBroker(_LockingBroker):
+        @classmethod
+        def connect(cls, _path: str):
+            cls.attempts += 1
+            raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(status, "_ledger_broker", lambda: BrokenBroker)
+    monkeypatch.setattr(status.time, "sleep", lambda _seconds: None)
+    BrokenBroker.attempts = 0
+    status.LEDGER.touch()
+
+    result = status._ledger_snapshot()
+
+    assert result["ok"] is False
+    assert "disk I/O error" in result["detail"]
+    assert BrokenBroker.attempts == 1

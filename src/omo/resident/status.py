@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -30,6 +31,8 @@ SEDIMENT_ROOT = WORKSPACE / ".omo" / "_knowledge" / "sediment"
 ALERT_WATERMARK = DELIVERY / "alert-forwarder" / "watermark.json"
 LEDGER = WORKSPACE / "runtime" / "omo" / "event-ledger.sqlite3"
 STALE_THRESHOLD_SECONDS = 1800  # 30min
+LEDGER_RETRY_ATTEMPTS = 3
+LEDGER_RETRY_DELAY_SECONDS = 0.2
 
 
 def _file_age(path: Path) -> float | None:
@@ -106,26 +109,53 @@ def _alert_snapshot() -> dict[str, Any]:
     }
 
 
+def _ledger_broker() -> Any:
+    sys.path.insert(0, str(WORKSPACE / "projects" / "omo" / "src"))
+    from omo.event_ledger.broker import LedgerBroker  # noqa: PLC0415
+
+    return LedgerBroker
+
+
+def _is_lock_error(exc: BaseException) -> bool:
+    return isinstance(exc, sqlite3.OperationalError) and any(
+        marker in str(exc).lower() for marker in ("locked", "busy")
+    )
+
+
+def _probe_ledger_once() -> dict[str, Any]:
+    broker = None
+    try:
+        broker = _ledger_broker().connect(str(LEDGER))
+        chain = broker.verify_chain()
+        ok = bool(chain.get("ok"))
+        return {
+            "ok": ok,
+            "detail": "chain ok" if ok else f"chain broken: {chain.get('error')}",
+            "sequence": broker.last_sequence(),
+        }
+    finally:
+        if broker is not None:
+            broker.close()
+
+
 def _ledger_snapshot() -> dict[str, Any]:
     if not LEDGER.is_file():
         return {"ok": False, "detail": "ledger sqlite missing"}
-    try:
-        sys.path.insert(0, str(WORKSPACE / "projects" / "omo" / "src"))
-        from omo.event_ledger.broker import LedgerBroker  # noqa: PLC0415
-
-        broker = LedgerBroker.connect(str(LEDGER))
+    for attempt in range(LEDGER_RETRY_ATTEMPTS):
         try:
-            chain = broker.verify_chain()
-            ok = bool(chain.get("ok"))
-            return {
-                "ok": ok,
-                "detail": "chain ok" if ok else f"chain broken: {chain.get('error')}",
-                "sequence": broker.last_sequence(),
-            }
-        finally:
-            broker.close()
-    except Exception as exc:  # noqa: BLE001 - best-effort
-        return {"ok": False, "detail": f"ledger check failed: {type(exc).__name__}: {exc}"}
+            return _probe_ledger_once()
+        except sqlite3.OperationalError as exc:
+            if not _is_lock_error(exc):
+                return {"ok": False, "detail": f"ledger check failed: {type(exc).__name__}: {exc}"}
+            if attempt + 1 >= LEDGER_RETRY_ATTEMPTS:
+                return {
+                    "ok": False,
+                    "detail": (f"ledger check failed: {type(exc).__name__}: {exc}; retry budget exhausted"),
+                }
+            time.sleep(LEDGER_RETRY_DELAY_SECONDS)
+        except Exception as exc:  # noqa: BLE001 - best-effort
+            return {"ok": False, "detail": f"ledger check failed: {type(exc).__name__}: {exc}"}
+    return {"ok": False, "detail": "ledger check failed: retry budget exhausted"}
 
 
 def snapshot() -> dict[str, Any]:
