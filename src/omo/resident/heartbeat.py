@@ -56,11 +56,42 @@ def _snapshot() -> dict[str, Any]:
     return status_snapshot()
 
 
+def _write_ledger_direct(payload: dict[str, Any], snap: dict[str, Any]) -> None:
+    """直接写活性台账 (不走统一事件流)。复用 _heartbeat_handler 的台账格式。"""
+    idem = f"heartbeat:{snap.get('ts', '')}:{SYSTEM_ALIVE_TYPE}"
+    entry = {
+        "idempotency_key": idem,
+        "ts": payload.get("ts") or snap.get("ts"),
+        "health": payload.get("health"),
+        "degraded_components": payload.get("degraded_components", []),
+        "source": "resident-heartbeat",
+    }
+    HEARTBEAT_LEDGER.parent.mkdir(parents=True, exist_ok=True)
+    with HEARTBEAT_LEDGER.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def _should_write_stream(payload: dict[str, Any]) -> bool:
+    """源头脑电采样 (动脉B, 2026-08-28): 判断本次心跳是否写统一事件流。
+
+    事件流信噪比实测 4% (480 心跳 : 20 真实信号) — 正常心跳只在整点写流
+    (每小时 1 条存证), 降级/恢复状态每次都写 (保证告警链路可见)。
+    台账粒度不变 (2min, 直接写台账绕过事件流)。
+    """
+    health = str(payload.get("health") or "")
+    if health not in ("ok", "recovered"):
+        return True  # 降级态: 高频写流, monitor/decision 链路需要看到
+    now = datetime.now(timezone.utc)  # noqa: UP017 -- cron python3.9 兼容
+    return now.minute < 2  # 整点窗口: 每小时第一次 tick 写 1 条存证
+
+
 def publish_heartbeat(*, dry_run: bool = False) -> dict[str, Any]:
     """heartbeat 角色私有 tick 的发布侧: 生成 system.alive 事件进统一事件流.
 
     调用方 (daemon per-role publish hook / CLI) 每次 tick 调用一次; 事件在下一
     tick 被 heartbeat 角色消费 → 沉淀活性台账 (2min 节律)。
+    脑电采样 (2026-08-28): 正常态只在整点写流 (存证), 其余 tick 直接写台账;
+    降级态恢复每次写流 (告警链路可见)。
     """
     snap = _snapshot()
     payload = {
@@ -73,8 +104,11 @@ def publish_heartbeat(*, dry_run: bool = False) -> dict[str, Any]:
     if dry_run:
         print(f"  [dry-run] {SYSTEM_ALIVE_TYPE} health={payload['health']}", file=sys.stderr)
         return {"published": 0, "health": payload["health"]}
-    _append_to_events_jsonl(payload, snap)
-    return {"published": 1, "health": payload["health"], "ts": snap.get("ts")}
+    if _should_write_stream(payload):
+        _append_to_events_jsonl(payload, snap)
+        return {"published": 1, "health": payload["health"], "ts": snap.get("ts")}
+    _write_ledger_direct(payload, snap)
+    return {"published": 0, "ledger_only": True, "health": payload["health"], "ts": snap.get("ts")}
 
 
 def _heartbeat_handler(event: dict[str, Any]) -> None:
