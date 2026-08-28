@@ -23,6 +23,27 @@ from ecos.ssot.mof.generated.control.mof_control_models import (
 )
 
 from omo.event_ledger.broker import LedgerBroker
+from omo.personal_episode_helpers import (
+    _are_consecutive_weeks,
+    _build_observation,
+    _deterministic,
+    _evaluate_readiness_gate,
+    _feedback_ref,
+    _has_valid_revision_receipt,
+    _iso_week_key,
+    _median,
+    _outcome_replay_matches,
+    _parse_ts,
+    _payload,
+    _personal_draft_digest,
+    _required_payload,
+    _revision_fields,
+    _sha256_digest,
+    _short_hash,
+    _utc_now,
+    _validate_burden,
+    _week_monday,
+)
 from omo.sovereignty.enforcement import EVT_ACTION_SUCCEEDED, PDP_PRODUCER
 from omo.sovereignty.mandates import STATUS_ACTIVE, MandateError, MandateManager
 from omo.sovereignty.roles import SovereigntyError, SovereigntyService
@@ -271,10 +292,6 @@ class PrincipalObservation:
             "weekly_samples": [s.to_dict() for s in self.weekly_samples],
             "gate_gaps": list(self.gate_gaps),
         }
-
-
-def _utc_now() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 class PersonalEpisodeService:
@@ -992,378 +1009,6 @@ class PersonalEpisodeService:
     def _required(name: str, value: str) -> None:
         if not isinstance(value, str) or not value.strip():
             raise PersonalEpisodeError("invalid_request", f"{name} must be non-empty")
-
-
-def _payload(row: Mapping[str, Any]) -> Mapping[str, Any]:
-    try:
-        value = json.loads(str(row["payload_json"]))
-    except (KeyError, TypeError, ValueError) as exc:
-        raise PersonalEpisodeError("malformed_episode", "episode payload is invalid") from exc
-    if not isinstance(value, Mapping):
-        raise PersonalEpisodeError("malformed_episode", "episode payload must be an object")
-    return value
-
-
-def _required_payload(payload: Mapping[str, Any], key: str) -> str:
-    value = payload.get(key)
-    if not isinstance(value, str) or not value:
-        raise PersonalEpisodeError("malformed_episode", f"episode payload missing {key}")
-    return value
-
-
-def _short_hash(*parts: str) -> str:
-    return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()[:24]
-
-
-def _deterministic(prefix: str, *parts: str) -> str:
-    return prefix + _short_hash(*parts)
-
-
-def _validate_burden(name: str, value: float | None) -> None:
-    """Reject negative, infinite, NaN, or non-numeric burden values."""
-    if value is None:
-        return
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise PersonalEpisodeError("invalid_burden", f"{name} must be a number")
-    v = float(value)
-    if v < 0 or not math.isfinite(v):
-        raise PersonalEpisodeError("invalid_burden", f"{name} must be non-negative and finite")
-
-
-def _sha256_digest(value: str) -> str:
-    if not isinstance(value, str) or not value.startswith("sha256:"):
-        raise PersonalEpisodeError("invalid_revision_receipt", "revision_digest must be sha256:<hex>")
-    digest = value.removeprefix("sha256:")
-    if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
-        raise PersonalEpisodeError("invalid_revision_receipt", "revision_digest must be sha256:<hex>")
-    return value
-
-
-def _personal_draft_digest(evidence_ref: str) -> str:
-    if not isinstance(evidence_ref, str) or not evidence_ref.startswith(PERSONAL_DRAFT_EVIDENCE_PREFIX):
-        raise PersonalEpisodeError(
-            "invalid_evidence_ref",
-            "evidence_ref must be an opaque personal-draft digest",
-        )
-    try:
-        return _sha256_digest(evidence_ref.removeprefix("evidence://personal-draft/"))
-    except PersonalEpisodeError as exc:
-        raise PersonalEpisodeError(
-            "invalid_evidence_ref",
-            "evidence_ref must be an opaque personal-draft digest",
-        ) from exc
-
-
-def _feedback_ref(feedback_id: str) -> str:
-    """Project a caller request ID to a bounded opaque ledger identifier."""
-    if (
-        not isinstance(feedback_id, str)
-        or not feedback_id.strip()
-        or feedback_id != feedback_id.strip()
-        or len(feedback_id) > 240
-    ):
-        raise PersonalEpisodeError(
-            "invalid_feedback_id",
-            "feedback_id must be a non-empty identifier of at most 240 characters",
-        )
-    return f"feedback://sha256:{hashlib.sha256(feedback_id.encode('utf-8')).hexdigest()}"
-
-
-def _outcome_replay_matches(
-    recorded: Mapping[str, Any],
-    expected: Mapping[str, Any],
-    *,
-    raw_feedback_id: str | None,
-) -> bool:
-    """Compare a replay without mutating legacy raw-ID ledger rows."""
-    normalized = dict(recorded)
-    if raw_feedback_id is not None and normalized.get("feedback_id") == raw_feedback_id:
-        normalized["feedback_id"] = expected.get("feedback_id")
-    if "outcome_feedback_schema" in normalized or "revision_receipt" in normalized:
-        return normalized == dict(expected)
-    legacy_fields = (
-        "feedback_id",
-        "verdict",
-        "action_id",
-        "review_duration_seconds",
-        "estimated_time_saved_seconds",
-    )
-    return all(normalized.get(field) == expected.get(field) for field in legacy_fields)
-
-
-def _revision_fields(values: list[str] | tuple[str, ...] | None) -> list[str]:
-    if values is None:
-        return []
-    if not isinstance(values, (list, tuple)) or any(not isinstance(value, str) for value in values):
-        raise PersonalEpisodeError("invalid_revision_receipt", "changed_fields must be a list of field names")
-    normalized = sorted({value.strip() for value in values if value.strip()})
-    if any(value not in REVISION_FIELDS for value in normalized):
-        raise PersonalEpisodeError(
-            "invalid_revision_receipt",
-            "changed_fields contains an unsupported field",
-        )
-    return normalized
-
-
-def _has_valid_revision_receipt(
-    outcome: Mapping[str, Any] | None,
-    evidence_payloads: list[Mapping[str, Any]],
-) -> bool:
-    """Return whether an outcome is bound to the latest privacy-safe candidate."""
-    if outcome is None or outcome.get("outcome_feedback_schema") != OUTCOME_FEEDBACK_SCHEMA:
-        return False
-    receipt = outcome.get("revision_receipt")
-    if not isinstance(receipt, Mapping) or receipt.get("schema") != REVISION_RECEIPT_SCHEMA:
-        return False
-    if not evidence_payloads:
-        return False
-    latest_ref = evidence_payloads[-1].get("evidence_uri")
-    if receipt.get("candidate_ref") != latest_ref or not isinstance(latest_ref, str):
-        return False
-    try:
-        candidate_digest = _personal_draft_digest(latest_ref)
-        revision_digest = _sha256_digest(str(receipt.get("revision_digest", "")))
-        changed_fields = _revision_fields(receipt.get("changed_fields"))
-    except PersonalEpisodeError:
-        return False
-    if outcome.get("verdict") == "edit":
-        return bool(changed_fields) and revision_digest != candidate_digest
-    return not changed_fields and revision_digest == candidate_digest
-
-
-def _iso_week_key(dt: datetime) -> str:
-    """ISO Monday-based natural week key, e.g. '2026-W32'."""
-    iso = dt.isocalendar()
-    return f"{iso[0]}-W{iso[1]:02d}"
-
-
-def _week_monday(week_key: str) -> date:
-    """Parse 'YYYY-Www' back to the Monday date."""
-    year_str, week_str = week_key.split("-W")
-    return date.fromisocalendar(int(year_str), int(week_str), 1)
-
-
-def _are_consecutive_weeks(samples: list[WeeklySample]) -> bool:
-    """True iff every adjacent pair is exactly one ISO week apart."""
-    if len(samples) < 2:
-        return len(samples) >= 1
-    mondays = [_week_monday(s.week_key) for s in samples]
-    for i in range(1, len(mondays)):
-        if (mondays[i] - mondays[i - 1]).days != 7:
-            return False
-    return True
-
-
-def _parse_ts(value: Any) -> datetime | None:
-    """Best-effort ISO-8601 parse; returns None on failure."""
-    if value is None:
-        return None
-    try:
-        return datetime.fromisoformat(str(value))
-    except (TypeError, ValueError):
-        return None
-
-
-def _median(values: list[float]) -> float | None:
-    """Median of a list; None for empty input."""
-    if not values:
-        return None
-    s = sorted(values)
-    n = len(s)
-    mid = n // 2
-    if n % 2 == 1:
-        return float(s[mid])
-    return (float(s[mid - 1]) + float(s[mid])) / 2.0
-
-
-def _build_observation(
-    principal_id: str,
-    observations: list[dict[str, Any]],
-) -> PrincipalObservation:
-    """Aggregate per-episode data into a PrincipalObservation with gate."""
-    total_episodes = len(observations)
-
-    # Global verdict distribution — effective verdict only (Blocker 4).
-    verdict_dist: dict[str, int] = {}
-    for ep in observations:
-        eff = ep["effective_outcome"]
-        if eff is not None:
-            v = eff.get("verdict")
-            if v:
-                verdict_dist[v] = verdict_dist.get(v, 0) + 1
-
-    # Global evidence origin counts.
-    system_ev = sum(1 for ep in observations for o in ep["evidence_origins"] if o == "system")
-    user_ev = sum(1 for ep in observations for o in ep["evidence_origins"] if o == "user_provided")
-    unknown_ev = sum(1 for ep in observations for o in ep["evidence_origins"] if o not in ("system", "user_provided"))
-
-    # Signal-to-effective-outcome latency (median).
-    latencies: list[float] = []
-    for ep in observations:
-        sig_dt: datetime | None = ep["signal_dt"]
-        outcome_dt: datetime | None = ep["effective_outcome_dt"]
-        if sig_dt is not None and outcome_dt is not None:
-            delta = (outcome_dt - sig_dt).total_seconds()
-            if delta >= 0:
-                latencies.append(delta)
-    median_latency = _median(latencies)
-
-    # Weekly samples — bucketed by effective outcome time (Blocker 3).
-    week_groups: dict[str, list[dict[str, Any]]] = {}
-    for ep in observations:
-        outcome_dt = ep["effective_outcome_dt"]
-        if outcome_dt is None:
-            continue
-        wk = _iso_week_key(outcome_dt)
-        week_groups.setdefault(wk, []).append(ep)
-
-    weekly_samples: list[WeeklySample] = []
-    for wk in sorted(week_groups):
-        eps = week_groups[wk]
-        total = len(eps)
-
-        vd: dict[str, int] = {}
-        sys_ev_w = usr_ev_w = unk_ev_w = 0
-        for ep in eps:
-            eff = ep["effective_outcome"]
-            if eff is not None:
-                v = eff.get("verdict")
-                if v:
-                    vd[v] = vd.get(v, 0) + 1
-            for o in ep["evidence_origins"]:
-                if o == "system":
-                    sys_ev_w += 1
-                elif o == "user_provided":
-                    usr_ev_w += 1
-                else:
-                    unk_ev_w += 1
-
-        sys_accept_eps = 0
-        complete_burden_eps = 0
-        review_lt_saved_eps = 0
-        qualifying_eps = 0
-        summed_review = 0.0
-        summed_saved = 0.0
-        has_review = False
-        has_saved = False
-
-        for ep in eps:
-            has_system = ep.get("receipt_candidate_origin") == "system"
-            eff = ep["effective_outcome"]
-            is_accept = eff is not None and eff.get("verdict") == "accept"
-            review_raw = eff.get("review_duration_seconds") if eff else None
-            saved_raw = eff.get("estimated_time_saved_seconds") if eff else None
-            complete = review_raw is not None and saved_raw is not None
-            review_lt = False
-            if review_raw is not None and saved_raw is not None:
-                try:
-                    review_lt = float(review_raw) < float(saved_raw)
-                except (TypeError, ValueError):
-                    review_lt = False
-
-            if review_raw is not None:
-                summed_review += float(review_raw)
-                has_review = True
-            if saved_raw is not None:
-                summed_saved += float(saved_raw)
-                has_saved = True
-
-            if is_accept and has_system:
-                sys_accept_eps += 1
-            if complete:
-                complete_burden_eps += 1
-            if review_lt:
-                review_lt_saved_eps += 1
-            # Gate qualifying requires: signal-sourced + Action.Succeeded +
-            # accept + system evidence + complete burden + review < saved.
-            if (
-                is_accept
-                and has_system
-                and complete
-                and review_lt
-                and ep.get("has_signal_source", False)
-                and ep.get("has_action_succeeded", False)
-                and ep.get("has_revision_receipt", False)
-            ):
-                qualifying_eps += 1
-
-        gate_met = qualifying_eps >= 3
-        weekly_samples.append(
-            WeeklySample(
-                week_key=wk,
-                total_episodes=total,
-                qualifying_episodes=qualifying_eps,
-                system_accept_episodes=sys_accept_eps,
-                complete_burden_episodes=complete_burden_eps,
-                review_lt_saved_episodes=review_lt_saved_eps,
-                summed_review_seconds=summed_review if has_review else None,
-                summed_saved_seconds=summed_saved if has_saved else None,
-                verdict_distribution=vd,
-                system_evidence_count=sys_ev_w,
-                user_evidence_count=usr_ev_w,
-                unknown_evidence_count=unk_ev_w,
-                gate_met=gate_met,
-            )
-        )
-
-    # Gate evaluation: 4 consecutive qualifying weeks.
-    readiness, gaps = _evaluate_readiness_gate(weekly_samples)
-
-    return PrincipalObservation(
-        principal_id=principal_id,
-        readiness=readiness,
-        total_episodes=total_episodes,
-        verdict_distribution=verdict_dist,
-        system_evidence_count=system_ev,
-        user_evidence_count=user_ev,
-        unknown_evidence_count=unknown_ev,
-        signal_to_verdict_latency_seconds=median_latency,
-        weekly_samples=weekly_samples,
-        gate_gaps=gaps,
-    )
-
-
-def _evaluate_readiness_gate(
-    weekly_samples: list[WeeklySample],
-) -> tuple[str, list[str]]:
-    """Strict four-consecutive-week gate.
-
-    Each qualifying week needs >= 3 episodes with system evidence + accept
-    outcome + complete burden + review < saved.  Returns (readiness, gaps).
-    """
-    if not weekly_samples:
-        return "not_ready", ["no weekly samples"]
-
-    qualifying = [s for s in weekly_samples if s.gate_met]
-
-    if len(qualifying) >= 4:
-        for i in range(len(qualifying) - 3):
-            window = qualifying[i : i + 4]
-            if _are_consecutive_weeks(window):
-                return "passed", []
-
-    gaps: list[str] = []
-    met_weeks = [s for s in weekly_samples if s.gate_met]
-    if not met_weeks:
-        gaps.append(
-            "no qualifying weeks yet (need >=3 system-accept episodes with complete burden and review<saved per week)"
-        )
-    else:
-        gaps.append(f"only {len(met_weeks)} qualifying week(s), need 4 consecutive")
-        for i in range(len(met_weeks) - 1):
-            wk_a = met_weeks[i]
-            wk_b = met_weeks[i + 1]
-            monday_a = _week_monday(wk_a.week_key)
-            monday_b = _week_monday(wk_b.week_key)
-            if (monday_b - monday_a).days != 7:
-                gaps.append(f"non-consecutive gap between {wk_a.week_key} and {wk_b.week_key}")
-        # Weeks below threshold.
-        below = [s for s in weekly_samples if not s.gate_met]
-        if below:
-            gaps.append(f"{len(below)} week(s) below threshold (need >=3 qualifying episodes each)")
-
-    return "collecting", gaps
-
 
 __all__ = [
     "CAPABILITY",
