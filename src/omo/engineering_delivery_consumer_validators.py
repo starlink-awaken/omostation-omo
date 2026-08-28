@@ -183,5 +183,3 @@ def _human_actor(value: Any) -> str:
     if scheme not in _HUMAN_ACTOR_SCHEMES:
         raise EngineeringDeliveryConsumerError(f"unsupported human actor scheme {scheme!r}")
     return text
-
-
