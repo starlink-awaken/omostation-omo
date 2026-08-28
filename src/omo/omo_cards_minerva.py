@@ -6,7 +6,6 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-
 from .omo_cards import _get_db, _now, _record_history
 
 

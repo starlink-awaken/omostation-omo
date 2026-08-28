@@ -4,7 +4,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-
 from .omo_task_policy import (
     OPC_P6_SELF_EVOLUTION_POLICY,
     TASK_POLICIES,
