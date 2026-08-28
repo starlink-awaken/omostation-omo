@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +30,8 @@ _REQUIRED_FIELDS = frozenset(
     }
 )
 _EVIDENCE_STATES = frozenset({"succeeded", "degraded"})
+_NATIVE_EXECUTION_SCHEMA = "native-execution-receipt/v1"
+_NATIVE_MATERIAL_SCHEMA = "native-execution-material/v1"
 _FORBIDDEN_KEYS = frozenset(
     {
         "access_token",
@@ -88,6 +90,10 @@ def _validate_timestamp(value: Any) -> str:
     except ValueError as exc:
         raise ExternalReceiptError(f"invalid receipt timestamp: {text}") from exc
     return text
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _validate_digest(value: Any) -> str | None:
@@ -188,9 +194,124 @@ def record_external_receipt(
     return WorkflowMeshStore(omo_dir).append(event)
 
 
+def _native_digest(value: Any, field_name: str) -> str:
+    text = _required_text(value, field_name).lower()
+    if len(text) != 71 or not text.startswith("sha256:") or any(char not in "0123456789abcdef" for char in text[7:]):
+        raise ExternalReceiptError(f"{field_name} must be a sha256 digest")
+    return text
+
+
+def _normalise_native_execution_receipt(
+    receipt: Mapping[str, Any] | Any,
+    *,
+    workflow_run_id: str,
+    step_run_id: str | None,
+) -> dict[str, Any]:
+    value = dict(_as_mapping(receipt))
+    _reject_forbidden(value)
+    if value.get("schema") != _NATIVE_EXECUTION_SCHEMA or value.get("status") != "completed":
+        raise ExternalReceiptError("native receipt schema or status is invalid")
+    if value.get("value_indicator_policy") is not False:
+        raise ExternalReceiptError("native receipt value promotion is forbidden")
+    if value.get("fallback") != {"used": False}:
+        raise ExternalReceiptError("native receipt fallback is forbidden")
+    if value.get("states") != {"invoked": True, "evidenced": False, "independently_verified": False}:
+        raise ExternalReceiptError("native receipt states are not eligible")
+    if value.get("transport_state") != "confirmed":
+        raise ExternalReceiptError("only confirmed succeeded native receipts are consumable")
+
+    material = value.get("material")
+    if not isinstance(material, Mapping) or material.get("schema") != _NATIVE_MATERIAL_SCHEMA:
+        raise ExternalReceiptError("native receipt material is invalid")
+    binding = material.get("binding")
+    if not isinstance(binding, Mapping):
+        raise ExternalReceiptError("native receipt binding is invalid")
+    bound_run_id = _required_text(binding.get("workflow_run_id"), "material.binding.workflow_run_id")
+    if bound_run_id != workflow_run_id:
+        raise ExternalReceiptError("native receipt workflow_run_id does not match consumer context")
+
+    admission = material.get("admission")
+    if not isinstance(admission, Mapping):
+        raise ExternalReceiptError("native receipt admission is invalid")
+    bound_step = _required_text(admission.get("step_run_id"), "material.admission.step_run_id")
+    if step_run_id is not None and bound_step != step_run_id:
+        raise ExternalReceiptError("native receipt step_run_id does not match consumer context")
+
+    capability = material.get("capability")
+    if not isinstance(capability, Mapping):
+        raise ExternalReceiptError("native receipt capability is invalid")
+    capability_id = _required_text(capability.get("id"), "material.capability.id")
+    capability_kind = _required_text(capability.get("kind"), "material.capability.kind")
+    operation_id = _required_text(material.get("operation_id"), "material.operation_id")
+    invocation_id = _native_digest(value.get("invocation_id"), "invocation_id")
+    receipt_digest = _native_digest(value.get("receipt_digest"), "receipt_digest")
+
+    outcome = value.get("outcome")
+    if (
+        not isinstance(outcome, Mapping)
+        or outcome.get("status") != "succeeded"
+        or outcome.get("failure_code") is not None
+    ):
+        raise ExternalReceiptError("only confirmed succeeded native receipts are consumable")
+    result_digest = _native_digest(outcome.get("result_digest"), "outcome.result_digest")
+    return {
+        "receipt_id": receipt_digest,
+        "trace_id": bound_run_id,
+        "resource_id": capability_id,
+        "operation": operation_id,
+        "result_state": "succeeded",
+        "observed_at": _utc_now(),
+        "provenance_ref": f"native://{capability_id}/{operation_id}",
+        "policy_digest": _NATIVE_EXECUTION_SCHEMA,
+        "decision_factors": {
+            "native_receipt_schema": _NATIVE_EXECUTION_SCHEMA,
+            "native_receipt_digest": receipt_digest,
+            "invocation_id": invocation_id,
+            "capability_kind": capability_kind,
+            "operation_id": operation_id,
+            "admission_id": _required_text(admission.get("admission_id"), "material.admission.admission_id"),
+            "step_run_id": bound_step,
+        },
+        "output_digest": result_digest[7:],
+    }
+
+
+def record_native_execution_receipt(
+    omo_dir: Path | str,
+    receipt: Mapping[str, Any] | Any,
+    *,
+    workflow_run_id: str,
+    step_run_id: str | None = None,
+    producer: str = "native-execution-consumer",
+) -> dict[str, Any]:
+    """Consume one confirmed native execution receipt through the existing broker.
+
+    The adapter only projects digest-only execution metadata.  It never copies
+    material, provider output, or credentials into Workflow Mesh and delegates
+    durable evidence/idempotency semantics to ``record_external_receipt``.
+    """
+    normalized = _normalise_native_execution_receipt(
+        receipt,
+        workflow_run_id=_required_text(workflow_run_id, "workflow_run_id"),
+        step_run_id=step_run_id,
+    )
+    evidence_id = f"external:{normalized['resource_id']}:{normalized['receipt_id']}"
+    existing = WorkflowMeshStore(omo_dir).evidence_snapshot(workflow_run_id, evidence_id)
+    if isinstance(existing, Mapping) and existing.get("observed_at"):
+        normalized["observed_at"] = existing["observed_at"]
+    return record_external_receipt(
+        omo_dir,
+        normalized,
+        workflow_run_id=workflow_run_id,
+        step_run_id=step_run_id or normalized["decision_factors"]["step_run_id"],
+        producer=producer,
+    )
+
+
 __all__ = [
     "EVIDENCE_KIND",
     "RECEIPT_SCHEMA",
     "ExternalReceiptError",
     "record_external_receipt",
+    "record_native_execution_receipt",
 ]
