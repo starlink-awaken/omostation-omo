@@ -72,6 +72,13 @@ from .omo_task_policy import (
     get_task_policy,
 )
 
+# 2026-08-28: task policy commands extracted to omo_lint_task_policy.py
+from .omo_lint_task_policy import (
+    cmd_lint_all_task_policies,
+    cmd_lint_self_evolution_approval,
+    cmd_lint_task_policy,
+)
+
 # P101 R1: yaml-bypass 子模块 (extracted 102L from omo_lint.py)
 # Re-export 保持向后兼容 (cli.py / scripts/ 可能直接 import)
 
@@ -321,32 +328,6 @@ def cmd_lint_sensitive_governed_writes(paths: list[str] | None = None) -> int:
 
     print(f"✅ omo lint sensitive-governed-writes pass: checked={checked} direct_writes=0")
     return 0
-
-
-def cmd_lint_task_policy(policy_name: str, workspace_root: str = ".") -> int:
-    root = Path(workspace_root).resolve()
-    policy = get_task_policy(policy_name)
-    issues = check_task_policy(root, policy)
-    if issues:
-        print(f"❌ omo lint {policy.name} fail: {len(issues)} issue(s)")
-        for issue in issues:
-            print(f"  - {issue}")
-        return 1
-    count = count_planned_matches(root, policy)
-    print(f"✅ omo lint {policy.name} pass: matches={count}")
-    return 0
-
-
-def cmd_lint_all_task_policies(workspace_root: str = ".") -> int:
-    root = Path(workspace_root).resolve()
-    failures = 0
-    for policy_name in sorted(TASK_POLICIES):
-        failures += cmd_lint_task_policy(policy_name, str(root))
-    return 0 if failures == 0 else 1
-
-
-def cmd_lint_self_evolution_approval(workspace_root: str = ".") -> int:
-    return cmd_lint_task_policy(OPC_P6_SELF_EVOLUTION_POLICY.name, workspace_root)
 
 
 # P102 R1: surfaces 子模块 (extracted 179L from omo_lint.py)
