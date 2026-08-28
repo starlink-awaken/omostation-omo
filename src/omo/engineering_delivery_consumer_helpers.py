@@ -22,88 +22,11 @@ from urllib.parse import urlparse
 
 import yaml
 
-from .omo_belief import MOSBeliefManager
-from .omo_external_receipt import RECEIPT_SCHEMA, record_external_receipt
-from .omo_io import AppendOnlyLog, fcntl_lock
-from .omo_shared import load_yaml_value_docs
-from .outcome_feedback import (
-    OUTCOME_FEEDBACK_LOG,
-    read_outcome_feedback,
-    record_outcome_feedback,
-    validate_outcome_feedback,
-)
-from .workflow_mesh import WORKFLOW_MESH_LOG, WorkflowMeshStore, project_workflow_run
-
-CONSUMPTION_SCHEMA = "engineering-delivery-consumption/v1"
-REVIEW_SCHEMA = "engineering-delivery-review/v1"
-REVIEW_QUEUE_SCHEMA = "engineering-delivery-review-queue/v1"
-QUALIFIED_DECISION_OUTCOME_SCHEMA = "qualified-decision-outcome/v1"
-SHADOW_OBSERVER_SCHEMA = "engineering-delivery-shadow-observer/v1"
-QUALIFIED_DECISION_OUTCOME_LOG = Path("_knowledge/workflow-mesh/engineering-delivery-decision-outcomes.jsonl")
-MOS_PROJECTION_RECEIPT_LOG = Path("_knowledge/workflow-mesh/engineering-delivery-mos-projections.jsonl")
-_SHADOW_OBSERVER_INPUT_MAX_BYTES = 64 * 1024 * 1024
-_SHADOW_OBSERVER_TOTAL_MAX_BYTES = 128 * 1024 * 1024
-
-SCENE_BINDING = {
-    "scene_id": "engineering-delivery",
-    "journey_id": "intent-to-evidence",
-    "outcome_metric": "verified_delivery_lead_time",
-}
-SCENE_POLICY = {
-    "scene_id": "engineering-delivery",
-    "tier": "shadow",
-    "value_indicator_policy": False,
-}
-CONTROLS = {
-    "proposal_only": True,
-    "activation": "forbidden",
-    "workflow_run_creation": False,
-    "provider_invocation": False,
-    "automatic_promotion": False,
-    "personal_value_attribution": False,
-}
-
-_DELIVERY_FIELDS = frozenset(
-    {
-        "delivery_id",
-        "repository_ref",
-        "pr_url",
-        "merge_sha",
-        "requested_at",
-        "merged_at",
-        "evidence_refs",
-    }
-)
-_REVIEW_FIELDS = frozenset({"delivery_id", "decision", "evidence_refs"})
-_DECISIONS = frozenset({"reviewed", "adopted", "rejected"})
-_FORBIDDEN_KEY_PARTS = frozenset(
-    {
-        "content",
-        "credential",
-        "document",
-        "input",
-        "output",
-        "password",
-        "path",
-        "raw",
-        "reviewdecision",
-        "secret",
-        "token",
-        "verdict",
-    }
-)
-_OPAQUE_REF_SCHEMES = frozenset({"evidence", "github", "ci", "workflow", "receipt"})
-_HUMAN_ACTOR_SCHEMES = frozenset({"human", "operator", "principal"})
-_PRINCIPAL_ASSERTION_SCHEMA = "cockpit-human-principal-assertion/v2"
-_ENGINEERING_REVIEW_SIGNING_KEY_ENV = "COCKPIT_ENGINEERING_REVIEW_SIGNING_KEY"
-# Server-owned persistent key file (gitignored); used as a fallback when the
-# environment variable is not set so the observer can verify recorded
-# assertions in a later process without re-exporting the key.
-_ENGINEERING_REVIEW_SIGNING_KEY_FILE = "_knowledge/workflow-mesh/engineering-review-signing.key"
-_PRINCIPAL_ASSERTION_MAX_AGE = timedelta(minutes=5)
-
-
 from .engineering_delivery_consumer_constants import (
+    _ENGINEERING_REVIEW_SIGNING_KEY_ENV,
+    _NON_HUMAN_EVIDENCE,
+    _PRINCIPAL_ASSERTION_MAX_AGE,
+    _PRINCIPAL_ASSERTION_SCHEMA,
     CONSUMPTION_SCHEMA,
     CONTROLS,
     MOS_PROJECTION_RECEIPT_LOG,
@@ -148,7 +71,6 @@ from .engineering_delivery_consumer_shadow import (
 from .engineering_delivery_consumer_validators import (
     EngineeringDeliveryConsumerError,
     EngineeringDeliveryProjectionError,
-    MOSBeliefManager,
     _canonical,
     _evidence_refs,
     _human_actor,
@@ -163,6 +85,17 @@ from .engineering_delivery_consumer_validators import (
     _validate_delivery,
     normalize_engineering_delivery_review,
 )
+from .omo_belief import MOSBeliefManager
+from .omo_external_receipt import RECEIPT_SCHEMA, record_external_receipt
+from .omo_io import AppendOnlyLog, fcntl_lock
+from .omo_shared import load_yaml_value_docs
+from .outcome_feedback import (
+    OUTCOME_FEEDBACK_LOG,
+    read_outcome_feedback,
+    record_outcome_feedback,
+    validate_outcome_feedback,
+)
+from .workflow_mesh import WORKFLOW_MESH_LOG, WorkflowMeshStore, project_workflow_run
 
 
 def _utc_now() -> str:
@@ -215,338 +148,6 @@ def _verify_principal_assertion(
             raise EngineeringDeliveryConsumerError("human principal assertion is expired or from the future")
     receipt_id = f"human-adjudication:{_sha256(signed_body)}"
     return actor, receipt_id
-
-
-def _shadow_observer_identity(info: os.stat_result) -> tuple[int, int, int, int, int]:
-    return (info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode), info.st_size, info.st_mtime_ns)
-
-
-def _shadow_observer_relative_parts(path: Path, *, workspace_root: Path) -> tuple[str, ...]:
-    try:
-        relative = path.absolute().relative_to(workspace_root.absolute())
-    except ValueError as exc:
-        raise _ShadowObserverInputError("shadow observer input escapes its workspace") from exc
-    if not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
-        raise _ShadowObserverInputError("shadow observer input path is invalid")
-    return relative.parts
-
-
-def _shadow_observer_directory_flags() -> int:
-    if not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW"):
-        raise _ShadowObserverInputError("secure directory traversal is unavailable")
-    return os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
-
-
-def _open_shadow_observer_workspace(workspace_root: Path) -> int | None:
-    try:
-        return os.open(workspace_root, _shadow_observer_directory_flags())
-    except FileNotFoundError:
-        return None
-    except OSError as exc:
-        raise _ShadowObserverInputError("shadow observer workspace cannot be opened safely") from exc
-
-
-def _open_shadow_observer_leaf(workspace_fd: int, parts: tuple[str, ...]) -> int | None:
-    parent_fd = os.dup(workspace_fd)
-    try:
-        for part in parts[:-1]:
-            try:
-                child_fd = os.open(part, _shadow_observer_directory_flags(), dir_fd=parent_fd)
-            except FileNotFoundError:
-                return None
-            except OSError as exc:
-                raise _ShadowObserverInputError("shadow observer input traversal is unsafe") from exc
-            os.close(parent_fd)
-            parent_fd = child_fd
-        flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
-        try:
-            return os.open(parts[-1], flags, dir_fd=parent_fd)
-        except FileNotFoundError:
-            return None
-        except OSError as exc:
-            raise _ShadowObserverInputError("shadow observer input cannot be opened safely") from exc
-    finally:
-        os.close(parent_fd)
-
-
-def _read_shadow_observer_bytes(fd: int, *, max_bytes: int) -> bytes:
-    chunks: list[bytes] = []
-    size = 0
-    while True:
-        chunk = os.read(fd, 65_536)
-        if not chunk:
-            return b"".join(chunks)
-        size += len(chunk)
-        if size > max_bytes:
-            raise _ShadowObserverInputError("shadow observer input exceeds the byte limit")
-        chunks.append(chunk)
-
-
-def _digest_shadow_observer_bytes(fd: int, *, max_bytes: int) -> str:
-    digest = hashlib.sha256()
-    size = 0
-    while True:
-        chunk = os.read(fd, 65_536)
-        if not chunk:
-            return digest.hexdigest()
-        size += len(chunk)
-        if size > max_bytes:
-            raise _ShadowObserverInputError("shadow observer input exceeds the byte limit")
-        digest.update(chunk)
-
-
-def _read_shadow_observer_input(
-    path: Path,
-    *,
-    workspace_root: Path,
-    workspace_fd: int,
-    max_bytes: int,
-) -> _ShadowObserverInputSnapshot:
-    """Capture one regular file through exactly one read-only descriptor."""
-    fd = _open_shadow_observer_leaf(
-        workspace_fd,
-        _shadow_observer_relative_parts(path, workspace_root=workspace_root),
-    )
-    if fd is None:
-        return _ShadowObserverInputSnapshot(path, None, None, None, None)
-    keep_open = False
-    try:
-        before = os.fstat(fd)
-        if not stat.S_ISREG(before.st_mode):
-            raise _ShadowObserverInputError("shadow observer input is not a regular file")
-        if before.st_size > max_bytes:
-            raise _ShadowObserverInputError("shadow observer input exceeds the byte limit")
-        payload = _read_shadow_observer_bytes(fd, max_bytes=max_bytes)
-        after = os.fstat(fd)
-        if _shadow_observer_identity(before) != _shadow_observer_identity(after):
-            raise _ShadowObserverInputChangedError("shadow observer input changed during capture")
-        snapshot = _ShadowObserverInputSnapshot(
-            path,
-            fd,
-            _shadow_observer_identity(after),
-            hashlib.sha256(payload).hexdigest(),
-            payload,
-        )
-        keep_open = True
-        return snapshot
-    finally:
-        if not keep_open:
-            os.close(fd)
-
-
-def _read_shadow_observer_inputs(
-    omo_dir: Path,
-) -> tuple[dict[Path, _ShadowObserverInputSnapshot], tuple[int, int, int, int, int] | None]:
-    snapshots: dict[Path, _ShadowObserverInputSnapshot] = {}
-    workspace_root = _workspace_root(omo_dir)
-    workspace_fd = _open_shadow_observer_workspace(workspace_root)
-    if workspace_fd is None:
-        return (
-            {
-                path: _ShadowObserverInputSnapshot(path, None, None, None, None)
-                for path in _shadow_observer_input_paths(omo_dir)
-            },
-            None,
-        )
-    workspace_identity = _shadow_observer_identity(os.fstat(workspace_fd))
-    total_bytes = 0
-    try:
-        for path in _shadow_observer_input_paths(omo_dir):
-            remaining_bytes = _SHADOW_OBSERVER_TOTAL_MAX_BYTES - total_bytes
-            if remaining_bytes <= 0:
-                raise _ShadowObserverInputError("shadow observer inputs exceed the total byte limit")
-            snapshots[path] = _read_shadow_observer_input(
-                path,
-                workspace_root=workspace_root,
-                workspace_fd=workspace_fd,
-                max_bytes=min(_SHADOW_OBSERVER_INPUT_MAX_BYTES, remaining_bytes),
-            )
-            total_bytes += len(snapshots[path].payload or b"")
-    except Exception:
-        _close_shadow_observer_inputs(snapshots)
-        raise
-    finally:
-        os.close(workspace_fd)
-    return snapshots, workspace_identity
-
-
-def _read_shadow_observer_jsonl(snapshot: _ShadowObserverInputSnapshot) -> list[dict[str, Any]]:
-    if snapshot.payload is None:
-        return []
-    records: list[dict[str, Any]] = []
-    for line in snapshot.payload.decode("utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            records.append(json.loads(line))
-        except json.JSONDecodeError:
-            records.append({"raw": line[:200]})
-    return records
-
-
-def _verify_shadow_observer_input(
-    snapshot: _ShadowObserverInputSnapshot,
-    *,
-    workspace_root: Path,
-    workspace_fd: int,
-) -> None:
-    """Fail closed if a captured input changed, appeared, or was replaced."""
-    current_fd = _open_shadow_observer_leaf(
-        workspace_fd,
-        _shadow_observer_relative_parts(snapshot.path, workspace_root=workspace_root),
-    )
-    if snapshot.fd is None:
-        if current_fd is None:
-            return
-        os.close(current_fd)
-        raise _ShadowObserverInputChangedError("shadow observer input appeared after capture")
-    if current_fd is None:
-        raise _ShadowObserverInputChangedError("shadow observer input disappeared after capture")
-    try:
-        current = os.fstat(current_fd)
-    finally:
-        os.close(current_fd)
-    os.lseek(snapshot.fd, 0, os.SEEK_SET)
-    captured_again_digest = _digest_shadow_observer_bytes(
-        snapshot.fd,
-        max_bytes=_SHADOW_OBSERVER_INPUT_MAX_BYTES,
-    )
-    descriptor = os.fstat(snapshot.fd)
-    if (
-        not stat.S_ISREG(current.st_mode)
-        or snapshot.identity != _shadow_observer_identity(current)
-        or snapshot.identity != _shadow_observer_identity(descriptor)
-        or snapshot.digest != captured_again_digest
-    ):
-        raise _ShadowObserverInputChangedError("shadow observer input changed after capture")
-
-
-def _verify_shadow_observer_inputs(
-    snapshots: Mapping[Path, _ShadowObserverInputSnapshot],
-    *,
-    workspace_root: Path,
-    workspace_identity: tuple[int, int, int, int, int] | None,
-) -> None:
-    workspace_fd = _open_shadow_observer_workspace(workspace_root)
-    if workspace_fd is None:
-        if workspace_identity is None:
-            return
-        raise _ShadowObserverInputChangedError("shadow observer workspace disappeared after capture")
-    try:
-        if workspace_identity is None or _shadow_observer_identity(os.fstat(workspace_fd)) != workspace_identity:
-            raise _ShadowObserverInputChangedError("shadow observer workspace changed after capture")
-        for snapshot in snapshots.values():
-            _verify_shadow_observer_input(
-                snapshot,
-                workspace_root=workspace_root,
-                workspace_fd=workspace_fd,
-            )
-    finally:
-        os.close(workspace_fd)
-
-
-def _close_shadow_observer_inputs(snapshots: Mapping[Path, _ShadowObserverInputSnapshot]) -> None:
-    for snapshot in snapshots.values():
-        if snapshot.fd is not None:
-            os.close(snapshot.fd)
-
-
-def _append_projection_status(
-    log: AppendOnlyLog,
-    existing: list[dict[str, Any]],
-    *,
-    decision_outcome_id: str,
-    status: str,
-    mos_decision_id: str | None = None,
-    error_code: str | None = None,
-) -> dict[str, Any]:
-    related = [item for item in existing if item.get("decision_outcome_id") == decision_outcome_id]
-    if related and related[-1].get("status") == status:
-        return related[-1]
-    recorded_at = _utc_now()
-    receipt = {
-        "schema": "engineering-delivery-mos-projection/v1",
-        "projection_receipt_id": (
-            f"engineering-delivery-mos-projection:{_sha256({'decision_outcome_id': decision_outcome_id, 'status': status, 'recorded_at': recorded_at})}"
-        ),
-        "decision_outcome_id": decision_outcome_id,
-        "status": status,
-        "mos_decision_id": mos_decision_id,
-        "error_code": error_code,
-        "recorded_at": recorded_at,
-    }
-    _validate_projection_receipt(receipt)
-    log.append(receipt, sort_keys=True)
-    existing.append(receipt)
-    return receipt
-
-
-def _validate_qualified_record(record: Mapping[str, Any], root: Path) -> dict[str, Any]:
-    required = {
-        "schema",
-        "decision_outcome_id",
-        "workflow_run_id",
-        "delivery_id",
-        "scene_id",
-        "tier",
-        "value_indicator_policy",
-        "source_class",
-        "adjudication_receipt_id",
-        "adjudication_assertion",
-        "human_verdict",
-        "human_actor_ref",
-        "reviewed_at",
-        "evidence_refs",
-        "source_feedback_id",
-        "source_receipt_id",
-        "recorded_at",
-    }
-    if not isinstance(record, Mapping) or set(record) != required:
-        raise EngineeringDeliveryConsumerError("invalid qualified decision-outcome record shape")
-    if record.get("schema") != QUALIFIED_DECISION_OUTCOME_SCHEMA:
-        raise EngineeringDeliveryConsumerError("invalid qualified decision-outcome schema")
-    if record.get("scene_id") != "engineering-delivery" or record.get("tier") != "shadow":
-        raise EngineeringDeliveryConsumerError("qualified decision-outcome scene policy mismatch")
-    if record.get("value_indicator_policy") is not False:
-        raise EngineeringDeliveryConsumerError("qualified decision-outcome must not count as personal value")
-    if record.get("source_class") != "real_human":
-        raise EngineeringDeliveryConsumerError("qualified decision-outcome source must be real_human")
-    if record.get("human_verdict") not in _DECISIONS:
-        raise EngineeringDeliveryConsumerError("invalid qualified decision-outcome verdict")
-    _human_actor(record.get("human_actor_ref"))
-    _timestamp(record.get("reviewed_at"), "reviewed_at")
-    _timestamp(record.get("recorded_at"), "recorded_at")
-    _evidence_refs(record.get("evidence_refs"), required=True, human_review=True)
-    review = {
-        "delivery_id": record.get("delivery_id"),
-        "decision": record.get("human_verdict"),
-        "evidence_refs": record.get("evidence_refs"),
-    }
-    asserted_actor, adjudication_receipt_id = _verify_principal_assertion(
-        record.get("adjudication_assertion"),
-        {
-            "workflow_run_id": record.get("workflow_run_id"),
-            "candidate_receipt_id": record.get("source_receipt_id"),
-            "review": review,
-        },
-        enforce_freshness=False,
-        root=root,
-    )
-    if asserted_actor != record.get("human_actor_ref"):
-        raise EngineeringDeliveryConsumerError("qualified decision-outcome actor assertion mismatch")
-    if adjudication_receipt_id != record.get("adjudication_receipt_id"):
-        raise EngineeringDeliveryConsumerError("qualified decision-outcome adjudication receipt mismatch")
-    for field in (
-        "decision_outcome_id",
-        "workflow_run_id",
-        "delivery_id",
-        "source_feedback_id",
-        "source_receipt_id",
-        "adjudication_receipt_id",
-    ):
-        _required_text(record.get(field), field)
-    return dict(record)
 
 
 def consume_engineering_delivery(
@@ -632,36 +233,6 @@ def consume_engineering_delivery(
         "scene": dict(SCENE_POLICY),
         "controls": dict(CONTROLS),
     }
-
-
-def _project_to_mos(omo_dir: Path, record: Mapping[str, Any]) -> dict[str, str]:
-    manager = MOSBeliefManager(root=_workspace_root(omo_dir))
-    existing = next(
-        (
-            item
-            for item in manager._load_state().get("decision_outcomes", [])
-            if item.get("source_run_id") == record["decision_outcome_id"]
-        ),
-        None,
-    )
-    if existing is not None:
-        return {"status": "deduplicated", "decision_id": str(existing["id"])}
-    decision_id = manager.record_decision_outcome(
-        decision_type="engineering-delivery:human-review",
-        input_summary=f"delivery={record['delivery_id']} scene=engineering-delivery tier=shadow",
-        expected_outcome="explicit human review of a submitted engineering delivery",
-        actual_outcome=str(record["human_verdict"]),
-        delta="value_indicator_policy=false",
-        source_run_id=str(record["decision_outcome_id"]),
-        metadata={
-            "scene_id": "engineering-delivery",
-            "tier": "shadow",
-            "source_class": "real_human",
-            "value_indicator_policy": False,
-            "personal_value_attribution": False,
-        },
-    )
-    return {"status": "projected", "decision_id": decision_id}
 
 
 def build_principal_assertion(
@@ -1095,59 +666,6 @@ __all__ = [
     "SCENE_BINDING",
     "SCENE_POLICY",
     "SHADOW_OBSERVER_SCHEMA",
-    "_DECISIONS",
-    "_DELIVERY_FIELDS",
-    "_ENGINEERING_REVIEW_SIGNING_KEY_ENV",
-    "_ENGINEERING_REVIEW_SIGNING_KEY_FILE",
-    "_FORBIDDEN_KEY_PARTS",
-    "_HUMAN_ACTOR_SCHEMES",
-    "_NON_HUMAN_EVIDENCE",
-    "_OPAQUE_REF_SCHEMES",
-    "_PRINCIPAL_ASSERTION_MAX_AGE",
-    "_PRINCIPAL_ASSERTION_SCHEMA",
-    "_REVIEW_FIELDS",
-    "_SHADOW_OBSERVER_INPUT_MAX_BYTES",
-    "_SHADOW_OBSERVER_TOTAL_MAX_BYTES",
-    "_ShadowObserverInputChangedError",
-    "_ShadowObserverInputError",
-    "_ShadowObserverInputSnapshot",
-    "_append_projection_status",
-    "_canonical",
-    "_close_shadow_observer_inputs",
-    "_digest_shadow_observer_bytes",
-    "_evidence_refs",
-    "_human_actor",
-    "_opaque_id",
-    "_open_shadow_observer_leaf",
-    "_open_shadow_observer_workspace",
-    "_project_to_mos",
-    "_projection_records",
-    "_qualified_log",
-    "_qualified_records",
-    "_read_shadow_observer_bytes",
-    "_read_shadow_observer_input",
-    "_read_shadow_observer_inputs",
-    "_read_shadow_observer_jsonl",
-    "_reject_forbidden_keys",
-    "_required_text",
-    "_sha256",
-    "_shadow_observer_directory_flags",
-    "_shadow_observer_identity",
-    "_shadow_observer_input_paths",
-    "_shadow_observer_relative_parts",
-    "_signing_key",
-    "_strict_envelope",
-    "_timestamp",
-    "_uri",
-    "_utc_now",
-    "_validate_delivery",
-    "_validate_primary_records",
-    "_validate_projection_receipt",
-    "_validate_qualified_record",
-    "_verify_principal_assertion",
-    "_verify_shadow_observer_input",
-    "_verify_shadow_observer_inputs",
-    "_workspace_root",
     "build_engineering_delivery_review_queue",
     "build_engineering_delivery_shadow_observer",
     "build_principal_assertion",

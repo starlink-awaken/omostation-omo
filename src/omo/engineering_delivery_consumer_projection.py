@@ -9,11 +9,11 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .engineering_delivery_consumer_constants import (
+    _DECISIONS,
     MOS_PROJECTION_RECEIPT_LOG,
     QUALIFIED_DECISION_OUTCOME_LOG,
     QUALIFIED_DECISION_OUTCOME_SCHEMA,
     SCENE_BINDING,
-    _DECISIONS,
 )
 from .engineering_delivery_consumer_validators import (
     EngineeringDeliveryConsumerError,
@@ -23,6 +23,7 @@ from .engineering_delivery_consumer_validators import (
     _sha256,
     _timestamp,
 )
+from .omo_belief import MOSBeliefManager
 from .omo_io import AppendOnlyLog, fcntl_lock
 from .omo_shared import load_yaml_value_docs
 

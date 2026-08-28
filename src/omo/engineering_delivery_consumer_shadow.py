@@ -8,12 +8,12 @@ import stat
 from pathlib import Path
 from typing import Any
 
+from . import engineering_delivery_consumer_constants as _constants
 from .engineering_delivery_consumer_constants import (
     MOS_PROJECTION_RECEIPT_LOG,
     QUALIFIED_DECISION_OUTCOME_LOG,
     SCENE_BINDING,
     SHADOW_OBSERVER_SCHEMA,
-    _SHADOW_OBSERVER_TOTAL_MAX_BYTES,
 )
 from .engineering_delivery_consumer_projection import _workspace_root
 from .engineering_delivery_consumer_validators import (
@@ -22,11 +22,6 @@ from .engineering_delivery_consumer_validators import (
 )
 from .outcome_feedback import OUTCOME_FEEDBACK_LOG
 from .workflow_mesh import WORKFLOW_MESH_LOG, project_workflow_run
-from .engineering_delivery_consumer_validators import (
-    EngineeringDeliveryConsumerError,
-    EngineeringDeliveryProjectionError,
-)
-from .workflow_mesh import project_workflow_run
 
 
 class _ShadowObserverInputError(EngineeringDeliveryConsumerError):
@@ -85,18 +80,26 @@ def _open_shadow_observer_workspace(workspace_root: Path) -> int | None:
 
 
 def _open_shadow_observer_leaf(workspace_fd: int, parts: tuple[str, ...]) -> int | None:
-    current_fd = workspace_fd
+    parent_fd = os.dup(workspace_fd)
     try:
-        for part in parts:
-            next_fd = os.open(current_fd, part, os.O_RDONLY)
-            if current_fd != workspace_fd:
-                os.close(current_fd)
-            current_fd = next_fd
-    except OSError:
-        if current_fd != workspace_fd:
-            os.close(current_fd)
-        return None
-    return current_fd
+        for part in parts[:-1]:
+            try:
+                child_fd = os.open(part, _shadow_observer_directory_flags(), dir_fd=parent_fd)
+            except FileNotFoundError:
+                return None
+            except OSError as exc:
+                raise _ShadowObserverInputError("shadow observer input traversal is unsafe") from exc
+            os.close(parent_fd)
+            parent_fd = child_fd
+        flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+        try:
+            return os.open(parts[-1], flags, dir_fd=parent_fd)
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise _ShadowObserverInputError("shadow observer input cannot be opened safely") from exc
+    finally:
+        os.close(parent_fd)
 
 
 def _read_shadow_observer_bytes(fd: int, *, max_bytes: int) -> bytes:
@@ -176,19 +179,22 @@ def _read_shadow_observer_inputs(
     total_bytes = 0
     try:
         for path in _shadow_observer_input_paths(omo_dir):
-            remaining_bytes = _SHADOW_OBSERVER_TOTAL_MAX_BYTES - total_bytes
+            remaining_bytes = _constants._SHADOW_OBSERVER_TOTAL_MAX_BYTES - total_bytes
             snapshot = _read_shadow_observer_input(
                 path,
                 workspace_root=workspace_root,
                 workspace_fd=workspace_fd,
-                max_bytes=remaining_bytes,
+                max_bytes=min(_constants._SHADOW_OBSERVER_INPUT_MAX_BYTES, remaining_bytes),
             )
             total_bytes += len(snapshot.payload or b"")
-            if total_bytes > _SHADOW_OBSERVER_TOTAL_MAX_BYTES:
+            if total_bytes > _constants._SHADOW_OBSERVER_TOTAL_MAX_BYTES:
                 raise _ShadowObserverInputError(
-                    f"shadow observer input exceeds {_SHADOW_OBSERVER_TOTAL_MAX_BYTES} bytes"
+                    f"shadow observer input exceeds {_constants._SHADOW_OBSERVER_TOTAL_MAX_BYTES} bytes"
                 )
             snapshots[path] = snapshot
+    except Exception:
+        _close_shadow_observer_inputs(snapshots)
+        raise
     finally:
         os.close(workspace_fd)
     return snapshots, workspace_identity
@@ -213,31 +219,54 @@ def _verify_shadow_observer_input(
     snapshot: _ShadowObserverInputSnapshot,
     *,
     workspace_root: Path,
-) -> _ShadowObserverInputSnapshot:
+    workspace_fd: int,
+) -> None:
+    current_fd = _open_shadow_observer_leaf(
+        workspace_fd,
+        _shadow_observer_relative_parts(snapshot.path, workspace_root=workspace_root),
+    )
+    if snapshot.fd is None:
+        if current_fd is None:
+            return
+        os.close(current_fd)
+        raise _ShadowObserverInputChangedError("shadow observer input appeared after capture")
+    if current_fd is None:
+        raise _ShadowObserverInputChangedError("shadow observer input disappeared after capture")
     try:
-        current = _read_shadow_observer_input(
-            snapshot.path,
-            workspace_root=workspace_root,
-            workspace_fd=_open_shadow_observer_workspace(workspace_root)
-            or _open_shadow_observer_workspace(workspace_root),
-            max_bytes=_SHADOW_OBSERVER_TOTAL_MAX_BYTES,
-        )
-    except _ShadowObserverInputError:
-        return snapshot
-    if current.identity != snapshot.identity:
+        current = os.fstat(current_fd)
+    finally:
+        os.close(current_fd)
+    os.lseek(snapshot.fd, 0, os.SEEK_SET)
+    captured_again_digest = _digest_shadow_observer_bytes(
+        snapshot.fd,
+        max_bytes=_constants._SHADOW_OBSERVER_INPUT_MAX_BYTES,
+    )
+    if captured_again_digest != snapshot.digest:
         raise _ShadowObserverInputChangedError(f"{snapshot.path} changed during shadow observer read")
-    return snapshot
 
 
 def _verify_shadow_observer_inputs(
     snapshots: dict[Path, _ShadowObserverInputSnapshot],
     *,
     workspace_root: Path,
-) -> dict[Path, _ShadowObserverInputSnapshot]:
-    verified: dict[Path, _ShadowObserverInputSnapshot] = {}
-    for path, snapshot in snapshots.items():
-        verified[path] = _verify_shadow_observer_input(snapshot, workspace_root=workspace_root)
-    return verified
+    workspace_identity: tuple[int, int, int, int, int] | None,
+) -> None:
+    workspace_fd = _open_shadow_observer_workspace(workspace_root)
+    if workspace_fd is None:
+        if workspace_identity is None:
+            return
+        raise _ShadowObserverInputChangedError("shadow observer workspace disappeared after capture")
+    try:
+        if workspace_identity is None or _shadow_observer_identity(os.fstat(workspace_fd)) != workspace_identity:
+            raise _ShadowObserverInputChangedError("shadow observer workspace changed after capture")
+        for snapshot in snapshots.values():
+            _verify_shadow_observer_input(
+                snapshot,
+                workspace_root=workspace_root,
+                workspace_fd=workspace_fd,
+            )
+    finally:
+        os.close(workspace_fd)
 
 
 def _close_shadow_observer_inputs(snapshots: dict[Path, _ShadowObserverInputSnapshot]) -> None:
