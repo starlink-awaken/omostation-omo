@@ -113,8 +113,6 @@ def _load_spec_binding_contract() -> ModuleType:
     return module
 
 
-
-
 from .lifecycle_preflight import (
     _complete_fresh_delivery_identity,
     _delivery_identity_from_parent,

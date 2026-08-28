@@ -314,9 +314,6 @@ def _complete_fresh_delivery_identity(
     return completed
 
 
-
-
-
 def _read_run(registry: dict[str, Any], run_id: str) -> tuple[Path, dict[str, Any]]:
     from .lifecycle import read_run
 

@@ -1010,6 +1010,7 @@ class PersonalEpisodeService:
         if not isinstance(value, str) or not value.strip():
             raise PersonalEpisodeError("invalid_request", f"{name} must be non-empty")
 
+
 __all__ = [
     "CAPABILITY",
     "DISCLOSURE_POLICY",
