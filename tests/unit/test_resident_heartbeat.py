@@ -57,7 +57,9 @@ def _system_alive_event(**overrides) -> dict:
     return event
 
 
-def test_publish_heartbeat_appends_system_alive(tmp_path: Path) -> None:
+def test_publish_heartbeat_appends_system_alive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """整点窗口 (写流路径): 事件流出现 system.alive 事件 (payload 带健康快照)。"""
+    monkeypatch.setattr(heartbeat, "_should_write_stream", lambda payload: True)
     report = heartbeat.publish_heartbeat()
     assert report == {"published": 1, "health": "recovered", "ts": _SNAPSHOT["ts"]}
 
@@ -68,6 +70,21 @@ def test_publish_heartbeat_appends_system_alive(tmp_path: Path) -> None:
     assert event["producer"] == "resident-heartbeat"
     assert event["payload"]["health"] == "recovered"
     assert event["payload"]["components_summary"]["daemon"]["ok"] is True
+
+
+def test_publish_heartbeat_ledger_only_when_normal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """正常态非整点 (降采样路径): 不写事件流, 直接写台账 (动脉B 脑电采样)。"""
+    monkeypatch.setattr(heartbeat, "_should_write_stream", lambda payload: False)
+    report = heartbeat.publish_heartbeat()
+    assert report["published"] == 0
+    assert report["ledger_only"] is True
+    assert report["health"] == "recovered"
+
+    assert not heartbeat.EVENTS_JSONL.exists() or not heartbeat.EVENTS_JSONL.read_text(encoding="utf-8").strip()
+    ledger_lines = heartbeat.HEARTBEAT_LEDGER.read_text(encoding="utf-8").splitlines()
+    assert len(ledger_lines) == 1
+    entry = json.loads(ledger_lines[0])
+    assert entry["health"] == "recovered"
 
 
 def test_publish_heartbeat_dry_run_no_write(tmp_path: Path) -> None:
