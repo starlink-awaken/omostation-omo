@@ -103,191 +103,70 @@ _ENGINEERING_REVIEW_SIGNING_KEY_FILE = "_knowledge/workflow-mesh/engineering-rev
 _PRINCIPAL_ASSERTION_MAX_AGE = timedelta(minutes=5)
 
 
-def _signing_key(root: Path | None = None) -> str:
-    """Resolve the server-owned review signing key (env wins, file fallback)."""
-    from_env = os.environ.get(_ENGINEERING_REVIEW_SIGNING_KEY_ENV, "")
-    if len(from_env) >= 32:
-        return from_env
-    key_path = (root if root is not None else Path(".omo")) / _ENGINEERING_REVIEW_SIGNING_KEY_FILE
-    try:
-        candidate = key_path.read_text(encoding="utf-8").strip()
-    except OSError:
-        return ""
-    return candidate if len(candidate) >= 32 else ""
-
-
-_NON_HUMAN_EVIDENCE = re.compile(
-    r"(?:^|[/_.:-])(test|synthetic|user[-_]?provided)(?:$|[/_.:-])",
-    re.IGNORECASE,
+from .engineering_delivery_consumer_constants import (
+    CONSUMPTION_SCHEMA,
+    CONTROLS,
+    MOS_PROJECTION_RECEIPT_LOG,
+    QUALIFIED_DECISION_OUTCOME_LOG,
+    QUALIFIED_DECISION_OUTCOME_SCHEMA,
+    REVIEW_QUEUE_SCHEMA,
+    REVIEW_SCHEMA,
+    SCENE_BINDING,
+    SCENE_POLICY,
+    SHADOW_OBSERVER_SCHEMA,
 )
-
-
-class EngineeringDeliveryConsumerError(ValueError):
-    """The delivery or review envelope is unsafe or inconsistent."""
-
-
-class EngineeringDeliveryProjectionError(OSError):
-    """The primary human outcome is durable but its MOS projection degraded."""
-
-
-class _ShadowObserverInputError(EngineeringDeliveryConsumerError):
-    """One query-only observer input is unsafe or unreadable."""
-
-
-class _ShadowObserverInputChangedError(_ShadowObserverInputError):
-    """An observer input changed after its single-descriptor capture."""
-
-
-@dataclass
-class _ShadowObserverInputSnapshot:
-    path: Path
-    fd: int | None
-    identity: tuple[int, int, int, int, int] | None
-    digest: str | None
-    payload: bytes | None
-
-
-def _canonical(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-def _sha256(value: Any) -> str:
-    return hashlib.sha256(_canonical(value).encode("utf-8")).hexdigest()
+from .engineering_delivery_consumer_projection import (
+    _append_projection_status,
+    _project_to_mos,
+    _projection_records,
+    _qualified_log,
+    _qualified_records,
+    _validate_primary_records,
+    _validate_projection_receipt,
+    _validate_qualified_record,
+    _workspace_root,
+)
+from .engineering_delivery_consumer_shadow import (
+    _close_shadow_observer_inputs,
+    _digest_shadow_observer_bytes,
+    _open_shadow_observer_leaf,
+    _open_shadow_observer_workspace,
+    _read_shadow_observer_bytes,
+    _read_shadow_observer_input,
+    _read_shadow_observer_inputs,
+    _read_shadow_observer_jsonl,
+    _shadow_observer_directory_flags,
+    _shadow_observer_identity,
+    _shadow_observer_input_paths,
+    _shadow_observer_relative_parts,
+    _ShadowObserverInputChangedError,
+    _ShadowObserverInputError,
+    _ShadowObserverInputSnapshot,
+    _verify_shadow_observer_input,
+    _verify_shadow_observer_inputs,
+)
+from .engineering_delivery_consumer_validators import (
+    EngineeringDeliveryConsumerError,
+    EngineeringDeliveryProjectionError,
+    MOSBeliefManager,
+    _canonical,
+    _evidence_refs,
+    _human_actor,
+    _opaque_id,
+    _reject_forbidden_keys,
+    _required_text,
+    _sha256,
+    _signing_key,
+    _strict_envelope,
+    _timestamp,
+    _uri,
+    _validate_delivery,
+    normalize_engineering_delivery_review,
+)
 
 
 def _utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def _required_text(value: Any, field: str, *, max_length: int = 500) -> str:
-    text = str(value or "").strip()
-    if not text:
-        raise EngineeringDeliveryConsumerError(f"missing required field: {field}")
-    if len(text) > max_length:
-        raise EngineeringDeliveryConsumerError(f"field is too long: {field}")
-    return text
-
-
-def _timestamp(value: Any, field: str) -> str:
-    text = _required_text(value, field, max_length=64)
-    try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise EngineeringDeliveryConsumerError(f"{field} must be an ISO-8601 timestamp") from exc
-    if parsed.tzinfo is None:
-        raise EngineeringDeliveryConsumerError(f"{field} must include a timezone")
-    return parsed.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def _reject_forbidden_keys(value: Any, path: str = "payload") -> None:
-    if isinstance(value, Mapping):
-        for key, nested in value.items():
-            normalized = re.sub(r"[^a-z]", "", str(key).lower())
-            if any(part in normalized for part in _FORBIDDEN_KEY_PARTS):
-                raise EngineeringDeliveryConsumerError(f"forbidden raw, secret, or verdict field: {path}.{key}")
-            _reject_forbidden_keys(nested, f"{path}.{key}")
-    elif isinstance(value, (list, tuple)):
-        for index, nested in enumerate(value):
-            _reject_forbidden_keys(nested, f"{path}[{index}]")
-
-
-def _strict_envelope(payload: Mapping[str, Any], allowed: frozenset[str], name: str) -> dict[str, Any]:
-    if not isinstance(payload, Mapping):
-        raise EngineeringDeliveryConsumerError(f"{name} envelope must be an object")
-    unknown = sorted(set(payload) - allowed)
-    if unknown:
-        raise EngineeringDeliveryConsumerError(f"unsupported {name} fields: {unknown}")
-    _reject_forbidden_keys(payload)
-    return dict(payload)
-
-
-def _uri(value: Any, field: str, *, schemes: frozenset[str] | None = None) -> str:
-    text = _required_text(value, field)
-    parsed = urlparse(text)
-    if not parsed.scheme or (schemes is not None and parsed.scheme.lower() not in schemes):
-        raise EngineeringDeliveryConsumerError(f"{field} must be an opaque URI reference")
-    if parsed.scheme.lower() == "file" or text.startswith(("/", "~")):
-        raise EngineeringDeliveryConsumerError(f"{field} must not expose a filesystem path")
-    if parsed.username or parsed.password or parsed.query or parsed.fragment:
-        raise EngineeringDeliveryConsumerError(f"{field} must be an opaque URI without credentials or query data")
-    return text
-
-
-def _opaque_id(value: Any, field: str, *, max_length: int = 160) -> str:
-    text = _required_text(value, field, max_length=max_length)
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]*", text):
-        raise EngineeringDeliveryConsumerError(f"{field} must be an opaque identifier")
-    return text
-
-
-def _evidence_refs(value: Any, *, required: bool, human_review: bool = False) -> list[str]:
-    if not isinstance(value, list):
-        raise EngineeringDeliveryConsumerError("evidence_refs must be a list")
-    if required and not value:
-        raise EngineeringDeliveryConsumerError("evidence_refs must contain at least one reference")
-    if len(value) > 20:
-        raise EngineeringDeliveryConsumerError("evidence_refs must contain at most 20 references")
-    refs = [_uri(item, "evidence_refs.item", schemes=_OPAQUE_REF_SCHEMES) for item in value]
-    if human_review and any(_NON_HUMAN_EVIDENCE.search(ref) for ref in refs):
-        raise EngineeringDeliveryConsumerError("human review evidence must not be test, synthetic, or user_provided")
-    if len(set(refs)) != len(refs):
-        raise EngineeringDeliveryConsumerError("evidence_refs must be unique")
-    return refs
-
-
-def _validate_delivery(payload: Mapping[str, Any]) -> dict[str, Any]:
-    value = _strict_envelope(payload, _DELIVERY_FIELDS, "delivery")
-    requested_at = _timestamp(value.get("requested_at"), "requested_at")
-    merged_at = _timestamp(value.get("merged_at"), "merged_at")
-    if merged_at < requested_at:
-        raise EngineeringDeliveryConsumerError("merged_at must not precede requested_at")
-    merge_sha = _required_text(value.get("merge_sha"), "merge_sha", max_length=64).lower()
-    if not re.fullmatch(r"[0-9a-f]{40,64}", merge_sha):
-        raise EngineeringDeliveryConsumerError("merge_sha must be a 40-64 character hexadecimal digest")
-    repository_ref = _uri(value.get("repository_ref"), "repository_ref", schemes=frozenset({"github"}))
-    repository_uri = urlparse(repository_ref)
-    if not repository_uri.netloc or not re.fullmatch(r"/[^/]+", repository_uri.path):
-        raise EngineeringDeliveryConsumerError("repository_ref must identify one GitHub owner/repository")
-    pr_url = _uri(value.get("pr_url"), "pr_url", schemes=frozenset({"https"}))
-    if urlparse(pr_url).hostname != "github.com" or not re.fullmatch(
-        r"/[^/]+/[^/]+/pull/[1-9][0-9]*", urlparse(pr_url).path
-    ):
-        raise EngineeringDeliveryConsumerError("pr_url must identify a GitHub pull request")
-    return {
-        "delivery_id": _opaque_id(value.get("delivery_id"), "delivery_id"),
-        "repository_ref": repository_ref,
-        "pr_url": pr_url,
-        "merge_sha": merge_sha,
-        "requested_at": requested_at,
-        "merged_at": merged_at,
-        "evidence_refs": _evidence_refs(value.get("evidence_refs"), required=True),
-    }
-
-
-def normalize_engineering_delivery_review(payload: Mapping[str, Any]) -> dict[str, Any]:
-    """Return the canonical review payload used for assertion binding."""
-    value = _strict_envelope(payload, _REVIEW_FIELDS, "review")
-    decision = _required_text(value.get("decision"), "decision", max_length=32).lower()
-    if decision not in _DECISIONS:
-        raise EngineeringDeliveryConsumerError(f"unsupported human decision: {decision}")
-    return {
-        "delivery_id": _opaque_id(value.get("delivery_id"), "delivery_id"),
-        "decision": decision,
-        "evidence_refs": _evidence_refs(value.get("evidence_refs"), required=True, human_review=True),
-    }
-
-
-def _human_actor(value: Any) -> str:
-    try:
-        actor = _uri(value, "actor", schemes=_HUMAN_ACTOR_SCHEMES)
-    except EngineeringDeliveryConsumerError as exc:
-        raise EngineeringDeliveryConsumerError(
-            "human actor must use a human://, operator://, or principal:// reference"
-        ) from exc
-    lowered = actor.lower()
-    if any(token in lowered for token in ("agent", "automation", "bot", "system")):
-        raise EngineeringDeliveryConsumerError("human actor must not identify an agent or system")
-    return actor
 
 
 def _verify_principal_assertion(
@@ -336,70 +215,6 @@ def _verify_principal_assertion(
             raise EngineeringDeliveryConsumerError("human principal assertion is expired or from the future")
     receipt_id = f"human-adjudication:{_sha256(signed_body)}"
     return actor, receipt_id
-
-
-def _workspace_root(omo_dir: Path) -> Path:
-    return omo_dir.parent if omo_dir.name == ".omo" else omo_dir
-
-
-def _qualified_log(omo_dir: Path) -> AppendOnlyLog:
-    path = omo_dir / QUALIFIED_DECISION_OUTCOME_LOG
-    return AppendOnlyLog(path, lock=fcntl_lock(path.with_suffix(path.suffix + ".lock")))
-
-
-def _qualified_records(omo_dir: Path) -> list[dict[str, Any]]:
-    records = _qualified_log(omo_dir).read_all()
-    return _validate_primary_records(records, omo_dir)
-
-
-def _validate_primary_records(records: list[dict[str, Any]], root: Path) -> list[dict[str, Any]]:
-    validated = [_validate_qualified_record(record, root) for record in records]
-    ids = [record["decision_outcome_id"] for record in validated]
-    if len(set(ids)) != len(ids):
-        raise EngineeringDeliveryConsumerError("duplicate qualified decision-outcome identity")
-    return validated
-
-
-def _validate_projection_receipt(record: Mapping[str, Any]) -> dict[str, Any]:
-    required = {
-        "schema",
-        "projection_receipt_id",
-        "decision_outcome_id",
-        "status",
-        "mos_decision_id",
-        "error_code",
-        "recorded_at",
-    }
-    if not isinstance(record, Mapping) or set(record) != required:
-        raise EngineeringDeliveryConsumerError("invalid MOS projection receipt shape")
-    if record.get("schema") != "engineering-delivery-mos-projection/v1":
-        raise EngineeringDeliveryConsumerError("invalid MOS projection receipt schema")
-    if record.get("status") not in {"pending", "projected", "degraded"}:
-        raise EngineeringDeliveryConsumerError("invalid MOS projection receipt status")
-    if record.get("status") == "projected" and not str(record.get("mos_decision_id") or "").strip():
-        raise EngineeringDeliveryConsumerError("projected MOS receipt requires mos_decision_id")
-    if record.get("status") == "degraded" and record.get("error_code") != "mos_projection_unavailable":
-        raise EngineeringDeliveryConsumerError("degraded MOS receipt requires stable error_code")
-    _required_text(record.get("projection_receipt_id"), "projection_receipt_id")
-    _required_text(record.get("decision_outcome_id"), "decision_outcome_id")
-    _timestamp(record.get("recorded_at"), "recorded_at")
-    return dict(record)
-
-
-def _projection_records(omo_dir: Path) -> list[dict[str, Any]]:
-    records = AppendOnlyLog(omo_dir / MOS_PROJECTION_RECEIPT_LOG).read_all()
-    return [_validate_projection_receipt(record) for record in records]
-
-
-def _shadow_observer_input_paths(omo_dir: Path) -> tuple[Path, ...]:
-    """Return every durable input consumed by the query-only observer."""
-    return (
-        omo_dir / QUALIFIED_DECISION_OUTCOME_LOG,
-        omo_dir / MOS_PROJECTION_RECEIPT_LOG,
-        omo_dir / OUTCOME_FEEDBACK_LOG,
-        omo_dir / WORKFLOW_MESH_LOG,
-        _workspace_root(omo_dir) / ".omo" / "state" / "agent-beliefs" / "index.yaml",
-    )
 
 
 def _shadow_observer_identity(info: os.stat_result) -> tuple[int, int, int, int, int]:
