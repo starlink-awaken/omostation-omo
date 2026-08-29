@@ -160,6 +160,9 @@ class ActionRequest:
     request_hash: str | None = None
     trace_id: str | None = None
     mandate_version: int = 1
+    principal_authority_ref: str | None = None
+    principal_receipt_digest: str | None = None
+    credential_ref: str | None = None
 
     def validate(self) -> None:
         errors: list[str] = []
@@ -199,6 +202,16 @@ class ActionRequest:
             errors.append("trace_id must match '^[A-Za-z0-9_-]{8,}$'")
         if not isinstance(self.mandate_version, int) or self.mandate_version < 1:
             errors.append("mandate_version must be an int >= 1")
+        if (
+            self.principal_authority_ref is not None
+            and re.match(r"^authority:[A-Za-z0-9_.:/-]+$", self.principal_authority_ref) is None
+        ):
+            errors.append("principal_authority_ref must match '^authority:[A-Za-z0-9_.:/-]+$'")
+        if (
+            self.principal_receipt_digest is not None
+            and re.match(r"^sha256:[a-f0-9]{64}$", self.principal_receipt_digest) is None
+        ):
+            errors.append("principal_receipt_digest must match '^sha256:[a-f0-9]{64}$'")
         if errors:
             raise InvalidActionRequestError("; ".join(errors))
 
@@ -222,6 +235,8 @@ def compute_request_hash(request: ActionRequest) -> str:
             "requested_budget": request.requested_budget,
             "budget_unit": request.budget_unit,
             "disclosure_policy": request.disclosure_policy,
+            "principal_authority_ref": request.principal_authority_ref or "",
+            "principal_receipt_digest": request.principal_receipt_digest or "",
         },
         sort_keys=True,
         allow_nan=False,
@@ -278,11 +293,17 @@ class PolicyEnforcementService:
         manager: MandateManager | None = None,
         clock: Callable[[], str] = _utc_now,
         decision_ttl_seconds: int = DEFAULT_DECISION_TTL_SECONDS,
+        authority: Any | None = None,
     ) -> None:
         self._broker = broker
         self._manager = manager or MandateManager(broker, clock=clock)
         self._clock = clock
         self._ttl = decision_ttl_seconds
+        if authority is None:
+            from omo.sovereignty.principal_authority import DefaultPrincipalAuthority
+
+            authority = DefaultPrincipalAuthority()
+        self._authority = authority
 
     @classmethod
     def open(cls, db_path: str | Any, **kwargs: Any) -> PolicyEnforcementService:
@@ -307,6 +328,14 @@ class PolicyEnforcementService:
         request.validate()
         request_hash = request.request_hash or compute_request_hash(request)
         trace_id = request.trace_id or uuid4().hex[:24]
+
+        # Principal authority verification happens BEFORE the idempotency gate:
+        # a fresh request must first prove a verified identity, and a replayed
+        # request carries the same verified authority fields.  Denial here is
+        # fail-closed with zero provider/tool/ledger effect.
+        authority_deny = self._verify_principal_authority(request, request_hash, trace_id)
+        if authority_deny is not None:
+            return DecisionResult(authority_deny, persisted=self._persist_decision(authority_deny))
 
         # Idempotency gate + PDP share one fail-closed boundary: a ledger
         # read failure anywhere here means the PDP is unavailable (deny).
@@ -422,6 +451,113 @@ class PolicyEnforcementService:
                 expires_at=timing[1],
             )
             return DecisionResult(deny, persisted=False)
+
+    def _verify_principal_authority(
+        self,
+        request: ActionRequest,
+        request_hash: str,
+        trace_id: str,
+    ) -> PolicyDecision | None:
+        """Fail-closed principal authority gate (BET-Y1Q3-T4-04).
+
+        Returns a deny PolicyDecision when authority verification fails, else
+        None.  Never produces a provider/tool/ledger effect.
+        """
+        from omo.sovereignty.principal_authority import (
+            REASON_AUTHORITY_CREDENTIAL_MISMATCH,
+            REASON_AUTHORITY_DIGEST_UNVERIFIED,
+            REASON_AUTHORITY_EXPIRED,
+            REASON_AUTHORITY_PRINCIPAL_MISMATCH,
+            REASON_AUTHORITY_REQUIRED,
+            REASON_AUTHORITY_UNKNOWN,
+            AuthorityVerificationError,
+            digest_receipt,
+        )
+
+        # 1. missing authority receipt -> deny
+        if not request.principal_authority_ref or not request.principal_receipt_digest:
+            return self._build_decision(
+                request,
+                request_hash,
+                trace_id,
+                decision="deny",
+                reason=REASON_AUTHORITY_REQUIRED,
+                description="principal authority receipt required before admission",
+            )
+
+        now = _utc_now()
+        credential_ref = request.credential_ref or ""
+        try:
+            receipt = self._authority.verify(
+                request.principal_id,
+                credential_ref,
+                now=now,
+            )
+        except AuthorityVerificationError as exc:
+            return self._build_decision(
+                request,
+                request_hash,
+                trace_id,
+                decision="deny",
+                reason=exc.reason,
+                description=str(exc),
+            )
+        except Exception as exc:  # pragma: no cover - authority infra failure
+            return self._build_decision(
+                request,
+                request_hash,
+                trace_id,
+                decision="deny",
+                reason=REASON_AUTHORITY_UNKNOWN,
+                description=str(exc),
+            )
+
+        # 2. receipt principal mismatch
+        if receipt.principal_id != request.principal_id:
+            return self._build_decision(
+                request,
+                request_hash,
+                trace_id,
+                decision="deny",
+                reason=REASON_AUTHORITY_PRINCIPAL_MISMATCH,
+                description=(
+                    f"principal authority receipt principal {receipt.principal_id!r} "
+                    f"does not match request principal {request.principal_id!r}"
+                ),
+            )
+        # 3. digest mismatch (authority digest must equal request digest)
+        if digest_receipt(receipt) != request.principal_receipt_digest:
+            return self._build_decision(
+                request,
+                request_hash,
+                trace_id,
+                decision="deny",
+                reason=REASON_AUTHORITY_DIGEST_UNVERIFIED,
+                description="principal_receipt_digest does not match authority digest",
+            )
+        # 4. expired receipt
+        try:
+            from datetime import datetime
+
+            if datetime.fromisoformat(now) > datetime.fromisoformat(receipt.expires_at):
+                return self._build_decision(
+                    request,
+                    request_hash,
+                    trace_id,
+                    decision="deny",
+                    reason=REASON_AUTHORITY_EXPIRED,
+                    description="principal authority receipt expired",
+                )
+        except ValueError:
+            return self._build_decision(
+                request,
+                request_hash,
+                trace_id,
+                decision="deny",
+                reason=REASON_AUTHORITY_EXPIRED,
+                description="malformed receipt timestamp",
+            )
+        return None
 
     # -- Receipts -------------------------------------------------------------
 
@@ -642,6 +778,8 @@ class PolicyEnforcementService:
                 expires_at=expires_at,
                 reason=reason,
                 description=description or None,
+                principal_authority_ref=request.principal_authority_ref,
+                principal_receipt_digest=request.principal_receipt_digest,
             )
         except PydanticValidationError as exc:
             raise InvalidActionRequestError(
@@ -728,6 +866,8 @@ class PolicyEnforcementService:
                 reason=reason,
                 result=result,
                 description=description or None,
+                principal_authority_ref=decision.principal_authority_ref,
+                principal_receipt_digest=decision.principal_receipt_digest,
             )
         except PydanticValidationError as exc:
             raise PolicyEnforcementError(
@@ -786,6 +926,8 @@ class PolicyEnforcementService:
             budget_unit=decision.budget_unit,
             disclosure_policy=decision.disclosure,
             request_hash=decision.request_hash,
+            principal_authority_ref=decision.principal_authority_ref,
+            principal_receipt_digest=decision.principal_receipt_digest,
         )
         try:
             self._append_decision(request, decision)
@@ -964,6 +1106,9 @@ class AgoraPepProvider:
                 request_hash=request_hash,  # trusted top-level value
                 trace_id=envelope.get("trace_id"),
                 mandate_version=int(envelope.get("mandate_version", 1)),
+                principal_authority_ref=envelope.get("principal_authority_ref"),
+                principal_receipt_digest=envelope.get("principal_receipt_digest"),
+                credential_ref=envelope.get("credential_ref"),
             )
         except (TypeError, ValueError) as exc:
             raise InvalidActionRequestError(f"malformed _omo_policy context: {exc}") from exc
