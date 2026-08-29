@@ -4,9 +4,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-
-from .lifecycle import append_ledger_event, claim_policy
 from ..omo_shared import load_yaml
+from .lifecycle import append_ledger_event, claim_policy
 
 
 def p74_solidification_report(

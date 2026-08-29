@@ -2,13 +2,12 @@
 from __future__ import annotations
 
 import os
-import time
-import signal
-import threading
 import re
+import signal
 import subprocess
+import threading
+import time
 from copy import deepcopy
-
 from pathlib import Path
 from typing import Any
 
@@ -25,8 +24,8 @@ from omo.omo_ingress_paths import (
     _workspace_relative,
 )
 from omo.omo_io import AppendOnlyLog, fcntl_lock, write_text_atomic, write_yaml_atomic
-from omo.omo_task_schema import validate_task_data
 from omo.omo_shared import load_yaml
+from omo.omo_task_schema import validate_task_data
 
 
 def record_task_execution(

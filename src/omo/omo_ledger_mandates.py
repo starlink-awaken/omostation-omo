@@ -16,7 +16,7 @@ from .omo_ledger import _emit_error, _emit_receipt
 
 def _cmd_mandate_grant(surface: EventLedgerSurface, params: dict[str, Any], is_json: bool) -> int:
     """Grant a DelegationMandate. Local only, writes via broker."""
-    from datetime import UTC, datetime, timedelta
+    from datetime import timedelta
 
     from ecos.ssot.mof.generated.control.mof_control_models import DelegationMandate
 

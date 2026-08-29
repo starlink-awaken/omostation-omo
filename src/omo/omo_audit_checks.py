@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
-from pathlib import Path
-from typing import Any
 import os
 import re
 import subprocess
 import sys
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any
 
 from omo.omo_io import AppendOnlyLog
 from omo.omo_paths import (
@@ -19,13 +19,9 @@ from omo.omo_paths import (
     WORKSPACE_ROOT,
 )
 
-
 from . import omo_audit as _audit_mod
-from .omo_audit_types import CheckResult, GovernanceReport, _load_yaml_safely
+from .omo_audit_types import CheckResult, GovernanceReport, Severity, _load_yaml_safely
 
-
-
-from .omo_lint_doc import _check_doc_referenced
 
 def governance_check_lint() -> CheckResult:
     """跑 ruff check kairon packages/, 统计 error 数."""

@@ -43,8 +43,7 @@ from omo.omo_paths import (
 )
 
 # 2026-08-29: governance check functions extracted to omo_audit_checks.py
-from .omo_audit_types import CheckResult, GovernanceReport
-from .omo_audit_types import _load_yaml_safely
+from .omo_audit_types import CheckResult, GovernanceReport, _load_yaml_safely
 
 _OMO_ROOT: Path = WORKSPACE_ROOT / ".omo"
 _KAIRON_DIR: Path = KAIRON_DIR
@@ -52,7 +51,6 @@ _WORKSPACE_ROOT: Path = WORKSPACE_ROOT
 ENV_SKIP_AGORA = "OMO_AUDIT_SKIP_AGORA"
 
 from .omo_audit_checks import (
-
     governance_check_adr_links,
     governance_check_agora_health,
     governance_check_debt_integrity,

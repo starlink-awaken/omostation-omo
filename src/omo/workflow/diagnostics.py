@@ -25,6 +25,9 @@ from .core import (
     registry_workspace_root,
     substitute,
 )
+
+# 2026-08-29: p74 solidification report extracted to diagnostics_p74.py
+from .diagnostics_p74 import p74_solidification_report
 from .diagnostics_verify import (
     build_verify_report,
     print_verify_report,
@@ -32,9 +35,6 @@ from .diagnostics_verify import (
     select_diff_checks,
     subprocess_run,
 )
-
-# 2026-08-29: p74 solidification report extracted to diagnostics_p74.py
-from .diagnostics_p74 import p74_solidification_report
 from .lifecycle import (
     append_ledger_event,
     claim_policy,

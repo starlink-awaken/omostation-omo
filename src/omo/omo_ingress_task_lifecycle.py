@@ -11,6 +11,7 @@ import os
 import re
 import signal
 import subprocess
+import sys as _sys
 import threading
 import time
 from copy import deepcopy
@@ -18,20 +19,6 @@ from pathlib import Path
 from typing import Any
 
 from omo.omo_audit import record as record_audit
-
-# 2026-08-29: task execution functions extracted to omo_ingress_task_execution.py
-from .omo_ingress_task_execution import (
-    complete_task,
-    execute_controlled_task,
-    record_task_consensus,
-    record_task_execution,
-    start_controlled_task,
-    stop_controlled_task,
-    update_done_task_evidence_paths,
-    update_planned_task_evidence_paths,
-    get_controlled_process_status,
-    restart_controlled_task,
-)
 from omo.omo_ingress_paths import (
     _artifact_lifecycle_fields,
     _audit_log_path,
@@ -45,6 +32,20 @@ from omo.omo_ingress_paths import (
 )
 from omo.omo_io import fcntl_lock, write_text_atomic, write_yaml_atomic
 from omo.omo_task_schema import validate_task_data
+
+# 2026-08-29: task execution functions extracted to omo_ingress_task_execution.py
+from .omo_ingress_task_execution import (
+    complete_task,
+    execute_controlled_task,
+    get_controlled_process_status,
+    record_task_consensus,
+    record_task_execution,
+    restart_controlled_task,
+    start_controlled_task,
+    stop_controlled_task,
+    update_done_task_evidence_paths,
+    update_planned_task_evidence_paths,
+)
 
 # P110 R1: 3 子模块 (promotion + contract + archive) extracted 936L from omo_ingress_task_lifecycle.py
 # Re-export 保持向后兼容 (cli.py / worker / 外部 import 调用点不破)

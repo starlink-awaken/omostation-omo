@@ -2,7 +2,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal
+
+# T10-58: restored from pre-extraction omo_audit.py (8a816dbe^) — the
+# extraction dropped this alias while keeping annotated uses of it.
+Severity = Literal["ok", "warn", "fail"]
 
 
 @dataclass
@@ -109,3 +114,21 @@ def _load_yaml_safely(path: Path) -> dict | None:
     except Exception:  # defensive fallback
         return None
     return _mini_yaml_parse(text)
+
+
+def _mini_yaml_parse(text: str) -> dict:
+    """极简 YAML 解析器, 仅支持 'key: value' 形式的顶层字段."""
+    out: dict = {}
+    for line in text.splitlines():
+        line = line.rstrip()
+        if not line or line.startswith(("#", " ", "\t")):
+            continue
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        key = key.strip()
+        value = value.strip()
+        if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+            value = value[1:-1]
+        out[key] = value
+    return out
