@@ -51,13 +51,13 @@ def run_cell_command(cell_pool, episode_id: str, intent: str, strategy: str = "d
 
 
 def main():
-    from omo.resident.cell_pool import CellPool
     from omo.resident.cell_dag import CellDAG
-    from omo.resident.governor import Governor, RISK_R0, RISK_R1, RISK_R2, RISK_R3
-    from omo.resident.pdp_pep import PDP, PEP
-    from omo.resident.memory_pipeline import MemoryPipeline
-    from omo.resident.cell_memory_network import MemoryNetwork
     from omo.resident.cell_governance import CellGovernance
+    from omo.resident.cell_memory_network import MemoryNetwork
+    from omo.resident.cell_pool import CellPool
+    from omo.resident.governor import RISK_R0, RISK_R1, RISK_R2, RISK_R3, Governor
+    from omo.resident.memory_pipeline import MemoryPipeline
+    from omo.resident.pdp_pep import PDP, PEP
 
     print_header("场景: 项目治理全链路")
 

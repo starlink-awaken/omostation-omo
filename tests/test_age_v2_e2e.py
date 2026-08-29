@@ -17,10 +17,10 @@ class TestCellFullPipeline(unittest.TestCase):
 
     def setUp(self):
         from omo.resident.cell import CellCoordinator
-        from omo.resident.planner import Planner
         from omo.resident.executor import Executor
-        from omo.resident.verifier import Verifier
         from omo.resident.governor import Governor
+        from omo.resident.planner import Planner
+        from omo.resident.verifier import Verifier
 
         self.cell = CellCoordinator()
         self.planner = Planner()
