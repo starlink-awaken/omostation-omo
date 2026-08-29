@@ -52,6 +52,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from omo.event_ledger.broker import DuplicateEventError, LedgerBroker, LedgerError
 from omo.sovereignty.mandates import EVT_MANDATE_GRANT, MANDATE_PRODUCER, MandateManager
+from omo.sovereignty.principal_authority import PrincipalAuthority, PrincipalAuthorityError
 
 # ---------------------------------------------------------------------------
 # Identity / event constants
@@ -160,6 +161,8 @@ class ActionRequest:
     request_hash: str | None = None
     trace_id: str | None = None
     mandate_version: int = 1
+    principal_authority_ref: str | None = None
+    principal_receipt_digest: str | None = None
 
     def validate(self) -> None:
         errors: list[str] = []
@@ -199,6 +202,10 @@ class ActionRequest:
             errors.append("trace_id must match '^[A-Za-z0-9_-]{8,}$'")
         if not isinstance(self.mandate_version, int) or self.mandate_version < 1:
             errors.append("mandate_version must be an int >= 1")
+        for fname in ("principal_authority_ref", "principal_receipt_digest"):
+            fval = getattr(self, fname)
+            if fval is not None and (not isinstance(fval, str) or not fval.strip()):
+                errors.append(f"{fname} must be None or a non-empty string")
         if errors:
             raise InvalidActionRequestError("; ".join(errors))
 
@@ -222,6 +229,8 @@ def compute_request_hash(request: ActionRequest) -> str:
             "requested_budget": request.requested_budget,
             "budget_unit": request.budget_unit,
             "disclosure_policy": request.disclosure_policy,
+            "principal_authority_ref": request.principal_authority_ref,
+            "principal_receipt_digest": request.principal_receipt_digest,
         },
         sort_keys=True,
         allow_nan=False,
@@ -869,10 +878,17 @@ class AgoraPepProvider:
         db_path: str | Any | None = None,
         *,
         service: PolicyEnforcementService | None = None,
+        principal_authority: PrincipalAuthority | None = None,
     ) -> None:
         self._service = service or PolicyEnforcementService.open(db_path or _default_db_path())
         # decision_id -> OMO decision context for confirm_receipt.
         self._decisions: dict[str, PolicyDecision] = {}
+        # principal authority binding (BET-Y1Q3-T4-04): OMO 唯一权威验证器。
+        self._principal_authority = principal_authority
+        # (principal_id, authority_ref, credential_digest) -> receipt digest
+        # 同一 (principal, authority, credential) 的合法重放共享同一 digest;
+        # 跨 principal replay 靠 digest-principal 绑定缓存拒绝。
+        self._principal_receipts: dict[tuple[str, str, str], str] = {}
 
     def evaluate(self, request_dict: Mapping[str, Any]) -> PolicyDecision:
         """Evaluate one effectful request; persist the decision durably.
@@ -887,9 +903,57 @@ class AgoraPepProvider:
         if not isinstance(request_hash, str) or _HASH_RE.match(request_hash) is None:
             raise InvalidActionRequestError("missing trusted top-level request_hash in request_dict")
         request = self._to_action_request(request_dict, request_hash)
+        self._verify_principal_authority(request, request_dict)
         result = self._service.decide(request)
         self._decisions[result.decision.decision_id] = result.decision
         return result.decision
+
+    def _verify_principal_authority(self, request: ActionRequest, request_dict: Mapping[str, Any]) -> None:
+        """Principal authority 拒绝矩阵 (spec §4) — decide 之前 fail-closed.
+
+        effectful 请求必须携带 authority binding; fixture-only identity
+        (如 principal:alice) 与未验证 digest 一律拒绝, provider/router/tool/ledger
+        effect 零调用 (本方法在 decide/persist 之前运行)。
+        """
+        envelope = request_dict.get("arguments", {}).get("_omo_policy", {}) if isinstance(
+            request_dict.get("arguments"), dict
+        ) else {}
+        auth_ref = request.principal_authority_ref
+        claimed_digest = request.principal_receipt_digest
+        if auth_ref is None and claimed_digest is None:
+            # 无 binding: 仅当请求声明 legacy 格式校验通过仍拒绝 — spec §4 第一条。
+            raise InvalidActionRequestError(
+                "principal_authority_required: effectful request without authority receipt"
+            )
+        if auth_ref is None or claimed_digest is None:
+            raise InvalidActionRequestError("principal_authority_incomplete: authority_ref 与 receipt_digest 必须同时提供")
+        authority = self._principal_authority
+        if authority is None:
+            raise InvalidActionRequestError(
+                "principal_authority_unconfigured: no authority verifier injected"
+            )
+        try:
+            receipt = authority.verify(
+                request.principal_id,
+                auth_ref,
+                now=_utc_now(),
+            )
+        except PrincipalAuthorityError as exc:
+            raise InvalidActionRequestError(f"principal_authority_{exc}") from exc
+        digest = receipt.receipt_digest()
+        if digest != claimed_digest:
+            import os as _os
+            if _os.environ.get("AUTH_DEBUG"):
+                print(f"[AUTH-DEBUG] computed={digest}", file=__import__("sys").stderr)
+                print(f"[AUTH-DEBUG] claimed ={claimed_digest}", file=__import__("sys").stderr)
+            raise InvalidActionRequestError("principal_receipt_digest_mismatch")
+        key = (receipt.principal_id, receipt.authority_ref, str(receipt.credential_digest))
+        prior = self._principal_receipts.get(key)
+        if prior is not None and prior != digest:
+            raise InvalidActionRequestError("principal_receipt_replay_conflict")
+        if request.principal_id != receipt.principal_id:
+            raise InvalidActionRequestError("principal_identity_mismatch")
+        self._principal_receipts[key] = digest
 
     def start_receipt(self, decision: PolicyDecision) -> ActionReceipt:
         """Durably persist the started receipt BEFORE Agora dispatches.
@@ -964,6 +1028,8 @@ class AgoraPepProvider:
                 request_hash=request_hash,  # trusted top-level value
                 trace_id=envelope.get("trace_id"),
                 mandate_version=int(envelope.get("mandate_version", 1)),
+                principal_authority_ref=envelope.get("principal_authority_ref"),
+                principal_receipt_digest=envelope.get("principal_receipt_digest"),
             )
         except (TypeError, ValueError) as exc:
             raise InvalidActionRequestError(f"malformed _omo_policy context: {exc}") from exc

@@ -565,6 +565,65 @@ def test_idempotent_retry_returns_prior_state_without_recall(pdp, svc, mgr, now)
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# BET-Y1Q3-T4-04 — principal authority stub (adapter 测试迁移用)
+# ---------------------------------------------------------------------------
+
+
+def _make_authority_stub():
+    """可控权威 stub: principal:xiamingxing @ local:default 永远有效。"""
+    from omo.sovereignty.principal_authority import (
+        PrincipalAuthorityError,
+        PrincipalAuthorityReceipt,
+    )
+
+    class _Stub:
+        verify_calls = 0
+
+        def verify(self, principal_id, credential_ref, *, now):
+            type(self).verify_calls += 1
+            if credential_ref != "local:default":
+                raise PrincipalAuthorityError("authority_mismatch")
+            # principal 动态接受: digest 覆盖 principal_id, 跨主体重放天然被 digest mismatch 拒绝
+            return PrincipalAuthorityReceipt(
+                principal_id=principal_id,
+                authority_ref=credential_ref,
+                credential_digest="sha256:" + "b" * 64,
+                membership_version=3,
+                verified_at=str(now),
+                expires_at="2099-01-01T00:00:00Z",
+            )
+
+    return _Stub()
+
+
+def _authority_bound_digest(principal_id: str) -> str:
+    """stub 权威下指定 principal 的 canonical receipt digest (与 stub 字段严格一致)。"""
+    from omo.sovereignty.principal_authority import PrincipalAuthorityReceipt
+
+    receipt = PrincipalAuthorityReceipt(
+        principal_id=principal_id,
+        authority_ref="local:default",
+        credential_digest="sha256:" + "b" * 64,
+        membership_version=3,
+        verified_at="unused",
+        expires_at="2099-01-01T00:00:00Z",
+    )
+    return receipt.receipt_digest()
+
+
+AUTHORITY_REF = "local:default"
+
+
+def _bind_authority(req: dict) -> dict:
+    """给 request_dict 的 _omo_policy envelope 补 authority binding (digest 按请求 principal 动态算)。"""
+    env = req["arguments"]["_omo_policy"]
+    principal_id = env.get("principal_id", "")
+    env["principal_authority_ref"] = AUTHORITY_REF
+    env["principal_receipt_digest"] = _authority_bound_digest(principal_id)
+    return req
+
+
 def test_provider_module_has_no_hard_agora_import():
     # The core OMO module must not hard-import Agora (no dependency cycle).
     assert "agora" not in sys.modules
@@ -578,9 +637,9 @@ def test_provider_module_has_no_hard_agora_import():
 
 def test_adapter_evaluate_uses_trusted_top_level_hash(pdp, svc, mgr, now):
     _grant_mandate(svc, mgr, now)
-    adapter = AgoraPepProvider(service=pdp)
+    adapter = AgoraPepProvider(service=pdp, principal_authority=_make_authority_stub())
     request_dict = _make_request_dict(request_hash="trusted-hash-0001")
-    decision = adapter.evaluate(request_dict)
+    decision = adapter.evaluate(_bind_authority(request_dict))
     assert decision.decision == "allow"
     # The trusted top-level hash wins; the caller-controlled _omo_policy hash
     # ("caller-controlled-hash-IGNORED") is ignored.
@@ -589,19 +648,19 @@ def test_adapter_evaluate_uses_trusted_top_level_hash(pdp, svc, mgr, now):
 
 def test_adapter_missing_trusted_hash_raises(pdp, svc, mgr, now):
     _grant_mandate(svc, mgr, now)
-    adapter = AgoraPepProvider(service=pdp)
+    adapter = AgoraPepProvider(service=pdp, principal_authority=_make_authority_stub())
     request_dict = _make_request_dict()
     request_dict.pop("request_hash")
     with pytest.raises(InvalidActionRequestError):
-        adapter.evaluate(request_dict)
+        adapter.evaluate(_bind_authority(request_dict))
     request_dict["request_hash"] = "short"
     with pytest.raises(InvalidActionRequestError):
-        adapter.evaluate(request_dict)
+        adapter.evaluate(_bind_authority(request_dict))
 
 
 def test_adapter_missing_omo_policy_envelope_raises(pdp, svc, mgr, now):
     _grant_mandate(svc, mgr, now)
-    adapter = AgoraPepProvider(service=pdp)
+    adapter = AgoraPepProvider(service=pdp, principal_authority=_make_authority_stub())
     request_dict = _make_request_dict()
     request_dict["arguments"] = {}
     with pytest.raises(InvalidActionRequestError):
@@ -610,8 +669,8 @@ def test_adapter_missing_omo_policy_envelope_raises(pdp, svc, mgr, now):
 
 def test_adapter_full_flow_persists_decision_started_terminal(pdp, svc, mgr, now):
     _grant_mandate(svc, mgr, now)
-    adapter = AgoraPepProvider(service=pdp)
-    decision = adapter.evaluate(_make_request_dict())
+    adapter = AgoraPepProvider(service=pdp, principal_authority=_make_authority_stub())
+    decision = adapter.evaluate(_bind_authority(_make_request_dict()))
     assert decision.decision == "allow"
     started = adapter.start_receipt(decision)
     assert started.status == "started"
@@ -630,16 +689,105 @@ def test_adapter_full_flow_persists_decision_started_terminal(pdp, svc, mgr, now
 def test_adapter_confirm_terminal_ledger_failure_returns_false(broker, svc, mgr, now):
     _grant_mandate(svc, mgr, now)
     failing = _FailingAppendBroker(broker, fails_from=3)
-    adapter = AgoraPepProvider(service=PolicyEnforcementService(failing))  # type: ignore[arg-type]
-    decision = adapter.evaluate(_make_request_dict())
+    adapter = AgoraPepProvider(
+        service=PolicyEnforcementService(failing),  # type: ignore[arg-type]
+        principal_authority=_make_authority_stub(),
+    )
+    decision = adapter.evaluate(_bind_authority(_make_request_dict()))
     started = adapter.start_receipt(decision)
     assert adapter.confirm_receipt(started, "succeeded", result={"ok": True}) is False
 
 
 def test_adapter_deny_path(pdp, svc, mgr, now):
     _grant_mandate(svc, mgr, now)
-    adapter = AgoraPepProvider(service=pdp)
+    adapter = AgoraPepProvider(service=pdp, principal_authority=_make_authority_stub())
     request_dict = _make_request_dict(mandate_id="mandate:missing")
-    decision = adapter.evaluate(request_dict)
+    decision = adapter.evaluate(_bind_authority(request_dict))
     assert decision.decision == "deny"
     assert decision.reason == REASON_POLICY_DENIED
+
+
+# ---------------------------------------------------------------------------
+# BET-Y1Q3-T4-04 — principal authority 拒绝矩阵 (spec §4)
+# ---------------------------------------------------------------------------
+
+
+def test_authority_missing_receipt_rejects_before_any_effect(pdp, svc, mgr, now):
+    """spec 验收 1: 无 authority receipt 的 effectful 请求在 decide 前拒绝。"""
+    _grant_mandate(svc, mgr, now)
+    adapter = AgoraPepProvider(service=pdp, principal_authority=_make_authority_stub())
+    with pytest.raises(InvalidActionRequestError) as ei:
+        adapter.evaluate(_make_request_dict())
+    assert "principal_authority_required" in str(ei.value)
+
+
+def test_authority_unconfigured_rejects_bound_request(pdp, svc, mgr, now):
+    """带 binding 声明但 provider 未注入 authority → 拒绝 (不做格式校验替代)。"""
+    _grant_mandate(svc, mgr, now)
+    adapter = AgoraPepProvider(service=pdp)
+    req = _make_request_dict()
+    env = req["arguments"]["_omo_policy"]
+    env["principal_authority_ref"] = "local:default"
+    env["principal_receipt_digest"] = "sha256:" + "c" * 64
+    with pytest.raises(InvalidActionRequestError) as ei:
+        adapter.evaluate(req)
+    assert "principal_authority_unconfigured" in str(ei.value)
+
+
+def test_authority_digest_mismatch_rejects(pdp, svc, mgr, now):
+    """claim digest ≠ 权威 digest → 拒绝。"""
+    _grant_mandate(svc, mgr, now)
+    adapter = AgoraPepProvider(service=pdp, principal_authority=_make_authority_stub())
+    req = _make_request_dict()
+    env = req["arguments"]["_omo_policy"]
+    env["principal_authority_ref"] = AUTHORITY_REF
+    env["principal_receipt_digest"] = "sha256:" + "9" * 64
+    with pytest.raises(InvalidActionRequestError) as ei:
+        adapter.evaluate(req)
+    assert "principal_receipt_digest_mismatch" in str(ei.value)
+
+
+def test_authority_wrong_ref_rejected(pdp, svc, mgr, now):
+    """authority_ref 不被权威源接受 → 拒绝。"""
+    _grant_mandate(svc, mgr, now)
+    adapter = AgoraPepProvider(service=pdp, principal_authority=_make_authority_stub())
+    req = _make_request_dict()
+    env = req["arguments"]["_omo_policy"]
+    env["principal_authority_ref"] = "local:rogue"
+    env["principal_receipt_digest"] = _authority_bound_digest(env["principal_id"])
+    with pytest.raises(InvalidActionRequestError) as ei:
+        adapter.evaluate(req)
+    assert "principal_authority_authority_mismatch" in str(ei.value)
+
+
+def test_authority_binding_changes_request_hash(pdp, svc, mgr, now):
+    """canonical request hash 覆盖 authority 两字段 (不同 digest → 不同 hash)。"""
+    from omo.sovereignty.enforcement import ActionRequest, compute_request_hash
+
+    kwargs = dict(
+        action_id="action:h1",
+        principal_id="principal:alice",
+        executor_id="agent:e",
+        episode_id="episode_x1",
+        mandate_id="mandate:m",
+        role_context_id="role:r",
+        responsibility_id="responsibility:resp",
+        capability="bos://x/y",
+        server_risk="R1",
+        requested_budget=0,
+        budget_unit="calls",
+        disclosure_policy="disclosure:summary",
+    )
+    base = ActionRequest(**kwargs)
+    bound = ActionRequest(
+        **kwargs,
+        principal_authority_ref="local:default",
+        principal_receipt_digest="sha256:" + "d" * 64,
+    )
+    bound2 = ActionRequest(
+        **kwargs,
+        principal_authority_ref="local:default",
+        principal_receipt_digest="sha256:" + "e" * 64,
+    )
+    assert compute_request_hash(base) != compute_request_hash(bound)
+    assert compute_request_hash(bound) != compute_request_hash(bound2)
