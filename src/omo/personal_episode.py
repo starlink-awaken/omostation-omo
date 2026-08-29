@@ -198,7 +198,7 @@ class PersonalExecutionContext:
     @property
     def omo_policy(self) -> dict[str, Any]:
         """Return the complete fail-closed W2-03 PEP envelope."""
-        return {
+        policy: dict[str, Any] = {
             "action_id": self.action_id,
             "principal_id": self.principal_id,
             "executor_id": self.executor_id,
@@ -214,10 +214,14 @@ class PersonalExecutionContext:
             "disclosure_policy": DISCLOSURE_POLICY,
             "trace_id": self.trace_id,
             "mandate_version": 1,
-            "principal_authority_ref": self.principal_authority_ref,
-            "principal_receipt_digest": self.principal_receipt_digest,
-            "credential_ref": self.credential_ref,
         }
+        if self.principal_authority_ref is not None:
+            policy["principal_authority_ref"] = self.principal_authority_ref
+        if self.principal_receipt_digest is not None:
+            policy["principal_receipt_digest"] = self.principal_receipt_digest
+        if self.credential_ref is not None:
+            policy["credential_ref"] = self.credential_ref
+        return policy
 
     def to_dict(self) -> dict[str, Any]:
         result = dict(self.omo_policy)
