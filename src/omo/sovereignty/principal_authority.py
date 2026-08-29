@@ -172,9 +172,7 @@ class DefaultPrincipalAuthority:
         ttl_seconds: int = _DEFAULT_TTL_SECONDS,
     ) -> None:
         self._members = dict(members if members is not None else _DEFAULT_MEMBERS)
-        self._fixture_only = (
-            frozenset(fixture_only) if fixture_only is not None else _FIXTURE_ONLY_PRINCIPALS
-        )
+        self._fixture_only = frozenset(fixture_only) if fixture_only is not None else _FIXTURE_ONLY_PRINCIPALS
         self._production = production
         self._ttl_seconds = ttl_seconds
 

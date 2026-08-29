@@ -202,13 +202,15 @@ class ActionRequest:
             errors.append("trace_id must match '^[A-Za-z0-9_-]{8,}$'")
         if not isinstance(self.mandate_version, int) or self.mandate_version < 1:
             errors.append("mandate_version must be an int >= 1")
-        if self.principal_authority_ref is not None and re.match(
-            r"^authority:[A-Za-z0-9_.:/-]+$", self.principal_authority_ref
-        ) is None:
+        if (
+            self.principal_authority_ref is not None
+            and re.match(r"^authority:[A-Za-z0-9_.:/-]+$", self.principal_authority_ref) is None
+        ):
             errors.append("principal_authority_ref must match '^authority:[A-Za-z0-9_.:/-]+$'")
-        if self.principal_receipt_digest is not None and re.match(
-            r"^sha256:[a-f0-9]{64}$", self.principal_receipt_digest
-        ) is None:
+        if (
+            self.principal_receipt_digest is not None
+            and re.match(r"^sha256:[a-f0-9]{64}$", self.principal_receipt_digest) is None
+        ):
             errors.append("principal_receipt_digest must match '^sha256:[a-f0-9]{64}$'")
         if errors:
             raise InvalidActionRequestError("; ".join(errors))
