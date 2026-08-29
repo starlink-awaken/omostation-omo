@@ -27,7 +27,7 @@ from omo.event_ledger.broker import (
     LedgerBroker,
     LedgerError,
 )
-from omo.event_ledger.publisher import PublishResult, PublishUncertainError, publish_due
+from omo.event_ledger.publisher import PublishResult, PublishUncertainError, publish_due, publish_to_bus, run_once
 from omo.event_ledger.schema import (
     LEDGER_DDL,
     LEDGER_SCHEMA_VERSION,
@@ -85,6 +85,8 @@ __all__ = [
     "is_wal_allowed",
     "parse_agora_stdin",
     "publish_due",
+    "publish_to_bus",
+    "run_once",
     "schema_fingerprint",
     "table_names",
     "verify_schema",
