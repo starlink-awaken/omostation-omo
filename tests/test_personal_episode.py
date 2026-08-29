@@ -1709,3 +1709,60 @@ def test_wp5_missing_lineage_not_qualifying():
         episode_id="",
     )
     assert not ok
+
+
+# ---------------------------------------------------------------------------
+# WP5 Phase 1b — record_wp5_outcome truth-writer (事务边界/幂等/拒绝)
+# ---------------------------------------------------------------------------
+
+
+def _wp5_store(tmp_path):
+    from omo.omo_adjudication import AdjudicationStore
+    from omo.omo_io import AppendOnlyLog
+
+    return AdjudicationStore(log=AppendOnlyLog(tmp_path / "adj.jsonl"))
+
+
+def test_wp5_truth_writer_happy_path(tmp_path):
+    store = _wp5_store(tmp_path)
+    result = store.record_wp5_outcome(
+        _wp5_adjudication(),
+        scene_id="engineering-delivery",
+        episode_id="ep-001",
+        burden_minutes=12.0,
+    )
+    assert result["qualifying"] is True
+    assert result["replayed"] is False
+    assert result["qualifying_count"] == 1
+
+
+def test_wp5_truth_writer_idempotent_replay(tmp_path):
+    """spec: 相同裁决重放不增加计数, 复用已有记录。"""
+    store = _wp5_store(tmp_path)
+    adj = _wp5_adjudication()
+    r1 = store.record_wp5_outcome(adj, scene_id="s", episode_id="e")
+    r2 = store.record_wp5_outcome(adj, scene_id="s", episode_id="e")
+    assert r1["qualifying"] and r2["qualifying"]
+    assert r2["replayed"] is True
+    assert r2["qualifying_count"] == 1  # 不增
+
+
+def test_wp5_truth_writer_replay_conflict(tmp_path):
+    """同 id 不同 authority digest → replay conflict 拒绝。"""
+    store = _wp5_store(tmp_path)
+    store.record_wp5_outcome(_wp5_adjudication(), scene_id="s", episode_id="e")
+    forged = _wp5_adjudication(authority_receipt_digest="sha256:" + "b" * 64)
+    result = store.record_wp5_outcome(forged, scene_id="s", episode_id="e")
+    assert result["qualifying"] is False
+    assert "replay_conflict" in result["reason"]
+
+
+def test_wp5_truth_writer_non_qualifying_no_write(tmp_path):
+    """非 qualifying → 拒绝且零写入。"""
+    store = _wp5_store(tmp_path)
+    result = store.record_wp5_outcome(_wp5_adjudication(source_class="synthetic"), scene_id="s", episode_id="e")
+    assert result["qualifying"] is False
+    assert result["qualifying_count"] == 0
+    # 进程重启后 (重读 log) 计数一致
+    store2 = _wp5_store(tmp_path)
+    assert store2._wp5_count() == 0
