@@ -23,8 +23,8 @@ class TestRealWorldDocumentAnalysis(unittest.TestCase):
     def test_analyze_readme(self):
         """分析 README.md 文档."""
         from omo.resident.cell import CellCoordinator
-        from omo.resident.planner import Planner
         from omo.resident.executor import Executor
+        from omo.resident.planner import Planner
 
         cell = CellCoordinator()
         planner = Planner()
@@ -47,8 +47,8 @@ class TestRealWorldDocumentAnalysis(unittest.TestCase):
 
     def test_analyze_directory_structure(self):
         """分析目录结构."""
-        from omo.resident.planner import Planner
         from omo.resident.executor import Executor
+        from omo.resident.planner import Planner
 
         planner = Planner()
         executor = Executor(backend="local")
@@ -65,8 +65,8 @@ class TestRealWorldCodeQuality(unittest.TestCase):
 
     def test_lint_check(self):
         """运行 lint 检查."""
-        from omo.resident.planner import Planner
         from omo.resident.executor import Executor
+        from omo.resident.planner import Planner
 
         planner = Planner()
         executor = Executor(backend="local")
@@ -229,5 +229,7 @@ if __name__ == "__main__":
     suite.addTests(loader.loadTestsFromTestCase(TestMemoryConsolidation))
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
-    print(f"\nTests run: {result.testsRun}, Successes: {result.testsRun - len(result.failures) - len(result.errors)}, Failures: {len(result.failures)}, Errors: {len(result.errors)}")
+    print(
+        f"\nTests run: {result.testsRun}, Successes: {result.testsRun - len(result.failures) - len(result.errors)}, Failures: {len(result.failures)}, Errors: {len(result.errors)}"
+    )
     sys.exit(0 if result.wasSuccessful() else 1)

@@ -25,10 +25,10 @@ class TestCellFullLifecycle(unittest.TestCase):
     def test_analysis_pipeline(self):
         """分析任务完整流水线."""
         from omo.resident.cell import CellCoordinator
-        from omo.resident.planner import Planner
         from omo.resident.executor import Executor
-        from omo.resident.verifier import Verifier
         from omo.resident.governor import Governor
+        from omo.resident.planner import Planner
+        from omo.resident.verifier import Verifier
 
         cell = CellCoordinator()
         planner = Planner()
@@ -97,7 +97,7 @@ class TestCellRecovery(unittest.TestCase):
     def test_crash_recovery(self):
         """Cell 崩溃后从快照恢复."""
         from omo.resident.cell import CellCoordinator
-        from omo.resident.cell_state import CellStateManager, snapshot_cell, restore_cell
+        from omo.resident.cell_state import CellStateManager, restore_cell, snapshot_cell
 
         # 1. 创建 Cell 并执行一些操作
         cell = CellCoordinator()
@@ -183,7 +183,7 @@ class TestGovernance(unittest.TestCase):
 
     def test_risk_assessment(self):
         """风险评估测试."""
-        from omo.resident.governor import Governor, RISK_R0, RISK_R1, RISK_R2, RISK_R3
+        from omo.resident.governor import RISK_R0, RISK_R1, RISK_R2, RISK_R3, Governor
 
         governor = Governor()
 
@@ -258,5 +258,7 @@ if __name__ == "__main__":
     suite.addTests(loader.loadTestsFromTestCase(TestMemoryPipeline))
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
-    print(f"\nTests run: {result.testsRun}, Successes: {result.testsRun - len(result.failures) - len(result.errors)}, Failures: {len(result.failures)}, Errors: {len(result.errors)}")
+    print(
+        f"\nTests run: {result.testsRun}, Successes: {result.testsRun - len(result.failures) - len(result.errors)}, Failures: {len(result.failures)}, Errors: {len(result.errors)}"
+    )
     sys.exit(0 if result.wasSuccessful() else 1)

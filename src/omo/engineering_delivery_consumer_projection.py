@@ -85,6 +85,9 @@ def _validate_qualified_record(record: Mapping[str, Any], root: Path) -> dict[st
     return dict(record)
 
 
+from .omo_belief import MOSBeliefManager
+
+
 def _project_to_mos(omo_dir: Path, record: Mapping[str, Any]) -> dict[str, str]:
     manager = MOSBeliefManager(root=_workspace_root(omo_dir))
     existing = next(
