@@ -124,6 +124,22 @@ def _decide(event: dict[str, Any]) -> str | None:
     event_type = str(event.get("event_type") or "")
     if event_type not in TRIGGER_EVENTS:
         return None
+    # T10-57: drop provenance-free trigger events — without a trace/event id
+    # the draft is an unreadable "?" placeholder and the raw event still lives
+    # in the event stream for triage.
+    if not trace_id:
+        return None
+    # T10-57: at most one draft per (event_type, trace_id) per UTC day —
+    # retries of the same failure must not append near-identical files.
+    today = datetime.now(UTC).strftime("%Y%m%d")
+    slug = _safe_slug(trace_id)
+    for existing in PROPOSAL_DIR.glob(f"decision-{today}-*-{slug}.json"):
+        try:
+            data = json.loads(existing.read_text(encoding="utf-8"))
+        except (OSError, ValueError):  # unreadable draft → treat as absent
+            continue
+        if (data.get("trigger_event") or {}).get("event_type") == event_type:
+            return None
     proposals = _scan_proposals()
     result = {
         "schema": "resident-decision/v1",
