@@ -26,7 +26,7 @@ import os
 import re
 import subprocess
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -34,11 +34,7 @@ from typing import Literal
 # 复用 omo_io.AppendOnlyLog (P49+ AppendOnlyLog 抽象: JSONL 物理读写唯一入口)
 from omo.omo_io import AppendOnlyLog
 from omo.omo_paths import (
-    DEBT_ITEMS_DIR,
-    DECISIONS_DIR,
     KAIRON_DIR,
-    KAIRON_PACKAGES,
-    TASKS_PLANNED_DIR,
     WORKSPACE_ROOT,
 )
 
