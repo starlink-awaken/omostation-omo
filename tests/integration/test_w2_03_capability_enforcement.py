@@ -64,9 +64,38 @@ def mgr(broker):
     yield MandateManager(broker)
 
 
+# W2-03 authority binding (follow-up to BET-Y1Q3-T4-04 / ecos #58): every
+# fresh request must pass the principal authority gate before admission.
+# The default authority only knows real members, so tests register the
+# fixture principal here and every ActionRequest carries the matching
+# receipt triple below.
+_ALICE_CRED_DIGEST = "sha256:" + "7a" * 32
+_ALICE_CREDENTIAL_REF = f"credential:key:1:{_ALICE_CRED_DIGEST}"
+
+
+def _test_authority():
+    """DefaultPrincipalAuthority with the fixture principal registered."""
+    from omo.sovereignty.principal_authority import DefaultPrincipalAuthority
+
+    return DefaultPrincipalAuthority(
+        members={"principal:alice": ("key", _ALICE_CRED_DIGEST, 1)},
+        fixture_only=frozenset(),
+    )
+
+
+def _alice_authority_digest() -> str:
+    from datetime import datetime
+
+    from omo.sovereignty.principal_authority import digest_receipt
+
+    auth = _test_authority()
+    receipt = auth.verify("principal:alice", _ALICE_CREDENTIAL_REF, now=datetime.now(UTC).isoformat())
+    return digest_receipt(receipt)
+
+
 @pytest.fixture()
 def pdp(broker):
-    yield PolicyEnforcementService(broker)
+    yield PolicyEnforcementService(broker, authority=_test_authority())
 
 
 @pytest.fixture()
@@ -133,6 +162,11 @@ def _request(**overrides) -> ActionRequest:
         "budget_unit": "call",
         "disclosure_policy": "disclosure:private",
         "request_hash": "req-hash-w2-03-integration",
+        # Principal authority binding (BET-Y1Q3-T4-04): verified receipt triple
+        # so the gate passes and tests exercise the semantics below it.
+        "principal_authority_ref": "authority:omo:v1:principal:alice",
+        "principal_receipt_digest": _alice_authority_digest(),
+        "credential_ref": _ALICE_CREDENTIAL_REF,
     }
     kwargs.update(overrides)
     return ActionRequest(**kwargs)  # type: ignore[arg-type]
@@ -229,7 +263,7 @@ def test_deterministic_replay_across_fresh_service(pdp, svc, mgr, now, db_path):
     # Fresh broker + service on the same db: replay is deterministic.
     broker2 = LedgerBroker.connect(db_path)
     try:
-        pdp2 = PolicyEnforcementService(broker2)
+        pdp2 = PolicyEnforcementService(broker2, authority=_test_authority())
         assert [d.model_dump(mode="json") for d in pdp2.replay_decisions()] == before_decisions
         assert [r.model_dump(mode="json") for r in pdp2.replay_receipts()] == before_receipts
         assert broker2.verify_chain(from_sequence=1)["ok"] is True
@@ -280,7 +314,7 @@ def test_request_mismatch_denied_zero_calls(pdp, svc, mgr, now):
 def test_pdp_failure_denied_zero_calls(broker, svc, mgr, now):
     _grant_mandate(svc, mgr, now)
     failing = FailingReadBroker(broker)
-    pdp = PolicyEnforcementService(failing)  # type: ignore[arg-type]
+    pdp = PolicyEnforcementService(failing, authority=_test_authority())  # type: ignore[arg-type]
     provider = FakeProvider()
     outcome = pdp.execute(_request(), provider)
     assert outcome.status == "denied"
@@ -292,7 +326,7 @@ def test_pdp_failure_denied_zero_calls(broker, svc, mgr, now):
 def test_decision_append_failure_denied_zero_calls(broker, svc, mgr, now):
     _grant_mandate(svc, mgr, now)
     failing = FailingAppendBroker(broker, fails_from=1)
-    pdp = PolicyEnforcementService(failing)  # type: ignore[arg-type]
+    pdp = PolicyEnforcementService(failing, authority=_test_authority())  # type: ignore[arg-type]
     provider = FakeProvider()
     outcome = pdp.execute(_request(), provider)
     assert outcome.status == "denied"
@@ -304,7 +338,7 @@ def test_decision_append_failure_denied_zero_calls(broker, svc, mgr, now):
 def test_started_append_failure_zero_calls(broker, svc, mgr, now):
     _grant_mandate(svc, mgr, now)
     failing = FailingAppendBroker(broker, fails_from=2)
-    pdp = PolicyEnforcementService(failing)  # type: ignore[arg-type]
+    pdp = PolicyEnforcementService(failing, authority=_test_authority())  # type: ignore[arg-type]
     provider = FakeProvider()
     outcome = pdp.execute(_request(), provider)
     assert outcome.status == "failed"
@@ -329,7 +363,7 @@ def test_provider_failure_writes_failed_receipt(pdp, svc, mgr, now, broker):
 def test_terminal_append_failure_never_succeeded_started_visible(broker, svc, mgr, now):
     _grant_mandate(svc, mgr, now)
     failing = FailingAppendBroker(broker, fails_from=3)
-    pdp = PolicyEnforcementService(failing)  # type: ignore[arg-type]
+    pdp = PolicyEnforcementService(failing, authority=_test_authority())  # type: ignore[arg-type]
     provider = FakeProvider()
     outcome = pdp.execute(_request(), provider)
     assert outcome.status == "unconfirmed"
