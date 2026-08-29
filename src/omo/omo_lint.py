@@ -189,6 +189,7 @@ _SENSITIVE_WRITE_EXEMPT_FILES = {
     "omo_ingress_task_archive.py",  # P110 split: task yield/archive (parent: omo_ingress_task_lifecycle)
     "omo_ingress_task_contract.py",  # P110 split: task contract + self-evolution routing
     "omo_ingress_task_promotion.py",  # P110 split: task promote/revert/approval repair
+    "omo_ingress_task_execution.py",  # P110-lineage split: task execution recording (parent: omo_ingress_task_lifecycle)
     "omo_ingress_task_execution.py",  # P110 split: task execution lifecycle writes via ingress broker
     "omo_release_cycle.py",
     "omo_weekly_loop.py",
