@@ -22,6 +22,54 @@ from .omo_paths import DELIVERY_DIR
 if TYPE_CHECKING:
     from .omo_autonomy_level import AutonomyLadder
 
+# ---------------------------------------------------------------------------
+# BET-Y1Q3-T4-07 (WP5) — authority-bound human adjudication 合同
+# ---------------------------------------------------------------------------
+
+WP5_SOURCE_CLASS = "real_human"
+
+
+@dataclass(frozen=True)
+class HumanAdjudication:
+    """WP5 合同: authority 绑定的人类裁决 (spec §3)。
+
+    authority_receipt_digest 来自 WP4 的 OMO 权威验证 — 无绑定不产生
+    qualifying outcome。
+    """
+
+    adjudication_id: str
+    decision_id: str
+    principal_id: str
+    verdict: str
+    source_class: str
+    authority_receipt_digest: str
+    adjudicated_at: str
+
+
+def is_qualifying_outcome(
+    adjudication: HumanAdjudication,
+    *,
+    decision_persisted: bool,
+    scene_id: str,
+    episode_id: str,
+) -> tuple[bool, str]:
+    """WP5 qualifying 判定 (spec §2 价值真值边界)。
+
+    返回 (qualifying, reason)。非 qualifying 不计 gate、价值状态不变。
+    """
+    if adjudication.source_class != WP5_SOURCE_CLASS:
+        return False, f"source_class must be {WP5_SOURCE_CLASS!r}"
+    if not adjudication.authority_receipt_digest.startswith("sha256:"):
+        return False, "authority receipt binding missing (WP4)"
+    if not adjudication.principal_id.startswith("principal:"):
+        return False, "principal_id format invalid"
+    if not decision_persisted:
+        return False, "adjudication must bind a persisted decision"
+    if not scene_id or not episode_id:
+        return False, "scene/episode lineage required"
+    return True, "ok"
+
+
 VERDICT_CONFIDENCE_DELTA: dict[str, float] = {
     "accepted": +0.05,
     "modified": -0.05,
