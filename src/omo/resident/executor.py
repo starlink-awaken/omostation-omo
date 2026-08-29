@@ -14,9 +14,10 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class Executor:
-    def __init__(self, backend: str = "local"):
+    def __init__(self, backend: str = "local", omo_dir: Path | None = None):
         self.backend = backend
         self.execution_log = []
+        self.omo_dir = omo_dir or ROOT / ".omo"
 
     def execute_plan(self, plan: dict) -> dict:
         results = [self.execute_task(t) for t in plan.get("tasks", [])]
@@ -31,9 +32,23 @@ class Executor:
         self.execution_log.append(result)
         return result
 
+    # BET-Y1Q3-T4-05 (WP2): fixed-success effectful actions — 需要 admitted
+    # workflow context 才能执行; 无 context 一律 not_executed (spec §4)。
+    EFFECTFUL_ACTIONS = frozenset({"generate_doc", "create_draft", "format_code", "run_tests", "backup", "snapshot"})
+
     def execute_task(self, task: dict) -> dict:
         action = task.get("action", "")
         target = task.get("target", "")
+        context = task.get("admitted_context")
+        if action in self.EFFECTFUL_ACTIONS:
+            # spec §4: 无 admitted workflow context 的 effectful action 拒绝, 零副作用
+            if not isinstance(context, dict) or not context:
+                return {
+                    "ok": False,
+                    "effect": "not_executed",
+                    "error": f"admitted workflow context required for effectful action: {action}",
+                }
+            return self._execute_effectful(action, target, context)
         try:
             if self.backend == "local":
                 return self._execute_local(action, target)
@@ -45,12 +60,56 @@ class Executor:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    def _execute_effectful(self, action: str, target: str, context: dict) -> dict:
+        """Receipt-backed effectful 执行 — 消费已准入 context, 经 sandbox tool 产生
+        durable receipt (幂等重放内建)。digest_ref 语义: 绑定 action+target 的
+        canonical digest 作为执行证据。"""
+        import hashlib
+        import json as _json
+
+        from omo.sandbox_tool_runner import SandboxToolError, run_sandbox_tool
+
+        input_payload = _json.dumps({"action": action, "target": target}, sort_keys=True)
+        input_digest = hashlib.sha256(input_payload.encode("utf-8")).hexdigest()
+        try:
+            result = run_sandbox_tool(
+                self.omo_dir,
+                workflow_run_id=context["workflow_run_id"],
+                trace_id=context["trace_id"],
+                dispatch_id=context["dispatch_id"],
+                worker_id=context["worker_id"],
+                step_run_id=context["step_run_id"],
+                admission_id=context["admission_id"],
+                input_ref=f"artifact://resident-effect/{action}/{target}",
+                input_digest=input_digest,
+                now=context.get("now"),
+            )
+        except SandboxToolError as exc:
+            return {"ok": False, "effect": "not_executed", "error": f"sandbox_tool_rejected: {exc}"}
+        # 幂等: 重放复用同一 invocation (sandbox runner 内建), replay 不产生第二次效果
+        receipt_digest = result.get("invocation_id") or result.get("output_digest") or ""
+        replayed = result.get("status") == "replayed"
+        return {
+            "ok": result.get("status") in {"executed", "replayed"},
+            "effect": "executed",
+            "replayed": replayed,
+            "action": action,
+            "target": target,
+            "activation": result.get("activation"),
+            "receipt_digest": receipt_digest,
+            "result": result,
+        }
+
     def _execute_local(self, action: str, target: str) -> dict:
+        # BET-Y1Q3-T4-05: local backend 只保留真实只读操作;
+        # effectful fixed-success 分支已移除 (WP2 spec §2/§3)。
         read_only = {"read_file", "list_files", "search", "query_status", "get_info", "scan", "check", "validate"}
-        low_risk = {"format_code", "generate_doc", "create_draft", "run_tests", "backup", "snapshot", "log"}
-        allowed = read_only | low_risk
-        if action not in allowed:
-            return {"ok": False, "error": f"Action '{action}' not allowed in local mode"}
+        if action not in read_only:
+            return {
+                "ok": False,
+                "effect": "not_executed",
+                "error": f"Action '{action}' requires admitted workflow context (effectful not allowed in local mode)",
+            }
         if action in ("scan", "list_files"):
             p = ROOT / target if not Path(target).is_absolute() else Path(target)
             if p.exists():
@@ -77,18 +136,6 @@ class Executor:
             return {"ok": True, "output": results[:20], "count": len(results)}
         if action == "query_status":
             return {"ok": True, "output": "System operational", "status": "healthy"}
-        if action == "generate_doc":
-            return {"ok": True, "output": f"Generated document: {target}", "doc_type": "report"}
-        if action == "create_draft":
-            return {"ok": True, "output": f"Created draft: {target}", "status": "draft"}
-        if action == "format_code":
-            return {"ok": True, "output": f"Formatted: {target}", "lines_changed": 0}
-        if action == "run_tests":
-            return {"ok": True, "output": "All tests passed", "passed": 10, "failed": 0}
-        if action == "backup":
-            return {"ok": True, "output": f"Backup created: {target}", "backup_id": f"bak-{uuid.uuid4().hex[:8]}"}
-        if action == "snapshot":
-            return {"ok": True, "output": f"Snapshot taken: {target}", "snapshot_id": f"snap-{uuid.uuid4().hex[:8]}"}
         return {"ok": False, "error": f"Unsupported local action: {action}"}
 
     def _execute_pi_worker(self, action: str, target: str) -> dict:
