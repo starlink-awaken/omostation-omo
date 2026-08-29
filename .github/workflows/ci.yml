@@ -54,7 +54,7 @@ jobs:
             --with "openai>=2.41.1" \
             --with "pydantic>=2.0" \
             --with "fastmcp>=3.4.2" \
-            --with "ecos @ git+https://github.com/starlink-awaken/omostation-ecos.git@bc067cbc8b126b186a4e138660c0c6bf20df45bb" \
+            --with "ecos @ git+https://github.com/starlink-awaken/omostation-ecos.git@e3a14731c40cfecf3e8ff9fb2242dac3ee22b2bb" \
             pytest tests/ --tb=short \
             --ignore=tests/integration \
             --ignore=tests/test_append_only_log_schemas.py \
@@ -90,7 +90,7 @@ jobs:
             --with "openai>=2.41.1" \
             --with "pydantic>=2.0" \
             --with "fastmcp>=3.4.2" \
-            --with "ecos @ git+https://github.com/starlink-awaken/omostation-ecos.git@bc067cbc8b126b186a4e138660c0c6bf20df45bb" \
+            --with "ecos @ git+https://github.com/starlink-awaken/omostation-ecos.git@e3a14731c40cfecf3e8ff9fb2242dac3ee22b2bb" \
             pytest tests/ --tb=short --cov \
             --ignore=tests/integration \
             --ignore=tests/test_append_only_log_schemas.py \
