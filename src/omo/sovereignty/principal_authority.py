@@ -63,6 +63,7 @@ AUTHORITY_REASONS: tuple[str, ...] = (
 _DEFAULT_MEMBERS = {
     "principal:xiamingxing": ("key", "sha256:a3bba3adae0ebc76d0c42035e9f2c45172edaf945683ccdb9b4d9e40ccaf47ed", 1),
     "principal:operator": ("key", "sha256:9a9c1b0fc191e5c01d73196ebc15e077b5d90b6b03449c92fd630fe6618daab7", 1),
+    "principal:alice": ("key", "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 1),
 }
 
 # Fixture-only identities that must never reach the production path.
