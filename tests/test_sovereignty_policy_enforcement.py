@@ -86,7 +86,7 @@ def now():
 
 def _grant_mandate(svc, mgr, now, *, cap="bos://mail/draft", **overrides):
     assignment = svc.assign(
-        "principal:alice",
+        "principal:xiamingxing",
         "role:family-steward",
         role_name="Family Steward",
         scope="family",
@@ -96,7 +96,7 @@ def _grant_mandate(svc, mgr, now, *, cap="bos://mail/draft", **overrides):
     kwargs = {
         "mandate_id": "mandate:enforce-001",
         "schema_version": "delegation-mandate/v1",
-        "principal_id": "principal:alice",
+        "principal_id": "principal:xiamingxing",
         "executor_id": "agent:planner",
         "episode_id": "episode_enforce",
         "role_context_id": "role:family-steward",
@@ -123,10 +123,30 @@ def _grant_mandate(svc, mgr, now, *, cap="bos://mail/draft", **overrides):
     return mgr.grant(DelegationMandate(**kwargs))
 
 
+_VALID_CREDENTIAL_XIAMINGXING = "credential:key:1:sha256:a3bba3adae0ebc76d0c42035e9f2c45172edaf945683ccdb9b4d9e40ccaf47ed"
+
+
+def _authority_digest_for(principal_id: str) -> str:
+    """Compute a fresh, valid principal receipt digest for the default clock."""
+    from omo.sovereignty.principal_authority import (
+        DefaultPrincipalAuthority,
+        digest_receipt,
+    )
+    from datetime import datetime, timezone
+
+    auth = DefaultPrincipalAuthority()
+    receipt = auth.verify(
+        principal_id,
+        _VALID_CREDENTIAL_XIAMINGXING,
+        now=datetime.now(timezone.utc).isoformat(),
+    )
+    return digest_receipt(receipt)
+
+
 def _make_request(**overrides: object) -> ActionRequest:
     kwargs: dict[str, object] = {
         "action_id": "action:draft-reply",
-        "principal_id": "principal:alice",
+        "principal_id": "principal:xiamingxing",
         "executor_id": "agent:planner",
         "episode_id": "episode_enforce",
         "mandate_id": "mandate:enforce-001",
@@ -138,6 +158,12 @@ def _make_request(**overrides: object) -> ActionRequest:
         "budget_unit": "call",
         "disclosure_policy": "disclosure:private",
         "request_hash": "req-hash-enforce-001",
+        # Principal authority binding (BET-Y1Q3-T4-04): every request carries a
+        # verified authority receipt by default; tests override to probe the
+        # fail-closed negative matrix.
+        "principal_authority_ref": "authority:omo:v1:principal:xiamingxing",
+        "principal_receipt_digest": _authority_digest_for("principal:xiamingxing"),
+        "credential_ref": _VALID_CREDENTIAL_XIAMINGXING,
     }
     kwargs.update(overrides)
     return ActionRequest(**kwargs)  # type: ignore[arg-type]
@@ -162,6 +188,9 @@ def _make_request_dict(*, request_hash="req-hash-enforce-001", **overrides):
         "request_hash": "caller-controlled-hash-IGNORED",  # must be ignored
         "trace_id": req.trace_id,
         "mandate_version": req.mandate_version,
+        "principal_authority_ref": req.principal_authority_ref,
+        "principal_receipt_digest": req.principal_receipt_digest,
+        "credential_ref": req.credential_ref,
     }
     return {
         "uri": req.capability,
@@ -643,3 +672,200 @@ def test_adapter_deny_path(pdp, svc, mgr, now):
     decision = adapter.evaluate(request_dict)
     assert decision.decision == "deny"
     assert decision.reason == REASON_POLICY_DENIED
+
+
+# ---------------------------------------------------------------------------
+# BET-Y1Q3-T4-04 Principal authority binding — fail-closed rejection matrix
+# ---------------------------------------------------------------------------
+
+
+def _grant_for_principal(svc, mgr, now, principal_id, mandate_id="mandate:enforce-001"):
+    assignment = svc.assign(
+        principal_id,
+        "role:family-steward",
+        role_name="Family Steward",
+        scope="family",
+        responsibilities=["family-commitments"],
+    )
+    resp = assignment.responsibilities[0]
+    from omo.sovereignty.mandates import DelegationMandate
+    kwargs = {
+        "mandate_id": mandate_id,
+        "schema_version": "delegation-mandate/v1",
+        "principal_id": principal_id,
+        "executor_id": "agent:planner",
+        "episode_id": "episode_enforce",
+        "role_context_id": "role:family-steward",
+        "role_assignment_id": assignment.assignment_id,
+        "role_assignment_version": assignment.version,
+        "responsibility_id": resp.resp_id,
+        "responsibility_version": resp.version,
+        "purpose": "Enforcement test mandate",
+        "capability_scope": ["bos://mail/draft"],
+        "autonomy_level": "A3",
+        "risk_ceiling": "R2",
+        "approval_mode": "matrix",
+        "disclosure_policy": "disclosure:private",
+        "valid_from": now - timedelta(hours=1),
+        "expires_at": now + timedelta(days=365),
+        "budget_limit": 10.0,
+        "budget_unit": "call",
+        "revocable": True,
+        "trace_id": "enforce001234567890abcdef12",
+        "mandate_version": 1,
+        "status": "active",
+    }
+    return mgr.grant(DelegationMandate(**kwargs))
+
+
+def _assert_denied_zero_effect(outcome, decision, *, reason):
+    assert outcome.status == OUTCOME_DENIED
+    assert outcome.provider_calls == 0
+    assert decision is not None
+    assert decision.decision == "deny"
+    assert decision.reason == reason
+
+
+def test_authority_missing_receipt_denied(broker, svc, mgr, now):
+    _grant_for_principal(svc, mgr, now, "principal:xiamingxing")
+    pdp = PolicyEnforcementService(broker, manager=mgr)
+    provider = _CountingProvider()
+    req = _make_request(principal_authority_ref=None, principal_receipt_digest=None, credential_ref=None)
+    outcome = pdp.execute(req, provider)
+    decision = pdp.decision("action:draft-reply")
+    from omo.sovereignty.principal_authority import REASON_AUTHORITY_REQUIRED
+    _assert_denied_zero_effect(outcome, decision, reason=REASON_AUTHORITY_REQUIRED)
+
+
+def test_authority_principal_mismatch_denied(broker, svc, mgr, now):
+    _grant_for_principal(svc, mgr, now, "principal:xiamingxing")
+    from omo.sovereignty.principal_authority import (
+        PrincipalAuthorityReceipt,
+        digest_receipt,
+        REASON_AUTHORITY_PRINCIPAL_MISMATCH,
+    )
+    # Defensive branch: a buggy authority returns a receipt for a DIFFERENT
+    # principal than the request -> must deny before any mandate/admission work.
+    class _WrongPrincipalAuthority:
+        def verify(self, principal_id, credential_ref, *, now):
+            return PrincipalAuthorityReceipt(
+                principal_id="principal:someone-else",
+                authority_ref="authority:omo:v1:principal:someone-else",
+                credential_digest="sha256:" + "a" * 64,
+                membership_version=1,
+                verified_at=now,
+                expires_at="2999-01-01T00:00:00+00:00",
+            )
+
+    wrong = _WrongPrincipalAuthority()
+    pdp = PolicyEnforcementService(broker, manager=mgr, authority=wrong)
+    provider = _CountingProvider()
+    req = _make_request(principal_receipt_digest=digest_receipt(wrong.verify("principal:xiamingxing", "", now=now.isoformat())))
+    outcome = pdp.execute(req, provider)
+    decision = pdp.decision("action:draft-reply")
+    _assert_denied_zero_effect(outcome, decision, reason=REASON_AUTHORITY_PRINCIPAL_MISMATCH)
+
+
+def test_authority_digest_unverified_denied(broker, svc, mgr, now):
+    _grant_for_principal(svc, mgr, now, "principal:xiamingxing")
+    pdp = PolicyEnforcementService(broker, manager=mgr)
+    provider = _CountingProvider()
+    forged_digest = "sha256:" + "a" * 64
+    req = _make_request(principal_receipt_digest=forged_digest)
+    outcome = pdp.execute(req, provider)
+    decision = pdp.decision("action:draft-reply")
+    from omo.sovereignty.principal_authority import REASON_AUTHORITY_DIGEST_UNVERIFIED
+    _assert_denied_zero_effect(outcome, decision, reason=REASON_AUTHORITY_DIGEST_UNVERIFIED)
+
+
+def test_authority_expired_denied(broker, svc, mgr, now):
+    _grant_for_principal(svc, mgr, now, "principal:xiamingxing")
+    from omo.sovereignty.principal_authority import (
+        PrincipalAuthorityReceipt,
+        digest_receipt,
+        REASON_AUTHORITY_EXPIRED,
+    )
+    # Defensive branch: authority returns an already-expired receipt -> deny.
+    class _ExpiredAuthority:
+        def verify(self, principal_id, credential_ref, *, now):
+            return PrincipalAuthorityReceipt(
+                principal_id=principal_id,
+                authority_ref=f"authority:omo:v1:{principal_id}",
+                credential_digest="sha256:" + "a" * 64,
+                membership_version=1,
+                verified_at="2000-01-01T00:00:00+00:00",
+                expires_at="2000-01-02T00:00:00+00:00",
+            )
+
+    expired = _ExpiredAuthority()
+    pdp = PolicyEnforcementService(broker, manager=mgr, authority=expired)
+    provider = _CountingProvider()
+    req = _make_request(
+        principal_receipt_digest=digest_receipt(expired.verify("principal:xiamingxing", "", now=now.isoformat()))
+    )
+    outcome = pdp.execute(req, provider)
+    decision = pdp.decision("action:draft-reply")
+    _assert_denied_zero_effect(outcome, decision, reason=REASON_AUTHORITY_EXPIRED)
+
+
+def test_authority_unknown_denied(broker, svc, mgr, now):
+    _grant_for_principal(svc, mgr, now, "principal:xiamingxing")
+    pdp = PolicyEnforcementService(broker, manager=mgr)
+    provider = _CountingProvider()
+    # unknown principal (not in authority members) with a fabricated ref
+    req = _make_request(
+        principal_id="principal:nobody",
+        principal_authority_ref="authority:omo:v1:principal:nobody",
+        principal_receipt_digest="sha256:" + "b" * 64,
+        credential_ref="credential:key:1:sha256:" + "c" * 64,
+    )
+    outcome = pdp.execute(req, provider)
+    decision = pdp.decision("action:draft-reply")
+    from omo.sovereignty.principal_authority import REASON_AUTHORITY_UNKNOWN
+    _assert_denied_zero_effect(outcome, decision, reason=REASON_AUTHORITY_UNKNOWN)
+
+
+def test_authority_credential_mismatch_denied(broker, svc, mgr, now):
+    _grant_for_principal(svc, mgr, now, "principal:xiamingxing")
+    pdp = PolicyEnforcementService(broker, manager=mgr)
+    provider = _CountingProvider()
+    wrong_cred = "credential:key:1:sha256:" + "d" * 64
+    req = _make_request(credential_ref=wrong_cred)
+    outcome = pdp.execute(req, provider)
+    decision = pdp.decision("action:draft-reply")
+    from omo.sovereignty.principal_authority import REASON_AUTHORITY_CREDENTIAL_MISMATCH
+    _assert_denied_zero_effect(outcome, decision, reason=REASON_AUTHORITY_CREDENTIAL_MISMATCH)
+
+
+def test_authority_version_rollback_denied(broker, svc, mgr, now):
+    _grant_for_principal(svc, mgr, now, "principal:xiamingxing")
+    pdp = PolicyEnforcementService(broker, manager=mgr)
+    provider = _CountingProvider()
+    rollback_cred = "credential:key:0:sha256:a3bba3adae0ebc76d0c42035e9f2c45172edaf945683ccdb9b4d9e40ccaf47ed"
+    req = _make_request(credential_ref=rollback_cred)
+    outcome = pdp.execute(req, provider)
+    decision = pdp.decision("action:draft-reply")
+    from omo.sovereignty.principal_authority import REASON_AUTHORITY_VERSION_ROLLBACK
+    _assert_denied_zero_effect(outcome, decision, reason=REASON_AUTHORITY_VERSION_ROLLBACK)
+
+
+def test_authority_fixture_only_production_denied(broker, svc, mgr, now):
+    _grant_for_principal(svc, mgr, now, "principal:alice")
+    from omo.sovereignty.principal_authority import DefaultPrincipalAuthority
+    pdp = PolicyEnforcementService(
+        broker,
+        manager=mgr,
+        authority=DefaultPrincipalAuthority(production=True),
+    )
+    provider = _CountingProvider()
+    # principal:alice (fixture-only) must be rejected on the production path
+    from omo.sovereignty.principal_authority import REASON_AUTHORITY_UNKNOWN
+    req = _make_request(
+        principal_id="principal:alice",
+        principal_authority_ref="authority:omo:v1:principal:alice",
+        principal_receipt_digest="sha256:" + "e" * 64,
+        credential_ref="credential:key:1:sha256:" + "f" * 64,
+    )
+    outcome = pdp.execute(req, provider)
+    decision = pdp.decision("action:draft-reply")
+    _assert_denied_zero_effect(outcome, decision, reason=REASON_AUTHORITY_UNKNOWN)
