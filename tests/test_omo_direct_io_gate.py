@@ -177,6 +177,15 @@ def test_cmd_lint_sensitive_governed_writes_allows_broker_usage(tmp_path: Path, 
     assert "direct_writes=0" in captured.out
 
 
+def test_real_task_execution_module_is_authorized_ingress() -> None:
+    """P110 task execution extraction remains an authorized broker boundary."""
+    task_execution = Path(__file__).resolve().parents[1] / "src" / "omo" / "omo_ingress_task_execution.py"
+
+    rc = cmd_lint_sensitive_governed_writes([str(task_execution)])
+
+    assert rc == 0
+
+
 def test_cmd_lint_mutation_ledger_passes_with_committed_entry(tmp_path: Path, capsys) -> None:
     artifact_path = tmp_path / "runtime" / "omo" / "_delivery" / "ingress" / "tasks" / "TASK-1.yaml"
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
