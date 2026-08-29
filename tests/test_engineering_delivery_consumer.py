@@ -16,6 +16,8 @@ import pytest
 import omo.engineering_delivery_consumer as consumer
 import omo.engineering_delivery_consumer_helpers as consumer_helpers
 import omo.omo_external_resources as external_resources
+from omo import engineering_delivery_consumer_constants as _constants_module
+from omo import engineering_delivery_consumer_shadow as _shadow_module
 from omo.engineering_delivery_consumer import (
     EngineeringDeliveryConsumerError,
     EngineeringDeliveryProjectionError,
@@ -226,7 +228,7 @@ def test_human_review_is_idempotent_and_projects_primary_log_and_mos(tmp_path):
         _review(),
         workflow_run_id="run-delivery-1",
         principal_assertion=_assertion(_review()),
-    )
+     )
 
     assert first["status"] == "recorded"
     assert replay["status"] == "deduplicated"
@@ -567,7 +569,7 @@ def test_query_only_shadow_observer_fails_closed_when_captured_input_changes(
 ):
     root = _populated_shadow_observer_root(tmp_path)
     changed_path = root / relative_path
-    original_read = consumer._read_shadow_observer_input
+    original_read = _shadow_module._read_shadow_observer_input
 
     def read_then_change(path, **kwargs):
         snapshot = original_read(path, **kwargs)
@@ -575,7 +577,7 @@ def test_query_only_shadow_observer_fails_closed_when_captured_input_changes(
             changed_path.write_bytes(replacement)
         return snapshot
 
-    monkeypatch.setattr(consumer_helpers, "_read_shadow_observer_input", read_then_change)
+    monkeypatch.setattr(_shadow_module, "_read_shadow_observer_input", read_then_change)
 
     result = build_engineering_delivery_shadow_observer(
         root,
@@ -639,7 +641,7 @@ def test_query_only_shadow_observer_rejects_an_unsafe_opt_out_without_writes(tmp
 
 def test_query_only_shadow_observer_closes_prior_descriptors_when_capture_fails(tmp_path, monkeypatch):
     root = _populated_shadow_observer_root(tmp_path)
-    original_read = consumer._read_shadow_observer_input
+    original_read = _shadow_module._read_shadow_observer_input
     captured_fds: list[int] = []
 
     def read_or_fail(path, **kwargs):
@@ -650,7 +652,7 @@ def test_query_only_shadow_observer_closes_prior_descriptors_when_capture_fails(
             captured_fds.append(snapshot.fd)
         return snapshot
 
-    monkeypatch.setattr(consumer_helpers, "_read_shadow_observer_input", read_or_fail)
+    monkeypatch.setattr(_shadow_module, "_read_shadow_observer_input", read_or_fail)
 
     result = build_engineering_delivery_shadow_observer(
         root,
@@ -749,7 +751,7 @@ def test_query_only_shadow_observer_rejects_a_symlinked_input_ancestor(tmp_path)
 
 def test_query_only_shadow_observer_fails_closed_when_an_ancestor_is_replaced(tmp_path, monkeypatch):
     root = _populated_shadow_observer_root(tmp_path)
-    original_read = consumer._read_shadow_observer_input
+    original_read = _shadow_module._read_shadow_observer_input
     knowledge_dir = root / "_knowledge"
     backup_dir = root / "_knowledge-before-replacement"
 
@@ -760,7 +762,7 @@ def test_query_only_shadow_observer_fails_closed_when_an_ancestor_is_replaced(tm
             knowledge_dir.mkdir()
         return snapshot
 
-    monkeypatch.setattr(consumer_helpers, "_read_shadow_observer_input", read_then_replace)
+    monkeypatch.setattr(_shadow_module, "_read_shadow_observer_input", read_then_replace)
 
     result = build_engineering_delivery_shadow_observer(
         root,
@@ -775,7 +777,7 @@ def test_query_only_shadow_observer_fails_closed_when_an_ancestor_is_replaced(tm
 def test_query_only_shadow_observer_detects_same_identity_content_replacement(tmp_path, monkeypatch):
     root = _populated_shadow_observer_root(tmp_path)
     primary_path = root / consumer.QUALIFIED_DECISION_OUTCOME_LOG
-    original_read = consumer._read_shadow_observer_input
+    original_read = _shadow_module._read_shadow_observer_input
 
     def read_then_replace(path, **kwargs):
         snapshot = original_read(path, **kwargs)
@@ -788,7 +790,7 @@ def test_query_only_shadow_observer_detects_same_identity_content_replacement(tm
             )
         return snapshot
 
-    monkeypatch.setattr(consumer_helpers, "_read_shadow_observer_input", read_then_replace)
+    monkeypatch.setattr(_shadow_module, "_read_shadow_observer_input", read_then_replace)
 
     result = build_engineering_delivery_shadow_observer(
         root,
@@ -802,7 +804,7 @@ def test_query_only_shadow_observer_detects_same_identity_content_replacement(tm
 
 def test_query_only_shadow_observer_rejects_oversized_inputs_without_reading_them(tmp_path, monkeypatch):
     root = _populated_shadow_observer_root(tmp_path)
-    monkeypatch.setattr(consumer_helpers, "_SHADOW_OBSERVER_INPUT_MAX_BYTES", 1)
+    monkeypatch.setattr(_constants_module, "_SHADOW_OBSERVER_INPUT_MAX_BYTES", 1)
 
     result = build_engineering_delivery_shadow_observer(
         root,
@@ -820,8 +822,8 @@ def test_query_only_shadow_observer_enforces_the_total_byte_budget(tmp_path, mon
     total_bytes = sum(path.stat().st_size for path in input_paths)
     largest_input = max(path.stat().st_size for path in input_paths)
     assert total_bytes > largest_input
-    monkeypatch.setattr(consumer_helpers, "_SHADOW_OBSERVER_INPUT_MAX_BYTES", largest_input + 1)
-    monkeypatch.setattr(consumer_helpers, "_SHADOW_OBSERVER_TOTAL_MAX_BYTES", total_bytes - 1)
+    monkeypatch.setattr(_constants_module, "_SHADOW_OBSERVER_INPUT_MAX_BYTES", largest_input + 1)
+    monkeypatch.setattr(_constants_module, "_SHADOW_OBSERVER_TOTAL_MAX_BYTES", total_bytes - 1)
 
     result = build_engineering_delivery_shadow_observer(
         root,

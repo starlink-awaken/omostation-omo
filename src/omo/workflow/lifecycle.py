@@ -209,181 +209,6 @@ def run_stage(
     return 0 if all(item["ok"] for item in results) else 1
 
 
-def sanitize_lock_name(scope: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", scope).strip("_") or "workspace"
-
-
-def _bounded_lock_name(scope: str, max_len: int) -> str:
-    """锁文件名上限保护: 超长时截断 + 内容 hash 后缀降低碰撞风险.
-
-    macOS filename 上限 255 bytes; `verify` 不带 run_id 时 lifecycle 会把
-    argv 串拼进 run_id → 锁名可达数千字节 → Errno 63 崩溃 (T1-05A 修复轮实测).
-    """
-    import hashlib
-
-    name = sanitize_lock_name(scope)
-    if len(name) <= max_len:
-        return name
-    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:12]
-    return f"{name[: max_len - len(digest) - 1]}-{digest}"
-
-
-@contextmanager
-def run_update_lock(registry: dict[str, Any], run_id: str):
-    lock_dir = lock_state_dir(registry)
-    lock_dir.mkdir(parents=True, exist_ok=True)
-    lock_name = _bounded_lock_name(run_id, _RUN_UPDATE_LOCK_NAME_MAX_LEN)
-    lock_path = lock_dir / f"run_{lock_name}.update.lock"
-    deadline = time.monotonic() + RUN_UPDATE_LOCK_TIMEOUT_SECONDS
-    acquired = False
-    while not acquired:
-        try:
-            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                handle.write(f"run_id: {run_id}\ncreated_at: {utc_now()}\n")
-            acquired = True
-        except FileExistsError:
-            try:
-                if time.time() - lock_path.stat().st_mtime > RUN_UPDATE_LOCK_TIMEOUT_SECONDS:
-                    lock_path.unlink(missing_ok=True)
-                    continue
-            except FileNotFoundError:
-                continue
-            if time.monotonic() >= deadline:
-                raise WorkflowError(f"timed out waiting for run update lock: {display_path(lock_path)}")
-            time.sleep(0.05)
-    try:
-        yield
-    finally:
-        if acquired:
-            lock_path.unlink(missing_ok=True)
-
-
-def append_ledger_event(registry: dict[str, Any], event: dict[str, Any]) -> None:
-    path = ledger_path(registry)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"ts": utc_now(), **event}
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
-
-
-def _extract_run_timestamp(run_id: str) -> str | None:
-    """Parse the timestamp embedded in a run_id like 20260723T062855Z-..."""
-    if len(run_id) < 16 or not run_id[:4].isdigit():
-        return None
-    return f"{run_id[:4]}-{run_id[4:6]}-{run_id[6:8]}T{run_id[9:11]}:{run_id[11:13]}:{run_id[13:15]}Z"
-
-
-def ledger_mentions_run(registry: dict[str, Any], run_id: str) -> bool:
-    path = ledger_path(registry)
-    if not path.exists() or path.stat().st_size == 0:
-        return False
-    needle = f'"run_id": "{run_id}"'
-    # also match compact JSON without space after colon
-    needle_alt = f'"run_id":"{run_id}"'
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return False
-    return needle in text or needle_alt in text
-
-
-def heal_ledger_for_run(
-    registry: dict[str, Any],
-    run_id: str,
-    payload: dict[str, Any],
-) -> bool:
-    """ADR-0209 A2: if ledger has no event for a known run, replay from run yaml.
-
-    Reconstructs a minimal start (and close if terminal) event so observe/compliance
-    do not warn forever after events.jsonl was trimmed externally.
-    Returns True when a heal write happened.
-    """
-    if ledger_mentions_run(registry, run_id):
-        return False
-    original_ts = payload.get("created_at") or _extract_run_timestamp(run_id)
-    append_ledger_event(
-        registry,
-        {
-            "event": "agent_workflow_start",
-            "run_id": run_id,
-            "workflow_id": payload.get("workflow_id"),
-            "actor": payload.get("actor"),
-            "agent_profile": payload.get("agent_profile"),
-            "objective": payload.get("objective"),
-            "path": payload.get("path"),
-            "locks": payload.get("locks") or [],
-            "healed": True,
-            "heal_reason": "ledger_missing_run_replay_from_run_yaml",
-            "ts": original_ts or utc_now(),
-        },
-    )
-    status = str(payload.get("status") or "")
-    if status in {"ok", "failed", "blocked"}:
-        close_ts = payload.get("closed_at") or payload.get("updated_at") or original_ts
-        append_ledger_event(
-            registry,
-            {
-                "event": "agent_workflow_close",
-                "run_id": run_id,
-                "workflow_id": payload.get("workflow_id"),
-                "status": status,
-                "evidence": payload.get("evidence") or [],
-                "healed": True,
-                "heal_reason": "ledger_missing_run_replay_from_run_yaml",
-                "ts": close_ts or utc_now(),
-            },
-        )
-    return True
-
-
-_HEARTBEAT_STALE_SECONDS = 3600
-
-
-def _classify_existing_lock(lock_path: Path) -> dict[str, Any]:
-    """Classify an existing lock as live, zombie_expired, or zombie_stale_heartbeat."""
-    try:
-        payload = yaml.safe_load(lock_path.read_text(encoding="utf-8")) or {}
-    except (yaml.YAMLError, OSError):
-        return {"kind": "zombie_stale_heartbeat", "detail": "unreadable lock file"}
-    expires = payload.get("expires_at", "")
-    if expires:
-        try:
-            exp_dt = datetime.fromisoformat(expires.replace("Z", "+00:00"))
-            if datetime.now(UTC) > exp_dt:
-                return {
-                    "kind": "zombie_expired",
-                    "detail": f"expired at {expires}",
-                    "payload": payload,
-                }
-        except ValueError:
-            pass
-    heartbeat = payload.get("last_heartbeat", "")
-    if heartbeat:
-        try:
-            hb_dt = datetime.fromisoformat(heartbeat.replace("Z", "+00:00"))
-            age = (datetime.now(UTC) - hb_dt).total_seconds()
-            if age > _HEARTBEAT_STALE_SECONDS:
-                return {
-                    "kind": "zombie_stale_heartbeat",
-                    "detail": f"heartbeat {age:.0f}s ago (> {_HEARTBEAT_STALE_SECONDS}s)",
-                    "payload": payload,
-                }
-        except ValueError:
-            pass
-    return {"kind": "live", "detail": "holder active", "payload": payload}
-
-
-def heartbeat_lock(lock_path: Path) -> None:
-    """Update last_heartbeat on a lock file to signal liveness."""
-    try:
-        payload = yaml.safe_load(lock_path.read_text(encoding="utf-8")) or {}
-        payload["last_heartbeat"] = utc_now()
-        write_yaml_atomic(lock_path, payload)
-    except OSError:
-        pass
-
-
 def heartbeat_run(registry: dict[str, Any], run_id: str) -> dict[str, Any]:
     """Serialize and renew every lock owned by one active run."""
     with run_update_lock(registry, run_id):
@@ -467,109 +292,6 @@ def _heartbeat_run_locked(registry: dict[str, Any], run_id: str) -> dict[str, An
         "renewed": renewed,
         "count": len(renewed),
     }
-
-
-def acquire_locks(
-    registry: dict[str, Any],
-    scopes: list[str],
-    run_id: str,
-    actor: str,
-    force: bool,
-) -> list[str]:
-    lock_dir = lock_state_dir(registry)
-    lock_dir.mkdir(parents=True, exist_ok=True)
-    acquired: list[str] = []
-    acquired_paths: list[Path] = []
-    ttl_hours = float(registry.get("runner", {}).get("lock_ttl_hours", 24))
-    expires_at = (datetime.now(UTC) + timedelta(hours=ttl_hours)).replace(microsecond=0)
-    try:
-        for scope in scopes:
-            lock_name = _bounded_lock_name(scope, _PATH_LOCK_NAME_MAX_LEN)
-            lock_path = lock_dir / f"{lock_name}.lock.yaml"
-            now_ts = utc_now()
-            payload = {
-                "run_id": run_id,
-                "actor": actor,
-                "scope": scope,
-                "created_at": now_ts,
-                "last_heartbeat": now_ts,
-                "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
-            }
-            if lock_path.exists() and not force:
-                classification = _classify_existing_lock(lock_path)
-                existing = lock_path.read_text(encoding="utf-8").strip()
-                if classification["kind"] == "live":
-                    raise WorkflowError(
-                        f"lock HELD (live) for {scope}: {lock_path}\n"
-                        f"  holder is active — {classification['detail']}\n"
-                        f"{existing}"
-                    )
-                lock_path.unlink(missing_ok=True)
-            with lock_path.open("w" if force else "x", encoding="utf-8") as handle:
-                yaml.safe_dump(payload, handle, allow_unicode=True, sort_keys=False)
-            acquired_paths.append(lock_path)
-            acquired.append(display_path(lock_path))
-    except WorkflowError:
-        raise
-    except Exception:
-        for path in acquired_paths:
-            path.unlink(missing_ok=True)
-        raise
-    return acquired
-
-
-def release_locks(registry: dict[str, Any], run_id: str) -> list[str]:
-    lock_dir = lock_state_dir(registry)
-    released: list[str] = []
-    if not lock_dir.exists():
-        return released
-    for lock_path in lock_dir.glob("*.lock.yaml"):
-        try:
-            payload = yaml.safe_load(lock_path.read_text(encoding="utf-8")) or {}
-        except yaml.YAMLError:
-            continue
-        if payload.get("run_id") == run_id:
-            lock_path.unlink()
-            released.append(display_path(lock_path))
-    return released
-
-
-def scan_locks(registry: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return a report of all path locks with live/zombie classification."""
-    lock_dir = lock_state_dir(registry)
-    results: list[dict[str, Any]] = []
-    if not lock_dir.exists():
-        return results
-    for lock_path in sorted(lock_dir.glob("*.lock.yaml")):
-        classification = _classify_existing_lock(lock_path)
-        entry: dict[str, Any] = {
-            "path": display_path(lock_path),
-            "kind": classification["kind"],
-            "detail": classification["detail"],
-        }
-        payload = classification.get("payload") or {}
-        if payload:
-            entry["run_id"] = payload.get("run_id", "")
-            entry["actor"] = payload.get("actor", "")
-            entry["scope"] = payload.get("scope", "")
-            entry["created_at"] = payload.get("created_at", "")
-            entry["last_heartbeat"] = payload.get("last_heartbeat", "")
-            entry["expires_at"] = payload.get("expires_at", "")
-        results.append(entry)
-    return results
-
-
-def prune_stale_locks(registry: dict[str, Any]) -> list[dict[str, Any]]:
-    """Remove zombie locks (expired or stale heartbeat). Return pruned entries."""
-    pruned: list[dict[str, Any]] = []
-    for entry in scan_locks(registry):
-        if entry["kind"] in ("zombie_expired", "zombie_stale_heartbeat"):
-            lock_file = Path(entry["path"])
-            if not lock_file.is_absolute():
-                lock_file = WORKSPACE / lock_file
-            lock_file.unlink(missing_ok=True)
-            pruned.append(entry)
-    return pruned
 
 
 def run_file_for(registry: dict[str, Any], run_id: str) -> Path:
@@ -1128,81 +850,31 @@ def load_lock_records(registry: dict[str, Any]) -> list[tuple[Path, dict[str, An
     return records
 
 
-def normalize_claim_mode(raw_mode: Any, default: str = "advisory") -> str:
-    mode = str(raw_mode or default)
-    return mode if mode in CLAIM_POLICY_MODES else default
+# 2026-08-26: claim 工具组拆至 lifecycle_claims.py (SRP 行数门), 此处 re-export 保持接口不变
+from .lifecycle_claims import (  # noqa: F401 -- re-export
+    claim_covers_path,
+    claim_policy,
+    claimed_paths,
+    is_read_only_workflow,
+    normalize_claim_mode,
+)
+from .lifecycle_ledger import (  # noqa: F401 -- re-export
+    _extract_run_timestamp,
+    append_ledger_event,
+    heal_ledger_for_run,
+    ledger_mentions_run,
+)
 
-
-def claim_policy(registry: dict[str, Any]) -> dict[str, Any]:
-    policy = registry.get("claim_policy")
-    if not isinstance(policy, dict):
-        return {"mode": "advisory", "required_paths": [], "tiers": []}
-    mode = normalize_claim_mode(policy.get("mode"))
-    required_paths = policy.get("required_paths") or []
-    normalized_required_paths = [str(item) for item in required_paths if isinstance(item, str)]
-    tiers: list[dict[str, Any]] = []
-    if normalized_required_paths:
-        tiers.append(
-            {
-                "id": "legacy-required-paths",
-                "mode": mode,
-                "paths": normalized_required_paths,
-            }
-        )
-    for index, tier in enumerate(policy.get("tiers") or []):
-        if not isinstance(tier, dict):
-            continue
-        paths = [str(item) for item in tier.get("paths") or [] if isinstance(item, str)]
-        if not paths:
-            continue
-        tier_mode = normalize_claim_mode(tier.get("mode"), default="advisory")
-        if tier_mode == "off":
-            continue
-        tiers.append(
-            {
-                "id": str(tier.get("id") or f"tier-{index + 1}"),
-                "mode": tier_mode,
-                "paths": paths,
-            }
-        )
-    return {
-        "mode": mode,
-        "required_paths": normalized_required_paths,
-        "tiers": tiers,
-    }
-
-
-def claimed_paths(payload: dict[str, Any]) -> list[str]:
-    paths: set[str] = set()
-    for claim in payload.get("claims") or []:
-        if not isinstance(claim, dict):
-            continue
-        for item in claim.get("paths") or []:
-            if isinstance(item, str) and item.strip():
-                paths.add(normalize_repo_path(item))
-    return sorted(paths)
-
-
-def claim_covers_path(claimed_path: str, changed_path: str) -> bool:
-    normalized_claim = normalize_repo_path(claimed_path)
-    normalized_changed = normalize_repo_path(changed_path)
-    if normalized_claim == ".":
-        return True
-    if path_matches([normalized_claim], normalized_changed):
-        return True
-    return normalized_changed.startswith(normalized_claim.rstrip("/") + "/")
-
-
-def is_read_only_workflow(registry: dict[str, Any], workflow_id: str) -> bool:
-    """True when workflow declares empty write surfaces (ADR-0209 A4)."""
-    if not workflow_id:
-        return False
-    try:
-        workflow = workflow_by_id(registry, workflow_id)
-    except WorkflowError:
-        return False
-    surfaces = workflow.get("surfaces") or {}
-    write = surfaces.get("write")
-    # Explicit empty write list => read-only. Missing write key is NOT exempt
-    # (legacy workflows may omit surfaces entirely).
-    return isinstance(write, list) and len(write) == 0
+# 2026-08-28: lock/ledger 工具组拆至 lifecycle_locks.py / lifecycle_ledger.py (SRP 行数门), 此处 re-export 保持接口不变
+from .lifecycle_locks import (  # noqa: F401 -- re-export
+    _HEARTBEAT_STALE_SECONDS,
+    _bounded_lock_name,
+    _classify_existing_lock,
+    acquire_locks,
+    heartbeat_lock,
+    prune_stale_locks,
+    release_locks,
+    run_update_lock,
+    sanitize_lock_name,
+    scan_locks,
+)

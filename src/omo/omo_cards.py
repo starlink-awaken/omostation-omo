@@ -132,6 +132,13 @@ def _format_row(row: sqlite3.Row) -> str:
 # ── commands ────────────────────────────────────────────
 
 
+# 2026-08-28: cmd_migrate extracted to omo_cards_migrate.py
+from .omo_cards_migrate import cmd_migrate  # noqa: F401 -- re-export
+
+# 2026-08-28: cmd_minerva_ingest extracted to omo_cards_minerva.py
+from .omo_cards_minerva import cmd_minerva_ingest  # noqa: F401 -- re-export
+
+
 def cmd_init(args=None):
     """Initialize (or re-initialize) the database."""
     conn = _get_db()
@@ -779,189 +786,6 @@ card_history (id, card_id, old_status, new_status, changed_at, changed_by, note)
 
     print(f"✅ Generated {generated} architecture views in {views_dir}")
     return 0
-
-
-def cmd_minerva_ingest(args):
-    """Bridge: trigger Minerva deep research for a CARDS research card, store results, advance status."""
-    conn = _get_db()
-    row = conn.execute("SELECT * FROM cards WHERE id = ?", (args.id,)).fetchone()
-    if not row:
-        conn.close()
-        print(f"❌ Card not found: {args.id}")
-        return 1
-    if row["type"] != "research":
-        conn.close()
-        print(f"❌ Card {args.id} is type '{row['type']}', not 'research'")
-        return 1
-
-    question = row["title"]
-    if row["summary"]:
-        question = f"{row['title']}: {row['summary']}"
-
-    level = getattr(args, "level", "L1") or "L1"
-    kairon_dir = str(Path(__file__).resolve().parents[4] / "projects" / "kairon")
-
-    print(f"🔬 Minerva research: {question[:80]}...")
-    print(f"   Level: {level}  |  Card: {args.id}")
-
-    # Call Minerva
-    try:
-        result = subprocess.run(
-            [
-                "uv",
-                "--directory",
-                kairon_dir,
-                "run",
-                "minerva",
-                "research",
-                question,
-                "--level",
-                level,
-                "--json",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-        if result.returncode != 0:
-            print(f"⚠️  Minerva exited with code {result.returncode}")
-            print(f"   stderr: {result.stderr[:200]}")
-            # Still save partial output
-            minerva_output = result.stdout or result.stderr
-        else:
-            minerva_output = result.stdout
-    except subprocess.TimeoutExpired:
-        print("⚠️  Minerva timed out (5min). Saving partial results.")
-        minerva_output = "(Minerva timed out)"
-    except FileNotFoundError:
-        print("❌ Minerva not found. Ensure kairon project is installed.")
-        conn.close()
-        return 1
-
-    # Build enriched content
-    old_content = row["content"] or ""
-    new_content = f"""{old_content}
-
-## Minerva 研究报告 (L{level})
-> 自动生成于 {_now()}
-
-{minerva_output[:5000] if len(minerva_output) > 5000 else minerva_output}
-"""
-    # Update card: store minerva output, advance to digest
-    old_status = row["status"]
-    new_status = "digest"
-
-    extra = json.loads(row["extra"] or "{}")
-    extra["minerva_level"] = level
-    extra["minerva_generated_at"] = _now()
-
-    conn.execute(
-        "UPDATE cards SET status=?, content=?, extra=?, updated_at=? WHERE id=?",
-        (new_status, new_content, json.dumps(extra), _now(), args.id),
-    )
-    _record_history(conn, args.id, old_status, new_status, f"minerva-ingest (L{level})")
-    conn.commit()
-    conn.close()
-    print(f"✅ {args.id}: {old_status} → {new_status} (Minerva L{level} complete)")
-    return 0
-
-
-def cmd_migrate(args):
-    """Import v1 CARDS/*.md files into SQLite."""
-    cards_dir = Path(args.source)
-    if not cards_dir.exists():
-        print(f"❌ Source directory not found: {cards_dir}")
-        return 1
-
-    conn = _get_db()
-    imported = 0
-    skipped = 0
-
-    for md_file in sorted(cards_dir.rglob("*.md")):
-        if md_file.name == "README.md":
-            continue
-
-        text = md_file.read_text(encoding="utf-8")
-
-        # Parse YAML frontmatter
-        if text.startswith("---"):
-            parts = text.split("---", 2)
-            if len(parts) >= 3:
-                frontmatter_text = parts[1]
-                body = parts[2].strip()
-            else:
-                print(f"⚠️  Skipping {md_file.name}: malformed frontmatter")
-                skipped += 1
-                continue
-        else:
-            print(f"⚠️  Skipping {md_file.name}: no frontmatter")
-            skipped += 1
-            continue
-
-        # Simple YAML parsing (flat key: value only)
-        fm = {}
-        for line in frontmatter_text.strip().split("\n"):
-            line = line.strip()
-            if ":" in line:
-                key, _, val = line.partition(":")
-                fm[key.strip()] = val.strip()
-
-        card_id = fm.get("id", "")
-        if not card_id:
-            print(f"⚠️  Skipping {md_file.name}: no id")
-            skipped += 1
-            continue
-
-        # Check if exists
-        existing = conn.execute("SELECT id FROM cards WHERE id = ?", (card_id,)).fetchone()
-        if existing:
-            print(f"⏭  Skipping {card_id}: already exists")
-            skipped += 1
-            continue
-
-        now = _now()
-        tags = json.dumps([t.strip() for t in fm.get("tags", "").strip("[]").split(",") if t.strip()])
-        extra = json.dumps(
-            {
-                "severity": fm.get("severity", ""),
-                "task_type": fm.get("task_type", ""),
-            }
-            if fm.get("severity") or fm.get("task_type")
-            else {}
-        )
-
-        conn.execute(
-            """INSERT INTO cards (id, type, status, title, domain, priority, summary, content, parent_id, created_at, updated_at, deadline, review_due, tags, extra)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                card_id,
-                fm.get("type", "task"),
-                fm.get("status", "planned"),
-                fm.get("title", md_file.stem),
-                fm.get("domain", "meta"),
-                fm.get("priority", "P2"),
-                fm.get("summary", ""),
-                body,
-                fm.get("parent") or None,
-                fm.get("created", now),
-                now,
-                fm.get("deadline") or None,
-                fm.get("review_due") or None,
-                tags,
-                extra,
-            ),
-        )
-        _record_history(conn, card_id, None, fm.get("status", "planned"), "imported from v1")
-        imported += 1
-        print(f"✅ {card_id}: {fm.get('title', '')}")
-
-    conn.commit()
-    conn.close()
-    print(f"\n📦 Imported {imported} cards, skipped {skipped}")
-    return 0
-
-
-# ── main ────────────────────────────────────────────────
 
 
 def main(argv: list[str] | None = None) -> int:

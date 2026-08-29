@@ -62,6 +62,19 @@ from .omo_lint_schemas import (
     _check_sort_keys_default,
     cmd_lint_schemas,
 )
+
+# 2026-08-28: task policy commands extracted to omo_lint_task_policy.py
+from .omo_lint_task_policy import (
+    cmd_lint_all_task_policies,
+    cmd_lint_self_evolution_approval,
+    cmd_lint_task_policy,
+)
+
+# 2026-08-28: yaml bypass commands extracted to omo_lint_yaml_bypass.py
+from .omo_lint_yaml_bypass import (
+    _check_yaml_bypass,
+    cmd_lint_yaml_bypass,
+)
 from .omo_paths import OMO_ROOT, PROJECTS_DIR, WORKSPACE_ROOT
 from .omo_shared import load_yaml
 from .omo_task_policy import (
@@ -70,6 +83,27 @@ from .omo_task_policy import (
     check_task_policy,
     count_planned_matches,
     get_task_policy,
+)
+
+# God-module lint thresholds and allowlists (shared with omo_lint_yaml_bypass)
+WARN_LOC = 600
+ERROR_LOC = 1500
+GOD_MODULE_ALLOWLIST: set[str] = {
+    "projects/omo/src/omo/blueprint_control.py",  # 2950L
+    "projects/omlxc/src/omlxc/storage/database.py",  # 1944L
+    "projects/cockpit/src/cockpit/adapters/governance_context.py",  # 1754L
+    "projects/omlxc/src/omlxc/daemon/composition.py",  # 1514L
+    "projects/omlxc/src/omlxc/cli.py",  # 1559L (omlxc v3.1.0 升级带入, 2026-08-16 登记)
+}
+EXCLUDE_DIR_PARTS: tuple[str, ...] = (
+    "tests",
+    "test_",
+    "__pycache__",
+    ".venv",
+    "node_modules",
+    "_archive",
+    "demo",
+    "fixtures",
 )
 
 # P101 R1: yaml-bypass 子模块 (extracted 102L from omo_lint.py)
@@ -323,147 +357,12 @@ def cmd_lint_sensitive_governed_writes(paths: list[str] | None = None) -> int:
     return 0
 
 
-def cmd_lint_task_policy(policy_name: str, workspace_root: str = ".") -> int:
-    root = Path(workspace_root).resolve()
-    policy = get_task_policy(policy_name)
-    issues = check_task_policy(root, policy)
-    if issues:
-        print(f"❌ omo lint {policy.name} fail: {len(issues)} issue(s)")
-        for issue in issues:
-            print(f"  - {issue}")
-        return 1
-    count = count_planned_matches(root, policy)
-    print(f"✅ omo lint {policy.name} pass: matches={count}")
-    return 0
-
-
-def cmd_lint_all_task_policies(workspace_root: str = ".") -> int:
-    root = Path(workspace_root).resolve()
-    failures = 0
-    for policy_name in sorted(TASK_POLICIES):
-        failures += cmd_lint_task_policy(policy_name, str(root))
-    return 0 if failures == 0 else 1
-
-
-def cmd_lint_self_evolution_approval(workspace_root: str = ".") -> int:
-    return cmd_lint_task_policy(OPC_P6_SELF_EVOLUTION_POLICY.name, workspace_root)
-
-
 # P102 R1: surfaces 子模块 (extracted 179L from omo_lint.py)
 # Re-export 保持向后兼容 (cli.py / scripts/ 可能直接 import)
 
 
 # P103 R1: mutation-ledger 子模块 (extracted 92L from omo_lint.py)
 # Re-export 保持向后兼容 (cli.py / scripts/ 可能直接 import)
-
-
-def _check_yaml_bypass(omo_dir: Path = Path(".omo")) -> list[tuple[str, str]]:
-    """扫 .omo/debt/items/*.yaml 检测非 OMO CLI 写入的越权字段 (Round 43 P0).
-
-    OMO 用 lifecycle_state 字段管理债务状态. fix_debts.py 这种越权
-    脚本错改 status 字段 (OMO 不读 status 字段). 此 lint 拦截未来再发生.
-
-    检测规则:
-      R1: yaml 有 status 字段但没有 lifecycle_state 字段 → 越权 (非 OMO 写)
-      R2: yaml 有 status 字段值是 closed/resolved 但 lifecycle_state 不一致 → 越权
-      R4: yaml 解析失败 → 警告
-
-    注: 不检查 history 字段 (R3 删了, 防误报 — fresh yaml seed 时无 history 是合法初始态).
-
-    Returns:
-        list of (yaml_filename, violation_message) tuples. 空 list = 合规.
-    """
-    items_dir = omo_dir / "debt" / "items"
-    if not items_dir.is_dir():
-        return []
-
-    import yaml as _yaml
-
-    issues: list[tuple[str, str]] = []
-    for path in sorted(items_dir.glob("*.yaml")):
-        try:
-            data = _yaml.safe_load(path.read_text(encoding="utf-8"))
-        except (OSError, _yaml.YAMLError) as exc:
-            issues.append((path.name, f"R4: parse error: {exc}"))
-            continue
-        if not isinstance(data, dict):
-            issues.append((path.name, "R4: yaml 不是 dict 结构"))
-            continue
-
-        has_status = "status" in data
-        has_lifecycle = "lifecycle_state" in data
-        status = data.get("status", "")
-        lifecycle = data.get("lifecycle_state", "")
-
-        if has_status and not has_lifecycle:
-            issues.append(
-                (
-                    path.name,
-                    (
-                        f"R1: yaml 有 status={status!r} 字段但无 lifecycle_state (OMO 用 "
-                        f"lifecycle_state, 改 status 是越权写入, OMO 不认)"
-                    ),
-                )
-            )
-        elif has_status and status in ("closed", "resolved") and lifecycle != status:
-            issues.append(
-                (
-                    path.name,
-                    (
-                        f"R2: status={status!r} 但 lifecycle_state={lifecycle!r} 不一致 "
-                        f"(越权写入, OMO 以 lifecycle_state 为准)"
-                    ),
-                )
-            )
-
-    return issues
-
-
-def cmd_lint_yaml_bypass(omo_dir: Path = Path(".omo")) -> int:
-    """omo lint yaml-bypass — Round 43 P0 拦截 .omo/debt/items/ 越权写入."""
-    issues = _check_yaml_bypass(omo_dir)
-    if issues:
-        print(f"❌ omo lint yaml-bypass fail: {len(issues)} 处越权 (X1 审计风险)")
-        for name, msg in issues:
-            print(f"   - {name}: {msg}")
-        print()
-        print("修复方法: 走 omo-debt close/reopen CLI 正路, 不要直接 yaml.safe_load + yaml.dump 改字段.")
-        return 1
-    print("✅ omo lint yaml-bypass pass: 0 处越权 (所有 .omo/debt/items/*.yaml 走 OMO CLI 正路)")
-    return 0
-
-
-# 阈值 (ADR-0155 修订 L0:X4: error 800→1500, 跟 bin/check-god-module.py error>1500L 统一, 消除两套不一致债)
-# 旧值 (L0:X4 原锁 800L, TASK-F7114ABA) 致 22 个 >800L GATE FAIL, 其中 21 个在 800-1500L (bin 视为 warn),
-# 仅 1 个 >1500L. 统一 1500L 让两套 god-module 守门一致, 21 个降 warn, 剩 1 个 >1500L 留 SRP 重构.
-WARN_LOC = 600
-ERROR_LOC = 1500
-
-# 豁免: 显式 allowlist (历史合理大文件, 需在 ADR 记录理由)
-# ADR-0155: api_system_map.py 已 SRP 拆解 (3504L → 990L + catalog/io_commands/status 分层), 豁免移除, 门禁转硬性执行.
-# 存量超标登记 (T9-01 轮 2026-08-15): 4 文件 >1500L 是先于本检查引入的存量债,
-# 挡住所有触碰 omo/omlxc/cockpit 子模块指针的 PR (CI god-module gate)。
-# 登记放行 = 「存量不挡新交付」, 拆解归 BET-Y1Q2-T6-10 (god-module SRP 拆分)。
-# 移除条件: 对应文件拆到 <=1500L 时从本表删除。
-GOD_MODULE_ALLOWLIST: set[str] = {
-    "projects/omo/src/omo/blueprint_control.py",  # 2950L
-    "projects/omlxc/src/omlxc/storage/database.py",  # 1944L
-    "projects/cockpit/src/cockpit/adapters/governance_context.py",  # 1754L
-    "projects/omlxc/src/omlxc/daemon/composition.py",  # 1514L
-    "projects/omlxc/src/omlxc/cli.py",  # 1559L (omlxc v3.1.0 升级带入, 2026-08-16 登记)
-}
-
-# 不扫的目录 (测试/数据迁移脚本可超)
-EXCLUDE_DIR_PARTS: tuple[str, ...] = (
-    "tests",
-    "test_",
-    "__pycache__",
-    ".venv",
-    "node_modules",
-    "_archive",
-    "demo",
-    "fixtures",
-)
 
 
 def _collect_python_files(workspace_root: Path) -> list[Path]:
