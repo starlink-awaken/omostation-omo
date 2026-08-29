@@ -191,6 +191,9 @@ class PersonalExecutionContext:
     responsibility_id: str
     action_id: str
     trace_id: str
+    principal_authority_ref: str | None = None
+    principal_receipt_digest: str | None = None
+    credential_ref: str | None = None
 
     @property
     def omo_policy(self) -> dict[str, Any]:
@@ -211,6 +214,9 @@ class PersonalExecutionContext:
             "disclosure_policy": DISCLOSURE_POLICY,
             "trace_id": self.trace_id,
             "mandate_version": 1,
+            "principal_authority_ref": self.principal_authority_ref,
+            "principal_receipt_digest": self.principal_receipt_digest,
+            "credential_ref": self.credential_ref,
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -297,13 +303,34 @@ class PrincipalObservation:
 class PersonalEpisodeService:
     """A deterministic, ledger-backed personal draft episode service."""
 
-    def __init__(self, broker: LedgerBroker, *, clock: Callable[[], str] = _utc_now) -> None:
+    def __init__(
+        self,
+        broker: LedgerBroker,
+        *,
+        clock: Callable[[], str] = _utc_now,
+        principal_authority: Any = None,
+        default_credential_ref: str | None = None,
+    ) -> None:
         self._broker = broker
         self._clock = clock
+        self._principal_authority = principal_authority
+        self._default_credential_ref = default_credential_ref
 
     @classmethod
-    def open(cls, db_path: str | Any, *, clock: Callable[[], str] = _utc_now) -> PersonalEpisodeService:
-        return cls(LedgerBroker.connect(db_path), clock=clock)
+    def open(
+        cls,
+        db_path: str | Any,
+        *,
+        clock: Callable[[], str] = _utc_now,
+        principal_authority: Any = None,
+        default_credential_ref: str | None = None,
+    ) -> PersonalEpisodeService:
+        return cls(
+            LedgerBroker.connect(db_path),
+            clock=clock,
+            principal_authority=principal_authority,
+            default_credential_ref=default_credential_ref,
+        )
 
     def start(
         self,
@@ -566,6 +593,20 @@ class PersonalEpisodeService:
         mandate = MandateManager(self._broker, clock=self._clock).get(mandate_id, principal_id)
         if mandate is None or mandate.status != STATUS_ACTIVE:
             raise PersonalEpisodeError("episode_not_confirmed", "episode has no active mandate")
+        principal_authority_ref = principal_receipt_digest = credential_ref = None
+        if self._principal_authority is not None and self._default_credential_ref is not None:
+            try:
+                from omo.sovereignty.principal_authority import digest_receipt
+                receipt = self._principal_authority.verify(
+                    principal_id,
+                    self._default_credential_ref,
+                    now=self._clock(),
+                )
+                principal_authority_ref = receipt.authority_ref
+                principal_receipt_digest = digest_receipt(receipt)
+                credential_ref = self._default_credential_ref
+            except Exception:
+                pass
         return PersonalExecutionContext(
             episode_id=episode_id,
             mandate_id=mandate_id,
@@ -575,6 +616,9 @@ class PersonalEpisodeService:
             responsibility_id=responsibility_id,
             action_id=_deterministic("action:personal-", episode_id),
             trace_id=mandate.trace_id,
+            principal_authority_ref=principal_authority_ref,
+            principal_receipt_digest=principal_receipt_digest,
+            credential_ref=credential_ref,
         )
 
     def get_draft_snapshot(self, episode_id: str, principal_id: str) -> EpisodeDraftSnapshot:
