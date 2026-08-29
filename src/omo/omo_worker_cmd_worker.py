@@ -11,6 +11,7 @@ from .omo_admission import evaluate_worker_envelope, request_conditional_approva
 from .omo_external_receipt import (
     ExternalReceiptError,
     record_external_receipt,
+    record_native_execution_receipt,
 )
 from .omo_handoff_index import write_handoff_index
 from .omo_metrics import write_worker_utilization_summary
@@ -191,12 +192,13 @@ def _print_external_receipt(
 ) -> int:
     try:
         receipt = json.loads(Path(receipt_file).read_text(encoding="utf-8"))
-        event = record_external_receipt(
-            Path(omo_dir),
-            receipt,
-            workflow_run_id=workflow_run_id,
-            step_run_id=step_run_id,
-            producer=producer,
+        consume = (
+            record_native_execution_receipt
+            if isinstance(receipt, dict) and receipt.get("schema") == "native-execution-receipt/v1"
+            else record_external_receipt
+        )
+        event = consume(
+            Path(omo_dir), receipt, workflow_run_id=workflow_run_id, step_run_id=step_run_id, producer=producer
         )
     except (OSError, json.JSONDecodeError, ExternalReceiptError, ValueError) as exc:
         print(f"error={type(exc).__name__}: {exc}")

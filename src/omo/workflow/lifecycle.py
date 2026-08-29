@@ -641,6 +641,9 @@ def close_run(
             {
                 "status": status,
                 "ok": status == "ok",
+                # 透传真实错误 (2026-08-28 sediment 分类: 153 StepFailed 全是
+                # 模糊 "workflow failed" — 根因是 close 侧不传 error)
+                "error": payload.get("error") or payload.get("failure_reason") or "",
                 "evidence_count": len(evidence),
             },
             workspace=registry_workspace_root(registry),
@@ -799,6 +802,8 @@ def closeout_run(
         {
             "status": status,
             "ok": report["ok"],
+            # 透传真实错误 (同 direct close 侧修复)
+            "error": report.get("error") or verify_report.get("reason") or "",
             "verify_ok": verify_report["ok"],
             "observe_decision": observe_report["decision"],
             "evidence_count": len(closeout_evidence),

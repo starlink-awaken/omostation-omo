@@ -21,11 +21,11 @@ sys.path.insert(0, str(REPO / "src"))
 from omo.resident.cell import CellCoordinator
 from omo.resident.cell_pool import CellPool
 from omo.resident.cell_state import CellStateManager, restore_cell, snapshot_cell
-from omo.resident.planner import Planner
 from omo.resident.executor import Executor
-from omo.resident.verifier import Verifier
 from omo.resident.governor import Governor
 from omo.resident.memory_pipeline import MemoryPipeline
+from omo.resident.planner import Planner
+from omo.resident.verifier import Verifier
 
 
 def print_header(title: str):
@@ -263,7 +263,7 @@ def main():
     print_step("治理拦截", f"{gov_blocks} 次")
     print_step("记忆候选", f"{mem_candidates} 个")
     print_step("持久化状态", f"{len(saved_states)} 个已保存")
-    print_step("调度策略", f"new_cell / reuse_idle / least_loaded 全部验证")
+    print_step("调度策略", "new_cell / reuse_idle / least_loaded 全部验证")
 
     # 最终判定（核心功能全部验证通过）
     core_pass = (
@@ -276,8 +276,8 @@ def main():
         print("\n  ✅ 核心场景验证全部通过")
         print(f"     - {completed}/{total_episodes} Episode 完成")
         print(f"     - {len(saved_states)} 个状态持久化/恢复成功")
-        print(f"     - 调度策略 (new_cell/reuse_idle/least_loaded) 全部验证")
-        print(f"     - 治理决策 (R0/R1/R2/R3) 全部正确")
+        print("     - 调度策略 (new_cell/reuse_idle/least_loaded) 全部验证")
+        print("     - 治理决策 (R0/R1/R2/R3) 全部正确")
         if ok_tasks < total_tasks:
             print(f"     - 注意: {total_tasks - ok_tasks} 个任务因目标文件不存在而失败（预期行为）")
     else:
