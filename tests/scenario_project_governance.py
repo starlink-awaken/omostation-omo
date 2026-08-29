@@ -28,9 +28,9 @@ sys.path.insert(0, str(REPO / "src"))
 
 
 def print_header(title: str):
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"  {title}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
 
 def print_step(step: str, detail: str = ""):
@@ -79,7 +79,10 @@ def main():
     # 1.1 创建分析计划
     print_step("创建分析计划", "扫描项目结构 + 检查 CI 状态")
     plan_result = run_cell_command(pool, "ep-analyze", "分析项目健康状态: 扫描目录结构, 检查 CI 状态")
-    print_step("Cell 分配", f"cell_id={plan_result.get('cell_id', 'N/A')[:20]}... strategy={plan_result.get('strategy', 'N/A')}")
+    print_step(
+        "Cell 分配",
+        f"cell_id={plan_result.get('cell_id', 'N/A')[:20]}... strategy={plan_result.get('strategy', 'N/A')}",
+    )
 
     # 1.2 治理评估 - 分析动作是 R0 (只读)
     risk = governor.assess_risk({"action": "scan", "target": "docs/"})
@@ -87,11 +90,14 @@ def main():
     assert risk == RISK_R0, f"Expected R0, got {risk}"
 
     # 1.3 发布记忆到网络
-    network.publish("cell-analyze", {
-        "content": "项目健康分析完成: 发现 3 个过期文档, 1 个 CI 失败",
-        "type": "semantic",
-        "tags": ["health", "analysis"],
-    })
+    network.publish(
+        "cell-analyze",
+        {
+            "content": "项目健康分析完成: 发现 3 个过期文档, 1 个 CI 失败",
+            "type": "semantic",
+            "tags": ["health", "analysis"],
+        },
+    )
     print_step("记忆发布", "已发布到跨 Cell 记忆网络")
 
     # ─────────────────────────────────────────────────────────────
@@ -165,11 +171,13 @@ def main():
     print_header("Phase 4: 技术债务审计")
 
     # 4.1 配置审计
-    audit_result = governance.audit_cell_config({
-        "max_cells": 4,
-        "auto_scale": True,
-        "policy_set": "cartridge",
-    })
+    audit_result = governance.audit_cell_config(
+        {
+            "max_cells": 4,
+            "auto_scale": True,
+            "policy_set": "cartridge",
+        }
+    )
     print_step("配置审计", f"compliant={audit_result['compliant']}, findings={len(audit_result['findings'])}")
 
     # 4.2 动作审计
@@ -178,8 +186,7 @@ def main():
 
     # 4.3 漂移检测
     drift = governance.detect_drift(
-        baseline={"max_cells": 4, "auto_scale": True},
-        current={"max_cells": 8, "auto_scale": False}
+        baseline={"max_cells": 4, "auto_scale": True}, current={"max_cells": 8, "auto_scale": False}
     )
     print_step("漂移检测", f"发现 {len(drift)} 处漂移")
     for d in drift:
@@ -249,9 +256,9 @@ def main():
     for k, v in summary.items():
         print_step(k.replace("_", " ").title(), str(v))
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("  场景执行完成 ✓")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     return 0
 
