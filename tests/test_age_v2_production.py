@@ -53,7 +53,9 @@ class TestCellFullLifecycle(unittest.TestCase):
         cell.handoff("planner", "executor", {"plan": plan})
         result = executor.execute_plan(plan)
         self.assertIn("execution_id", result)
-        self.assertTrue(result["completed"])
+        # WP2 迁移: effectful 无 admitted context → not_executed; completed 诚实反映
+        self.assertFalse(result["completed"])
+        self.assertTrue(any(r.get("effect") == "not_executed" for r in result["results"]))
 
         # 5. Verify
         cell.handoff("executor", "verifier", {"result": result})

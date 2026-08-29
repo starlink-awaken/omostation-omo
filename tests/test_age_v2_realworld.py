@@ -40,7 +40,12 @@ class TestRealWorldDocumentAnalysis(unittest.TestCase):
         # Execute
         cell.handoff("planner", "executor", {"plan": plan})
         result = executor.execute_plan(plan)
-        self.assertTrue(result["completed"])
+        # WP2 迁移: effectful action 无 admitted context → not_executed, completed 诚实反映
+        # (旧行为的假成功聚合正是本 WP 移除的; Cell 协作链路本身继续被验证)
+        # 只读 task 成功, effectful task 被 not_executed 拒绝 → completed 诚实为 False
+        self.assertFalse(result["completed"])
+        not_executed = [r for r in result["results"] if r.get("effect") == "not_executed"]
+        self.assertTrue(any(not_executed for _ in [1]), "expect at least one honest rejection")
 
         # Verify at least one task succeeded
         self.assertGreater(result["results"][0].get("ok", False), -1)
