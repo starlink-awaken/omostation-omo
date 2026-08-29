@@ -73,6 +73,34 @@ def _check_god_module() -> dict:
         return {"id": "god-module", "status": "error", "detail": str(e)}
 
 
+def run_full_inspection() -> dict:
+    """统一检查聚合 (BOS internal handler 契约: bos://governance/omo/inspect).
+
+    2026-08-29 恢复: 原实现被重构成 cmd_inspect (返回 int 退出码) 时丢失,
+    导致 bos-services.yaml 声明漂移 (handler 不可解析, gateway health
+    probe fail-closed)。声明契约要求返回 dict。
+    """
+    checks = [
+        _check_completeness,
+        _check_references,
+        _check_schemas,
+        _check_god_module,
+    ]
+    results = []
+    for check_fn in checks:
+        try:
+            results.append(check_fn())
+        except Exception as e:  # noqa: BLE001 - 单项失败不阻塞其余检查
+            results.append({"id": check_fn.__name__, "status": "error", "detail": str(e)})
+    ok_count = sum(1 for r in results if r["status"] == "ok")
+    return {
+        "schema": "omo-inspection/v1",
+        "ok": all(r["status"] in {"ok", "warn"} for r in results),
+        "summary": {"ok": ok_count, "total": len(results)},
+        "checks": results,
+    }
+
+
 def cmd_inspect(json_output: bool = False) -> int:
     """运行统一检查."""
     checks = [
