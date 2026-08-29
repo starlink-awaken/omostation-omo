@@ -2828,51 +2828,19 @@ def _parser() -> _BlueprintArgumentParser:
     return parser
 
 
-def _root(value: str) -> Path:
-    try:
-        root = Path(value).resolve(strict=True)
-    except OSError as exc:
-        raise BlueprintControlError("authority root is unavailable") from exc
-    if not root.is_dir():
-        raise BlueprintControlError("authority root is not a directory")
-    return root
 
-
-def _dispatch_artifact(root: Path, reference: str) -> dict[str, Any]:
-    path = _artifact_path(root, reference, field_name="dispatch file")
-    try:
-        payload = load_yaml(path)
-    except (OSError, ValueError) as exc:
-        raise BlueprintControlError("dispatch file is invalid") from exc
-    blueprint = payload.get("blueprint")
-    control_state = payload.get("control_state")
-    workflow = payload.get("execution", {}).get("workflow_mesh")
-    admission = workflow.get("admission") if isinstance(workflow, Mapping) else None
-    if (
-        not isinstance(blueprint, Mapping)
-        or not isinstance(control_state, Mapping)
-        or not isinstance(workflow, Mapping)
-        or not isinstance(admission, Mapping)
-        or control_state.get("transport") != "accepted"
-    ):
-        raise BlueprintControlError("dispatch is not transport accepted")
-    required = {
-        "workflow_run_id": workflow.get("workflow_run_id"),
-        "admission_id": admission.get("admission_id"),
-        "packet_id": blueprint.get("packet_id"),
-        "packet_hash": blueprint.get("packet_hash"),
-        "bet_id": blueprint.get("bet_id"),
-        "dispatch_id": payload.get("dispatch_id"),
-    }
-    if any(not isinstance(value, str) or not value for value in required.values()):
-        raise BlueprintControlError("dispatch identity is incomplete")
-    return {
-        "state": "transport_accepted",
-        **required,
-        "dispatch_path": _safe_relative_path(reference, "dispatch file"),
-        "control_state": dict(control_state),
-    }
-
+# 2026-08-29: helper functions extracted to blueprint_control_helpers.py
+from .blueprint_control_helpers import (
+    _artifact_path,
+    _candidate_projection_path,
+    _compiled_from_artifact,
+    _dispatch_artifact,
+    _emit,
+    _error_code,
+    _parser,
+    _read_json_artifact,
+    _root,
+)
 
 def main(argv: list[str] | None = None) -> int:
     """Run the supervised facade without duplicating controller business logic."""

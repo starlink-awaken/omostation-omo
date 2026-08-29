@@ -1,90 +1,47 @@
-"""Shared helpers for blueprint control: hashing, time, validation."""
-
+#!/usr/bin/env python3
 from __future__ import annotations
 
+from __future__ import annotations
+import argparse
 import hashlib
 import json
-from collections.abc import Mapping
+import os
+import re
+import shlex
+import signal
+import subprocess
+import tempfile
+import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import PurePosixPath
-from typing import Any
+from pathlib import Path, PurePosixPath
+from typing import Any, NoReturn
+import yaml
+from ecos.ssot.mof.generated.control.mof_control_models import WorkPacket
+from ecos.ssot.tools.work_packet_compiler import (
+from .approval_lifecycle import (
+from .omo_io import write_text_atomic
+from .omo_shared import load_yaml
+from .omo_task_schema import validate_task_file
+from .omo_worker_core import (
+from .omo_worker_dispatch import dispatch_task
+from .orchestration_contract import (
+from .workflow_dispatch import admit_workflow
+from .workflow_mesh import WorkflowMeshStore, new_workflow_event
+from .blueprint_control_helpers import (
 
 
-class BlueprintControlError(ValueError):
-    """A blueprint cannot advance through the supervised control contract."""
+def _root(value: str) -> Path:
+    try:
+        root = Path(value).resolve(strict=True)
+    except OSError as exc:
+        raise BlueprintControlError("authority root is unavailable") from exc
+    if not root.is_dir():
+        raise BlueprintControlError("authority root is not a directory")
+    return root
 
 
-@dataclass(frozen=True)
-class CompiledBlueprintPacket:
-    packet: dict[str, Any]
-    packet_hash: str
 
-
-def _sha256(data: bytes) -> str:
-    return "sha256:" + hashlib.sha256(data).hexdigest()
-
-
-def _utc(value: str | None = None) -> datetime:
-    if value is None:
-        return datetime.now(UTC)
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
-
-
-def _stamp(value: str | None = None) -> str:
-    return _utc(value).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def _canonical_receipt_digest(receipt: Mapping[str, Any]) -> str:
-    projected = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
-    canonical = json.dumps(projected, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode()).hexdigest()
-
-
-def _is_sha256(value: Any, *, prefixed: bool) -> bool:
-    text = str(value or "")
-    if prefixed:
-        if not text.startswith("sha256:"):
-            return False
-        text = text.removeprefix("sha256:")
-    return len(text) == 64 and all(character in "0123456789abcdef" for character in text)
-
-
-def _safe_relative_path(value: Any, field_name: str) -> str:
-    text = str(value or "").strip()
-    path = PurePosixPath(text)
-    canonical = path.as_posix() + ("/" if text.endswith("/") else "")
-    if (
-        not text
-        or text in {".", "./"}
-        or text.startswith("/")
-        or "\\" in text
-        or path.is_absolute()
-        or ".." in path.parts
-        or canonical != text
-    ):
-        raise BlueprintControlError(f"unsafe {field_name}: {text}")
-    return text
-
-
-def _required_string_list(container: Mapping[str, Any], field_name: str) -> list[str]:
-    value = container.get(field_name)
-    if not isinstance(value, list) or not value or any(not isinstance(item, str) or not item.strip() for item in value):
-        raise BlueprintControlError(f"{field_name} must be a non-empty string list")
-    return [item.strip() for item in value]
-
-
-__all__ = [
-    "BlueprintControlError",
-    "CompiledBlueprintPacket",
-    "_sha256",
-    "_utc",
-    "_stamp",
-    "_canonical_receipt_digest",
-    "_is_sha256",
-    "_safe_relative_path",
-    "_required_string_list",
-]
+# 2026-08-29: _dispatch_artifact extracted to blueprint_control_helpers.py
+from .blueprint_control_helpers import _dispatch_artifact
