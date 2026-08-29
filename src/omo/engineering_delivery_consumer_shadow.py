@@ -56,7 +56,11 @@ def _shadow_observer_identity(info: os.stat_result) -> tuple[int, int, int, int,
 
 def _shadow_observer_relative_parts(path: Path, *, workspace_root: Path) -> tuple[str, ...]:
     try:
-        relative = path.absolute().relative_to(workspace_root.absolute())
+        # Normalize parent aliases (for example macOS /private vs /var), but
+        # keep the final component literal so _open_shadow_observer_leaf can
+        # enforce O_NOFOLLOW on the file itself.
+        relative_parent = path.parent.resolve(strict=False).relative_to(workspace_root.resolve(strict=False))
+        relative = relative_parent / path.name
     except ValueError as exc:
         raise _ShadowObserverInputError("shadow observer input escapes its workspace") from exc
     if not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):

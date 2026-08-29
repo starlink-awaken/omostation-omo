@@ -371,6 +371,7 @@ def record_engineering_delivery_review(
                 "decision_outcome_id": decision_outcome_id,
                 "workflow_run_id": run_id,
                 "delivery_id": receipt_id,
+                "scene_binding": dict(SCENE_BINDING),
                 "scene_id": "engineering-delivery",
                 "tier": "shadow",
                 "value_indicator_policy": False,
