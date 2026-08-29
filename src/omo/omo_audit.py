@@ -51,15 +51,17 @@ _KAIRON_DIR: Path = KAIRON_DIR
 _WORKSPACE_ROOT: Path = WORKSPACE_ROOT
 ENV_SKIP_AGORA = "OMO_AUDIT_SKIP_AGORA"
 
-from .omo_audit_checks import (
-
-    governance_check_adr_links,
-    governance_check_agora_health,
-    governance_check_debt_integrity,
-    governance_check_doc_lifecycle,
-    governance_check_lint,
-    governance_check_task_consistency,
-    governance_check_test_coverage,
+# Governance check functions live in omo_audit_checks.py (extracted 2026-08-29).
+# They are imported lazily (inside run_governance_audit + PEP 562 __getattr__)
+# to break the import cycle: omo_audit_checks imports this module for constants.
+_GOVERNANCE_CHECKS = (
+    "governance_check_adr_links",
+    "governance_check_agora_health",
+    "governance_check_debt_integrity",
+    "governance_check_doc_lifecycle",
+    "governance_check_lint",
+    "governance_check_task_consistency",
+    "governance_check_test_coverage",
 )
 
 # =============================================================================
@@ -265,6 +267,16 @@ def run_governance_audit(workspace: Path | None = None) -> GovernanceReport:
         _KAIRON_DIR = workspace / "projects" / "knowledge" / "kairon"
         _WORKSPACE_ROOT = workspace
 
+    from .omo_audit_checks import (
+        governance_check_adr_links,
+        governance_check_agora_health,
+        governance_check_debt_integrity,
+        governance_check_doc_lifecycle,
+        governance_check_lint,
+        governance_check_task_consistency,
+        governance_check_test_coverage,
+    )
+
     try:
         checks = [
             governance_check_lint(),
@@ -427,6 +439,14 @@ __all__ = (
     "run_governance_audit",
     "summary",
 )
+
+
+def __getattr__(name: str):
+    if name in _GOVERNANCE_CHECKS:
+        from . import omo_audit_checks as _checks
+
+        return getattr(_checks, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 if __name__ == "__main__":
