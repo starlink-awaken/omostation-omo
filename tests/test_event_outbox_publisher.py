@@ -1,7 +1,9 @@
+import sys
 from pathlib import Path
+from types import ModuleType
 
 from omo.event_ledger import LedgerBroker
-from omo.event_ledger.publisher import publish_due
+from omo.event_ledger.publisher import publish_due, publish_to_bus, run_once
 
 
 def _broker(tmp_path: Path) -> LedgerBroker:
@@ -184,3 +186,45 @@ def _add_seconds(value: str, seconds: int) -> str:
         .isoformat()
         .replace("+00:00", "Z")
     )
+
+
+def test_run_once_reuses_canonical_publisher(tmp_path: Path) -> None:
+    broker = _broker(tmp_path)
+    _append(broker)
+    now = str(broker.outbox_entries()[0]["next_attempt_at"])
+
+    result = run_once(
+        broker,
+        "bos://test",
+        lambda _event_id, _payload, _destination: "receipt-run-once",
+        worker_id="worker-1",
+        now=now,
+    )
+
+    assert result[0].receipt_id == "receipt-run-once"
+    broker.close()
+
+
+def test_publish_to_bus_returns_the_real_bus_event_id(monkeypatch) -> None:
+    captured = {}
+
+    class FakeEnvelope:
+        def __init__(self, **kwargs):
+            captured["envelope"] = kwargs
+
+    class FakePlane:
+        EVENT = "EVENT"
+
+    bus_module = ModuleType("bus_foundation")
+    bus_module.publish = lambda envelope: "bus-event-1"
+    envelope_module = ModuleType("bus_foundation.envelope")
+    envelope_module.OmniEnvelope = FakeEnvelope
+    envelope_module.OmniPlane = FakePlane
+    monkeypatch.setitem(sys.modules, "bus_foundation", bus_module)
+    monkeypatch.setitem(sys.modules, "bus_foundation.envelope", envelope_module)
+
+    receipt = publish_to_bus("event-1", {"hello": "world"}, "bos://test")
+
+    assert receipt == "bus-event-1"
+    assert captured["envelope"]["topic"] == "bos://test"
+    assert captured["envelope"]["payload"]["event_id"] == "event-1"

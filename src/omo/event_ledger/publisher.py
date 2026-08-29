@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+import sys
+from argparse import ArgumentParser
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Callable
 
@@ -142,4 +144,74 @@ def publish_due(
     return results
 
 
-__all__ = ["PublishFn", "PublishResult", "PublishUncertainError", "publish_due"]
+def publish_to_bus(event_id: str, payload: dict[str, Any], destination: str) -> str:
+    """Publish one outbox event through the existing Bus Foundation authority."""
+    from bus_foundation import publish
+    from bus_foundation.envelope import OmniEnvelope, OmniPlane
+
+    envelope = OmniEnvelope(
+        plane=OmniPlane.EVENT,
+        topic=destination,
+        source_uri="bos://event-ledger/outbox",
+        trace_id=event_id,
+        payload={"event_id": event_id, "payload": payload},
+    )
+    receipt = publish(envelope)
+    if not isinstance(receipt, str) or not receipt.strip():
+        raise PublishUncertainError("bus returned no durable event id")
+    return receipt
+
+
+def run_once(
+    broker: LedgerBroker,
+    destination: str,
+    publish: PublishFn = publish_to_bus,
+    *,
+    worker_id: str,
+    now: str,
+    limit: int = 100,
+) -> list[PublishResult]:
+    """Run one production publisher tick through the canonical publisher."""
+    return publish_due(
+        broker,
+        destination,
+        publish,
+        worker_id=worker_id,
+        now=now,
+        limit=limit,
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = ArgumentParser(description="Publish due Event Ledger outbox rows")
+    parser.add_argument("--db", required=True, help="Event Ledger SQLite path")
+    parser.add_argument("--destination", required=True)
+    parser.add_argument("--worker-id", required=True)
+    parser.add_argument("--now", default=None)
+    parser.add_argument("--limit", type=int, default=100)
+    args = parser.parse_args(argv)
+    now = args.now or _format_time(datetime.now(UTC))
+    with LedgerBroker.connect(args.db) as broker:
+        results = run_once(
+            broker,
+            args.destination,
+            worker_id=args.worker_id,
+            now=now,
+            limit=args.limit,
+        )
+    print(json.dumps([asdict(result) for result in results], ensure_ascii=False, sort_keys=True))
+    return 0 if all(result.state == OUTBOX_SENT for result in results) else 1
+
+
+if __name__ == "__main__":  # pragma: no cover - exercised by the process canary
+    sys.exit(main())
+
+
+__all__ = [
+    "PublishFn",
+    "PublishResult",
+    "PublishUncertainError",
+    "publish_due",
+    "publish_to_bus",
+    "run_once",
+]
