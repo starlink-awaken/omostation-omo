@@ -707,10 +707,18 @@ def _subcommand_main(argv: list[str]) -> int:
         elif subcmd == "sovereignty-query":
             return _cmd_sovereignty_query(surface, params, is_json)
         elif subcmd == "mandate-grant":
+            # T10-58: lazy import — omo_ledger_mandates imports this module's
+            # emit helpers at top level, so eager import here would cycle.
+            from .omo_ledger_mandates import _cmd_mandate_grant
+
             return _cmd_mandate_grant(surface, params, is_json)
         elif subcmd == "mandate-revoke":
+            from .omo_ledger_mandates import _cmd_mandate_revoke
+
             return _cmd_mandate_revoke(surface, params, is_json)
         elif subcmd == "mandate-admit":
+            from .omo_ledger_mandates import _cmd_mandate_admit
+
             return _cmd_mandate_admit(surface, params, is_json)
         else:
             _emit_error(

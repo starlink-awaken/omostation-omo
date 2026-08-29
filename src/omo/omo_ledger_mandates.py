@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-from __future__ import annotations
-import argparse
-import json
 import math
-import shutil
-import sys
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
-from .event_ledger.broker import DuplicateEventError, LedgerError
-from .event_ledger.surface import (
-from .omo_paths import find_omo_dir
-from .omo_shared import load_yaml, write_yaml
+
+from .event_ledger.surface import EventLedgerSurface
+
+# T10-58 reconciliation: the 6fe958c6 extraction committed this module with a
+# truncated import block and no wiring back into omo_ledger's dispatcher.
+# _emit_error/_emit_receipt stayed in omo_ledger; importing them here is safe
+# because omo_ledger imports this module lazily (inside _subcommand_main).
+from .omo_ledger import _emit_error, _emit_receipt
 
 
 def _cmd_mandate_grant(surface: EventLedgerSurface, params: dict[str, Any], is_json: bool) -> int:
