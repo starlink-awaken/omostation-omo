@@ -1627,3 +1627,85 @@ def test_gate_passed_then_rename_from_candidate(broker, service):
     obs = service.observe_principal("principal:alice")
     assert obs.readiness == "passed"
     assert "candidate" not in obs.readiness
+
+
+# ---------------------------------------------------------------------------
+# BET-Y1Q3-T4-07 (WP5) — authority-bound adjudication qualifying 判定
+# ---------------------------------------------------------------------------
+
+
+def _wp5_adjudication(**overrides):
+    from omo.omo_adjudication import HumanAdjudication
+
+    base = dict(
+        adjudication_id="adj-wp5-001",
+        decision_id="do-001",
+        principal_id="principal:xiamingxing",
+        verdict="accepted",
+        source_class="real_human",
+        authority_receipt_digest="sha256:" + "a" * 64,
+        adjudicated_at="2026-08-29T00:00:00Z",
+    )
+    base.update(overrides)
+    return HumanAdjudication(**base)
+
+
+def test_wp5_qualifying_happy_path():
+    from omo.omo_adjudication import is_qualifying_outcome
+
+    ok, reason = is_qualifying_outcome(
+        _wp5_adjudication(),
+        decision_persisted=True,
+        scene_id="engineering-delivery",
+        episode_id="ep-001",
+    )
+    assert ok, reason
+
+
+def test_wp5_non_real_human_not_qualifying():
+    from omo.omo_adjudication import is_qualifying_outcome
+
+    ok, _ = is_qualifying_outcome(
+        _wp5_adjudication(source_class="synthetic"),
+        decision_persisted=True,
+        scene_id="s",
+        episode_id="e",
+    )
+    assert not ok
+
+
+def test_wp5_missing_authority_binding_not_qualifying():
+    from omo.omo_adjudication import is_qualifying_outcome
+
+    ok, reason = is_qualifying_outcome(
+        _wp5_adjudication(authority_receipt_digest=""),
+        decision_persisted=True,
+        scene_id="s",
+        episode_id="e",
+    )
+    assert not ok
+    assert "authority" in reason
+
+
+def test_wp5_unpersisted_decision_not_qualifying():
+    from omo.omo_adjudication import is_qualifying_outcome
+
+    ok, _ = is_qualifying_outcome(
+        _wp5_adjudication(),
+        decision_persisted=False,
+        scene_id="s",
+        episode_id="e",
+    )
+    assert not ok
+
+
+def test_wp5_missing_lineage_not_qualifying():
+    from omo.omo_adjudication import is_qualifying_outcome
+
+    ok, _ = is_qualifying_outcome(
+        _wp5_adjudication(),
+        decision_persisted=True,
+        scene_id="",
+        episode_id="",
+    )
+    assert not ok
