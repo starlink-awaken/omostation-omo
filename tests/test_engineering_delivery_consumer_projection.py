@@ -8,8 +8,8 @@ from omo.engineering_delivery_consumer_projection import (
     _workspace_root,
 )
 from omo.engineering_delivery_consumer_shadow import _shadow_observer_relative_parts
-from omo.omo_io import AppendOnlyLog
 from omo.engineering_delivery_consumer_validators import EngineeringDeliveryConsumerError
+from omo.omo_io import AppendOnlyLog
 
 
 def test_projection_status_writer_preserves_legacy_log_contract(tmp_path) -> None:
