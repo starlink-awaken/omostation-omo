@@ -915,23 +915,23 @@ class AgoraPepProvider:
         (如 principal:alice) 与未验证 digest 一律拒绝, provider/router/tool/ledger
         effect 零调用 (本方法在 decide/persist 之前运行)。
         """
-        envelope = request_dict.get("arguments", {}).get("_omo_policy", {}) if isinstance(
-            request_dict.get("arguments"), dict
-        ) else {}
+        envelope = (
+            request_dict.get("arguments", {}).get("_omo_policy", {})
+            if isinstance(request_dict.get("arguments"), dict)
+            else {}
+        )
         auth_ref = request.principal_authority_ref
         claimed_digest = request.principal_receipt_digest
         if auth_ref is None and claimed_digest is None:
             # 无 binding: 仅当请求声明 legacy 格式校验通过仍拒绝 — spec §4 第一条。
-            raise InvalidActionRequestError(
-                "principal_authority_required: effectful request without authority receipt"
-            )
+            raise InvalidActionRequestError("principal_authority_required: effectful request without authority receipt")
         if auth_ref is None or claimed_digest is None:
-            raise InvalidActionRequestError("principal_authority_incomplete: authority_ref 与 receipt_digest 必须同时提供")
+            raise InvalidActionRequestError(
+                "principal_authority_incomplete: authority_ref 与 receipt_digest 必须同时提供"
+            )
         authority = self._principal_authority
         if authority is None:
-            raise InvalidActionRequestError(
-                "principal_authority_unconfigured: no authority verifier injected"
-            )
+            raise InvalidActionRequestError("principal_authority_unconfigured: no authority verifier injected")
         try:
             receipt = authority.verify(
                 request.principal_id,
@@ -943,6 +943,7 @@ class AgoraPepProvider:
         digest = receipt.receipt_digest()
         if digest != claimed_digest:
             import os as _os
+
             if _os.environ.get("AUTH_DEBUG"):
                 print(f"[AUTH-DEBUG] computed={digest}", file=__import__("sys").stderr)
                 print(f"[AUTH-DEBUG] claimed ={claimed_digest}", file=__import__("sys").stderr)
