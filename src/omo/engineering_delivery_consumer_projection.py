@@ -13,13 +13,14 @@ from .engineering_delivery_consumer_constants import (
     QUALIFIED_DECISION_OUTCOME_SCHEMA,
     SCENE_BINDING,
 )
-from .engineering_delivery_consumer_validators import EngineeringDeliveryConsumerError, _utc_now
+from .engineering_delivery_consumer_validators import EngineeringDeliveryConsumerError, _sha256, _utc_now
 from .omo_io import AppendOnlyLog, fcntl_lock
 from .omo_shared import load_yaml_value_docs
 
 
 def _workspace_root(omo_dir: Path) -> Path:
-    return omo_dir.resolve().parent
+    absolute = omo_dir.absolute()
+    return absolute.parent if absolute.name == ".omo" else absolute
 
 
 def _qualified_log(omo_dir: Path) -> AppendOnlyLog:
@@ -31,22 +32,17 @@ def _qualified_records(omo_dir: Path) -> list[dict[str, Any]]:
 
 
 def _validate_primary_records(records: list[dict[str, Any]], root: Path) -> list[dict[str, Any]]:
-    valid: list[dict[str, Any]] = []
-    for record in records:
-        if not isinstance(record, Mapping):
-            continue
-        if record.get("schema") != QUALIFIED_DECISION_OUTCOME_SCHEMA:
-            continue
-        if record.get("scene_binding") != SCENE_BINDING:
-            continue
-        valid.append(dict(record))
-    return valid
+    validated = [_validate_qualified_record(record, root) for record in records]
+    ids = [record["decision_outcome_id"] for record in validated]
+    if len(set(ids)) != len(ids):
+        raise EngineeringDeliveryConsumerError("duplicate qualified decision-outcome identity")
+    return validated
 
 
 def _validate_projection_receipt(record: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(record, Mapping):
         raise EngineeringDeliveryConsumerError("projection receipt must be a mapping")
-    if record.get("schema") != MOS_PROJECTION_RECEIPT_LOG.name:
+    if record.get("schema") != "engineering-delivery-mos-projection/v1":
         raise EngineeringDeliveryConsumerError("projection receipt schema mismatch")
     return dict(record)
 
@@ -57,19 +53,28 @@ def _projection_records(omo_dir: Path) -> list[dict[str, Any]]:
 
 
 def _append_projection_status(
-    omo_dir: Path,
+    log: AppendOnlyLog,
+    existing: list[dict[str, Any]],
     *,
     status: str,
     decision_outcome_id: str,
-    detail: str | None = None,
+    mos_decision_id: str | None = None,
+    error_code: str | None = None,
 ) -> dict[str, Any]:
-    log = AppendOnlyLog(omo_dir / MOS_PROJECTION_RECEIPT_LOG)
+    related = [item for item in existing if item.get("decision_outcome_id") == decision_outcome_id]
+    if related and related[-1].get("status") == status:
+        return related[-1]
+    recorded_at = _utc_now()
     entry: dict[str, Any] = {
-        "schema": MOS_PROJECTION_RECEIPT_LOG.name,
+        "schema": "engineering-delivery-mos-projection/v1",
+        "projection_receipt_id": (
+            f"engineering-delivery-mos-projection:{_sha256({'decision_outcome_id': decision_outcome_id, 'status': status, 'recorded_at': recorded_at})}"
+        ),
         "status": status,
         "decision_outcome_id": decision_outcome_id,
-        "detail": detail,
-        "recorded_at": _utc_now(),
+        "mos_decision_id": mos_decision_id,
+        "error_code": error_code,
+        "recorded_at": recorded_at,
     }
     log.append(entry)
     return entry
@@ -104,7 +109,15 @@ def _project_to_mos(omo_dir: Path, record: Mapping[str, Any]) -> dict[str, str]:
         decision_type="engineering-delivery:human-review",
         input_summary=f"delivery={record['delivery_id']} scene=engineering-delivery tier=shadow",
         expected_outcome="explicit human review of a submitted engineering delivery",
-        outcome={"decision": record.get("decision"), "delivery_id": record.get("delivery_id")},
-        source_run_id=record["decision_outcome_id"],
+        actual_outcome=str(record["human_verdict"]),
+        delta="value_indicator_policy=false",
+        source_run_id=str(record["decision_outcome_id"]),
+        metadata={
+            "scene_id": "engineering-delivery",
+            "tier": "shadow",
+            "source_class": "real_human",
+            "value_indicator_policy": False,
+            "personal_value_attribution": False,
+        },
     )
     return {"status": "projected", "decision_id": decision_id}

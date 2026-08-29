@@ -48,6 +48,11 @@ class EngineeringDeliveryProjectionError(OSError):
     """MOS projection or qualified-record write failure."""
 
 
+def _utc_now() -> str:
+    """Return the canonical second-precision UTC timestamp used by OMO receipts."""
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def _signing_key(root: Path | None = None) -> str:
     """Resolve the server-owned review signing key (env wins, file fallback)."""
     from_env = os.environ.get(_ENGINEERING_REVIEW_SIGNING_KEY_ENV, "")
