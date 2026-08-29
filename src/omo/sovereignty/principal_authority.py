@@ -22,12 +22,12 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Protocol, runtime_checkable
 
 from omo.sovereignty.enforcement import (
-    PolicyEnforcementError,
     REASON_PDP_UNAVAILABLE,
+    PolicyEnforcementError,
 )
 
 # ---------------------------------------------------------------------------
@@ -78,7 +78,7 @@ _DEFAULT_TTL_SECONDS = 3600
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 # ---------------------------------------------------------------------------

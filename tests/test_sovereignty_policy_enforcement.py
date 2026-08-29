@@ -128,17 +128,18 @@ _VALID_CREDENTIAL_XIAMINGXING = "credential:key:1:sha256:a3bba3adae0ebc76d0c4203
 
 def _authority_digest_for(principal_id: str) -> str:
     """Compute a fresh, valid principal receipt digest for the default clock."""
+    from datetime import datetime
+
     from omo.sovereignty.principal_authority import (
         DefaultPrincipalAuthority,
         digest_receipt,
     )
-    from datetime import datetime, timezone
 
     auth = DefaultPrincipalAuthority()
     receipt = auth.verify(
         principal_id,
         _VALID_CREDENTIAL_XIAMINGXING,
-        now=datetime.now(timezone.utc).isoformat(),
+        now=datetime.now(UTC).isoformat(),
     )
     return digest_receipt(receipt)
 
@@ -740,9 +741,9 @@ def test_authority_missing_receipt_denied(broker, svc, mgr, now):
 def test_authority_principal_mismatch_denied(broker, svc, mgr, now):
     _grant_for_principal(svc, mgr, now, "principal:xiamingxing")
     from omo.sovereignty.principal_authority import (
+        REASON_AUTHORITY_PRINCIPAL_MISMATCH,
         PrincipalAuthorityReceipt,
         digest_receipt,
-        REASON_AUTHORITY_PRINCIPAL_MISMATCH,
     )
     # Defensive branch: a buggy authority returns a receipt for a DIFFERENT
     # principal than the request -> must deny before any mandate/admission work.
@@ -781,9 +782,9 @@ def test_authority_digest_unverified_denied(broker, svc, mgr, now):
 def test_authority_expired_denied(broker, svc, mgr, now):
     _grant_for_principal(svc, mgr, now, "principal:xiamingxing")
     from omo.sovereignty.principal_authority import (
+        REASON_AUTHORITY_EXPIRED,
         PrincipalAuthorityReceipt,
         digest_receipt,
-        REASON_AUTHORITY_EXPIRED,
     )
     # Defensive branch: authority returns an already-expired receipt -> deny.
     class _ExpiredAuthority:
