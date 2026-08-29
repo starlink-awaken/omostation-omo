@@ -548,7 +548,7 @@ def test_migration_reapply_is_idempotent(tmp_path: Path) -> None:
     broker = _broker(tmp_path)
     status = broker.migration_status()
     assert len(status) == 1
-    assert status[0]["version"] == "1"
+    assert status[0]["version"] == "2"
     # Re-applying the same schema is a no-op (idempotent).
     apply_schema(broker._conn)
     assert len(broker.migration_status()) == 1
@@ -558,7 +558,7 @@ def test_migration_reapply_is_idempotent(tmp_path: Path) -> None:
 def test_migration_checksum_mismatch_rejected(tmp_path: Path) -> None:
     broker = _broker(tmp_path)
     conn = broker._conn
-    conn.execute("UPDATE schema_migration SET checksum = 'corrupt' WHERE version = '1'")
+    conn.execute("UPDATE schema_migration SET checksum = 'corrupt' WHERE version = '2'")
     conn.commit()
     with pytest.raises(LedgerSchemaError):
         apply_schema(conn)

@@ -62,6 +62,7 @@ DEFAULT_OUTBOX_DESTINATION = "ledger"
 BUSY_TIMEOUT_MS = 5000
 #: Outbox states.
 OUTBOX_PENDING = "pending"
+OUTBOX_UNCERTAIN = "uncertain"
 OUTBOX_SENT = "sent"
 OUTBOX_FAILED = "failed"
 
@@ -854,12 +855,126 @@ class LedgerBroker:
             rows = self._conn.execute(sql, tuple(params)).fetchall()
         return [dict(row) for row in rows]
 
+    def outbox_claim_due(
+        self,
+        destination: str,
+        *,
+        worker_id: str,
+        now: str,
+        lease_expires_at: str,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Atomically lease due pending/uncertain rows for one publisher."""
+        if not worker_id.strip():
+            raise LedgerError("worker_id is required")
+        if limit < 1:
+            return []
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                rows = self._conn.execute(
+                    "SELECT * FROM event_outbox "
+                    "WHERE destination = ? AND state IN (?, ?) "
+                    "AND next_attempt_at <= ? "
+                    "AND (lease_owner IS NULL OR lease_expires_at <= ?) "
+                    "ORDER BY next_attempt_at ASC, event_id ASC LIMIT ?",
+                    (destination, OUTBOX_PENDING, OUTBOX_UNCERTAIN, now, now, int(limit)),
+                ).fetchall()
+                claimed: list[dict[str, Any]] = []
+                for row in rows:
+                    updated = self._conn.execute(
+                        "UPDATE event_outbox SET lease_owner = ?, lease_expires_at = ? "
+                        "WHERE event_id = ? AND destination = ? "
+                        "AND state IN (?, ?) AND next_attempt_at <= ? "
+                        "AND (lease_owner IS NULL OR lease_expires_at <= ?)",
+                        (
+                            worker_id,
+                            lease_expires_at,
+                            row["event_id"],
+                            destination,
+                            OUTBOX_PENDING,
+                            OUTBOX_UNCERTAIN,
+                            now,
+                            now,
+                        ),
+                    )
+                    if updated.rowcount:
+                        claimed.append(
+                            dict(
+                                self._conn.execute(
+                                    "SELECT * FROM event_outbox WHERE event_id = ? AND destination = ?",
+                                    (row["event_id"], destination),
+                                ).fetchone()
+                            )
+                        )
+                self._conn.commit()
+                return claimed
+            except BaseException:
+                self._conn.rollback()
+                raise
+
+    def outbox_event_payload(self, event_id: str) -> dict[str, Any]:
+        """Return the decoded payload for one outbox event."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT payload_json FROM event_log WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+        if row is None:
+            raise LedgerError(f"outbox event not found: {event_id}")
+        value = json.loads(str(row["payload_json"]))
+        if not isinstance(value, dict):
+            raise LedgerError(f"outbox event payload is not an object: {event_id}")
+        return value
+
+    def outbox_finalize(
+        self,
+        event_id: str,
+        destination: str,
+        *,
+        worker_id: str,
+        state: str,
+        attempts: int,
+        next_attempt_at: str,
+        receipt_id: str | None = None,
+        error_class: str | None = None,
+    ) -> dict[str, Any]:
+        """Finalize a leased row only when the lease owner still matches."""
+        if state not in (OUTBOX_PENDING, OUTBOX_UNCERTAIN, OUTBOX_SENT, OUTBOX_FAILED):
+            raise LedgerError(f"invalid outbox state: {state!r}")
+        with self._lock:
+            updated = self._conn.execute(
+                "UPDATE event_outbox SET state = ?, attempts = ?, next_attempt_at = ?, "
+                "receipt_id = ?, error_class = ?, lease_owner = NULL, lease_expires_at = NULL "
+                "WHERE event_id = ? AND destination = ? AND lease_owner = ?",
+                (
+                    state,
+                    int(attempts),
+                    next_attempt_at,
+                    receipt_id,
+                    error_class,
+                    event_id,
+                    destination,
+                    worker_id,
+                ),
+            )
+            if updated.rowcount != 1:
+                self._conn.rollback()
+                raise LedgerError(f"outbox lease lost: event={event_id} destination={destination}")
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT * FROM event_outbox WHERE event_id = ? AND destination = ?",
+                (event_id, destination),
+            ).fetchone()
+        return dict(row)
+
     def outbox_mark(self, event_id: str, destination: str, *, state: str, attempts: int) -> None:
         if state not in (OUTBOX_SENT, OUTBOX_FAILED):
             raise LedgerError(f"invalid outbox state: {state!r}")
         with self._lock:
             self._conn.execute(
-                "UPDATE event_outbox SET state = ?, attempts = ?, next_attempt_at = ? "
+                "UPDATE event_outbox SET state = ?, attempts = ?, next_attempt_at = ?, "
+                "lease_owner = NULL, lease_expires_at = NULL "
                 "WHERE event_id = ? AND destination = ?",
                 (state, int(attempts), _utc_now(), event_id, destination),
             )
@@ -911,6 +1026,7 @@ __all__ = [
     "EPISODE_REQUIRED_CLASSES",
     "OUTBOX_FAILED",
     "OUTBOX_PENDING",
+    "OUTBOX_UNCERTAIN",
     "OUTBOX_SENT",
     "DuplicateEventError",
     "IntegrityViolationError",

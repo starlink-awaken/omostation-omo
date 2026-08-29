@@ -42,7 +42,7 @@ from typing import Any
 
 #: Bump this whenever the ledger DDL changes in a way that requires a new
 #: migration. The current value defines the schema the broker expects.
-LEDGER_SCHEMA_VERSION = "1"
+LEDGER_SCHEMA_VERSION = "2"
 
 # ---------------------------------------------------------------------------
 # DDL (authoritative physical model — blueprint §10.2)
@@ -89,6 +89,10 @@ CREATE TABLE IF NOT EXISTS event_outbox (
   state           TEXT NOT NULL,
   attempts        INTEGER NOT NULL DEFAULT 0,
   next_attempt_at TEXT NOT NULL,
+  lease_owner     TEXT,
+  lease_expires_at TEXT,
+  receipt_id      TEXT,
+  error_class     TEXT,
   PRIMARY KEY (event_id, destination)
 );
 
@@ -255,6 +259,10 @@ _EXPECTED_TABLE_COLUMNS: dict[str, dict[str, tuple[str, bool]]] = {
         "state": ("TEXT", True),
         "attempts": ("INTEGER", True),
         "next_attempt_at": ("TEXT", True),
+        "lease_owner": ("TEXT", False),
+        "lease_expires_at": ("TEXT", False),
+        "receipt_id": ("TEXT", False),
+        "error_class": ("TEXT", False),
     },
     "schema_migration": {
         "version": ("TEXT", False),
@@ -580,13 +588,34 @@ def apply_schema(
             ).fetchone()
 
         if applied is None:
-            # Fresh ledger: full create in one transaction.
-            for stmt in _iter_statements(LEDGER_DDL + "\n" + LEDGER_TRIGGERS):
-                conn.execute(stmt)
-            conn.execute(
-                "INSERT INTO schema_migration(version, applied_at, checksum) VALUES (?, datetime('now'), ?)",
-                (schema_version, checksum),
+            # Fresh ledger: full create in one transaction. Existing v1
+            # ledgers receive only the additive outbox columns; no second
+            # queue or writer is introduced.
+            has_event_outbox = (
+                conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'event_outbox'").fetchone()
+                is not None
             )
+            if has_event_outbox:
+                columns = {row[1] for row in conn.execute("PRAGMA table_info(event_outbox)").fetchall()}
+                for column, declaration in (
+                    ("lease_owner", "TEXT"),
+                    ("lease_expires_at", "TEXT"),
+                    ("receipt_id", "TEXT"),
+                    ("error_class", "TEXT"),
+                ):
+                    if column not in columns:
+                        conn.execute(f"ALTER TABLE event_outbox ADD COLUMN {column} {declaration}")
+                conn.execute(
+                    "INSERT INTO schema_migration(version, applied_at, checksum) VALUES (?, datetime('now'), ?)",
+                    (schema_version, checksum),
+                )
+            else:
+                for stmt in _iter_statements(LEDGER_DDL + "\n" + LEDGER_TRIGGERS):
+                    conn.execute(stmt)
+                conn.execute(
+                    "INSERT INTO schema_migration(version, applied_at, checksum) VALUES (?, datetime('now'), ?)",
+                    (schema_version, checksum),
+                )
         else:
             if applied[0] != checksum:
                 raise LedgerSchemaError(
