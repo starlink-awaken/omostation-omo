@@ -22,13 +22,18 @@ from .orchestration_contract import (
     OrchestrationContractError,
     validate_capability_requirements,
 )
-from .workflow_mesh import WorkflowMeshStore, new_workflow_event
+from .workflow_dispatch_errors import WorkflowDispatchError
 
 # 2026-08-29: _approval_state and _validated_request_identity extracted to workflow_dispatch_helpers.py
-from .workflow_dispatch_helpers import _approval_state, _build_admission_grant, _canonical, _proof, renew_admission, _validated_request_identity
-
-
-from .workflow_dispatch_errors import WorkflowDispatchError
+from .workflow_dispatch_helpers import (
+    _approval_state,
+    _build_admission_grant,
+    _canonical,
+    _proof,
+    _validated_request_identity,
+    renew_admission,
+)
+from .workflow_mesh import WorkflowMeshStore, new_workflow_event
 
 
 def _parse_health(health: dict[str, Any], required: list[str]) -> dict[str, Any]:

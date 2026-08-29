@@ -9,15 +9,15 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
 from .omo_shared import load_yaml
 from .omo_task_schema import validate_task_file
 from .orchestration_contract import (
     OrchestrationContractError,
     validate_capability_requirements,
 )
-
 from .workflow_dispatch_errors import WorkflowDispatchError
-
+from .workflow_mesh import WorkflowMeshStore, new_workflow_event
 
 
 def _canonical(value: dict[str, Any]) -> bytes:
@@ -27,6 +27,7 @@ def _canonical(value: dict[str, Any]) -> bytes:
 def _proof(grant: dict[str, Any]) -> str:
     unsigned = {key: value for key, value in grant.items() if key != "proof"}
     return hashlib.sha256(_canonical(unsigned)).hexdigest()
+
 
 def _approval_state(
     root: Path,

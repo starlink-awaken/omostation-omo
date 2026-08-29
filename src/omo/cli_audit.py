@@ -4,7 +4,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from omo.omo_audit import governance_main, query as audit_query
+from omo.omo_audit import governance_main
+from omo.omo_audit import query as audit_query
 
 
 def _cmd_audit(args: list[str]) -> int:

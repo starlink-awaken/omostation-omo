@@ -102,17 +102,115 @@ PROVIDER_ATTEMPT_STATES = {
 }
 
 
-from .blueprint_control_helpers import (
-    BlueprintControlError,
-    CompiledBlueprintPacket,
-    _canonical_receipt_digest,
-    _is_sha256,
-    _required_string_list,
-    _safe_relative_path,
-    _sha256,
-    _stamp,
-    _utc,
-)
+def _sha256(data: bytes) -> str:
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def _utc(value: str | None = None) -> datetime:
+    if value is None:
+        return datetime.now(UTC)
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _stamp(value: str | None = None) -> str:
+    return _utc(value).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _canonical_receipt_digest(receipt: Mapping[str, Any]) -> str:
+    projected = {key: value for key, value in receipt.items() if key != "receipt_sha256"}
+    canonical = json.dumps(projected, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _is_sha256(value: Any, *, prefixed: bool) -> bool:
+    text = str(value or "")
+    if prefixed:
+        if not text.startswith("sha256:"):
+            return False
+        text = text.removeprefix("sha256:")
+    return len(text) == 64 and all(character in "0123456789abcdef" for character in text)
+
+
+def _required_string_list(container: Mapping[str, Any], field_name: str) -> list[str]:
+    value = container.get(field_name)
+    if not isinstance(value, list) or not value or any(not isinstance(item, str) or not item.strip() for item in value):
+        raise BlueprintControlError(f"{field_name} must be a non-empty string list")
+    return [item.strip() for item in value]
+
+
+def _safe_relative_path(value: Any, field_name: str) -> str:
+    text = str(value or "").strip()
+    path = PurePosixPath(text)
+    canonical = path.as_posix() + ("/" if text.endswith("/") else "")
+    if (
+        not text
+        or text in {".", "./"}
+        or text.startswith("/")
+        or "\\" in text
+        or path.is_absolute()
+        or ".." in path.parts
+        or canonical != text
+    ):
+        raise BlueprintControlError(f"unsafe {field_name}: {text}")
+    return text
+
+
+class BlueprintControlError(ValueError):
+    """A blueprint cannot advance through the supervised control contract."""
+
+
+class CompiledBlueprintPacket:
+    packet: dict[str, Any]
+    packet_hash: str
+
+
+def _dispatch_artifact(root: Path, reference: str) -> dict[str, Any]:
+    path = _artifact_path(root, reference, field_name="dispatch file")
+    try:
+        payload = load_yaml(path)
+    except (OSError, ValueError) as exc:
+        raise BlueprintControlError("dispatch file is invalid") from exc
+    blueprint = payload.get("blueprint")
+    control_state = payload.get("control_state")
+    workflow = payload.get("execution", {}).get("workflow_mesh")
+    admission = workflow.get("admission") if isinstance(workflow, Mapping) else None
+    if (
+        not isinstance(blueprint, Mapping)
+        or not isinstance(control_state, Mapping)
+        or not isinstance(workflow, Mapping)
+        or not isinstance(admission, Mapping)
+        or control_state.get("transport") != "accepted"
+    ):
+        raise BlueprintControlError("dispatch is not transport accepted")
+    required = {
+        "workflow_run_id": workflow.get("workflow_run_id"),
+        "admission_id": admission.get("admission_id"),
+        "packet_id": blueprint.get("packet_id"),
+        "packet_hash": blueprint.get("packet_hash"),
+        "bet_id": blueprint.get("bet_id"),
+        "dispatch_id": payload.get("dispatch_id"),
+    }
+    if any(not isinstance(value, str) or not value for value in required.values()):
+        raise BlueprintControlError("dispatch identity is incomplete")
+    return {
+        "state": "transport_accepted",
+        **required,
+        "dispatch_path": _safe_relative_path(reference, "dispatch file"),
+        "control_state": dict(control_state),
+    }
+
+
+def _root(value: str) -> Path:
+    try:
+        root = Path(value).resolve(strict=True)
+    except OSError as exc:
+        raise BlueprintControlError("authority root is unavailable") from exc
+    if not root.is_dir():
+        raise BlueprintControlError("authority root is not a directory")
+    return root
 
 
 class BlueprintControlService:
@@ -2827,20 +2925,6 @@ def _parser() -> _BlueprintArgumentParser:
     rollback_parser.add_argument("--candidate-file", required=True)
     return parser
 
-
-
-# 2026-08-29: helper functions extracted to blueprint_control_helpers.py
-from .blueprint_control_helpers import (
-    _artifact_path,
-    _candidate_projection_path,
-    _compiled_from_artifact,
-    _dispatch_artifact,
-    _emit,
-    _error_code,
-    _parser,
-    _read_json_artifact,
-    _root,
-)
 
 def main(argv: list[str] | None = None) -> int:
     """Run the supervised facade without duplicating controller business logic."""

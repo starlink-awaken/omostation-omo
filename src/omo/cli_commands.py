@@ -11,7 +11,6 @@ from omo.omo_reputation import compute_reputation
 
 def _cmd_cache(args: list[str]) -> int:
     """状态缓存管理"""
-    import argparse
 
     parser = argparse.ArgumentParser(prog="omo cache", description="状态缓存管理")
     subparsers = parser.add_subparsers(dest="cache_sub", required=True)
@@ -22,8 +21,6 @@ def _cmd_cache(args: list[str]) -> int:
     parser_invalidate.add_argument("pattern", type=str, help="缓存键匹配模式")
 
     parsed = parser.parse_args(args)
-
-    from pathlib import Path
 
     from omo.state_cache import GovernanceStateCache
 
@@ -50,9 +47,6 @@ def _cmd_cache(args: list[str]) -> int:
 
 def _cmd_belief(args: list[str]) -> int:
     """MOS Agent Belief 经验可观测管理"""
-    import argparse
-
-    from omo.omo_belief import MOSBeliefManager
 
     parser = argparse.ArgumentParser(prog="omo belief", description="MOS Agent Belief 经验可观测性管理")
     subparsers = parser.add_subparsers(dest="sub", required=True)
@@ -88,12 +82,8 @@ def _cmd_belief(args: list[str]) -> int:
 
 def _cmd_reputation(args: list[str]) -> int:
     """Agent 信誉画像 (BET-Y1Q2-T4-02)."""
-    import argparse
 
-    from omo.omo_adjudication import AdjudicationStore
-    from omo.omo_adjudication import AdjudicationStore
     from omo.omo_belief import MOSBeliefManager
-    from omo.omo_reputation import compute_reputation
 
     parser = argparse.ArgumentParser(
         prog="omo reputation",
@@ -122,7 +112,3 @@ def _cmd_reputation(args: list[str]) -> int:
         print(f"  拒绝率: {d['rejection_rate']:.1%}")
         print(f"  平均置信度: {d['avg_confidence']:.3f}")
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

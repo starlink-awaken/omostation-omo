@@ -11,9 +11,6 @@ from omo.omo_belief import MOSBeliefManager
 
 def _cmd_adjudication(args: list[str]) -> int:
     """AdjudicationRecorded 裁决管理 (BET-Y1Q1-T4-01)"""
-    import argparse
-
-    from omo.omo_adjudication import AdjudicationStore
 
     parser = argparse.ArgumentParser(prog="omo adjudication", description="裁决记录管理 (AdjudicationRecorded)")
     subparsers = parser.add_subparsers(dest="sub", required=True)
@@ -69,11 +66,7 @@ def _cmd_adjudication(args: list[str]) -> int:
 
 def _cmd_feedback(args: list[str]) -> int:
     """MOS 闭环: 人类裁决 → 信念修正 (BET-Y1Q2-T1-03)."""
-    import argparse
 
-    from omo.omo_adjudication import VERDICT_CONFIDENCE_DELTA, AdjudicationStore
-    from omo.omo_autonomy_level import AutonomyLadder
-    from omo.omo_belief import MOSBeliefManager
     from omo.omo_paths import RUNTIME_DELIVERY_DIR, RUNTIME_TRUTH_DIR
 
     parser = argparse.ArgumentParser(

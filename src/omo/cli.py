@@ -464,13 +464,13 @@ def _refresh_dashboard_safely(trigger: str = "") -> None:
     except Exception as e:
         print(f"⚠️  [dashboard refresh skipped via {trigger}]: {e}", file=sys.stderr)
 
-# 2026-08-29: subcommand functions extracted to focused modules
-from .cli_audit import _cmd_audit
-from .cli_healing import _cmd_healing
-from .cli_adjudication_feedback import _cmd_adjudication, _cmd_feedback
-from .cli_commands import _cmd_belief, _cmd_cache, _cmd_reputation
-from .cli_predict import _cmd_predict
 
+# 2026-08-29: subcommand functions extracted to focused modules
+from .cli_adjudication_feedback import _cmd_adjudication, _cmd_feedback
+from .cli_audit import _cmd_audit
+from .cli_commands import _cmd_belief, _cmd_cache, _cmd_reputation
+from .cli_healing import _cmd_healing
+from .cli_predict import _cmd_predict
 
 if __name__ == "__main__":
     raise SystemExit(main())
