@@ -597,6 +597,7 @@ class PersonalEpisodeService:
         if self._principal_authority is not None and self._default_credential_ref is not None:
             try:
                 from omo.sovereignty.principal_authority import digest_receipt
+
                 receipt = self._principal_authority.verify(
                     principal_id,
                     self._default_credential_ref,
