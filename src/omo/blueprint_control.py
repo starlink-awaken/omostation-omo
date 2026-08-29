@@ -162,6 +162,7 @@ class BlueprintControlError(ValueError):
     """A blueprint cannot advance through the supervised control contract."""
 
 
+@dataclass(frozen=True)
 class CompiledBlueprintPacket:
     packet: dict[str, Any]
     packet_hash: str
