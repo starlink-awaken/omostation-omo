@@ -18,6 +18,7 @@ from typing import Any
 
 from .orchestration_contract import OrchestrationContractError, validate_capability_requirements
 from .workflow_mesh import (
+    EXACT_REQUEST_DISCRIMINATOR,
     WorkflowMeshEventError,
     WorkflowMeshStore,
     new_workflow_event,
@@ -49,6 +50,25 @@ def _stamp(value: str | None = None) -> str:
 
 def _store(omo_dir: Path | str) -> WorkflowMeshStore:
     return WorkflowMeshStore(omo_dir)
+
+
+def _validate_exact_admission_window(admission: Mapping[str, Any]) -> None:
+    try:
+        issued_at = datetime.fromisoformat(str(admission.get("issued_at") or "").replace("Z", "+00:00"))
+        expires_at = datetime.fromisoformat(str(admission.get("expires_at") or "").replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise WorkerLifecycleError("exact admission time window is invalid") from exc
+    if issued_at.tzinfo is None or expires_at.tzinfo is None:
+        raise WorkerLifecycleError("exact admission time window is invalid")
+    issued_at = issued_at.astimezone(UTC)
+    expires_at = expires_at.astimezone(UTC)
+    now = _utc()
+    if expires_at <= issued_at:
+        raise WorkerLifecycleError("exact admission time window is invalid")
+    if now < issued_at:
+        raise WorkerLifecycleError("exact admission is not yet valid")
+    if now >= expires_at:
+        raise WorkerLifecycleError("exact admission is expired")
 
 
 def _existing(store: WorkflowMeshStore, idempotency_key: str) -> dict[str, Any] | None:
@@ -177,6 +197,9 @@ def record_step_dispatch(
         and (
             admission.get("workflow_run_id") != workflow_run_id
             or request_identity != exact_request_identity
+            or admission.get("exact_request_discriminator") != EXACT_REQUEST_DISCRIMINATOR
+            or request_identity.get("bet_id") != exact_request_identity.get("bet_id")
+            or request_identity.get("workflow_id") != exact_request_identity.get("workflow_id")
             or dispatch_id != exact_request_identity.get("dispatch_id")
             or request_identity.get("workflow_run_id") != workflow_run_id
             or request_identity.get("correlation_id") != workflow_run_id
@@ -195,6 +218,8 @@ def record_step_dispatch(
         )
     ):
         raise WorkerLifecycleError("admission binding mismatch")
+    if exact_admission:
+        _validate_exact_admission_window(admission)
     nonce = secrets.token_hex(16) if ack_origin_proof else None
     payload = {
         "dispatch_id": dispatch_id,
@@ -209,6 +234,9 @@ def record_step_dispatch(
         "ack_origin_nonce": nonce,
     }
     if exact_admission:
+        payload["exact_request_discriminator"] = EXACT_REQUEST_DISCRIMINATOR
+        payload["bet_id"] = request_identity["bet_id"]
+        payload["workflow_id"] = request_identity["workflow_id"]
         payload["capability_requirements_digest"] = requirements_digest
     if ack_origin_proof:
         payload["ack_origin_commitment"] = worker_ack_origin_digest(
@@ -365,6 +393,12 @@ def record_worker_completion(
     )
     if snapshot.get("state") != "running":
         raise WorkerLifecycleError("worker completion requires a running StepRun")
+    admission = snapshot.get("admission")
+    exact_identity = snapshot.get("exact_request_identity")
+    if isinstance(exact_identity, Mapping):
+        if not isinstance(admission, Mapping):
+            raise WorkerLifecycleError("worker completion requires exact admission")
+        _validate_exact_admission_window(admission)
     worker = snapshot.get("worker")
     if (
         not isinstance(worker, Mapping)
@@ -398,6 +432,15 @@ def record_worker_completion(
     }
     receipt = {
         "status": "succeeded",
+        **(
+            {
+                "exact_request_discriminator": EXACT_REQUEST_DISCRIMINATOR,
+                "bet_id": exact_identity["bet_id"],
+                "workflow_id": exact_identity["workflow_id"],
+            }
+            if isinstance(exact_identity, Mapping)
+            else {}
+        ),
         "workflow_run_id": workflow_run_id,
         "admission_id": admission_id,
         "step_run_id": step_run_id,

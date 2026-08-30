@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -622,6 +623,8 @@ def _seed_exact_workflow_packet(
         json.dumps(requirements, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     exact_identity = {
+        "bet_id": "BET-BOUND",
+        "workflow_id": "test-workflow",
         "correlation_id": run_id,
         "workflow_run_id": run_id,
         "packet_id": "WP-BET-PRODUCTION",
@@ -634,6 +637,8 @@ def _seed_exact_workflow_packet(
         "capability_requirements_digest": requirements_digest,
     }
     policy = {
+        "exact_request_discriminator": "agent-workflow-exact/v1",
+        "bet_id": exact_identity["bet_id"],
         "workflow_id": "test-workflow",
         "workflow_run_id": run_id,
         "packet_id": exact_identity["packet_id"],
@@ -645,19 +650,23 @@ def _seed_exact_workflow_packet(
         "source_receipt_digests": ["sha256:" + "3" * 64],
         "requested_budget": 0.0,
     }
+    issued_at = datetime.now(UTC).replace(microsecond=0)
     grant = {
         "admission_id": "admit-production-exact",
         "status": "admitted",
         "workflow_run_id": run_id,
         "trace_id": run_id,
         "backend": "agent-workflow",
+        "exact_request_discriminator": "agent-workflow-exact/v1",
+        "bet_id": exact_identity["bet_id"],
+        "workflow_id": exact_identity["workflow_id"],
         "step_run_ids": [f"{run_id}:execute"],
         "capabilities": ["reasoning"],
         "policy_digest": hashlib.sha256(
             json.dumps(policy, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest(),
-        "issued_at": "2026-08-30T00:00:00+00:00",
-        "expires_at": "2026-08-31T00:00:00+00:00",
+        "issued_at": issued_at.isoformat(),
+        "expires_at": (issued_at + timedelta(seconds=900)).isoformat(),
         "request_identity": exact_identity,
     }
     grant["proof"] = hashlib.sha256(
@@ -668,7 +677,12 @@ def _seed_exact_workflow_packet(
         new_workflow_event(
             "WorkflowRequested",
             run_id,
-            payload={"workflow_id": "test-workflow", "request_identity": exact_identity},
+            payload={
+                "exact_request_discriminator": "agent-workflow-exact/v1",
+                "bet_id": exact_identity["bet_id"],
+                "workflow_id": "test-workflow",
+                "request_identity": exact_identity,
+            },
         )
     )
     store.append(
@@ -678,6 +692,9 @@ def _seed_exact_workflow_packet(
             payload={
                 "admission": grant,
                 "policy": policy,
+                "exact_request_discriminator": "agent-workflow-exact/v1",
+                "bet_id": exact_identity["bet_id"],
+                "workflow_id": exact_identity["workflow_id"],
                 "policy_digest": grant["policy_digest"],
                 "proof": grant["proof"],
                 "request_identity": exact_identity,
@@ -690,6 +707,7 @@ def _seed_exact_workflow_packet(
         "admission": grant,
         "request_identity": {
             "bet_id": "BET-BOUND",
+            "workflow_id": "test-workflow",
             "packet_id": exact_identity["packet_id"],
             "packet_hash": exact_identity["packet_hash"],
             "dispatch_id": "caller-forged-dispatch",
@@ -810,6 +828,8 @@ def test_exact_production_success_records_authenticated_completion_and_redacts_p
     chronology: list[str] = []
 
     class CompletedWorker:
+        pid = 42401
+
         def __init__(self, argv, *, cwd, stdout, stderr, text, env, start_new_session):
             del stdout, stderr, text
             assert start_new_session is True
@@ -870,6 +890,107 @@ def test_exact_production_success_records_authenticated_completion_and_redacts_p
     assert origin_proof not in json.dumps(store.events())
     assert origin_proof not in log_path.read_text(encoding="utf-8")
     assert "[REDACTED]" in log_path.read_text(encoding="utf-8")
+
+
+def test_exact_zero_return_parent_with_live_descendant_fails_before_completion(
+    tmp_path: Path,
+) -> None:
+    _task_path, _pi = _exact_worker_fixture(tmp_path)
+    packet, _exact_identity = _seed_exact_workflow_packet(tmp_path)
+    origin_proof = new_worker_ack_origin_proof()
+    pid_path = tmp_path / "zero-return-pids.txt"
+    script_path = tmp_path / "ack-and-leave-descendant.py"
+    script_path.write_text(
+        "\n".join(
+            [
+                "import json",
+                "import os",
+                "from pathlib import Path",
+                "import subprocess",
+                "import sys",
+                "from omo.worker_lifecycle import acknowledge_worker",
+                "child_code = 'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)'",
+                "child = subprocess.Popen(",
+                "    [sys.executable, '-c', child_code],",
+                "    stdin=subprocess.DEVNULL,",
+                "    stdout=subprocess.DEVNULL,",
+                "    stderr=subprocess.DEVNULL,",
+                ")",
+                "Path(sys.argv[1]).write_text(f'{os.getpid()} {child.pid}', encoding='utf-8')",
+                "context = json.loads(os.environ['OMO_WORKER_ACK_CONTEXT_JSON'])",
+                "omo_dir = context.pop('omo_dir')",
+                "acknowledge_worker(",
+                "    Path.cwd() / omo_dir,",
+                "    **context,",
+                "    ack_decision='proceed',",
+                "    origin_proof=os.environ['OMO_WORKER_ACK_ORIGIN_PROOF'],",
+                ")",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    registry_path = tmp_path / ".omo" / "_truth" / "registry" / "workers.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    registry["workers"][0]["transports"]["acp_stdio"]["command"] = " ".join(
+        [shlex.quote(sys.executable), shlex.quote(str(script_path)), shlex.quote(str(pid_path))]
+    )
+    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+    spawned_pids: list[int] = []
+
+    def pid_alive(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    try:
+        with pytest.raises(RuntimeError, match="process group remained live after successful return"):
+            dispatch_task(
+                tmp_path,
+                task_id="TASK-ADMISSION-GATE",
+                worker_id="pi",
+                allowed_write_paths=[],
+                workflow_packet=packet,
+                worker_ack_origin_proof=origin_proof,
+                launch=True,
+                now="2026-08-30T01:02:03+00:00",
+            )
+        deadline = time.monotonic() + 5
+        while not pid_path.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert pid_path.exists()
+        spawned_pids.extend(int(item) for item in pid_path.read_text(encoding="utf-8").split())
+        deadline = time.monotonic() + 5
+        while any(pid_alive(pid) for pid in spawned_pids) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert len(spawned_pids) == 2
+        assert not any(pid_alive(pid) for pid in spawned_pids)
+        events = WorkflowMeshStore(tmp_path / ".omo").events()
+        persisted_text = "\n".join(
+            path.read_text(encoding="utf-8", errors="replace")
+            for path in (tmp_path / ".omo").rglob("*")
+            if path.is_file()
+        )
+        assert not any(event["event_type"] == "WorkflowSucceeded" for event in events)
+        assert origin_proof not in persisted_text
+    finally:
+        if pid_path.exists() and not spawned_pids:
+            spawned_pids.extend(int(item) for item in pid_path.read_text(encoding="utf-8").split())
+        if spawned_pids:
+            try:
+                os.killpg(spawned_pids[0], signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        for pid in spawned_pids:
+            if pid_alive(pid):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
 
 
 def test_exact_production_missing_origin_proof_rejects_before_dispatch(
@@ -973,6 +1094,8 @@ def test_exact_production_failure_or_missing_ack_never_completes(
     origin_proof = new_worker_ack_origin_proof()
 
     class WorkerResult:
+        pid = 42402
+
         def __init__(self, argv, *, cwd, stdout, stderr, text, env, start_new_session):
             del stdout, stderr, text
             assert start_new_session is True
@@ -1070,6 +1193,8 @@ def test_exact_production_timeout_records_honest_failure(
     packet, _exact_identity = _seed_exact_workflow_packet(tmp_path)
 
     class TimedOutWorker:
+        pid = 42403
+
         def __init__(self, argv, *, cwd, stdout, stderr, text, env, start_new_session):
             del cwd, stdout, stderr, text, env
             assert start_new_session is True
@@ -1207,7 +1332,7 @@ def test_exact_production_step_started_append_failure_reaps_spawned_child(
         "killed": False,
         "drained": True,
         "communicate_calls": 1 if cleanup_failure == "terminate_error" else 2,
-        "signals": [signal.SIGTERM, signal.SIGKILL, 0, 0],
+        "signals": [signal.SIGTERM, 0, signal.SIGKILL, 0, 0],
     }
     assert not any(event["event_type"] == "StepStarted" for event in events)
     assert not any(event["event_type"] == "StepFailed" for event in events)
@@ -1226,7 +1351,13 @@ def test_exact_production_cleanup_fails_closed_when_validated_group_survives(
     packet, _exact_identity = _seed_exact_workflow_packet(tmp_path)
     origin_proof = new_worker_ack_origin_proof()
     spawned_pid = 42420
-    lifecycle = {"terminated": False, "killed": False, "drained": 0, "signals": []}
+    lifecycle = {
+        "terminated": False,
+        "killed": False,
+        "drained": 0,
+        "signals": [],
+        "communicate_timeouts": [],
+    }
 
     class PersistentGroupWorker:
         pid = spawned_pid
@@ -1243,7 +1374,7 @@ def test_exact_production_cleanup_fails_closed_when_validated_group_survives(
             lifecycle["killed"] = True
 
         def communicate(self, timeout=None):
-            del timeout
+            lifecycle["communicate_timeouts"].append(timeout)
             lifecycle["drained"] += 1
             self.returncode = -9
             return "partial", "cleanup"
@@ -1267,7 +1398,7 @@ def test_exact_production_cleanup_fails_closed_when_validated_group_survives(
     clock = {"value": 0.0}
 
     def fast_monotonic():
-        clock["value"] += 10.0
+        clock["value"] += 0.5
         return clock["value"]
 
     monkeypatch.setattr("omo.omo_worker_dispatch.subprocess.Popen", PersistentGroupWorker)
@@ -1295,7 +1426,12 @@ def test_exact_production_cleanup_fails_closed_when_validated_group_survives(
     assert 0 in lifecycle["signals"]
     assert lifecycle["terminated"] is False
     assert lifecycle["killed"] is False
-    assert lifecycle["drained"] >= 1
+    assert all(timeout is not None and 0 <= timeout <= 5 for timeout in lifecycle["communicate_timeouts"])
+    if group_failure == "persistent_live":
+        assert lifecycle["drained"] >= 1
+        assert lifecycle["communicate_timeouts"]
+    else:
+        assert lifecycle["drained"] == 0
     events = WorkflowMeshStore(tmp_path / ".omo").events()
     persisted_text = "\n".join(
         path.read_text(encoding="utf-8", errors="replace")

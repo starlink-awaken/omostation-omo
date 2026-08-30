@@ -565,61 +565,80 @@ def dispatch_task(
                 pass
             return pid
 
+        def validated_group_alive(process_group_id: int | None) -> bool:
+            if process_group_id is None:
+                raise RuntimeError("exact worker process-group identity is unavailable")
+            try:
+                os.killpg(process_group_id, 0)
+            except ProcessLookupError:
+                return False
+            except OSError:
+                return True
+            return True
+
         def reap_spawned_child(process: Any, process_group_id: int | None) -> tuple[str, str]:
-            def validated_group_alive() -> bool:
-                if process_group_id is None:
-                    return False
-                try:
-                    os.killpg(process_group_id, 0)
-                except ProcessLookupError:
-                    return False
-                except OSError:
-                    return True
-                return True
+            if process_group_id is None:
+                raise RuntimeError("exact worker process-group cleanup failed")
+            deadline = time.monotonic() + 5.0
+            output: tuple[str, str] = ("", "")
 
-            def ensure_validated_group_absent() -> None:
-                if process_group_id is None:
-                    return
-                deadline = time.monotonic() + 5
-                while validated_group_alive() and time.monotonic() < deadline:
-                    try:
-                        os.killpg(process_group_id, signal.SIGKILL)
-                    except ProcessLookupError:
-                        return
-                    except OSError:
-                        pass
-                    time.sleep(0.01)
-                if validated_group_alive():
-                    raise RuntimeError("exact worker process-group cleanup failed")
+            def remaining() -> float:
+                return max(0.0, deadline - time.monotonic())
 
-            def signal_validated_group(sig: signal.Signals) -> bool:
-                if process_group_id is None:
-                    return False
-                try:
-                    os.killpg(process_group_id, sig)
-                except ProcessLookupError:
-                    return True
-                except OSError:
-                    return False
-                return True
+            def bounded_communicate(*, grace_cap: float | None = None) -> tuple[str, str]:
+                timeout = remaining()
+                if grace_cap is not None:
+                    timeout = min(timeout, grace_cap)
+                if timeout <= 0:
+                    raise subprocess.TimeoutExpired(getattr(process, "args", []), timeout)
+                return process.communicate(timeout=timeout)
 
-            def kill_and_drain() -> tuple[str, str]:
-                signal_validated_group(signal.SIGKILL)
+            term_sent = False
+            group_absent = False
+            try:
+                os.killpg(process_group_id, signal.SIGTERM)
+                term_sent = True
+            except ProcessLookupError:
+                group_absent = True
+            except OSError:
+                pass
+
+            if term_sent or group_absent:
                 try:
-                    output = process.communicate()
+                    output = bounded_communicate(grace_cap=1.0)
                 except Exception:
-                    output = ("", "")
-                ensure_validated_group_absent()
+                    pass
+            if not validated_group_alive(process_group_id):
                 return output
 
-            if not signal_validated_group(signal.SIGTERM):
-                return kill_and_drain()
-            try:
-                output = process.communicate(timeout=5)
-            except Exception:
-                return kill_and_drain()
-            if validated_group_alive():
-                return kill_and_drain()
+            kill_sent = False
+            while remaining() > 0:
+                try:
+                    os.killpg(process_group_id, signal.SIGKILL)
+                    kill_sent = True
+                    break
+                except ProcessLookupError:
+                    group_absent = True
+                    break
+                except OSError:
+                    time.sleep(min(0.01, remaining()))
+
+            if kill_sent or group_absent:
+                try:
+                    output = bounded_communicate()
+                except Exception:
+                    pass
+
+            while validated_group_alive(process_group_id) and remaining() > 0:
+                try:
+                    os.killpg(process_group_id, signal.SIGKILL)
+                except ProcessLookupError:
+                    break
+                except OSError:
+                    pass
+                time.sleep(min(0.01, remaining()))
+            if validated_group_alive(process_group_id):
+                raise RuntimeError("exact worker process-group cleanup failed")
             return output
 
         def reap_or_fail_closed(
@@ -711,6 +730,16 @@ def dispatch_task(
             record_exact_failure("worker_ack_missing_or_mismatched")
             raise ack_error
         if exact_request_identity is not None:
+            if validated_group_alive(process_group_id):
+                lingering_group_error = RuntimeError(
+                    "exact worker process group remained live after successful return"
+                )
+                reap_or_fail_closed(process, process_group_id, lingering_group_error)
+                try:
+                    record_exact_failure("worker_process_group_remained_live")
+                except Exception:
+                    pass
+                raise lingering_group_error
             from .worker_lifecycle import record_worker_completion
 
             result_digest = "sha256:" + hashlib.sha256(log_content.encode("utf-8")).hexdigest()

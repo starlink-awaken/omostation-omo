@@ -33,7 +33,7 @@ from .workflow_dispatch_helpers import (
     _validated_request_identity,
     renew_admission,
 )
-from .workflow_mesh import WorkflowMeshStore, new_workflow_event
+from .workflow_mesh import EXACT_REQUEST_DISCRIMINATOR, WorkflowMeshStore, new_workflow_event
 
 _AGENT_WORKFLOW_BINDING_FIELDS = (
     "correlation_id",
@@ -139,6 +139,8 @@ def admit_agent_workflow_start(
     root: Path,
     *,
     record: Mapping[str, Any],
+    ttl_seconds: int = 900,
+    now: str | None = None,
     omo_dir: str | Path = ".omo",
 ) -> dict[str, Any]:
     """Persist one exact, non-executing admission for an Agent Workflow start."""
@@ -214,8 +216,9 @@ def admit_agent_workflow_start(
         raise WorkflowDispatchError("agent workflow preflight must be non-executing and non-valuing")
 
     request_identity = {
-        field: binding[field]
-        for field in _AGENT_WORKFLOW_BINDING_FIELDS
+        **{field: binding[field] for field in _AGENT_WORKFLOW_BINDING_FIELDS},
+        "bet_id": str(record.get("bet_id") or ""),
+        "workflow_id": str(record.get("workflow_id") or ""),
     }
     request_identity.update(
         {
@@ -225,12 +228,20 @@ def admit_agent_workflow_start(
     )
     requested = _requested_event(store, run_id)
     requested_payload = requested.get("payload")
-    if not isinstance(requested_payload, Mapping) or requested_payload.get("request_identity") != request_identity:
+    if (
+        not isinstance(requested_payload, Mapping)
+        or requested_payload.get("exact_request_discriminator") != EXACT_REQUEST_DISCRIMINATOR
+        or requested_payload.get("bet_id") != request_identity["bet_id"]
+        or requested_payload.get("workflow_id") != request_identity["workflow_id"]
+        or requested_payload.get("request_identity") != request_identity
+    ):
         raise WorkflowDispatchError("persisted agent workflow request identity mismatch")
     if requested_payload.get("workflow_id") != record.get("workflow_id"):
         raise WorkflowDispatchError("persisted agent workflow request workflow mismatch")
 
     policy = {
+        "exact_request_discriminator": EXACT_REQUEST_DISCRIMINATOR,
+        "bet_id": request_identity["bet_id"],
         "workflow_id": record.get("workflow_id"),
         "workflow_run_id": run_id,
         "packet_id": packet_id,
@@ -242,18 +253,26 @@ def admit_agent_workflow_start(
         "source_receipt_digests": source_receipt_digests,
         "requested_budget": 0.0,
     }
-    issued_at = datetime.now(UTC).replace(microsecond=0).isoformat()
+    if not isinstance(ttl_seconds, int) or ttl_seconds <= 0:
+        raise WorkflowDispatchError("agent workflow admission ttl_seconds must be positive")
+    issued = datetime.fromisoformat(now.replace("Z", "+00:00")) if now else datetime.now(UTC)
+    if issued.tzinfo is None:
+        issued = issued.replace(tzinfo=UTC)
+    issued_at = issued.astimezone(UTC).replace(microsecond=0).isoformat()
     grant = {
         "admission_id": f"admit-{uuid4().hex}",
         "status": "admitted",
         "workflow_run_id": run_id,
         "trace_id": run_id,
         "backend": "agent-workflow",
+        "exact_request_discriminator": EXACT_REQUEST_DISCRIMINATOR,
+        "bet_id": request_identity["bet_id"],
+        "workflow_id": request_identity["workflow_id"],
         "step_run_ids": [f"{run_id}:execute"],
         "capabilities": [requirement["capability_id"] for requirement in requirements],
         "policy_digest": hashlib.sha256(_canonical(policy)).hexdigest(),
         "issued_at": issued_at,
-        "expires_at": (datetime.fromisoformat(issued_at) + timedelta(hours=1)).isoformat(),
+        "expires_at": (datetime.fromisoformat(issued_at) + timedelta(seconds=ttl_seconds)).isoformat(),
         "request_identity": request_identity,
     }
     grant["proof"] = _proof(grant)
@@ -267,6 +286,9 @@ def admit_agent_workflow_start(
             payload={
                 "admission": grant,
                 "policy": policy,
+                "exact_request_discriminator": EXACT_REQUEST_DISCRIMINATOR,
+                "bet_id": request_identity["bet_id"],
+                "workflow_id": request_identity["workflow_id"],
                 "policy_digest": grant["policy_digest"],
                 "proof": grant["proof"],
                 "request_identity": request_identity,

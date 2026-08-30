@@ -181,6 +181,8 @@ _WORKER_EVENTS = {
 }
 SCENE_BINDING_FIELDS = frozenset({"scene_id", "journey_id", "outcome_metric"})
 _AGENT_WORKFLOW_IDENTITY_FIELDS = {
+    "bet_id",
+    "workflow_id",
     "correlation_id",
     "workflow_run_id",
     "packet_id",
@@ -192,6 +194,7 @@ _AGENT_WORKFLOW_IDENTITY_FIELDS = {
     "capability_requirements",
     "capability_requirements_digest",
 }
+EXACT_REQUEST_DISCRIMINATOR = "agent-workflow-exact/v1"
 _SHA256_REF_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
@@ -256,11 +259,22 @@ def _validated_exact_request_identity(
     payload: Mapping[str, Any],
     workflow_run_id: str,
 ) -> dict[str, Any] | None:
+    discriminator = payload.get("exact_request_discriminator")
+    if discriminator is None:
+        return None
+    if discriminator != EXACT_REQUEST_DISCRIMINATOR:
+        raise WorkflowMeshEventError("exact Agent Workflow request discriminator is invalid")
     identity = payload.get("request_identity")
     if not isinstance(identity, Mapping) or set(identity) != _AGENT_WORKFLOW_IDENTITY_FIELDS:
-        return None
+        raise WorkflowMeshEventError("exact Agent Workflow request identity shape is invalid")
     if (
-        identity.get("workflow_run_id") != workflow_run_id
+        identity.get("bet_id") != payload.get("bet_id")
+        or not isinstance(identity.get("bet_id"), str)
+        or not identity.get("bet_id")
+        or identity.get("workflow_id") != payload.get("workflow_id")
+        or not isinstance(identity.get("workflow_id"), str)
+        or not identity.get("workflow_id")
+        or identity.get("workflow_run_id") != workflow_run_id
         or identity.get("correlation_id") != workflow_run_id
         or not isinstance(payload.get("workflow_id"), str)
         or not payload.get("workflow_id")
@@ -273,7 +287,7 @@ def _validated_exact_request_identity(
         or not isinstance(identity.get("delivery_attempt_id"), str)
         or not identity["delivery_attempt_id"]
     ):
-        raise WorkflowMeshEventError("Agent Workflow request delivery identity is invalid")
+        raise WorkflowMeshEventError("exact Agent Workflow request delivery identity is invalid")
     requirements = identity.get("capability_requirements")
     try:
         from .orchestration_contract import validate_capability_requirements
@@ -323,12 +337,25 @@ def _validate_admission_payload(
         raise WorkflowMeshEventError("Admission grant proof mismatch")
     if not isinstance(admission["step_run_ids"], list) or not admission["step_run_ids"]:
         raise WorkflowMeshEventError("Admission grant requires step_run_ids")
+    try:
+        issued_at = datetime.fromisoformat(str(admission["issued_at"]).replace("Z", "+00:00"))
+        expires_at = datetime.fromisoformat(str(admission["expires_at"]).replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise WorkflowMeshEventError("Admission grant time window is invalid") from exc
+    if issued_at.tzinfo is None or expires_at.tzinfo is None or expires_at <= issued_at:
+        raise WorkflowMeshEventError("Admission grant time window is invalid")
     if exact_request_identity is not None:
         identity = admission.get("request_identity")
         if not isinstance(identity, Mapping) or set(identity) != _AGENT_WORKFLOW_IDENTITY_FIELDS:
             raise WorkflowMeshEventError("Agent Workflow admission requires exact request_identity")
         if identity != exact_request_identity:
             raise WorkflowMeshEventError("Agent Workflow admission request identity mismatch")
+        if (
+            admission.get("exact_request_discriminator") != EXACT_REQUEST_DISCRIMINATOR
+            or admission.get("bet_id") != identity.get("bet_id")
+            or admission.get("workflow_id") != identity.get("workflow_id")
+        ):
+            raise WorkflowMeshEventError("Agent Workflow admission exact identity mismatch")
         run_id = admission["workflow_run_id"]
         if identity.get("workflow_run_id") != run_id or identity.get("correlation_id") != run_id:
             raise WorkflowMeshEventError("Agent Workflow admission run identity mismatch")
@@ -359,6 +386,8 @@ def _validate_admission_payload(
             raise WorkflowMeshEventError("Agent Workflow admission capability requirements digest mismatch")
         policy = payload.get("policy")
         expected_policy = {
+            "exact_request_discriminator": EXACT_REQUEST_DISCRIMINATOR,
+            "bet_id": identity["bet_id"],
             "workflow_id": requested_workflow_id,
             "workflow_run_id": run_id,
             "packet_id": identity["packet_id"],
@@ -389,7 +418,10 @@ def _validate_admission_payload(
             else None
         )
         if (
-            payload.get("request_identity") != identity
+            payload.get("exact_request_discriminator") != EXACT_REQUEST_DISCRIMINATOR
+            or payload.get("bet_id") != identity.get("bet_id")
+            or payload.get("workflow_id") != identity.get("workflow_id")
+            or payload.get("request_identity") != identity
             or payload.get("policy_digest") != admission["policy_digest"]
             or expected_policy_digest != admission["policy_digest"]
             or payload.get("proof") != admission["proof"]
@@ -476,6 +508,7 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
         "worker_events": [],
         "scene_binding": None,
         "exact_request_identity": None,
+        "exact_request_discriminator": None,
         "requested_workflow_id": None,
         "worker_completion_receipt": None,
     }
@@ -526,6 +559,7 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
             exact_identity = _validated_exact_request_identity(event["payload"], workflow_run_id)
             if exact_identity is not None:
                 snapshot["exact_request_identity"] = exact_identity
+                snapshot["exact_request_discriminator"] = event["payload"]["exact_request_discriminator"]
                 snapshot["requested_workflow_id"] = event["payload"]["workflow_id"]
         elif scene_binding is not None:
             if snapshot["scene_binding"] is None:
@@ -559,10 +593,15 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
                 and isinstance(snapshot.get("exact_request_identity"), Mapping)
                 and isinstance(admission.get("request_identity"), Mapping)
             ):
+                exact_identity = snapshot["exact_request_identity"]
                 requirements_digest = admission["request_identity"].get("capability_requirements_digest")
-                if requirements_digest is not None and event["payload"].get(
-                    "capability_requirements_digest"
-                ) != requirements_digest:
+                if (
+                    event["payload"].get("exact_request_discriminator") != EXACT_REQUEST_DISCRIMINATOR
+                    or event["payload"].get("bet_id") != exact_identity.get("bet_id")
+                    or event["payload"].get("workflow_id") != exact_identity.get("workflow_id")
+                    or requirements_digest is not None
+                    and event["payload"].get("capability_requirements_digest") != requirements_digest
+                ):
                     raise WorkflowMeshEventError("StepDispatched capability requirements digest mismatch")
             if event_type != "StepDispatched" and step_run_id not in snapshot["step_runs"]:
                 raise WorkflowMeshEventError(f"{event_type} requires prior StepDispatched")
@@ -670,6 +709,9 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
             receipt = event["payload"].get("worker_completion_receipt")
             receipt_fields = {
                 "status",
+                "exact_request_discriminator",
+                "bet_id",
+                "workflow_id",
                 "workflow_run_id",
                 "admission_id",
                 "step_run_id",
@@ -687,11 +729,16 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
                 _canonical_admission(unsigned_receipt)
             ).hexdigest()
             admission = snapshot.get("admission")
+            exact_identity = snapshot.get("exact_request_identity")
             worker = snapshot.get("worker")
             step = snapshot.get("step_runs", {}).get(receipt.get("step_run_id"))
             if (
                 event.get("producer") != "worker"
                 or receipt.get("status") != "succeeded"
+                or receipt.get("exact_request_discriminator") != EXACT_REQUEST_DISCRIMINATOR
+                or not isinstance(exact_identity, Mapping)
+                or receipt.get("bet_id") != exact_identity.get("bet_id")
+                or receipt.get("workflow_id") != exact_identity.get("workflow_id")
                 or receipt.get("workflow_run_id") != workflow_run_id
                 or not isinstance(admission, Mapping)
                 or receipt.get("admission_id") != admission.get("admission_id")

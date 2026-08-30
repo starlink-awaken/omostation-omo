@@ -54,6 +54,8 @@ def _exact_grant(run_id: str, step_run_id: str) -> tuple[dict, dict]:
         json.dumps(requirements, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     request_identity = {
+        "bet_id": "BET-BOUND",
+        "workflow_id": "test-workflow",
         "correlation_id": run_id,
         "workflow_run_id": run_id,
         "packet_id": "WP-BP-0123456789abcdef",
@@ -66,6 +68,8 @@ def _exact_grant(run_id: str, step_run_id: str) -> tuple[dict, dict]:
         "capability_requirements_digest": requirements_digest,
     }
     policy = {
+        "exact_request_discriminator": "agent-workflow-exact/v1",
+        "bet_id": request_identity["bet_id"],
         "workflow_id": "test-workflow",
         "workflow_run_id": run_id,
         "packet_id": request_identity["packet_id"],
@@ -83,6 +87,9 @@ def _exact_grant(run_id: str, step_run_id: str) -> tuple[dict, dict]:
         "workflow_run_id": run_id,
         "trace_id": run_id,
         "backend": "agent-workflow",
+        "exact_request_discriminator": "agent-workflow-exact/v1",
+        "bet_id": request_identity["bet_id"],
+        "workflow_id": request_identity["workflow_id"],
         "step_run_ids": [step_run_id],
         "capabilities": [requirement["capability_id"] for requirement in requirements],
         "policy_digest": hashlib.sha256(
@@ -103,7 +110,12 @@ def _admit_exact(store: WorkflowMeshStore, run_id: str, grant: dict, policy: dic
         new_workflow_event(
             "WorkflowRequested",
             run_id,
-            payload={"workflow_id": "test-workflow", "request_identity": grant["request_identity"]},
+            payload={
+                "exact_request_discriminator": "agent-workflow-exact/v1",
+                "bet_id": grant["request_identity"]["bet_id"],
+                "workflow_id": "test-workflow",
+                "request_identity": grant["request_identity"],
+            },
         )
     )
     store.append(
@@ -113,6 +125,9 @@ def _admit_exact(store: WorkflowMeshStore, run_id: str, grant: dict, policy: dic
             payload={
                 "admission": grant,
                 "policy": policy,
+                "exact_request_discriminator": "agent-workflow-exact/v1",
+                "bet_id": grant["request_identity"]["bet_id"],
+                "workflow_id": grant["request_identity"]["workflow_id"],
                 "policy_digest": grant["policy_digest"],
                 "proof": grant["proof"],
                 "request_identity": grant["request_identity"],
@@ -173,6 +188,110 @@ def _binding() -> dict:
 
 def _origin_proof(context: dict[str, str]) -> str:
     return _ORIGIN_PROOFS[context["workflow_run_id"]]
+
+
+def _reproof(grant: dict) -> None:
+    grant["proof"] = hashlib.sha256(
+        json.dumps(
+            {key: value for key, value in grant.items() if key != "proof"},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+
+def test_exact_step_dispatch_rejects_expired_admission_without_event(tmp_path):
+    run_id = "run-expired-exact-dispatch"
+    step_run_id = f"{run_id}:execute"
+    grant, policy = _exact_grant(run_id, step_run_id)
+    grant["issued_at"] = "2026-08-30T00:00:00+00:00"
+    grant["expires_at"] = "2026-08-30T00:15:00+00:00"
+    _reproof(grant)
+    store = WorkflowMeshStore(tmp_path)
+    _admit_exact(store, run_id, grant, policy)
+    before = list(store.events())
+
+    with pytest.raises(WorkerLifecycleError, match="admission.*expired"):
+        record_step_dispatch(
+            tmp_path,
+            workflow_run_id=run_id,
+            trace_id=run_id,
+            dispatch_id=grant["request_identity"]["dispatch_id"],
+            worker_id="worker-a",
+            step_run_id=step_run_id,
+            admission_id=grant["admission_id"],
+            policy_digest=grant["policy_digest"],
+            packet_id=grant["request_identity"]["packet_id"],
+            packet_hash=grant["request_identity"]["packet_hash"],
+            instruction_binding=_binding()["instruction_binding"],
+            ack_origin_proof=new_worker_ack_origin_proof(),
+        )
+
+    assert store.events() == before
+
+
+def test_exact_worker_completion_rejects_expired_admission_without_success(tmp_path, monkeypatch):
+    run_id = "run-expired-exact-completion"
+    step_run_id = f"{run_id}:execute"
+    issued_at = datetime.now(UTC).replace(microsecond=0)
+    expires_at = issued_at + timedelta(hours=1)
+    grant, policy = _exact_grant(run_id, step_run_id)
+    grant["issued_at"] = issued_at.isoformat()
+    grant["expires_at"] = expires_at.isoformat()
+    _reproof(grant)
+    store = WorkflowMeshStore(tmp_path)
+    _admit_exact(store, run_id, grant, policy)
+    origin_proof = new_worker_ack_origin_proof()
+    binding = _binding()
+    context = {
+        "workflow_run_id": run_id,
+        "trace_id": run_id,
+        "dispatch_id": grant["request_identity"]["dispatch_id"],
+        "worker_id": "worker-a",
+        "step_run_id": step_run_id,
+        "admission_id": grant["admission_id"],
+    }
+    record_step_dispatch(
+        tmp_path,
+        **context,
+        policy_digest=grant["policy_digest"],
+        packet_id=grant["request_identity"]["packet_id"],
+        packet_hash=grant["request_identity"]["packet_hash"],
+        instruction_binding=binding["instruction_binding"],
+        ack_origin_proof=origin_proof,
+    )
+    acknowledge_worker(
+        tmp_path,
+        **context,
+        packet_id=grant["request_identity"]["packet_id"],
+        packet_hash=grant["request_identity"]["packet_hash"],
+        instruction_binding=binding["instruction_binding"],
+        ack_decision="proceed",
+        origin_proof=origin_proof,
+    )
+    store.append(
+        new_workflow_event(
+            "StepStarted",
+            run_id,
+            payload={
+                "step_run_id": step_run_id,
+                "step_name": "execute",
+                "admission_id": grant["admission_id"],
+            },
+        )
+    )
+    monkeypatch.setattr(worker_lifecycle_mod, "_utc", lambda _value=None: expires_at + timedelta(seconds=1))
+
+    with pytest.raises(WorkerLifecycleError, match="admission.*expired"):
+        worker_lifecycle_mod.record_worker_completion(
+            tmp_path,
+            **context,
+            origin_proof=origin_proof,
+            result_digest="sha256:" + "c" * 64,
+        )
+
+    assert not any(event["event_type"] == "WorkflowSucceeded" for event in store.events())
 
 
 def test_worker_lifecycle_consumes_origin_proof_once(tmp_path):
