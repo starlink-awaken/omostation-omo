@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+import omo.workflow_dispatch as workflow_dispatch_mod
 from omo.omo_worker_core import (
     _build_launch_argv,
     _default_enabled_worker_id,
@@ -709,6 +710,76 @@ def _exact_worker_fixture(root: Path) -> tuple[Path, dict]:
     return task_path, pi
 
 
+def _healthy_reasoning() -> dict:
+    return {
+        "status": "healthy",
+        "capabilities": {"reasoning": {"available": True}},
+        "observed_at": "2026-08-30T00:00:00+00:00",
+        "source": "test",
+    }
+
+
+def test_canonical_exact_dispatch_caller_mints_private_proof(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _task_path, _pi = _exact_worker_fixture(tmp_path)
+    packet, exact_identity = _seed_exact_workflow_packet(tmp_path)
+    monkeypatch.setattr(workflow_dispatch_mod, "admit_workflow", lambda *_args, **_kwargs: packet)
+
+    result = workflow_dispatch_mod.dispatch_admitted_workflow(
+        tmp_path,
+        task_id="TASK-ADMISSION-GATE",
+        worker_id="pi",
+        allowed_write_paths=[],
+        backend="runtime",
+        required_capabilities=["reasoning"],
+        capability_health=_healthy_reasoning(),
+        launch=False,
+        workflow_run_id=packet["workflow_run_id"],
+        request_identity=packet["request_identity"],
+    )
+
+    persisted_text = "\n".join(
+        path.read_text(encoding="utf-8", errors="replace")
+        for path in (tmp_path / ".omo").rglob("*")
+        if path.is_file()
+    )
+    snapshot = WorkflowMeshStore(tmp_path / ".omo").snapshot(packet["workflow_run_id"])
+    assert result["worker_dispatch"]["dispatch_id"] == exact_identity["dispatch_id"]
+    assert snapshot["state"] == "dispatched"
+    assert snapshot["worker"]["ack_origin_commitment"].startswith("sha256:")
+    assert "worker_ack_origin_proof" not in persisted_text
+
+
+def test_canonical_exact_dispatch_rejects_public_proof_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _task_path, _pi = _exact_worker_fixture(tmp_path)
+    packet, _exact_identity = _seed_exact_workflow_packet(tmp_path)
+    packet["worker_ack_origin_proof"] = new_worker_ack_origin_proof()
+    monkeypatch.setattr(workflow_dispatch_mod, "admit_workflow", lambda *_args, **_kwargs: packet)
+    before = _file_snapshot(tmp_path)
+
+    with pytest.raises(ValueError, match="private proof is forbidden in public dispatch data"):
+        workflow_dispatch_mod.dispatch_admitted_workflow(
+            tmp_path,
+            task_id="TASK-ADMISSION-GATE",
+            worker_id="pi",
+            allowed_write_paths=[],
+            backend="runtime",
+            required_capabilities=["reasoning"],
+            capability_health=_healthy_reasoning(),
+            launch=False,
+            workflow_run_id=packet["workflow_run_id"],
+            request_identity=packet["request_identity"],
+        )
+
+    assert _file_snapshot(tmp_path) == before
+    assert not (tmp_path / ".omo" / "workers" / "runs").exists()
+
+
 def test_exact_production_dispatch_uses_persisted_request_dispatch_id(tmp_path: Path) -> None:
     _task_path, _pi = _exact_worker_fixture(tmp_path)
     packet, exact_identity = _seed_exact_workflow_packet(tmp_path)
@@ -1276,6 +1347,109 @@ def test_exact_production_step_started_failure_reaps_real_descendant_group(
     monkeypatch.setattr(WorkflowMeshStore, "append", reject_after_descendant_exists)
     try:
         with pytest.raises(WorkflowMeshEventError, match="stable-real-step-start-failure"):
+            dispatch_task(
+                tmp_path,
+                task_id="TASK-ADMISSION-GATE",
+                worker_id="pi",
+                allowed_write_paths=[],
+                workflow_packet=packet,
+                worker_ack_origin_proof=origin_proof,
+                launch=True,
+                now="2026-08-30T01:02:03+00:00",
+            )
+        deadline = time.monotonic() + 5
+        while any(pid_alive(pid) for pid in spawned_pids) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert len(spawned_pids) == 2
+        assert not any(pid_alive(pid) for pid in spawned_pids)
+        events = WorkflowMeshStore(tmp_path / ".omo").events()
+        assert not any(event["event_type"] == "WorkflowSucceeded" for event in events)
+        assert origin_proof not in json.dumps(events)
+    finally:
+        for pid in spawned_pids:
+            if pid_alive(pid):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+
+def test_exact_production_parent_exit_getpgid_race_reaps_expected_group(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _task_path, _pi = _exact_worker_fixture(tmp_path)
+    packet, _exact_identity = _seed_exact_workflow_packet(tmp_path)
+    origin_proof = new_worker_ack_origin_proof()
+    pid_path = tmp_path / "race-pids.txt"
+    ready_path = tmp_path / "race-descendant-ready.txt"
+    script_path = tmp_path / "spawn-race-descendant.py"
+    script_path.write_text(
+        "\n".join(
+            [
+                "import os",
+                "from pathlib import Path",
+                "import subprocess",
+                "import sys",
+                "import time",
+                "child_code = (",
+                "    \"import signal, sys, time; from pathlib import Path; \"",
+                "    \"signal.signal(signal.SIGTERM, signal.SIG_IGN); \"",
+                "    \"Path(sys.argv[1]).write_text('ready', encoding='utf-8'); time.sleep(60)\"",
+                ")",
+                "child = subprocess.Popen(",
+                "    [sys.executable, '-c', child_code, sys.argv[2]],",
+                "    stdin=subprocess.DEVNULL,",
+                "    stdout=subprocess.DEVNULL,",
+                "    stderr=subprocess.DEVNULL,",
+                ")",
+                "while not Path(sys.argv[2]).exists(): time.sleep(0.01)",
+                "Path(sys.argv[1]).write_text(f'{os.getpid()} {child.pid}', encoding='utf-8')",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    registry_path = tmp_path / ".omo" / "_truth" / "registry" / "workers.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    registry["workers"][0]["transports"]["acp_stdio"]["command"] = " ".join(
+        [
+            shlex.quote(sys.executable),
+            shlex.quote(str(script_path)),
+            shlex.quote(str(pid_path)),
+            shlex.quote(str(ready_path)),
+        ]
+    )
+    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+    spawned_pids: list[int] = []
+    original_append = WorkflowMeshStore.append
+
+    def reject_after_parent_exits(store, event):
+        if event["event_type"] != "StepStarted":
+            return original_append(store, event)
+        deadline = time.monotonic() + 5
+        while not pid_path.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert pid_path.exists(), "race parent never published descendant PID"
+        spawned_pids.extend(int(item) for item in pid_path.read_text(encoding="utf-8").split())
+        raise WorkflowMeshEventError("stable-getpgid-race-step-start-failure")
+
+    def pid_alive(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    monkeypatch.setattr(WorkflowMeshStore, "append", reject_after_parent_exits)
+    monkeypatch.setattr(
+        "omo.omo_worker_dispatch.os.getpgid",
+        lambda _pid: (_ for _ in ()).throw(ProcessLookupError("parent exited before getpgid")),
+    )
+    try:
+        with pytest.raises(WorkflowMeshEventError, match="stable-getpgid-race-step-start-failure"):
             dispatch_task(
                 tmp_path,
                 task_id="TASK-ADMISSION-GATE",

@@ -886,7 +886,9 @@ def dispatch_admitted_workflow(
         return _dispatch_iris_via_executor(root, packet, iris_caps)
 
     from .omo_worker_dispatch import dispatch_task
+    from .worker_lifecycle import new_worker_ack_origin_proof
 
+    worker_ack_origin_proof = new_worker_ack_origin_proof()
     worker_dispatch = dispatch_task(
         root,
         task_id=task_id,
@@ -895,6 +897,7 @@ def dispatch_admitted_workflow(
         launch=launch,
         transport=transport,
         workflow_packet=packet,
+        worker_ack_origin_proof=worker_ack_origin_proof,
     )
     return {
         **packet,
@@ -998,7 +1001,9 @@ def consume_pending_workflow_requests(
                 result = _dispatch_iris_via_executor(root, packet, iris_caps, omo_dir=omo_dir)
             else:
                 from .omo_worker_dispatch import dispatch_task
+                from .worker_lifecycle import new_worker_ack_origin_proof
 
+                worker_ack_origin_proof = new_worker_ack_origin_proof()
                 result = dispatch_task(
                     root,
                     task_id=task_id,
@@ -1007,6 +1012,7 @@ def consume_pending_workflow_requests(
                     launch=False,
                     transport="acp_stdio",
                     workflow_packet=packet,
+                    worker_ack_origin_proof=worker_ack_origin_proof,
                 )
         except Exception as exc:  # defensive: 单 run dispatch 失败不炸 tick
             failed.append({"workflow_run_id": run_id, "error": f"dispatch: {exc}"})

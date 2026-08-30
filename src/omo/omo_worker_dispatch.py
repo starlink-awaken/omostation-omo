@@ -560,10 +560,10 @@ def dispatch_task(
             if not isinstance(pid, int) or pid <= 1:
                 return None
             try:
-                process_group_id = os.getpgid(pid)
+                os.getpgid(pid)
             except OSError:
-                return None
-            return process_group_id if process_group_id == pid else None
+                pass
+            return pid
 
         def reap_spawned_child(process: Any, process_group_id: int | None) -> tuple[str, str]:
             def validated_group_alive() -> bool:
