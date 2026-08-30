@@ -171,6 +171,78 @@ class AdjudicationStore:
         self._update_capability_calibration(decision_id, verdict)
         return adj_id
 
+    def record_wp5_outcome(
+        self,
+        adjudication: HumanAdjudication,
+        *,
+        scene_id: str,
+        episode_id: str,
+        burden_minutes: float | None = None,
+    ) -> dict[str, Any]:
+        """WP5 truth-writer (BET-Y1Q3-T4-07): authority-bound 裁决 → qualifying outcome。
+
+        事务边界语义 (spec §3): qualifying 验证 → 幂等查重 → append-only 写入。
+        非 qualifying / replay conflict 一律拒绝且计数不变; append 失败不返回 success。
+        同一 adjudication_id 重放复用已写入记录 (幂等)。
+        """
+        ok, reason = is_qualifying_outcome(
+            adjudication,
+            decision_persisted=True,
+            scene_id=scene_id,
+            episode_id=episode_id,
+        )
+        if not ok:
+            return {
+                "qualifying": False,
+                "reason": reason,
+                "qualifying_count": self._wp5_count(),
+            }
+        existing = self._wp5_find(adjudication.adjudication_id)
+        if existing is not None:
+            if existing.get("authority_receipt_digest") != adjudication.authority_receipt_digest:
+                return {
+                    "qualifying": False,
+                    "reason": "replay_conflict: same id different authority digest",
+                    "qualifying_count": self._wp5_count(),
+                }
+            return {
+                "qualifying": True,
+                "replayed": True,
+                "adjudication_id": adjudication.adjudication_id,
+                "qualifying_count": self._wp5_count(),
+            }
+        record = {
+            "schema": "wp5-human-adjudication/v1",
+            **asdict(adjudication),
+            "scene_id": scene_id,
+            "episode_id": episode_id,
+            "burden_minutes": burden_minutes,
+        }
+        self._log.append(record, sort_keys=True)
+        appended = self._wp5_find(adjudication.adjudication_id)
+        if appended is None:
+            raise RuntimeError("wp5 outcome append failed (truth-writer durable guarantee)")
+        return {
+            "qualifying": True,
+            "replayed": False,
+            "adjudication_id": adjudication.adjudication_id,
+            "qualifying_count": self._wp5_count(),
+        }
+
+    def _wp5_records(self) -> list[dict[str, Any]]:
+        return [
+            r for r in self._log.read_all() if isinstance(r, dict) and r.get("schema") == "wp5-human-adjudication/v1"
+        ]
+
+    def _wp5_find(self, adjudication_id: str) -> dict[str, Any] | None:
+        return next(
+            (r for r in self._wp5_records() if r.get("adjudication_id") == adjudication_id),
+            None,
+        )
+
+    def _wp5_count(self) -> int:
+        return len(self._wp5_records())
+
     def _apply_belief_feedback(self, decision_id: str, verdict: str) -> None:
         """闭环: 裁决 → 信念置信度修正 (best-effort, 不抛异常)."""
         if self._mos_manager is None:
