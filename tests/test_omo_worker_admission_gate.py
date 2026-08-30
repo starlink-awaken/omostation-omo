@@ -614,6 +614,7 @@ def _seed_exact_workflow_packet(
     root: Path,
     *,
     persisted_dispatch_id: str = "preflight:run-production-exact:dispatch",
+    ttl_seconds: int = 900,
 ) -> tuple[dict, dict]:
     run_id = "run-production-exact"
     requirements = [
@@ -666,7 +667,7 @@ def _seed_exact_workflow_packet(
             json.dumps(policy, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest(),
         "issued_at": issued_at.isoformat(),
-        "expires_at": (issued_at + timedelta(seconds=900)).isoformat(),
+        "expires_at": (issued_at + timedelta(seconds=ttl_seconds)).isoformat(),
         "request_identity": exact_identity,
     }
     grant["proof"] = hashlib.sha256(
@@ -890,6 +891,151 @@ def test_exact_production_success_records_authenticated_completion_and_redacts_p
     assert origin_proof not in json.dumps(store.events())
     assert origin_proof not in log_path.read_text(encoding="utf-8")
     assert "[REDACTED]" in log_path.read_text(encoding="utf-8")
+
+
+def test_exact_production_caps_wait_and_ack_lease_to_admission_expiry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _task_path, _pi = _exact_worker_fixture(tmp_path)
+    packet, _exact_identity = _seed_exact_workflow_packet(tmp_path, ttl_seconds=30)
+    origin_proof = new_worker_ack_origin_proof()
+    observed: dict[str, float | int] = {}
+
+    class AdmissionBoundedWorker:
+        pid = 42431
+
+        def __init__(self, argv, *, cwd, stdout, stderr, text, env, start_new_session):
+            del stdout, stderr, text
+            assert start_new_session is True
+            self.args = argv
+            self.cwd = Path(cwd)
+            self.env = env
+            self.returncode = None
+
+        def communicate(self, timeout=None):
+            assert timeout is not None
+            observed["wait_timeout"] = timeout
+            context = json.loads(self.env["OMO_WORKER_ACK_CONTEXT_JSON"])
+            observed["lease_seconds"] = context["lease_seconds"]
+            assert 0 < timeout <= 30
+            assert 0 < context["lease_seconds"] <= 30
+            omo_dir = context.pop("omo_dir")
+            acknowledge_worker(
+                self.cwd / omo_dir,
+                **context,
+                ack_decision="proceed",
+                origin_proof=self.env["OMO_WORKER_ACK_ORIGIN_PROOF"],
+            )
+            self.returncode = 0
+            return "bounded-success", ""
+
+    class _NoopOpener:
+        def open(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr("omo.omo_worker_dispatch.subprocess.Popen", AdmissionBoundedWorker)
+    monkeypatch.setattr("urllib.request.build_opener", lambda *_args, **_kwargs: _NoopOpener())
+
+    dispatch_task(
+        tmp_path,
+        task_id="TASK-ADMISSION-GATE",
+        worker_id="pi",
+        allowed_write_paths=[],
+        workflow_packet=packet,
+        worker_ack_origin_proof=origin_proof,
+        launch=True,
+        now="2026-08-30T01:02:03+00:00",
+    )
+
+    snapshot = WorkflowMeshStore(tmp_path / ".omo").snapshot(packet["workflow_run_id"])
+    lease_expires_at = datetime.fromisoformat(snapshot["worker"]["lease_expires_at"].replace("Z", "+00:00"))
+    admission_expires_at = datetime.fromisoformat(packet["admission"]["expires_at"])
+    assert observed["wait_timeout"] <= 30
+    assert observed["lease_seconds"] <= 30
+    assert lease_expires_at <= admission_expires_at
+
+
+@pytest.mark.parametrize(
+    ("phase", "interrupt_type"),
+    [
+        ("step_started", KeyboardInterrupt),
+        ("step_started", SystemExit),
+        ("communicate", KeyboardInterrupt),
+        ("communicate", SystemExit),
+    ],
+)
+def test_exact_post_spawn_base_exception_reaps_group_and_reraises_original(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    phase: str,
+    interrupt_type: type[BaseException],
+) -> None:
+    _task_path, _pi = _exact_worker_fixture(tmp_path)
+    packet, _exact_identity = _seed_exact_workflow_packet(tmp_path)
+    origin_proof = new_worker_ack_origin_proof()
+    interruption = interrupt_type(f"stable-{phase}-interruption")
+    spawned_pid = 42430
+    lifecycle = {"group_alive": True, "signals": [], "communicate_calls": 0}
+
+    class InterruptedWorker:
+        pid = spawned_pid
+
+        def __init__(self, argv, *, cwd, stdout, stderr, text, env, start_new_session):
+            del cwd, stdout, stderr, text, env
+            assert start_new_session is True
+            self.args = argv
+            self.returncode = None
+
+        def communicate(self, timeout=None):
+            lifecycle["communicate_calls"] += 1
+            if phase == "communicate" and lifecycle["communicate_calls"] == 1:
+                raise interruption
+            self.returncode = -15
+            return "interrupted", ""
+
+    original_append = WorkflowMeshStore.append
+
+    def interrupt_step_started(store, event):
+        if phase == "step_started" and event["event_type"] == "StepStarted":
+            raise interruption
+        return original_append(store, event)
+
+    def fake_killpg(process_group_id, sig):
+        assert process_group_id == spawned_pid
+        lifecycle["signals"].append(sig)
+        if sig == 0:
+            if lifecycle["group_alive"]:
+                return None
+            raise ProcessLookupError("interrupted group absent")
+        if sig in {signal.SIGTERM, signal.SIGKILL}:
+            lifecycle["group_alive"] = False
+
+    monkeypatch.setattr("omo.omo_worker_dispatch.subprocess.Popen", InterruptedWorker)
+    monkeypatch.setattr(WorkflowMeshStore, "append", interrupt_step_started)
+    monkeypatch.setattr("omo.omo_worker_dispatch.os.getpgid", lambda pid: pid)
+    monkeypatch.setattr("omo.omo_worker_dispatch.os.killpg", fake_killpg)
+
+    with pytest.raises(interrupt_type, match=f"stable-{phase}-interruption") as raised:
+        dispatch_task(
+            tmp_path,
+            task_id="TASK-ADMISSION-GATE",
+            worker_id="pi",
+            allowed_write_paths=[],
+            workflow_packet=packet,
+            worker_ack_origin_proof=origin_proof,
+            launch=True,
+            now="2026-08-30T01:02:03+00:00",
+        )
+
+    assert raised.value is interruption
+    assert lifecycle["group_alive"] is False
+    assert signal.SIGTERM in lifecycle["signals"]
+    events = WorkflowMeshStore(tmp_path / ".omo").events()
+    assert not any(event["event_type"] == "WorkflowSucceeded" for event in events)
+    assert origin_proof not in json.dumps(events)
+    if phase == "communicate":
+        assert any(event["event_type"] == "StepFailed" for event in events)
 
 
 def test_exact_zero_return_parent_with_live_descendant_fails_before_completion(

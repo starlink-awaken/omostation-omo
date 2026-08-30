@@ -52,7 +52,11 @@ def _store(omo_dir: Path | str) -> WorkflowMeshStore:
     return WorkflowMeshStore(omo_dir)
 
 
-def _validate_exact_admission_window(admission: Mapping[str, Any]) -> None:
+def _remaining_exact_admission_seconds(
+    admission: Mapping[str, Any],
+    *,
+    now: str | None = None,
+) -> float:
     try:
         issued_at = datetime.fromisoformat(str(admission.get("issued_at") or "").replace("Z", "+00:00"))
         expires_at = datetime.fromisoformat(str(admission.get("expires_at") or "").replace("Z", "+00:00"))
@@ -62,13 +66,18 @@ def _validate_exact_admission_window(admission: Mapping[str, Any]) -> None:
         raise WorkerLifecycleError("exact admission time window is invalid")
     issued_at = issued_at.astimezone(UTC)
     expires_at = expires_at.astimezone(UTC)
-    now = _utc()
+    observed_at = _utc(now)
     if expires_at <= issued_at:
         raise WorkerLifecycleError("exact admission time window is invalid")
-    if now < issued_at:
+    if observed_at < issued_at:
         raise WorkerLifecycleError("exact admission is not yet valid")
-    if now >= expires_at:
+    if observed_at >= expires_at:
         raise WorkerLifecycleError("exact admission is expired")
+    return (expires_at - observed_at).total_seconds()
+
+
+def _validate_exact_admission_window(admission: Mapping[str, Any]) -> None:
+    _remaining_exact_admission_seconds(admission)
 
 
 def _existing(store: WorkflowMeshStore, idempotency_key: str) -> dict[str, Any] | None:
@@ -200,6 +209,10 @@ def record_step_dispatch(
             or admission.get("exact_request_discriminator") != EXACT_REQUEST_DISCRIMINATOR
             or request_identity.get("bet_id") != exact_request_identity.get("bet_id")
             or request_identity.get("workflow_id") != exact_request_identity.get("workflow_id")
+            or not isinstance(request_identity.get("assignment_id"), str)
+            or not request_identity.get("assignment_id")
+            or not isinstance(request_identity.get("dispatch_id"), str)
+            or not request_identity.get("dispatch_id")
             or dispatch_id != exact_request_identity.get("dispatch_id")
             or request_identity.get("workflow_run_id") != workflow_run_id
             or request_identity.get("correlation_id") != workflow_run_id
@@ -322,6 +335,11 @@ def acknowledge_worker(
         admission_id=admission_id,
     )
     worker = snapshot.get("worker")
+    admission = snapshot.get("admission")
+    if isinstance(snapshot.get("exact_request_identity"), Mapping):
+        if not isinstance(admission, Mapping):
+            raise WorkerLifecycleError("worker ACK requires exact admission")
+        _remaining_exact_admission_seconds(admission, now=now)
     if not isinstance(worker, Mapping):
         raise WorkerLifecycleError("worker ACK requires dispatch context")
     if not legacy_observer_ack and (
@@ -335,8 +353,13 @@ def acknowledge_worker(
     origin_commitment = str(worker.get("ack_origin_commitment") or "")
     if not legacy_observer_ack and not origin_commitment:
         raise WorkerLifecycleError("worker ACK dispatch has no origin proof commitment")
-    acknowledged_at = _stamp(now)
-    lease_expires_at = _stamp((_utc(now) + timedelta(seconds=lease_seconds)).isoformat())
+    acknowledged_at_value = _utc(now)
+    acknowledged_at = _stamp(acknowledged_at_value.isoformat())
+    requested_lease_expiry = acknowledged_at_value + timedelta(seconds=lease_seconds)
+    if isinstance(snapshot.get("exact_request_identity"), Mapping):
+        admission_expiry = _utc(str(admission.get("expires_at")))
+        requested_lease_expiry = min(requested_lease_expiry, admission_expiry)
+    lease_expires_at = _stamp(requested_lease_expiry.isoformat())
     payload = {
         "dispatch_id": dispatch_id,
         "worker_id": worker_id,

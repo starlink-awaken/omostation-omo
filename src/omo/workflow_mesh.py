@@ -261,6 +261,24 @@ def _validated_exact_request_identity(
 ) -> dict[str, Any] | None:
     discriminator = payload.get("exact_request_discriminator")
     if discriminator is None:
+        identity = payload.get("request_identity")
+        exact_marker_fields = {
+            "bet_id",
+            "workflow_id",
+            "packet_id",
+            "packet_hash",
+            "assignment_id",
+            "dispatch_id",
+            "actor_id",
+            "delivery_attempt_id",
+            "capability_requirements",
+            "capability_requirements_digest",
+        }
+        if (
+            isinstance(identity, Mapping)
+            and exact_marker_fields <= identity.keys()
+        ):
+            raise WorkflowMeshEventError("exact Agent Workflow request discriminator is required")
         return None
     if discriminator != EXACT_REQUEST_DISCRIMINATOR:
         raise WorkflowMeshEventError("exact Agent Workflow request discriminator is invalid")
@@ -282,6 +300,10 @@ def _validated_exact_request_identity(
         or not identity["packet_id"]
         or not isinstance(identity.get("packet_hash"), str)
         or _SHA256_REF_RE.fullmatch(identity["packet_hash"]) is None
+        or not isinstance(identity.get("assignment_id"), str)
+        or not identity["assignment_id"]
+        or not isinstance(identity.get("dispatch_id"), str)
+        or not identity["dispatch_id"]
         or not isinstance(identity.get("actor_id"), str)
         or not identity["actor_id"]
         or not isinstance(identity.get("delivery_attempt_id"), str)
@@ -364,6 +386,10 @@ def _validate_admission_payload(
             or not identity["packet_id"]
             or not isinstance(identity.get("packet_hash"), str)
             or _SHA256_REF_RE.fullmatch(identity["packet_hash"]) is None
+            or not isinstance(identity.get("assignment_id"), str)
+            or not identity["assignment_id"]
+            or not isinstance(identity.get("dispatch_id"), str)
+            or not identity["dispatch_id"]
             or not isinstance(identity.get("actor_id"), str)
             or not identity["actor_id"]
             or not isinstance(identity.get("delivery_attempt_id"), str)

@@ -116,9 +116,19 @@ def _fail_exact_agent_workflow_start(
 ) -> None:
     run_id = str(record["run_id"])
     evidence = f"WORKFLOW_MESH_ADMISSION_FAILED: {type(error).__name__}"
+    workspace = registry_workspace_root(registry)
+    durable_request = False
+    try:
+        from ..workflow_mesh import WorkflowMeshStore
+
+        durable_request = any(
+            event.get("workflow_run_id") == run_id and event.get("event_type") == "WorkflowRequested"
+            for event in WorkflowMeshStore(workspace / ".omo").events()
+        )
+    except Exception:
+        durable_request = request_persisted
     close_run(registry, run_id, "failed", [evidence], True, emit_mesh=False)
-    if request_persisted:
-        workspace = registry_workspace_root(registry)
+    if durable_request:
         cancelled = emit_workflow_mesh_event(
             "WorkflowCancelled",
             run_id,

@@ -505,6 +505,38 @@ def dispatch_task(
             if isinstance(request_identity, dict)
             else None,
         )
+        from .workflow_mesh import WorkflowMeshStore, new_workflow_event
+
+        store = WorkflowMeshStore(omo)
+        configured_lease_seconds = int((worker.get("lease_policy") or {}).get("lease_expired_after_seconds", 1200))
+        lease_seconds = configured_lease_seconds
+        if exact_request_identity is not None:
+            from .worker_lifecycle import _remaining_exact_admission_seconds
+
+            persisted_admission = store.snapshot(workflow_run_id).get("admission")
+            if not isinstance(persisted_admission, dict):
+                raise RuntimeError("exact worker launch requires persisted admission")
+            remaining_admission_seconds = _remaining_exact_admission_seconds(persisted_admission)
+            lease_seconds = min(configured_lease_seconds, int(remaining_admission_seconds))
+            if lease_seconds <= 0:
+                store.append(
+                    new_workflow_event(
+                        "StepFailed",
+                        workflow_run_id,
+                        trace_id=str(workflow_packet.get("trace_id") or workflow_run_id),
+                        producer="omo.worker_dispatch",
+                        idempotency_key=f"{workflow_run_id}:production-step-failed:{dispatch_id}",
+                        payload={
+                            "step_run_id": str(workflow_packet["admission"]["step_run_ids"][0]),
+                            "step_name": "execute",
+                            "admission_id": str(workflow_packet["admission"]["admission_id"]),
+                            "dispatch_id": dispatch_id,
+                            "worker_id": worker_id,
+                            "error": "admission_expired_before_launch",
+                        },
+                    )
+                )
+                raise RuntimeError("exact admission expired before worker launch")
         ack_context = {
             "workflow_run_id": workflow_run_id,
             "trace_id": str(workflow_packet.get("trace_id") or workflow_run_id),
@@ -515,7 +547,7 @@ def dispatch_task(
             "packet_id": request_identity["packet_id"],
             "packet_hash": request_identity["packet_hash"],
             "instruction_binding": request_identity["instruction_binding"],
-            "lease_seconds": int((worker.get("lease_policy") or {}).get("lease_expired_after_seconds", 1200)),
+            "lease_seconds": lease_seconds,
             "omo_dir": str(omo_ref),
         }
         worker_env = {
@@ -528,14 +560,11 @@ def dispatch_task(
                 separators=(",", ":"),
             ),
         }
-        from .workflow_mesh import WorkflowMeshStore, new_workflow_event
-
-        store = WorkflowMeshStore(omo)
         def record_exact_failure(reason: str) -> None:
             if exact_request_identity is None:
                 return
             snapshot = store.snapshot(workflow_run_id)
-            if snapshot.get("state") != "running":
+            if snapshot.get("state") not in {"dispatched", "running"}:
                 return
             store.append(
                 new_workflow_event(
@@ -677,7 +706,7 @@ def dispatch_task(
                         },
                     )
                 )
-            except Exception as step_started_error:
+            except BaseException as step_started_error:
                 reap_or_fail_closed(process, process_group_id, step_started_error)
                 try:
                     record_exact_failure("step_started_persist_failed")
@@ -685,7 +714,22 @@ def dispatch_task(
                     pass
                 raise
             try:
-                stdout, stderr = process.communicate(timeout=ack_context["lease_seconds"])
+                persisted_admission = store.snapshot(workflow_run_id).get("admission")
+                if not isinstance(persisted_admission, dict):
+                    raise RuntimeError("exact worker wait requires persisted admission")
+                remaining_admission_seconds = _remaining_exact_admission_seconds(persisted_admission)
+                wait_timeout = min(float(ack_context["lease_seconds"]), remaining_admission_seconds)
+                if wait_timeout <= 0:
+                    raise RuntimeError("exact admission expired before worker wait")
+            except BaseException as admission_deadline_error:
+                reap_or_fail_closed(process, process_group_id, admission_deadline_error)
+                try:
+                    record_exact_failure("admission_expired_before_worker_wait")
+                except Exception:
+                    pass
+                raise
+            try:
+                stdout, stderr = process.communicate(timeout=wait_timeout)
             except subprocess.TimeoutExpired as exc:
                 stdout, stderr = reap_or_fail_closed(process, process_group_id, exc)
                 log_content = redact_sensitive_text((stdout or "") + (stderr or "")).replace(
@@ -696,6 +740,13 @@ def dispatch_task(
                 raise RuntimeError(
                     f"worker launch timed out: worker_id={worker_id} timeout={exc.timeout} log={stdout_path}"
                 ) from exc
+            except BaseException as wait_error:
+                reap_or_fail_closed(process, process_group_id, wait_error)
+                try:
+                    record_exact_failure("worker_wait_interrupted")
+                except Exception:
+                    pass
+                raise
             returncode = process.returncode
         else:
             result = subprocess.run(argv, cwd=root, capture_output=True, text=True, env=worker_env)
@@ -755,7 +806,7 @@ def dispatch_task(
                     origin_proof=ack_origin_proof,
                     result_digest=result_digest,
                 )
-            except Exception as completion_error:
+            except BaseException as completion_error:
                 reap_or_fail_closed(process, process_group_id, completion_error)
                 try:
                     record_exact_failure("worker_completion_persist_failed")

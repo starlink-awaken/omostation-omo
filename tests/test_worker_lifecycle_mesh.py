@@ -691,3 +691,94 @@ def test_step_dispatch_rejects_forged_caller_dispatch_id(tmp_path):
 
     assert store.snapshot(run_id)["state"] == "admitted"
     assert not any(event["event_type"] == "StepDispatched" for event in store.events())
+
+
+@pytest.mark.parametrize("field", ["assignment_id", "dispatch_id"])
+def test_step_dispatch_rejects_empty_persisted_exact_ids_without_event(tmp_path, monkeypatch, field):
+    run_id = f"run-empty-exact-{field}"
+    step_run_id = f"{run_id}:execute"
+    grant, policy = _exact_grant(run_id, step_run_id)
+    store = WorkflowMeshStore(tmp_path)
+    _admit_exact(store, run_id, grant, policy)
+    forged_snapshot = store.snapshot(run_id)
+    forged_snapshot["admission"]["request_identity"][field] = ""
+    forged_snapshot["exact_request_identity"][field] = ""
+    _reproof(forged_snapshot["admission"])
+
+    class ForgedSnapshotStore:
+        def snapshot(self, workflow_run_id):
+            assert workflow_run_id == run_id
+            return forged_snapshot
+
+        def events(self):
+            return store.events()
+
+        def append(self, event):
+            return store.append(event)
+
+    monkeypatch.setattr(worker_lifecycle_mod, "_store", lambda _omo_dir: ForgedSnapshotStore())
+
+    with pytest.raises(WorkerLifecycleError, match="admission binding mismatch"):
+        record_step_dispatch(
+            tmp_path,
+            workflow_run_id=run_id,
+            trace_id=run_id,
+            dispatch_id="" if field == "dispatch_id" else grant["request_identity"]["dispatch_id"],
+            worker_id="worker-exact",
+            step_run_id=step_run_id,
+            admission_id=grant["admission_id"],
+            policy_digest=grant["policy_digest"],
+            packet_id=grant["request_identity"]["packet_id"],
+            packet_hash=grant["request_identity"]["packet_hash"],
+        )
+
+    assert store.snapshot(run_id)["state"] == "admitted"
+    assert not any(event["event_type"] == "StepDispatched" for event in store.events())
+
+
+def test_exact_worker_ack_lease_is_capped_by_admission_expiry(tmp_path):
+    run_id = "run-exact-admission-bounded-lease"
+    step_run_id = f"{run_id}:execute"
+    issued_at = datetime.now(UTC).replace(microsecond=0) - timedelta(seconds=10)
+    expires_at = issued_at + timedelta(seconds=900)
+    grant, policy = _exact_grant(run_id, step_run_id)
+    grant["issued_at"] = issued_at.isoformat()
+    grant["expires_at"] = expires_at.isoformat()
+    _reproof(grant)
+    store = WorkflowMeshStore(tmp_path)
+    _admit_exact(store, run_id, grant, policy)
+    origin_proof = new_worker_ack_origin_proof()
+    binding = _binding()
+    context = {
+        "workflow_run_id": run_id,
+        "trace_id": run_id,
+        "dispatch_id": grant["request_identity"]["dispatch_id"],
+        "worker_id": "worker-a",
+        "step_run_id": step_run_id,
+        "admission_id": grant["admission_id"],
+    }
+    record_step_dispatch(
+        tmp_path,
+        **context,
+        policy_digest=grant["policy_digest"],
+        packet_id=grant["request_identity"]["packet_id"],
+        packet_hash=grant["request_identity"]["packet_hash"],
+        instruction_binding=binding["instruction_binding"],
+        ack_origin_proof=origin_proof,
+    )
+    acknowledged = acknowledge_worker(
+        tmp_path,
+        **context,
+        packet_id=grant["request_identity"]["packet_id"],
+        packet_hash=grant["request_identity"]["packet_hash"],
+        instruction_binding=binding["instruction_binding"],
+        ack_decision="proceed",
+        origin_proof=origin_proof,
+        lease_seconds=1200,
+        now=(issued_at + timedelta(seconds=10)).isoformat(),
+    )
+
+    lease_expires_at = datetime.fromisoformat(
+        acknowledged["payload"]["lease_expires_at"].replace("Z", "+00:00")
+    )
+    assert lease_expires_at <= expires_at

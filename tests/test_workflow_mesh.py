@@ -707,7 +707,15 @@ def test_agent_workflow_start_persists_exact_admission_before_return(tmp_path, m
 
 @pytest.mark.parametrize(
     "mutation",
-    ["missing_field", "extra_field", "bet_mismatch", "workflow_mismatch"],
+    [
+        "missing_field",
+        "extra_field",
+        "bet_mismatch",
+        "workflow_mismatch",
+        "missing_discriminator",
+        "empty_assignment_id",
+        "empty_dispatch_id",
+    ],
 )
 def test_exact_request_discriminator_rejects_identity_shape_downgrade(tmp_path, mutation):
     run_id = f"run-exact-discriminator-{mutation}"
@@ -745,11 +753,33 @@ def test_exact_request_discriminator_rejects_identity_shape_downgrade(tmp_path, 
         payload["bet_id"] = "BET-FORGED"
     elif mutation == "workflow_mismatch":
         payload["workflow_id"] = "forged-workflow"
+    elif mutation == "missing_discriminator":
+        payload.pop("exact_request_discriminator")
+        payload.pop("bet_id")
+    elif mutation == "empty_assignment_id":
+        identity["assignment_id"] = ""
+    elif mutation == "empty_dispatch_id":
+        identity["dispatch_id"] = ""
 
     store = WorkflowMeshStore(tmp_path / ".omo")
     with pytest.raises(WorkflowMeshEventError, match="exact Agent Workflow request"):
         store.append(new_workflow_event("WorkflowRequested", run_id, payload=payload))
     assert store.events() == []
+
+
+def test_genuine_discriminatorless_legacy_request_remains_supported(tmp_path):
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    stored = store.append(
+        new_workflow_event(
+            "WorkflowRequested",
+            "run-genuine-legacy-request",
+            payload={"workflow_id": "legacy-workflow", "actor": "legacy-user"},
+        )
+    )
+    assert stored["event_type"] == "WorkflowRequested"
+    snapshot = store.snapshot("run-genuine-legacy-request")
+    assert snapshot["state"] == "planned"
+    assert snapshot["exact_request_identity"] is None
 
 
 def test_exact_agent_workflow_persisted_start_dispatch_close(tmp_path, monkeypatch):
@@ -1152,6 +1182,50 @@ def test_exact_agent_workflow_base_exception_closes_run_and_releases_locks(
     store = WorkflowMeshStore(tmp_path / ".omo")
     assert store.snapshot(run["run_id"])["state"] == "closed"
     assert not any(event["event_type"] == "StepDispatched" for event in store.events())
+
+
+def test_exact_start_cleanup_rereads_durable_request_after_emitter_interrupt(tmp_path, monkeypatch):
+    registry = _agent_workflow_registry(tmp_path, monkeypatch)
+    registry["workflows"][0]["lock_scopes"] = ["path:owned.py"]
+    identity = _prepared_agent_workflow_identity()
+    monkeypatch.setattr(workflow_lifecycle_mod, "_prepare_bet_execution", lambda _bet_id: deepcopy(identity))
+    real_emit = workflow_lifecycle_mod.emit_workflow_mesh_event
+    interruption = KeyboardInterrupt("stable-after-durable-request-interruption")
+
+    def append_then_interrupt(event_type, run_id, payload=None, **kwargs):
+        stored = real_emit(event_type, run_id, payload, **kwargs)
+        if event_type == "AgentWorkflowStarted":
+            assert stored is True
+            raise interruption
+        return stored
+
+    monkeypatch.setattr(workflow_lifecycle_mod, "emit_workflow_mesh_event", append_then_interrupt)
+
+    with pytest.raises(KeyboardInterrupt, match="stable-after-durable-request-interruption") as raised:
+        start_run(
+            registry,
+            registry["workflows"][0],
+            _agent_workflow_context(),
+            "interrupt after durable request",
+            False,
+            False,
+            bet_id="BET-BOUND",
+            start_preflight=lambda run_id, prepared: _agent_workflow_preflight(run_id, prepared),
+        )
+
+    assert raised.value is interruption
+    run_path = next((tmp_path / "runs").glob("*.yaml"))
+    _path, run = workflow_lifecycle_mod.read_run(registry, run_path.stem)
+    assert run["status"] == "failed"
+    assert run["released_locks"]
+    assert list((tmp_path / "locks").glob("*.yaml")) == []
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    assert [event["event_type"] for event in store.events()] == [
+        "WorkflowRequested",
+        "WorkflowCancelled",
+        "WorkflowClosed",
+    ]
+    assert store.snapshot(run["run_id"])["state"] == "closed"
 
 
 @pytest.mark.parametrize("entrypoint", ["direct", "closeout"])
