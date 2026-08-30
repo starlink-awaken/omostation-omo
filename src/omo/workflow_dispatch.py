@@ -138,21 +138,25 @@ def _validate_admission_inputs(
 def admit_agent_workflow_start(
     root: Path,
     *,
-    record: Mapping[str, Any],
+    workflow_run_id: str,
+    workflow_id: str,
+    bet_id: str,
+    actor_id: str,
+    work_packet: Mapping[str, Any],
+    work_packet_hash: str,
+    capability_requirements_digest: str,
+    capability_preflight: Mapping[str, Any],
     ttl_seconds: int = 900,
     now: str | None = None,
     omo_dir: str | Path = ".omo",
 ) -> dict[str, Any]:
     """Persist one exact, non-executing admission for an Agent Workflow start."""
-    run_id = str(record.get("run_id") or "")
+    run_id = str(workflow_run_id or "")
     store = WorkflowMeshStore(root / Path(omo_dir))
     snapshot = store.snapshot(run_id)
     if snapshot.get("state") != "planned":
         raise WorkflowDispatchError(f"agent workflow admission requires planned state: {snapshot.get('state')}")
 
-    work_packet = record.get("work_packet")
-    if not isinstance(work_packet, Mapping):
-        raise WorkflowDispatchError("agent workflow admission requires a WorkPacket")
     try:
         requirements = validate_capability_requirements(work_packet.get("capability_requirements"))
     except OrchestrationContractError as exc:
@@ -160,12 +164,12 @@ def admit_agent_workflow_start(
     if requirements != work_packet.get("capability_requirements"):
         raise WorkflowDispatchError("agent workflow capability requirements are not canonical")
 
-    requirements_digest = record.get("capability_requirements_digest")
+    requirements_digest = capability_requirements_digest
     expected_requirements_digest = "sha256:" + hashlib.sha256(_canonical(requirements)).hexdigest()  # type: ignore[arg-type]
     if requirements_digest != expected_requirements_digest:
         raise WorkflowDispatchError("agent workflow capability requirements digest mismatch")
 
-    preflight = record.get("capability_preflight")
+    preflight = capability_preflight
     if not isinstance(preflight, Mapping) or set(preflight) != {
         "requirements_digest",
         "binding",
@@ -200,12 +204,13 @@ def admit_agent_workflow_start(
     if any(not isinstance(binding.get(field), str) or not binding[field] for field in _AGENT_WORKFLOW_BINDING_FIELDS):
         raise WorkflowDispatchError("agent workflow preflight binding fields must be non-empty")
     packet_id = work_packet.get("packet_id")
-    packet_hash = record.get("work_packet_hash")
+    packet_hash = work_packet_hash
     if (
         binding["correlation_id"] != run_id
         or binding["workflow_run_id"] != run_id
         or binding["packet_id"] != packet_id
         or binding["packet_hash"] != packet_hash
+        or binding["actor_id"] != actor_id
         or not isinstance(packet_id, str)
         or not packet_id
         or not isinstance(packet_hash, str)
@@ -217,8 +222,8 @@ def admit_agent_workflow_start(
 
     request_identity = {
         **{field: binding[field] for field in _AGENT_WORKFLOW_BINDING_FIELDS},
-        "bet_id": str(record.get("bet_id") or ""),
-        "workflow_id": str(record.get("workflow_id") or ""),
+        "bet_id": str(bet_id or ""),
+        "workflow_id": str(workflow_id or ""),
     }
     request_identity.update(
         {
@@ -236,13 +241,13 @@ def admit_agent_workflow_start(
         or requested_payload.get("request_identity") != request_identity
     ):
         raise WorkflowDispatchError("persisted agent workflow request identity mismatch")
-    if requested_payload.get("workflow_id") != record.get("workflow_id"):
+    if requested_payload.get("workflow_id") != workflow_id:
         raise WorkflowDispatchError("persisted agent workflow request workflow mismatch")
 
     policy = {
         "exact_request_discriminator": EXACT_REQUEST_DISCRIMINATOR,
         "bet_id": request_identity["bet_id"],
-        "workflow_id": record.get("workflow_id"),
+        "workflow_id": workflow_id,
         "workflow_run_id": run_id,
         "packet_id": packet_id,
         "packet_hash": packet_hash,
@@ -309,10 +314,9 @@ def admit_agent_workflow_start(
         raise WorkflowDispatchError("persisted agent workflow admission re-read mismatch")
     return {
         "status": "admitted",
-        "dispatch_state": "admitted",
         "workflow_run_id": run_id,
         "admission": dict(persisted_grant),
-        "event": admitted,
+        "event_id": admitted["event_id"],
         "external_side_effects": "disabled",
         "worker_launch": False,
     }

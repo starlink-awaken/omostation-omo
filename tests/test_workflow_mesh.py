@@ -1,4 +1,5 @@
 import hashlib
+import inspect
 import json
 import os
 import subprocess
@@ -703,6 +704,60 @@ def test_agent_workflow_start_persists_exact_admission_before_return(tmp_path, m
     persisted = admissions[0]["payload"]["admission"]
     assert persisted["admission_id"] == grant["admission_id"]
     assert persisted["proof"] == grant["proof"]
+
+
+def test_admit_agent_workflow_start_matches_plan_locked_interface_and_result(tmp_path, monkeypatch):
+    signature = inspect.signature(workflow_dispatch_mod.admit_agent_workflow_start)
+    assert list(signature.parameters) == [
+        "root",
+        "workflow_run_id",
+        "workflow_id",
+        "bet_id",
+        "actor_id",
+        "work_packet",
+        "work_packet_hash",
+        "capability_requirements_digest",
+        "capability_preflight",
+        "ttl_seconds",
+        "now",
+        "omo_dir",
+    ]
+    record, _registry = _interrupt_exact_start_after_request(tmp_path, monkeypatch)
+    work_packet = deepcopy(record["work_packet"])
+    capability_preflight = deepcopy(record["capability_preflight"])
+    original_packet = deepcopy(work_packet)
+    original_preflight = deepcopy(capability_preflight)
+
+    result = workflow_dispatch_mod.admit_agent_workflow_start(
+        tmp_path,
+        workflow_run_id=record["run_id"],
+        workflow_id=record["workflow_id"],
+        bet_id=record["bet_id"],
+        actor_id=capability_preflight["binding"]["actor_id"],
+        work_packet=work_packet,
+        work_packet_hash=record["work_packet_hash"],
+        capability_requirements_digest=record["capability_requirements_digest"],
+        capability_preflight=capability_preflight,
+        ttl_seconds=900,
+        now="2026-08-31T00:00:00+00:00",
+    )
+
+    assert set(result) == {
+        "status",
+        "workflow_run_id",
+        "admission",
+        "event_id",
+        "external_side_effects",
+        "worker_launch",
+    }
+    admitted_event = WorkflowMeshStore(tmp_path / ".omo").events()[-1]
+    assert result["event_id"] == admitted_event["event_id"]
+    assert result["status"] == "admitted"
+    assert result["workflow_run_id"] == record["run_id"]
+    assert result["external_side_effects"] == "disabled"
+    assert result["worker_launch"] is False
+    assert work_packet == original_packet
+    assert capability_preflight == original_preflight
 
 
 def test_inherited_child_start_persists_documented_legacy_identity_without_execution(tmp_path, monkeypatch):
@@ -1451,10 +1506,46 @@ def test_agent_workflow_start_rejects_forged_exact_identity_before_effects(
 
     real_admit = getattr(workflow_dispatch_mod, "admit_agent_workflow_start", None)
 
-    def forged_admit(root, *, record, omo_dir=".omo"):
+    def forged_admit(
+        root,
+        *,
+        workflow_run_id,
+        workflow_id,
+        bet_id,
+        actor_id,
+        work_packet,
+        work_packet_hash,
+        capability_requirements_digest,
+        capability_preflight,
+        ttl_seconds=900,
+        now=None,
+        omo_dir=".omo",
+    ):
+        record = {
+            "run_id": workflow_run_id,
+            "workflow_id": workflow_id,
+            "bet_id": bet_id,
+            "work_packet": deepcopy(work_packet),
+            "work_packet_hash": work_packet_hash,
+            "capability_requirements_digest": capability_requirements_digest,
+            "capability_preflight": deepcopy(capability_preflight),
+        }
         _mutate_agent_workflow_admission(record, mutation)
         if real_admit is not None:
-            return real_admit(root, record=record, omo_dir=omo_dir)
+            return real_admit(
+                root,
+                workflow_run_id=record["run_id"],
+                workflow_id=record["workflow_id"],
+                bet_id=record["bet_id"],
+                actor_id=actor_id,
+                work_packet=record["work_packet"],
+                work_packet_hash=record["work_packet_hash"],
+                capability_requirements_digest=record["capability_requirements_digest"],
+                capability_preflight=record["capability_preflight"],
+                ttl_seconds=ttl_seconds,
+                now=now,
+                omo_dir=omo_dir,
+            )
         return None
 
     monkeypatch.setattr(

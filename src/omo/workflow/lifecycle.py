@@ -522,9 +522,20 @@ def start_run(
         if exact_start:
             if not request_persisted:
                 raise WorkflowError("WORKFLOW_MESH_REQUEST_FAILED: exact Agent Workflow request was not persisted")
+            capability_preflight = record.get("capability_preflight")
+            binding = capability_preflight.get("binding") if isinstance(capability_preflight, Mapping) else None
+            if not isinstance(binding, Mapping):
+                raise WorkflowError("WORKFLOW_MESH_ADMISSION_FAILED: exact preflight binding is unavailable")
             admission = admit_agent_workflow_start(
                 registry_workspace_root(registry),
-                record=record,
+                workflow_run_id=run_id,
+                workflow_id=record["workflow_id"],
+                bet_id=record["bet_id"],
+                actor_id=str(binding.get("actor_id") or ""),
+                work_packet=record["work_packet"],
+                work_packet_hash=record["work_packet_hash"],
+                capability_requirements_digest=record["capability_requirements_digest"],
+                capability_preflight=capability_preflight,
             )
             if admission.get("worker_launch") is not False or admission.get("external_side_effects") != "disabled":
                 raise WorkflowError("WORKFLOW_MESH_ADMISSION_UNSAFE: exact admission enabled execution")
