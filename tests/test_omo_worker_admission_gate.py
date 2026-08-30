@@ -1158,6 +1158,74 @@ def test_exact_outer_post_spawn_boundary_cleans_every_late_interruption(
     assert origin_proof not in json.dumps(events)
 
 
+@pytest.mark.parametrize("interrupt_type", [KeyboardInterrupt, SystemExit])
+def test_exact_group_derivation_interruption_uses_provisional_pid_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    interrupt_type: type[BaseException],
+) -> None:
+    _task_path, _pi = _exact_worker_fixture(tmp_path)
+    packet, _exact_identity = _seed_exact_workflow_packet(tmp_path)
+    origin_proof = new_worker_ack_origin_proof()
+    interruption = interrupt_type("stable-group-derivation-interruption")
+    spawned_pid = 42433
+    lifecycle = {"group_alive": True, "signals": [], "communicate_calls": 0}
+
+    class DerivationInterruptedWorker:
+        pid = spawned_pid
+
+        def __init__(self, argv, *, cwd, stdout, stderr, text, env, start_new_session):
+            del cwd, stdout, stderr, text, env
+            assert start_new_session is True
+            self.args = argv
+            self.returncode = None
+
+        def communicate(self, timeout=None):
+            lifecycle["communicate_calls"] += 1
+            self.returncode = -15
+            return "derivation-interrupted", ""
+
+    def interrupt_getpgid(_pid):
+        raise interruption
+
+    def fake_killpg(process_group_id, sig):
+        assert process_group_id == spawned_pid
+        lifecycle["signals"].append(sig)
+        if sig == 0:
+            if lifecycle["group_alive"]:
+                return None
+            raise ProcessLookupError("derivation group absent")
+        if not lifecycle["group_alive"]:
+            raise ProcessLookupError("derivation group absent")
+        if sig in {signal.SIGTERM, signal.SIGKILL}:
+            lifecycle["group_alive"] = False
+
+    monkeypatch.setattr("omo.omo_worker_dispatch.subprocess.Popen", DerivationInterruptedWorker)
+    monkeypatch.setattr("omo.omo_worker_dispatch.os.getpgid", interrupt_getpgid)
+    monkeypatch.setattr("omo.omo_worker_dispatch.os.killpg", fake_killpg)
+
+    with pytest.raises(interrupt_type, match="stable-group-derivation-interruption") as raised:
+        dispatch_task(
+            tmp_path,
+            task_id="TASK-ADMISSION-GATE",
+            worker_id="pi",
+            allowed_write_paths=[],
+            workflow_packet=packet,
+            worker_ack_origin_proof=origin_proof,
+            launch=True,
+            now="2026-08-30T01:02:03+00:00",
+        )
+
+    assert raised.value is interruption
+    assert lifecycle["group_alive"] is False
+    assert signal.SIGTERM in lifecycle["signals"]
+    assert lifecycle["communicate_calls"] >= 1
+    events = WorkflowMeshStore(tmp_path / ".omo").events()
+    assert not any(event["event_type"] == "StepStarted" for event in events)
+    assert not any(event["event_type"] == "WorkflowSucceeded" for event in events)
+    assert origin_proof not in json.dumps(events)
+
+
 def test_exact_zero_return_parent_with_live_descendant_fails_before_completion(
     tmp_path: Path,
 ) -> None:

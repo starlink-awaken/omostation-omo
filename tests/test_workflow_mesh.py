@@ -782,23 +782,49 @@ def test_genuine_discriminatorless_legacy_request_remains_supported(tmp_path):
     assert snapshot["exact_request_identity"] is None
 
 
+def test_documented_three_field_legacy_nested_identity_remains_supported(tmp_path):
+    run_id = "run-documented-legacy-nested-identity"
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    stored = store.append(
+        new_workflow_event(
+            "WorkflowRequested",
+            run_id,
+            payload={
+                "workflow_id": "legacy-workflow",
+                "request_identity": {
+                    "bet_id": "BET-LEGACY",
+                    "packet_id": "WP-LEGACY",
+                    "packet_hash": "sha256:" + "a" * 64,
+                },
+            },
+        )
+    )
+    assert stored["event_type"] == "WorkflowRequested"
+    assert store.snapshot(run_id)["exact_request_identity"] is None
+
+
 @pytest.mark.parametrize(
-    "markers",
+    "identity",
     [
-        {"bet_id": "BET-BOUND"},
-        {"workflow_id": "test-workflow"},
-        {"assignment_id": "assignment:exact"},
-        {"delivery_attempt_id": "attempt:exact"},
-        {"capability_requirements": []},
-        {"capability_requirements_digest": "sha256:" + "a" * 64},
+        {"bet_id": "BET-LEGACY", "packet_id": "WP-LEGACY"},
+        {"bet_id": "BET-LEGACY", "packet_hash": "sha256:" + "a" * 64},
+        {"packet_id": "WP-LEGACY", "packet_hash": "sha256:" + "a" * 64},
         {
-            "packet_id": "WP-BET-BOUND",
-            "dispatch_id": "dispatch:exact",
-            "actor_id": "actor:exact",
+            "bet_id": "BET-LEGACY",
+            "packet_id": "WP-LEGACY",
+            "packet_hash": "sha256:" + "a" * 64,
+            "correlation_id": "run-malformed",
         },
+        {"bet_id": "BET-LEGACY", "packet_id": "WP-LEGACY", "packet_hash": "sha256:" + "a" * 64, "workflow_run_id": "run-malformed"},
+        {"bet_id": "BET-LEGACY", "packet_id": "WP-LEGACY", "packet_hash": "sha256:" + "a" * 64, "assignment_id": "assignment:exact"},
+        {"bet_id": "BET-LEGACY", "packet_id": "WP-LEGACY", "packet_hash": "sha256:" + "a" * 64, "dispatch_id": "dispatch:exact"},
+        {"bet_id": "BET-LEGACY", "packet_id": "WP-LEGACY", "packet_hash": "sha256:" + "a" * 64, "actor_id": "actor:exact"},
+        {"bet_id": "BET-LEGACY", "packet_id": "WP-LEGACY", "packet_hash": "sha256:" + "a" * 64, "delivery_attempt_id": "attempt:exact"},
+        {"bet_id": "BET-LEGACY", "packet_id": "WP-LEGACY", "packet_hash": "sha256:" + "a" * 64, "capability_requirements": []},
+        {"bet_id": "BET-LEGACY", "packet_id": "WP-LEGACY", "packet_hash": "sha256:" + "a" * 64, "capability_requirements_digest": "sha256:" + "b" * 64},
     ],
 )
-def test_discriminatorless_request_rejects_any_exact_only_identity_marker(tmp_path, markers):
+def test_discriminatorless_nested_identity_rejects_nonlegacy_shape(tmp_path, identity):
     run_id = "run-discriminatorless-marker"
     store = WorkflowMeshStore(tmp_path / ".omo")
     with pytest.raises(WorkflowMeshEventError, match="exact Agent Workflow request discriminator"):
@@ -808,7 +834,7 @@ def test_discriminatorless_request_rejects_any_exact_only_identity_marker(tmp_pa
                 run_id,
                 payload={
                     "workflow_id": "legacy-compatible-top-level",
-                    "request_identity": markers,
+                    "request_identity": identity,
                 },
             )
         )

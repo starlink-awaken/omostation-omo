@@ -694,9 +694,15 @@ def dispatch_task(
                 raise RuntimeError("worker transport returned without a durable proceed ACK")
             return ack_worker
 
-        def run_exact_post_spawn(process: Any, process_group_id: int | None) -> tuple[str, str, int, str]:
-            stage = "step_started"
+        def run_exact_post_spawn(process: Any, provisional_group_id: int | None) -> tuple[str, str, int, str]:
+            process_group_id = provisional_group_id
+            stage = "group_derivation"
             try:
+                derived_group_id = validated_process_group(process)
+                if derived_group_id is None:
+                    raise RuntimeError("exact worker process-group identity is unavailable")
+                process_group_id = derived_group_id
+                stage = "step_started"
                 store.append(
                     new_workflow_event(
                         "StepStarted",
@@ -784,8 +790,9 @@ def dispatch_task(
                 env=worker_env,
                 start_new_session=True,
             )
-            process_group_id = validated_process_group(process)
-            stdout, stderr, returncode, log_content = run_exact_post_spawn(process, process_group_id)
+            spawned_pid = getattr(process, "pid", None)
+            provisional_group_id = spawned_pid if isinstance(spawned_pid, int) and spawned_pid > 1 else None
+            stdout, stderr, returncode, log_content = run_exact_post_spawn(process, provisional_group_id)
         else:
             result = subprocess.run(argv, cwd=root, capture_output=True, text=True, env=worker_env)
             stdout, stderr = result.stdout, result.stderr

@@ -256,8 +256,7 @@ def record_step_dispatch(
             ack_origin_proof,
             {**payload, "workflow_run_id": workflow_run_id},
         )
-    return _append(
-        store,
+    event = new_workflow_event(
         "StepDispatched",
         workflow_run_id,
         trace_id=trace_id,
@@ -265,6 +264,22 @@ def record_step_dispatch(
         idempotency_key=f"{workflow_run_id}:step-dispatched:{dispatch_id}",
         payload=payload,
     )
+    if exact_admission:
+        if not ack_origin_proof:
+            raise WorkerLifecycleError("exact dispatch origin proof is required")
+        try:
+            return store.append_exact_step_dispatch(event, origin_proof=ack_origin_proof)
+        except WorkflowMeshEventError as exc:
+            raise WorkerLifecycleError(str(exc)) from exc
+    prior = _existing(store, event["idempotency_key"])
+    if prior is not None:
+        if prior.get("event_type") != "StepDispatched" or prior.get("payload") != payload:
+            raise WorkerLifecycleError(f"conflicting worker lifecycle event: {event['idempotency_key']}")
+        return prior
+    try:
+        return store.append(event)
+    except WorkflowMeshEventError as exc:
+        raise WorkerLifecycleError(str(exc)) from exc
 
 
 def acknowledge_worker(
@@ -336,7 +351,8 @@ def acknowledge_worker(
     )
     worker = snapshot.get("worker")
     admission = snapshot.get("admission")
-    if isinstance(snapshot.get("exact_request_identity"), Mapping):
+    exact_ack = isinstance(snapshot.get("exact_request_identity"), Mapping)
+    if exact_ack:
         if not isinstance(admission, Mapping):
             raise WorkerLifecycleError("worker ACK requires exact admission")
         _remaining_exact_admission_seconds(admission, now=now)
@@ -525,7 +541,8 @@ def renew_worker_lease(
         raise WorkerLifecycleError("worker lease owner mismatch")
     heartbeat_value = _utc(now)
     requested_expiry = heartbeat_value + timedelta(seconds=lease_seconds)
-    if isinstance(snapshot.get("exact_request_identity"), Mapping):
+    exact_renewal = isinstance(snapshot.get("exact_request_identity"), Mapping)
+    if exact_renewal:
         admission = snapshot.get("admission")
         if not isinstance(admission, Mapping):
             raise WorkerLifecycleError("exact worker renewal requires persisted admission")
@@ -536,9 +553,6 @@ def renew_worker_lease(
     lease_expires_at = _stamp(requested_expiry.isoformat())
     event_key = heartbeat_id or lease_expires_at
     idempotency_key = f"{workflow_run_id}:worker-heartbeat:{dispatch_id}:{event_key}"
-    prior = _existing(store, idempotency_key)
-    if prior is not None:
-        return prior
     payload = {
         "dispatch_id": dispatch_id,
         "worker_id": worker_id,
@@ -548,8 +562,7 @@ def renew_worker_lease(
         "heartbeat_at": heartbeat_at,
         "lease_expires_at": lease_expires_at,
     }
-    return _append(
-        store,
+    event = new_workflow_event(
         "WorkerLeaseRenewed",
         workflow_run_id,
         trace_id=trace_id,
@@ -557,6 +570,18 @@ def renew_worker_lease(
         idempotency_key=idempotency_key,
         payload=payload,
     )
+    if exact_renewal:
+        try:
+            return store.append_exact_worker_lease(event)
+        except WorkflowMeshEventError as exc:
+            raise WorkerLifecycleError(str(exc)) from exc
+    prior = _existing(store, idempotency_key)
+    if prior is not None:
+        return prior
+    try:
+        return store.append(event)
+    except WorkflowMeshEventError as exc:
+        raise WorkerLifecycleError(str(exc)) from exc
 
 
 def expire_worker_lease(

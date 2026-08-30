@@ -262,22 +262,14 @@ def _validated_exact_request_identity(
     discriminator = payload.get("exact_request_discriminator")
     if discriminator is None:
         identity = payload.get("request_identity")
-        exact_marker_fields = {
-            "bet_id",
-            "workflow_id",
-            "packet_id",
-            "packet_hash",
-            "assignment_id",
-            "dispatch_id",
-            "actor_id",
-            "delivery_attempt_id",
-            "capability_requirements",
-            "capability_requirements_digest",
-        }
-        if (
-            isinstance(identity, Mapping)
-            and bool(exact_marker_fields & identity.keys())
-        ):
+        if isinstance(identity, Mapping):
+            legacy_fields = {"bet_id", "packet_id", "packet_hash"}
+            if (
+                set(identity) == legacy_fields
+                and all(isinstance(identity.get(field), str) and identity.get(field) for field in legacy_fields)
+                and _SHA256_REF_RE.fullmatch(str(identity["packet_hash"])) is not None
+            ):
+                return None
             raise WorkflowMeshEventError("exact Agent Workflow request discriminator is required")
         return None
     if discriminator != EXACT_REQUEST_DISCRIMINATOR:
@@ -1046,6 +1038,17 @@ class WorkflowMeshStore:
                         "exact WorkflowSucceeded requires authenticated worker completion append"
                     )
                 return self._append_locked(event)
+        if event["event_type"] in {"StepDispatched", "WorkerLeaseRenewed"}:
+            with self._lock:
+                current = self._log.read_all()
+                snapshot = project_workflow_run(current, event["workflow_run_id"])
+                if isinstance(snapshot.get("exact_request_identity"), Mapping):
+                    if event["event_type"] == "StepDispatched":
+                        raise WorkflowMeshEventError("exact StepDispatched requires authenticated exact dispatch append")
+                    raise WorkflowMeshEventError(
+                        "exact WorkerLeaseRenewed requires authenticated exact lease renewal append"
+                    )
+                return self._append_locked(event)
         with self._lock:
             return self._append_locked(event)
 
@@ -1095,6 +1098,55 @@ class WorkflowMeshStore:
             if event["payload"].get("ack_origin_proof_digest") != commitment:
                 raise WorkflowMeshEventError("worker ACK origin proof digest mismatch")
             return self._append_locked(event)
+
+    def append_exact_step_dispatch(self, event: dict[str, Any], *, origin_proof: str) -> dict[str, Any]:
+        """Atomically authenticate one exact coordinator-to-worker dispatch."""
+        validate_workflow_event(event)
+        if event["event_type"] != "StepDispatched" or not origin_proof:
+            raise WorkflowMeshEventError("authenticated exact dispatch requires StepDispatched and origin proof")
+        with self._lock:
+            current = self._log.read_all()
+            snapshot = project_workflow_run(current, event["workflow_run_id"])
+            if not isinstance(snapshot.get("exact_request_identity"), Mapping):
+                raise WorkflowMeshEventError("authenticated exact dispatch requires exact request")
+            _require_live_exact_admission(snapshot, event)
+            payload = event.get("payload", {})
+            if not payload.get("ack_origin_nonce"):
+                raise WorkflowMeshEventError("exact dispatch origin nonce is required")
+            expected = worker_ack_origin_digest(
+                origin_proof,
+                {**payload, "workflow_run_id": event["workflow_run_id"]},
+            )
+            if not hmac.compare_digest(expected, str(payload.get("ack_origin_commitment") or "")):
+                raise WorkflowMeshEventError("exact dispatch origin proof mismatch")
+            return self._append_locked(event)
+
+    def append_exact_worker_lease(self, event: dict[str, Any]) -> dict[str, Any]:
+        """Atomically validate, cap, and append one exact worker lease renewal."""
+        validate_workflow_event(event)
+        if event["event_type"] != "WorkerLeaseRenewed":
+            raise WorkflowMeshEventError("exact lease renewal append requires WorkerLeaseRenewed")
+        with self._lock:
+            current = self._log.read_all()
+            snapshot = project_workflow_run(current, event["workflow_run_id"])
+            if not isinstance(snapshot.get("exact_request_identity"), Mapping):
+                raise WorkflowMeshEventError("exact lease renewal requires exact request")
+            _require_live_exact_admission(snapshot, event)
+            admission = snapshot.get("admission")
+            if not isinstance(admission, Mapping):
+                raise WorkflowMeshEventError("exact lease renewal requires persisted admission")
+            capped = dict(event)
+            payload = dict(event["payload"])
+            _require_live_exact_admission(
+                snapshot,
+                {**event, "occurred_at": payload.get("heartbeat_at")},
+            )
+            admission_expiry = _parsed_utc_timestamp(admission.get("expires_at"))
+            requested_expiry = _parsed_utc_timestamp(payload.get("lease_expires_at"))
+            if requested_expiry > admission_expiry:
+                payload["lease_expires_at"] = admission_expiry.isoformat().replace("+00:00", "Z")
+            capped["payload"] = payload
+            return self._append_locked(capped)
 
     def append_worker_completion(self, event: dict[str, Any], *, origin_proof: str) -> dict[str, Any]:
         """Authenticate one exact worker completion with its held origin proof."""
