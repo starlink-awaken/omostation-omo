@@ -4,8 +4,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shlex
+import signal
 import subprocess
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -29,6 +32,29 @@ from .omo_worker_core import (
     _utc_now,
     _write_yaml,
 )
+
+
+def _normalised_public_token(value: str) -> str:
+    return re.sub(r"_+", "_", re.sub(r"[^a-z0-9]+", "_", value.lower())).strip("_")
+
+
+def _contains_private_proof_data(value: Any, *, private_proof: str | None) -> bool:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            token = _normalised_public_token(str(key))
+            if "origin_proof" in token and not token.endswith("_digest"):
+                return True
+            if _contains_private_proof_data(item, private_proof=private_proof):
+                return True
+        return False
+    if isinstance(value, (list, tuple, set)):
+        return any(_contains_private_proof_data(item, private_proof=private_proof) for item in value)
+    if not isinstance(value, str):
+        return False
+    if private_proof and private_proof in value:
+        return True
+    token = _normalised_public_token(value)
+    return "origin_proof" in token and not token.endswith("_digest")
 
 
 def _bridge_dispatch_to_mesh(
@@ -107,6 +133,15 @@ def dispatch_task(
         raise ValueError("; ".join(validation_errors))
     task = _load_yaml(task_file)
     registry = _load_yaml(omo / "_truth" / "registry" / "workers.yaml")
+    public_dispatch_data = {
+        "task": task,
+        "workflow_packet": workflow_packet,
+        "allowed_write_paths": allowed_write_paths,
+        "prior_evidence": prior_evidence,
+        "prompt_addendum": prompt_addendum,
+    }
+    if _contains_private_proof_data(public_dispatch_data, private_proof=worker_ack_origin_proof):
+        raise ValueError("private proof is forbidden in public dispatch data")
     # Admission is a hard precondition.  Validate before deriving a dispatch
     # id or creating any run/envelope/task/Mesh state so rejection is side-effect free.
     worker = _require_admitted_worker(registry, worker_id, transport)
@@ -122,7 +157,23 @@ def dispatch_task(
         raise ValueError(f"worker launch denied: controller direct start is required for worker_id={worker_id}")
 
     dispatch_now = now or _utc_now()
-    dispatch_id = f"{task_id.lower()}-{worker_id}-{_timestamp_slug(dispatch_now)}"
+    request_identity = workflow_packet.get("request_identity") if isinstance(workflow_packet, dict) else None
+    workflow_run_id = str(workflow_packet.get("workflow_run_id") or "") if isinstance(workflow_packet, dict) else ""
+    exact_request_identity: dict[str, Any] | None = None
+    if workflow_packet is not None:
+        from .workflow_mesh import WorkflowMeshStore
+
+        exact_snapshot = WorkflowMeshStore(omo).snapshot(workflow_run_id)
+        projected_identity = exact_snapshot.get("exact_request_identity")
+        if isinstance(projected_identity, dict):
+            exact_request_identity = projected_identity
+    dispatch_id = (
+        str(exact_request_identity.get("dispatch_id") or "")
+        if exact_request_identity is not None
+        else f"{task_id.lower()}-{worker_id}-{_timestamp_slug(dispatch_now)}"
+    )
+    if exact_request_identity is not None and not dispatch_id:
+        raise ValueError("exact workflow dispatch requires persisted request dispatch_id")
     run_dir = omo / "workers" / "runs"
 
     # OMO v4.0 Task Gate: Anti-Entropy Mechanism
@@ -151,8 +202,6 @@ def dispatch_task(
     reclaim_path = omo_ref / "workers" / "runs" / f"{dispatch_id}-reclaim.md"
     review_path = omo_ref / "workers" / "runs" / f"{dispatch_id}-review.md"
     stdout_path = omo_ref / "workers" / "runs" / f"{dispatch_id}-stdout.log"
-    request_identity = workflow_packet.get("request_identity") if isinstance(workflow_packet, dict) else None
-    workflow_run_id = str(workflow_packet.get("workflow_run_id") or "") if isinstance(workflow_packet, dict) else ""
     if workflow_packet is not None and not isinstance(request_identity, dict):
         raise ValueError("bound workflow dispatch requires request_identity")
     if isinstance(request_identity, dict):
@@ -193,7 +242,13 @@ def dispatch_task(
         raise ValueError("unbound legacy dispatch is observer-only and cannot create worker state")
     from .worker_lifecycle import new_worker_ack_origin_proof
 
-    ack_origin_proof = worker_ack_origin_proof or new_worker_ack_origin_proof()
+    ack_origin_proof = (
+        worker_ack_origin_proof
+        if exact_request_identity is not None
+        else worker_ack_origin_proof or new_worker_ack_origin_proof()
+    )
+    if not ack_origin_proof:
+        raise ValueError("worker ACK origin proof is unavailable")
     # A supervised blueprint must not project dispatch artifacts or mutate the
     # Task until StepDispatched is durable.  If this append fails, every file
     # remains exactly at its pre-dispatch state and the exception propagates.
@@ -450,6 +505,38 @@ def dispatch_task(
             if isinstance(request_identity, dict)
             else None,
         )
+        from .workflow_mesh import WorkflowMeshStore, new_workflow_event
+
+        store = WorkflowMeshStore(omo)
+        configured_lease_seconds = int((worker.get("lease_policy") or {}).get("lease_expired_after_seconds", 1200))
+        lease_seconds = configured_lease_seconds
+        if exact_request_identity is not None:
+            from .worker_lifecycle import _remaining_exact_admission_seconds
+
+            persisted_admission = store.snapshot(workflow_run_id).get("admission")
+            if not isinstance(persisted_admission, dict):
+                raise RuntimeError("exact worker launch requires persisted admission")
+            remaining_admission_seconds = _remaining_exact_admission_seconds(persisted_admission)
+            lease_seconds = min(configured_lease_seconds, int(remaining_admission_seconds))
+            if lease_seconds <= 0:
+                store.append(
+                    new_workflow_event(
+                        "StepFailed",
+                        workflow_run_id,
+                        trace_id=str(workflow_packet.get("trace_id") or workflow_run_id),
+                        producer="omo.worker_dispatch",
+                        idempotency_key=f"{workflow_run_id}:production-step-failed:{dispatch_id}",
+                        payload={
+                            "step_run_id": str(workflow_packet["admission"]["step_run_ids"][0]),
+                            "step_name": "execute",
+                            "admission_id": str(workflow_packet["admission"]["admission_id"]),
+                            "dispatch_id": dispatch_id,
+                            "worker_id": worker_id,
+                            "error": "admission_expired_before_launch",
+                        },
+                    )
+                )
+                raise RuntimeError("exact admission expired before worker launch")
         ack_context = {
             "workflow_run_id": workflow_run_id,
             "trace_id": str(workflow_packet.get("trace_id") or workflow_run_id),
@@ -460,7 +547,7 @@ def dispatch_task(
             "packet_id": request_identity["packet_id"],
             "packet_hash": request_identity["packet_hash"],
             "instruction_binding": request_identity["instruction_binding"],
-            "lease_seconds": int((worker.get("lease_policy") or {}).get("lease_expired_after_seconds", 1200)),
+            "lease_seconds": lease_seconds,
             "omo_dir": str(omo_ref),
         }
         worker_env = {
@@ -473,20 +560,269 @@ def dispatch_task(
                 separators=(",", ":"),
             ),
         }
-        result = subprocess.run(argv, cwd=root, capture_output=True, text=True, env=worker_env)
-        log_content = redact_sensitive_text((result.stdout or "") + (result.stderr or "")).replace(
-            ack_origin_proof, "[REDACTED]"
-        )
-        write_text_atomic(root / stdout_path, log_content)
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"worker launch failed: worker_id={worker_id} returncode={result.returncode} log={stdout_path}"
-            )
-        from .workflow_mesh import WorkflowMeshStore
 
-        ack_worker = WorkflowMeshStore(omo).worker_snapshot(workflow_run_id)
-        if not isinstance(ack_worker, dict) or ack_worker.get("ack_decision") != "proceed":
-            raise RuntimeError("worker transport returned without a durable proceed ACK")
+        def record_exact_failure(reason: str) -> None:
+            if exact_request_identity is None:
+                return
+            snapshot = store.snapshot(workflow_run_id)
+            if snapshot.get("state") not in {"dispatched", "running"}:
+                return
+            store.append(
+                new_workflow_event(
+                    "StepFailed",
+                    workflow_run_id,
+                    trace_id=ack_context["trace_id"],
+                    producer="omo.worker_dispatch",
+                    idempotency_key=f"{workflow_run_id}:production-step-failed:{dispatch_id}",
+                    payload={
+                        "step_run_id": ack_context["step_run_id"],
+                        "step_name": "execute",
+                        "admission_id": ack_context["admission_id"],
+                        "dispatch_id": dispatch_id,
+                        "worker_id": worker_id,
+                        "error": reason,
+                    },
+                )
+            )
+
+        def validated_process_group(process: Any) -> int | None:
+            pid = getattr(process, "pid", None)
+            if not isinstance(pid, int) or pid <= 1:
+                return None
+            try:
+                os.getpgid(pid)
+            except OSError:
+                pass
+            return pid
+
+        def validated_group_alive(process_group_id: int | None) -> bool:
+            if process_group_id is None:
+                raise RuntimeError("exact worker process-group identity is unavailable")
+            try:
+                os.killpg(process_group_id, 0)
+            except ProcessLookupError:
+                return False
+            except OSError:
+                return True
+            return True
+
+        def reap_spawned_child(process: Any, process_group_id: int | None) -> tuple[str, str]:
+            if process_group_id is None:
+                raise RuntimeError("exact worker process-group cleanup failed")
+            deadline = time.monotonic() + 5.0
+            output: tuple[str, str] = ("", "")
+
+            def remaining() -> float:
+                return max(0.0, deadline - time.monotonic())
+
+            def bounded_communicate(*, grace_cap: float | None = None) -> tuple[str, str]:
+                timeout = remaining()
+                if grace_cap is not None:
+                    timeout = min(timeout, grace_cap)
+                if timeout <= 0:
+                    raise subprocess.TimeoutExpired(getattr(process, "args", []), timeout)
+                return process.communicate(timeout=timeout)
+
+            term_sent = False
+            group_absent = False
+            try:
+                os.killpg(process_group_id, signal.SIGTERM)
+                term_sent = True
+            except ProcessLookupError:
+                group_absent = True
+            except OSError:
+                pass
+
+            if term_sent or group_absent:
+                try:
+                    output = bounded_communicate(grace_cap=1.0)
+                except Exception:
+                    pass
+            if not validated_group_alive(process_group_id):
+                return output
+
+            kill_sent = False
+            while remaining() > 0:
+                try:
+                    os.killpg(process_group_id, signal.SIGKILL)
+                    kill_sent = True
+                    break
+                except ProcessLookupError:
+                    group_absent = True
+                    break
+                except OSError:
+                    time.sleep(min(0.01, remaining()))
+
+            if kill_sent or group_absent:
+                try:
+                    output = bounded_communicate()
+                except Exception:
+                    pass
+
+            while validated_group_alive(process_group_id) and remaining() > 0:
+                try:
+                    os.killpg(process_group_id, signal.SIGKILL)
+                except ProcessLookupError:
+                    break
+                except OSError:
+                    pass
+                time.sleep(min(0.01, remaining()))
+            if validated_group_alive(process_group_id):
+                raise RuntimeError("exact worker process-group cleanup failed")
+            return output
+
+        cleanup_attempted = False
+
+        def reap_or_fail_closed(
+            process: Any,
+            process_group_id: int | None,
+            original_error: BaseException,
+        ) -> tuple[str, str]:
+            nonlocal cleanup_attempted
+            cleanup_attempted = True
+            try:
+                return reap_spawned_child(process, process_group_id)
+            except Exception:
+                raise RuntimeError("exact worker process-group cleanup failed") from original_error
+
+        def require_durable_ack() -> dict[str, Any]:
+            ack_worker = store.worker_snapshot(workflow_run_id)
+            if (
+                not isinstance(ack_worker, dict)
+                or ack_worker.get("ack_decision") != "proceed"
+                or ack_worker.get("ack_origin_proof_consumed") is not True
+                or ack_worker.get("dispatch_id") != dispatch_id
+                or ack_worker.get("worker_id") != worker_id
+                or ack_worker.get("step_run_id") != ack_context["step_run_id"]
+                or ack_worker.get("admission_id") != ack_context["admission_id"]
+            ):
+                raise RuntimeError("worker transport returned without a durable proceed ACK")
+            return ack_worker
+
+        def run_exact_post_spawn(process: Any, provisional_group_id: int | None) -> tuple[str, str, int, str]:
+            process_group_id = provisional_group_id
+            stage = "group_derivation"
+            try:
+                derived_group_id = validated_process_group(process)
+                if derived_group_id is None:
+                    raise RuntimeError("exact worker process-group identity is unavailable")
+                process_group_id = derived_group_id
+                stage = "step_started"
+                store.append(
+                    new_workflow_event(
+                        "StepStarted",
+                        workflow_run_id,
+                        trace_id=ack_context["trace_id"],
+                        producer="omo.worker_dispatch",
+                        idempotency_key=f"{workflow_run_id}:production-step-started:{dispatch_id}",
+                        payload={
+                            "step_run_id": ack_context["step_run_id"],
+                            "step_name": "execute",
+                            "admission_id": ack_context["admission_id"],
+                        },
+                    )
+                )
+                stage = "admission_deadline"
+                persisted_admission = store.snapshot(workflow_run_id).get("admission")
+                if not isinstance(persisted_admission, dict):
+                    raise RuntimeError("exact worker wait requires persisted admission")
+                remaining_admission_seconds = _remaining_exact_admission_seconds(persisted_admission)
+                wait_timeout = min(float(ack_context["lease_seconds"]), remaining_admission_seconds)
+                if wait_timeout <= 0:
+                    raise RuntimeError("exact admission expired before worker wait")
+                stage = "communicate"
+                stdout, stderr = process.communicate(timeout=wait_timeout)
+                stage = "log_write"
+                log_content = redact_sensitive_text((stdout or "") + (stderr or "")).replace(
+                    ack_origin_proof, "[REDACTED]"
+                )
+                write_text_atomic(root / stdout_path, log_content)
+                stage = "return_handling"
+                returncode = process.returncode
+                if returncode != 0:
+                    raise RuntimeError(
+                        f"worker launch failed: worker_id={worker_id} returncode={returncode} log={stdout_path}"
+                    )
+                stage = "ack_snapshot"
+                require_durable_ack()
+                stage = "group_inspection"
+                if validated_group_alive(process_group_id):
+                    raise RuntimeError("exact worker process group remained live after successful return")
+                stage = "authenticated_completion"
+                from .worker_lifecycle import record_worker_completion
+
+                result_digest = "sha256:" + hashlib.sha256(log_content.encode("utf-8")).hexdigest()
+                record_worker_completion(
+                    omo,
+                    workflow_run_id=workflow_run_id,
+                    trace_id=ack_context["trace_id"],
+                    dispatch_id=dispatch_id,
+                    worker_id=worker_id,
+                    step_run_id=ack_context["step_run_id"],
+                    admission_id=ack_context["admission_id"],
+                    origin_proof=ack_origin_proof,
+                    result_digest=result_digest,
+                )
+                return stdout, stderr, int(returncode), log_content
+            except BaseException as post_spawn_error:
+                cleaned_stdout, cleaned_stderr = reap_or_fail_closed(
+                    process,
+                    process_group_id,
+                    post_spawn_error,
+                )
+                try:
+                    record_exact_failure(f"worker_{stage}_failed")
+                except Exception:
+                    pass
+                if isinstance(post_spawn_error, subprocess.TimeoutExpired):
+                    timeout_log = redact_sensitive_text((cleaned_stdout or "") + (cleaned_stderr or "")).replace(
+                        ack_origin_proof, "[REDACTED]"
+                    )
+                    write_text_atomic(root / stdout_path, timeout_log)
+                    raise RuntimeError(
+                        f"worker launch timed out: worker_id={worker_id} "
+                        f"timeout={post_spawn_error.timeout} log={stdout_path}"
+                    ) from post_spawn_error
+                raise
+
+        if exact_request_identity is not None:
+            process = None
+            provisional_group_id = None
+            try:
+                process = subprocess.Popen(
+                    argv,
+                    cwd=root,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=worker_env,
+                    start_new_session=True,
+                )
+                spawned_pid = getattr(process, "pid", None)
+                provisional_group_id = spawned_pid if isinstance(spawned_pid, int) and spawned_pid > 1 else None
+                stdout, stderr, returncode, log_content = run_exact_post_spawn(process, provisional_group_id)
+            except BaseException as popen_boundary_error:
+                if process is not None and not cleanup_attempted:
+                    if provisional_group_id is None:
+                        cleanup_pid = getattr(process, "pid", None)
+                        provisional_group_id = cleanup_pid if isinstance(cleanup_pid, int) and cleanup_pid > 1 else None
+                    reap_or_fail_closed(process, provisional_group_id, popen_boundary_error)
+                    try:
+                        record_exact_failure("worker_post_popen_boundary_failed")
+                    except Exception:
+                        pass
+                raise
+        else:
+            result = subprocess.run(argv, cwd=root, capture_output=True, text=True, env=worker_env)
+            stdout, stderr = result.stdout, result.stderr
+            returncode = result.returncode
+            log_content = redact_sensitive_text((stdout or "") + (stderr or "")).replace(ack_origin_proof, "[REDACTED]")
+            write_text_atomic(root / stdout_path, log_content)
+            if returncode != 0:
+                raise RuntimeError(
+                    f"worker launch failed: worker_id={worker_id} returncode={returncode} log={stdout_path}"
+                )
+            require_durable_ack()
 
         # Phase 28 Step 3: Tri-Plane Bus - Broadcast event to Agora EventBus
         def push_log_to_agora(dispatch_id: str, content: str):

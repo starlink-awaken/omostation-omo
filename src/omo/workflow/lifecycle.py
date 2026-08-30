@@ -93,6 +93,68 @@ _PREFLIGHT_BINDING_KEYS = (
 )
 
 
+def admit_agent_workflow_start(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """Load the exact admission bridge only for a qualifying root start."""
+    from ..workflow_dispatch import admit_agent_workflow_start as _admit
+
+    return _admit(*args, **kwargs)
+
+
+def close_agent_workflow_run(*args: Any, **kwargs: Any) -> bool:
+    """Load the exact closeout bridge only when lifecycle closeout needs it."""
+    from ..workflow_dispatch import close_agent_workflow_run as _close
+
+    return _close(*args, **kwargs)
+
+
+def _fail_exact_agent_workflow_start(
+    registry: dict[str, Any],
+    record: dict[str, Any],
+    error: BaseException,
+    *,
+    request_persisted: bool,
+) -> None:
+    run_id = str(record["run_id"])
+    evidence = f"WORKFLOW_MESH_ADMISSION_FAILED: {type(error).__name__}"
+    workspace = registry_workspace_root(registry)
+    durable_request = False
+    try:
+        from ..workflow_mesh import WorkflowMeshStore
+
+        durable_request = any(
+            event.get("workflow_run_id") == run_id and event.get("event_type") == "WorkflowRequested"
+            for event in WorkflowMeshStore(workspace / ".omo").events()
+        )
+    except Exception:
+        durable_request = request_persisted
+    close_run(registry, run_id, "failed", [evidence], True, emit_mesh=False)
+    if durable_request:
+        cancelled = emit_workflow_mesh_event(
+            "WorkflowCancelled",
+            run_id,
+            {"status": "failed", "ok": False, "error": evidence},
+            workspace=workspace,
+        )
+        closed = emit_workflow_mesh_event(
+            "WorkflowClosed",
+            run_id,
+            {"status": "failed", "ok": False, "error": evidence},
+            workspace=workspace,
+        )
+        if not cancelled or not closed:
+            raise WorkflowError("WORKFLOW_MESH_ADMISSION_CLEANUP_FAILED: exact request was not closed") from error
+
+
+def _is_exact_agent_workflow_request(root: Path, workflow_run_id: str, *, omo_dir: str = ".omo") -> bool:
+    """Inspect the lightweight persisted request before importing the exact closer."""
+    from ..workflow_mesh import EXACT_REQUEST_DISCRIMINATOR, WorkflowMeshStore
+
+    for event in WorkflowMeshStore(root / omo_dir).events():
+        if event.get("workflow_run_id") == workflow_run_id and event.get("event_type") == "WorkflowRequested":
+            return event.get("payload", {}).get("exact_request_discriminator") == EXACT_REQUEST_DISCRIMINATOR
+    return False
+
+
 def _load_spec_binding_contract() -> ModuleType:
     """Load the Workspace-owned BET/WorkPacket boundary or fail closed."""
     global _SPEC_BINDING_CONTRACT
@@ -408,25 +470,79 @@ def start_run(
         "objective": objective,
         "actor": context["actor"],
     }
+    exact_start = not parent_run_id and ("capability_preflight" in record or "capability_requirements_digest" in record)
     if bet_id and isinstance(record.get("work_packet"), dict):
         # Canonical WorkPacket identity bridges into the Mesh so native-execution
         # verification can reconcile the binding against the persisted admission.
-        mesh_payload["request_identity"] = {
+        work_packet = record["work_packet"]
+        request_identity: dict[str, Any] = {
             "bet_id": bet_id,
-            "packet_id": str(record["work_packet"].get("packet_id") or ""),
+            "packet_id": str(work_packet.get("packet_id") or ""),
             "packet_hash": str(record.get("work_packet_hash") or ""),
         }
-        _requirements = record.get("capability_requirements")
-        if isinstance(_requirements, list):
+        requirements = work_packet.get("capability_requirements") if isinstance(work_packet, Mapping) else None
+        preflight = record.get("capability_preflight")
+        binding = preflight.get("binding") if isinstance(preflight, Mapping) else None
+        if isinstance(requirements, list):
             mesh_payload["capabilities"] = [
-                str(r.get("capability_id")) for r in _requirements if isinstance(r, dict) and r.get("capability_id")
+                str(requirement.get("capability_id"))
+                for requirement in requirements
+                if isinstance(requirement, Mapping) and requirement.get("capability_id")
             ]
-    emit_workflow_mesh_event(
-        "AgentWorkflowStarted",
-        run_id,
-        mesh_payload,
-        workspace=registry_workspace_root(registry),
-    )
+        if isinstance(binding, Mapping) and not parent_run_id:
+            request_identity = {
+                "bet_id": bet_id,
+                "workflow_id": plan["id"],
+                **{key: binding.get(key) for key in _PREFLIGHT_BINDING_KEYS},
+                "capability_requirements": requirements,
+                "capability_requirements_digest": record.get("capability_requirements_digest"),
+            }
+        mesh_payload["request_identity"] = request_identity
+    if exact_start:
+        mesh_payload.update(
+            {
+                "exact_request_discriminator": "agent-workflow-exact/v1",
+                "bet_id": str(bet_id or ""),
+                "workflow_id": plan["id"],
+            }
+        )
+    request_persisted = False
+    try:
+        request_persisted = emit_workflow_mesh_event(
+            "AgentWorkflowStarted",
+            run_id,
+            mesh_payload,
+            workspace=registry_workspace_root(registry),
+        )
+        if exact_start:
+            if not request_persisted:
+                raise WorkflowError("WORKFLOW_MESH_REQUEST_FAILED: exact Agent Workflow request was not persisted")
+            capability_preflight = record.get("capability_preflight")
+            binding = capability_preflight.get("binding") if isinstance(capability_preflight, Mapping) else None
+            if not isinstance(binding, Mapping):
+                raise WorkflowError("WORKFLOW_MESH_ADMISSION_FAILED: exact preflight binding is unavailable")
+            admission = admit_agent_workflow_start(
+                registry_workspace_root(registry),
+                workflow_run_id=run_id,
+                workflow_id=record["workflow_id"],
+                bet_id=record["bet_id"],
+                actor_id=str(binding.get("actor_id") or ""),
+                work_packet=record["work_packet"],
+                work_packet_hash=record["work_packet_hash"],
+                capability_requirements_digest=record["capability_requirements_digest"],
+                capability_preflight=capability_preflight,
+            )
+            if admission.get("worker_launch") is not False or admission.get("external_side_effects") != "disabled":
+                raise WorkflowError("WORKFLOW_MESH_ADMISSION_UNSAFE: exact admission enabled execution")
+    except BaseException as exc:
+        if exact_start:
+            _fail_exact_agent_workflow_start(
+                registry,
+                record,
+                exc,
+                request_persisted=request_persisted,
+            )
+        raise
     return record
 
 
@@ -624,6 +740,21 @@ def close_run(
     emit_mesh: bool = True,
 ) -> dict[str, Any]:
     path, payload = read_run(registry, run_id)
+    direct_close_payload = {
+        "status": status,
+        "ok": status == "ok",
+        "error": payload.get("error") or payload.get("failure_reason") or "",
+        "evidence_count": len(evidence),
+    }
+    exact_closed = False
+    workspace = registry_workspace_root(registry)
+    if emit_mesh and _is_exact_agent_workflow_request(workspace, run_id):
+        exact_closed = close_agent_workflow_run(
+            workspace,
+            workflow_run_id=run_id,
+            status=status,
+            payload=direct_close_payload,
+        )
     payload["status"] = status
     payload["updated_at"] = utc_now()
     payload["closed_at"] = utc_now()
@@ -648,18 +779,11 @@ def close_run(
     )
     # Direct `close` owns its Mesh terminal event. `closeout` suppresses this
     # narrow payload and emits one richer terminal event after verify/observe.
-    if emit_mesh:
+    if emit_mesh and not exact_closed:
         emit_workflow_mesh_event(
             "AgentWorkflowClosed",
             payload["run_id"],
-            {
-                "status": status,
-                "ok": status == "ok",
-                # 透传真实错误 (2026-08-28 sediment 分类: 153 StepFailed 全是
-                # 模糊 "workflow failed" — 根因是 close 侧不传 error)
-                "error": payload.get("error") or payload.get("failure_reason") or "",
-                "evidence_count": len(evidence),
-            },
+            direct_close_payload,
             workspace=registry_workspace_root(registry),
         )
     return payload
@@ -773,6 +897,23 @@ def closeout_run(
         f"agent-workflow verify: {verify_report['check_count']} checks ok={verify_report['ok']}",
         f"agent-workflow observe: {observe_report['decision']}",
     ]
+    closeout_payload = {
+        "status": status,
+        "ok": status == "ok",
+        "error": verify_report.get("reason") or "",
+        "verify_ok": verify_report["ok"],
+        "observe_decision": observe_report["decision"],
+        "evidence_count": len(closeout_evidence),
+    }
+    workspace = registry_workspace_root(registry)
+    exact_closed = False
+    if _is_exact_agent_workflow_request(workspace, run_id):
+        exact_closed = close_agent_workflow_run(
+            workspace,
+            workflow_run_id=run_id,
+            status=status,
+            payload=closeout_payload,
+        )
     payload = close_run(
         registry,
         run_id,
@@ -810,20 +951,13 @@ def closeout_run(
         )
     except Exception:
         pass
-    emit_workflow_mesh_event(
-        "AgentWorkflowClosed",
-        run_id,
-        {
-            "status": status,
-            "ok": report["ok"],
-            # 透传真实错误 (同 direct close 侧修复)
-            "error": report.get("error") or verify_report.get("reason") or "",
-            "verify_ok": verify_report["ok"],
-            "observe_decision": observe_report["decision"],
-            "evidence_count": len(closeout_evidence),
-        },
-        workspace=registry_workspace_root(registry),
-    )
+    if not exact_closed:
+        emit_workflow_mesh_event(
+            "AgentWorkflowClosed",
+            run_id,
+            closeout_payload,
+            workspace=registry_workspace_root(registry),
+        )
     return report
 
 

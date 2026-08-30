@@ -1,9 +1,21 @@
 import hashlib
+import inspect
 import json
+import os
+import subprocess
+import sys
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any
 
 import pytest
 
+import omo.worker_lifecycle as worker_lifecycle_mod
+import omo.workflow.core as workflow_core_mod
+import omo.workflow.lifecycle as workflow_lifecycle_mod
+import omo.workflow_dispatch as workflow_dispatch_mod
+from omo.workflow.lifecycle import start_run
 from omo.workflow_mesh import (
     WorkflowMeshEventError,
     WorkflowMeshStore,
@@ -33,6 +45,253 @@ def _grant(run_id: str, step_run_ids: list[str]) -> dict:
 def _admit(run_id: str, step_run_ids: list[str]) -> dict:
     grant = _grant(run_id, step_run_ids)
     return new_workflow_event("WorkflowAdmitted", run_id, payload={"admission": grant, **grant})
+
+
+def _agent_workflow_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    for relative in ("runs", "locks", "ledger", ".omo"):
+        (tmp_path / relative).mkdir()
+    monkeypatch.setattr(workflow_core_mod, "WORKSPACE", tmp_path)
+    monkeypatch.setattr(workflow_lifecycle_mod, "WORKSPACE", tmp_path)
+    return {
+        "runner": {
+            "run_state_dir": "runs",
+            "lock_state_dir": "locks",
+            "ledger_path": "ledger/events.jsonl",
+        },
+        "workflows": [
+            {
+                "id": "test-workflow",
+                "title": "Test",
+                "purpose": "test",
+                "agents": {"test-agent": {"actor": "tester"}},
+                "allowed_lanes": [],
+                "lock_scopes": [],
+                "phases": {},
+            }
+        ],
+        "agent_profiles": {
+            "test-agent": {
+                "id": "test-agent",
+                "actor": "tester",
+                "allowed_workflows": ["*"],
+            }
+        },
+    }
+
+
+def _agent_workflow_context() -> dict[str, str]:
+    return {
+        "actor": "tester",
+        "profile": "test-agent",
+        "project": "",
+        "format": "openspec",
+        "source_file": "",
+        "run_id": "",
+    }
+
+
+def _prepared_agent_workflow_identity() -> dict[str, Any]:
+    spec_binding = {
+        "spec_ref": "repo://docs/spec.md",
+        "spec_version": "1.0.0",
+        "content_digest": "sha256:" + "1" * 64,
+        "decision_ref": "decision://accepted/BET-BOUND",
+    }
+    requirements = [
+        {"capability_id": "skill:git-discipline", "operation": "load", "effect": "read_only"},
+        {"capability_id": "workflow:bet-execution", "operation": "load", "effect": "read_only"},
+    ]
+    packet = {
+        "packet_id": "WP-BET-BOUND",
+        "schema_version": "work-packet/v2",
+        "bet_id": "BET-BOUND",
+        "spec_binding": spec_binding,
+        "capability_requirements": requirements,
+    }
+    canonical = json.dumps(requirements, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return {
+        "spec_binding": spec_binding,
+        "work_packet": packet,
+        "work_packet_hash": "sha256:" + "2" * 64,
+        "capability_requirements_digest": "sha256:" + hashlib.sha256(canonical.encode()).hexdigest(),
+    }
+
+
+def _agent_workflow_preflight(run_id: str, identity: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "requirements_digest": identity["capability_requirements_digest"],
+        "binding": {
+            "correlation_id": run_id,
+            "workflow_run_id": run_id,
+            "packet_id": identity["work_packet"]["packet_id"],
+            "packet_hash": identity["work_packet_hash"],
+            "assignment_id": f"preflight:{run_id}:assignment",
+            "dispatch_id": f"preflight:{run_id}:dispatch",
+            "actor_id": "actor:test",
+            "delivery_attempt_id": "attempt:test",
+        },
+        "receipts": [
+            {
+                "capability_id": requirement["capability_id"],
+                "source_digest": "sha256:" + str(index + 3) * 64,
+                "receipt_digest": "sha256:" + str(index + 5) * 64,
+            }
+            for index, requirement in enumerate(identity["work_packet"]["capability_requirements"])
+        ],
+        "invoked": False,
+        "value_indicator_policy": False,
+    }
+
+
+def _start_agent_workflow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    registry = _agent_workflow_registry(tmp_path, monkeypatch)
+    identity = _prepared_agent_workflow_identity()
+    monkeypatch.setattr(workflow_lifecycle_mod, "_prepare_bet_execution", lambda _bet_id: deepcopy(identity))
+    record = start_run(
+        registry,
+        registry["workflows"][0],
+        _agent_workflow_context(),
+        "exact pre-spawn admission",
+        False,
+        False,
+        bet_id="BET-BOUND",
+        start_preflight=lambda run_id, prepared: _agent_workflow_preflight(run_id, prepared),
+    )
+    return record, identity, registry
+
+
+def _stub_successful_closeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    from omo.workflow import diagnostics as diagnostics_mod
+
+    monkeypatch.setattr(workflow_lifecycle_mod, "heartbeat_run", lambda *_args, **_kwargs: {"count": 0})
+    monkeypatch.setattr(
+        diagnostics_mod,
+        "build_verify_report",
+        lambda *_args, **_kwargs: {"ok": True, "check_count": 1},
+    )
+    monkeypatch.setattr(
+        diagnostics_mod,
+        "build_observe_report",
+        lambda *_args, **_kwargs: {"ok": True, "decision": "continue"},
+    )
+    monkeypatch.setattr(workflow_lifecycle_mod, "_run_closeout_side_effects", lambda *_args, **_kwargs: None)
+
+
+def _dispatch_and_start_exact(
+    tmp_path: Path,
+    record: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, str]]:
+    run_id = record["run_id"]
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    grant = store.snapshot(run_id)["admission"]
+    step_run_id = grant["step_run_ids"][0]
+    worker_id = "agent-workflow"
+    dispatch_id = grant["request_identity"]["dispatch_id"]
+    instruction_binding = {
+        "instruction_ref": "repo://docs/operations/blueprint-agent-instruction-pack-v1.md",
+        "instruction_version": "blueprint-agent-instruction-pack/v1",
+        "content_digest": "sha256:" + "b" * 64,
+        "instruction_profile": "executor",
+    }
+    origin_proof = worker_lifecycle_mod.new_worker_ack_origin_proof()
+    worker_lifecycle_mod.record_step_dispatch(
+        tmp_path / ".omo",
+        workflow_run_id=run_id,
+        trace_id=run_id,
+        dispatch_id=dispatch_id,
+        worker_id=worker_id,
+        step_run_id=step_run_id,
+        admission_id=grant["admission_id"],
+        policy_digest=grant["policy_digest"],
+        packet_id=grant["request_identity"]["packet_id"],
+        packet_hash=grant["request_identity"]["packet_hash"],
+        instruction_binding=instruction_binding,
+        ack_origin_proof=origin_proof,
+    )
+    worker_lifecycle_mod.acknowledge_worker(
+        tmp_path / ".omo",
+        workflow_run_id=run_id,
+        trace_id=run_id,
+        dispatch_id=dispatch_id,
+        worker_id=worker_id,
+        step_run_id=step_run_id,
+        admission_id=grant["admission_id"],
+        packet_id=grant["request_identity"]["packet_id"],
+        packet_hash=grant["request_identity"]["packet_hash"],
+        instruction_binding=instruction_binding,
+        ack_decision="proceed",
+        origin_proof=origin_proof,
+    )
+    store.append(
+        new_workflow_event(
+            "StepStarted",
+            run_id,
+            payload={
+                "step_run_id": step_run_id,
+                "step_name": "execute",
+                "admission_id": grant["admission_id"],
+            },
+        )
+    )
+    return grant, {
+        "workflow_run_id": run_id,
+        "trace_id": run_id,
+        "dispatch_id": dispatch_id,
+        "worker_id": worker_id,
+        "step_run_id": step_run_id,
+        "admission_id": grant["admission_id"],
+        "origin_proof": origin_proof,
+    }
+
+
+def _interrupt_exact_start_after_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    registry = _agent_workflow_registry(tmp_path, monkeypatch)
+    identity = _prepared_agent_workflow_identity()
+    monkeypatch.setattr(workflow_lifecycle_mod, "_prepare_bet_execution", lambda _bet_id: deepcopy(identity))
+    record = start_run(
+        registry,
+        registry["workflows"][0],
+        _agent_workflow_context(),
+        "interrupted exact start",
+        True,
+        False,
+        bet_id="BET-BOUND",
+        start_preflight=lambda run_id, prepared: _agent_workflow_preflight(run_id, prepared),
+    )
+    run_path = tmp_path / "runs" / f"{record['run_id']}.yaml"
+    run_path.write_text(
+        workflow_lifecycle_mod.yaml.safe_dump(record, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    binding = record["capability_preflight"]["binding"]
+    request_identity = {
+        "bet_id": "BET-BOUND",
+        "workflow_id": "test-workflow",
+        **binding,
+        "capability_requirements": record["work_packet"]["capability_requirements"],
+        "capability_requirements_digest": record["capability_requirements_digest"],
+    }
+    WorkflowMeshStore(tmp_path / ".omo").append(
+        new_workflow_event(
+            "WorkflowRequested",
+            record["run_id"],
+            payload={
+                "exact_request_discriminator": "agent-workflow-exact/v1",
+                "bet_id": "BET-BOUND",
+                "workflow_id": "test-workflow",
+                "request_identity": request_identity,
+            },
+        )
+    )
+    assert record["status"] == "active"
+    assert WorkflowMeshStore(tmp_path / ".omo").snapshot(record["run_id"])["state"] == "planned"
+    return record, registry
 
 
 def test_workflow_mesh_store_projects_lifecycle_and_is_idempotent(tmp_path):
@@ -396,3 +655,954 @@ def test_agent_workflow_mesh_bridge_with_scene_binding(tmp_path, monkeypatch):
     assert events[-1]["payload"]["scene_binding"]["scene_id"] == "scene-test"
     assert events[-1]["payload"]["scene_binding"]["journey_id"] == "journey-test"
     assert events[-1]["payload"]["scene_binding"]["outcome_metric"] == "metric-test"
+
+
+def test_agent_workflow_start_persists_exact_admission_before_return(tmp_path, monkeypatch):
+    from omo.workflow.mesh_agent_events import emit_workflow_mesh_event
+
+    record, _identity, _registry = _start_agent_workflow(tmp_path, monkeypatch)
+    omo_dir = tmp_path / ".omo"
+    store = WorkflowMeshStore(omo_dir)
+    snapshot = store.snapshot(record["run_id"])
+
+    assert snapshot["state"] == "admitted"
+    grant = snapshot["admission"]
+    identity = grant["request_identity"]
+    requirements = record["work_packet"]["capability_requirements"]
+    assert "capability_requirements" not in record
+    assert identity["capability_requirements"] == requirements
+    assert identity["capability_requirements_digest"] == record["capability_requirements_digest"]
+    assert identity["packet_id"] == record["work_packet"]["packet_id"]
+    assert identity["packet_hash"] == record["work_packet_hash"]
+    assert identity["workflow_run_id"] == record["run_id"]
+    assert identity["bet_id"] == "BET-BOUND"
+    assert identity["workflow_id"] == "test-workflow"
+    assert identity["actor_id"] == record["capability_preflight"]["binding"]["actor_id"]
+    assert identity["delivery_attempt_id"] == record["capability_preflight"]["binding"]["delivery_attempt_id"]
+    assert grant["exact_request_discriminator"] == "agent-workflow-exact/v1"
+    requested_payload = store.events()[0]["payload"]
+    assert requested_payload["exact_request_discriminator"] == "agent-workflow-exact/v1"
+    assert requested_payload["bet_id"] == identity["bet_id"]
+    assert requested_payload["workflow_id"] == identity["workflow_id"]
+    issued_at = datetime.fromisoformat(grant["issued_at"])
+    expires_at = datetime.fromisoformat(grant["expires_at"])
+    assert expires_at - issued_at == timedelta(seconds=900)
+    assert grant["proof"]
+
+    events = store.events()
+    assert [event["event_type"] for event in events] == ["WorkflowRequested", "WorkflowAdmitted"]
+    assert not any(event["event_type"] == "StepDispatched" for event in events)
+
+    emit_workflow_mesh_event(
+        "AgentWorkflowClosed",
+        record["run_id"],
+        {"status": "succeeded", "ok": True, "capabilities": ["forged-closeout"]},
+        workspace=tmp_path,
+    )
+    admissions = [event for event in store.events() if event["event_type"] == "WorkflowAdmitted"]
+    assert len(admissions) == 1
+    persisted = admissions[0]["payload"]["admission"]
+    assert persisted["admission_id"] == grant["admission_id"]
+    assert persisted["proof"] == grant["proof"]
+
+
+def test_admit_agent_workflow_start_matches_plan_locked_interface_and_result(tmp_path, monkeypatch):
+    signature = inspect.signature(workflow_dispatch_mod.admit_agent_workflow_start)
+    assert list(signature.parameters) == [
+        "root",
+        "workflow_run_id",
+        "workflow_id",
+        "bet_id",
+        "actor_id",
+        "work_packet",
+        "work_packet_hash",
+        "capability_requirements_digest",
+        "capability_preflight",
+        "ttl_seconds",
+        "now",
+        "omo_dir",
+    ]
+    record, _registry = _interrupt_exact_start_after_request(tmp_path, monkeypatch)
+    work_packet = deepcopy(record["work_packet"])
+    capability_preflight = deepcopy(record["capability_preflight"])
+    original_packet = deepcopy(work_packet)
+    original_preflight = deepcopy(capability_preflight)
+
+    result = workflow_dispatch_mod.admit_agent_workflow_start(
+        tmp_path,
+        workflow_run_id=record["run_id"],
+        workflow_id=record["workflow_id"],
+        bet_id=record["bet_id"],
+        actor_id=capability_preflight["binding"]["actor_id"],
+        work_packet=work_packet,
+        work_packet_hash=record["work_packet_hash"],
+        capability_requirements_digest=record["capability_requirements_digest"],
+        capability_preflight=capability_preflight,
+        ttl_seconds=900,
+        now="2026-08-31T00:00:00+00:00",
+    )
+
+    assert set(result) == {
+        "status",
+        "workflow_run_id",
+        "admission",
+        "event_id",
+        "external_side_effects",
+        "worker_launch",
+    }
+    admitted_event = WorkflowMeshStore(tmp_path / ".omo").events()[-1]
+    assert result["event_id"] == admitted_event["event_id"]
+    assert result["status"] == "admitted"
+    assert result["workflow_run_id"] == record["run_id"]
+    assert result["external_side_effects"] == "disabled"
+    assert result["worker_launch"] is False
+    assert work_packet == original_packet
+    assert capability_preflight == original_preflight
+
+
+def test_inherited_child_start_persists_documented_legacy_identity_without_execution(tmp_path, monkeypatch):
+    parent, _identity, registry = _start_agent_workflow(tmp_path, monkeypatch)
+    inherited_identity = {
+        key: deepcopy(parent[key])
+        for key in (
+            "spec_binding",
+            "work_packet",
+            "work_packet_hash",
+            "capability_requirements_digest",
+            "capability_preflight",
+        )
+    }
+    monkeypatch.setattr(
+        workflow_lifecycle_mod,
+        "resolve_parent_delivery_identity",
+        lambda *_args, **_kwargs: ("BET-BOUND", deepcopy(inherited_identity), "tester"),
+    )
+    monkeypatch.setattr(
+        workflow_lifecycle_mod,
+        "_validate_inherited_delivery_identity",
+        lambda _bet_id, value, **_kwargs: deepcopy(value),
+    )
+    child = start_run(
+        registry,
+        registry["workflows"][0],
+        _agent_workflow_context(),
+        "inherited child observability",
+        False,
+        False,
+        parent_run_id=parent["run_id"],
+    )
+
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    child_events = [event for event in store.events() if event["workflow_run_id"] == child["run_id"]]
+    assert [event["event_type"] for event in child_events] == ["WorkflowRequested"]
+    payload = child_events[0]["payload"]
+    assert "exact_request_discriminator" not in payload
+    assert payload["request_identity"] == {
+        "bet_id": "BET-BOUND",
+        "packet_id": child["work_packet"]["packet_id"],
+        "packet_hash": child["work_packet_hash"],
+    }
+    snapshot = store.snapshot(child["run_id"])
+    assert snapshot["state"] == "planned"
+    assert snapshot["exact_request_identity"] is None
+    assert not any(event["event_type"] in {"WorkflowAdmitted", "StepDispatched"} for event in child_events)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_field",
+        "extra_field",
+        "bet_mismatch",
+        "workflow_mismatch",
+        "missing_discriminator",
+        "empty_assignment_id",
+        "empty_dispatch_id",
+    ],
+)
+def test_exact_request_discriminator_rejects_identity_shape_downgrade(tmp_path, mutation):
+    run_id = f"run-exact-discriminator-{mutation}"
+    requirements = [{"capability_id": "skill:git-discipline", "operation": "load", "effect": "read_only"}]
+    requirements_digest = (
+        "sha256:" + hashlib.sha256(json.dumps(requirements, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    )
+    identity = {
+        "bet_id": "BET-BOUND",
+        "workflow_id": "test-workflow",
+        "correlation_id": run_id,
+        "workflow_run_id": run_id,
+        "packet_id": "WP-BET-BOUND",
+        "packet_hash": "sha256:" + "a" * 64,
+        "assignment_id": f"preflight:{run_id}:assignment",
+        "dispatch_id": f"preflight:{run_id}:dispatch",
+        "actor_id": "actor:test",
+        "delivery_attempt_id": "attempt:test",
+        "capability_requirements": requirements,
+        "capability_requirements_digest": requirements_digest,
+    }
+    payload = {
+        "exact_request_discriminator": "agent-workflow-exact/v1",
+        "bet_id": identity["bet_id"],
+        "workflow_id": identity["workflow_id"],
+        "request_identity": identity,
+    }
+    if mutation == "missing_field":
+        identity.pop("actor_id")
+    elif mutation == "extra_field":
+        identity["unexpected"] = "forged"
+    elif mutation == "bet_mismatch":
+        payload["bet_id"] = "BET-FORGED"
+    elif mutation == "workflow_mismatch":
+        payload["workflow_id"] = "forged-workflow"
+    elif mutation == "missing_discriminator":
+        payload.pop("exact_request_discriminator")
+        payload.pop("bet_id")
+    elif mutation == "empty_assignment_id":
+        identity["assignment_id"] = ""
+    elif mutation == "empty_dispatch_id":
+        identity["dispatch_id"] = ""
+
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    with pytest.raises(WorkflowMeshEventError, match="exact Agent Workflow request"):
+        store.append(new_workflow_event("WorkflowRequested", run_id, payload=payload))
+    assert store.events() == []
+
+
+def test_genuine_discriminatorless_legacy_request_remains_supported(tmp_path):
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    stored = store.append(
+        new_workflow_event(
+            "WorkflowRequested",
+            "run-genuine-legacy-request",
+            payload={"workflow_id": "legacy-workflow", "actor": "legacy-user"},
+        )
+    )
+    assert stored["event_type"] == "WorkflowRequested"
+    snapshot = store.snapshot("run-genuine-legacy-request")
+    assert snapshot["state"] == "planned"
+    assert snapshot["exact_request_identity"] is None
+
+
+def test_documented_three_field_legacy_nested_identity_remains_supported(tmp_path):
+    run_id = "run-documented-legacy-nested-identity"
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    stored = store.append(
+        new_workflow_event(
+            "WorkflowRequested",
+            run_id,
+            payload={
+                "workflow_id": "legacy-workflow",
+                "request_identity": {
+                    "bet_id": "BET-LEGACY",
+                    "packet_id": "WP-LEGACY",
+                    "packet_hash": "sha256:" + "a" * 64,
+                },
+            },
+        )
+    )
+    assert stored["event_type"] == "WorkflowRequested"
+    assert store.snapshot(run_id)["exact_request_identity"] is None
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [
+        {"bet_id": "BET-LEGACY", "packet_id": "WP-LEGACY"},
+        {"bet_id": "BET-LEGACY", "packet_hash": "sha256:" + "a" * 64},
+        {"packet_id": "WP-LEGACY", "packet_hash": "sha256:" + "a" * 64},
+        {
+            "bet_id": "BET-LEGACY",
+            "packet_id": "WP-LEGACY",
+            "packet_hash": "sha256:" + "a" * 64,
+            "correlation_id": "run-malformed",
+        },
+        {
+            "bet_id": "BET-LEGACY",
+            "packet_id": "WP-LEGACY",
+            "packet_hash": "sha256:" + "a" * 64,
+            "workflow_run_id": "run-malformed",
+        },
+        {
+            "bet_id": "BET-LEGACY",
+            "packet_id": "WP-LEGACY",
+            "packet_hash": "sha256:" + "a" * 64,
+            "assignment_id": "assignment:exact",
+        },
+        {
+            "bet_id": "BET-LEGACY",
+            "packet_id": "WP-LEGACY",
+            "packet_hash": "sha256:" + "a" * 64,
+            "dispatch_id": "dispatch:exact",
+        },
+        {
+            "bet_id": "BET-LEGACY",
+            "packet_id": "WP-LEGACY",
+            "packet_hash": "sha256:" + "a" * 64,
+            "actor_id": "actor:exact",
+        },
+        {
+            "bet_id": "BET-LEGACY",
+            "packet_id": "WP-LEGACY",
+            "packet_hash": "sha256:" + "a" * 64,
+            "delivery_attempt_id": "attempt:exact",
+        },
+        {
+            "bet_id": "BET-LEGACY",
+            "packet_id": "WP-LEGACY",
+            "packet_hash": "sha256:" + "a" * 64,
+            "capability_requirements": [],
+        },
+        {
+            "bet_id": "BET-LEGACY",
+            "packet_id": "WP-LEGACY",
+            "packet_hash": "sha256:" + "a" * 64,
+            "capability_requirements_digest": "sha256:" + "b" * 64,
+        },
+    ],
+)
+def test_discriminatorless_nested_identity_rejects_nonlegacy_shape(tmp_path, identity):
+    run_id = "run-discriminatorless-marker"
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    with pytest.raises(WorkflowMeshEventError, match="exact Agent Workflow request discriminator"):
+        store.append(
+            new_workflow_event(
+                "WorkflowRequested",
+                run_id,
+                payload={
+                    "workflow_id": "legacy-compatible-top-level",
+                    "request_identity": identity,
+                },
+            )
+        )
+    assert store.events() == []
+
+
+def test_exact_agent_workflow_persisted_start_dispatch_close(tmp_path, monkeypatch):
+    record, _identity, registry = _start_agent_workflow(tmp_path, monkeypatch)
+    grant, completion_context = _dispatch_and_start_exact(tmp_path, record)
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    worker_lifecycle_mod.record_worker_completion(
+        tmp_path / ".omo",
+        **completion_context,
+        result_digest="sha256:" + "c" * 64,
+    )
+    _stub_successful_closeout(monkeypatch)
+
+    report = workflow_lifecycle_mod.closeout_run(
+        registry,
+        record["run_id"],
+        "ok",
+        ["exact lifecycle"],
+        [],
+        False,
+        False,
+        False,
+        False,
+    )
+
+    events = store.events()
+    assert report["ok"] is True
+    assert report["run"]["status"] == "ok"
+    assert [event["event_type"] for event in events] == [
+        "WorkflowRequested",
+        "WorkflowAdmitted",
+        "StepDispatched",
+        "WorkerAcknowledged",
+        "StepStarted",
+        "WorkflowSucceeded",
+        "WorkflowClosed",
+    ]
+    assert store.snapshot(record["run_id"])["state"] == "closed"
+    dispatched_payload = events[2]["payload"]
+    completion_receipt = events[5]["payload"]["worker_completion_receipt"]
+    assert dispatched_payload["bet_id"] == "BET-BOUND"
+    assert dispatched_payload["workflow_id"] == "test-workflow"
+    assert completion_receipt["bet_id"] == "BET-BOUND"
+    assert completion_receipt["workflow_id"] == "test-workflow"
+    admissions = [event for event in events if event["event_type"] == "WorkflowAdmitted"]
+    assert len(admissions) == 1
+    assert admissions[0]["payload"]["admission"]["admission_id"] == grant["admission_id"]
+    assert admissions[0]["payload"]["admission"]["proof"] == grant["proof"]
+
+
+def test_exact_agent_workflow_rejects_forged_generic_success(tmp_path, monkeypatch):
+    record, _identity, _registry = _start_agent_workflow(tmp_path, monkeypatch)
+    _grant, _completion_context = _dispatch_and_start_exact(tmp_path, record)
+    store = WorkflowMeshStore(tmp_path / ".omo")
+
+    with pytest.raises(WorkflowMeshEventError, match="authenticated worker completion append"):
+        store.append(
+            new_workflow_event(
+                "WorkflowSucceeded",
+                record["run_id"],
+                payload={"completed_step_run_id": f"{record['run_id']}:execute"},
+            )
+        )
+
+
+def test_exact_agent_workflow_rejects_raw_deterministic_completion_receipt(tmp_path, monkeypatch):
+    record, _identity, _registry = _start_agent_workflow(tmp_path, monkeypatch)
+    grant, completion_context = _dispatch_and_start_exact(tmp_path, record)
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    worker = store.snapshot(record["run_id"])["worker"]
+    receipt = {
+        "status": "succeeded",
+        "workflow_run_id": record["run_id"],
+        "admission_id": grant["admission_id"],
+        "step_run_id": completion_context["step_run_id"],
+        "dispatch_id": completion_context["dispatch_id"],
+        "worker_id": completion_context["worker_id"],
+        "ack_origin_proof_digest": worker["ack_origin_proof_digest"],
+        "completion_origin_commitment": "sha256:" + "e" * 64,
+        "result_digest": "sha256:" + "d" * 64,
+    }
+    receipt["receipt_digest"] = (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+    )
+    forged = new_workflow_event(
+        "WorkflowSucceeded",
+        record["run_id"],
+        producer="worker",
+        payload={"worker_completion_receipt": receipt},
+    )
+
+    with pytest.raises(WorkflowMeshEventError, match="authenticated worker completion append"):
+        store.append(forged)
+    assert store.snapshot(record["run_id"])["state"] == "running"
+
+
+@pytest.mark.parametrize("entrypoint", ["direct", "closeout"])
+@pytest.mark.parametrize("status", ["blocked", "failed"])
+def test_interrupted_exact_request_unsuccessful_close_is_honest_terminal(
+    tmp_path,
+    monkeypatch,
+    entrypoint,
+    status,
+):
+    record, registry = _interrupt_exact_start_after_request(tmp_path, monkeypatch)
+    if entrypoint == "closeout":
+        _stub_successful_closeout(monkeypatch)
+        result = workflow_lifecycle_mod.closeout_run(
+            registry,
+            record["run_id"],
+            status,
+            ["interrupted request close"],
+            [],
+            False,
+            False,
+            False,
+            False,
+        )["run"]
+    else:
+        result = workflow_lifecycle_mod.close_run(
+            registry,
+            record["run_id"],
+            status,
+            ["interrupted request close"],
+            True,
+        )
+
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    assert result["status"] == status
+    assert store.snapshot(record["run_id"])["state"] == "closed"
+    assert [event["event_type"] for event in store.events()] == [
+        "WorkflowRequested",
+        "WorkflowCancelled",
+        "WorkflowClosed",
+    ]
+
+
+@pytest.mark.parametrize("entrypoint", ["direct", "closeout"])
+def test_interrupted_exact_request_ok_close_rejects_stably(tmp_path, monkeypatch, entrypoint):
+    record, registry = _interrupt_exact_start_after_request(tmp_path, monkeypatch)
+    if entrypoint == "closeout":
+        _stub_successful_closeout(monkeypatch)
+        close = lambda: workflow_lifecycle_mod.closeout_run(
+            registry,
+            record["run_id"],
+            "ok",
+            ["must have admission and completion"],
+            [],
+            False,
+            False,
+            False,
+            False,
+        )
+    else:
+        close = lambda: workflow_lifecycle_mod.close_run(
+            registry,
+            record["run_id"],
+            "ok",
+            ["must have admission and completion"],
+            True,
+        )
+
+    with pytest.raises(Exception, match="EXACT_WORKFLOW_ADMISSION_NOT_PERSISTED"):
+        close()
+
+    _path, persisted = workflow_lifecycle_mod.read_run(registry, record["run_id"])
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    assert persisted["status"] == "active"
+    assert store.snapshot(record["run_id"])["state"] == "planned"
+    assert [event["event_type"] for event in store.events()] == ["WorkflowRequested"]
+
+
+def test_exact_agent_workflow_admitted_only_ok_closeout_rejects_without_synthetic_events(tmp_path, monkeypatch):
+    from omo.workflow import mesh_agent_events as mesh_agent_events_mod
+
+    record, _identity, registry = _start_agent_workflow(tmp_path, monkeypatch)
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    _stub_successful_closeout(monkeypatch)
+
+    def reject_legacy_chain(*_args, **_kwargs):
+        raise AssertionError("exact closeout must not synthesize another admission")
+
+    monkeypatch.setattr(mesh_agent_events_mod, "_emit_admission_chain", reject_legacy_chain)
+
+    with pytest.raises(Exception, match="EXACT_WORKFLOW_EXECUTION_NOT_PERSISTED"):
+        workflow_lifecycle_mod.closeout_run(
+            registry,
+            record["run_id"],
+            "ok",
+            ["exact lifecycle"],
+            [],
+            False,
+            False,
+            False,
+            False,
+        )
+
+    _path, run = workflow_lifecycle_mod.read_run(registry, record["run_id"])
+    assert run["status"] == "active"
+    assert store.snapshot(record["run_id"])["state"] == "admitted"
+    assert [event["event_type"] for event in store.events()] == ["WorkflowRequested", "WorkflowAdmitted"]
+
+
+@pytest.mark.parametrize("status", ["blocked", "failed"])
+def test_exact_agent_workflow_direct_unsuccessful_close_is_honest_terminal(tmp_path, monkeypatch, status):
+    record, _identity, registry = _start_agent_workflow(tmp_path, monkeypatch)
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    grant = store.snapshot(record["run_id"])["admission"]
+
+    closed = workflow_lifecycle_mod.close_run(
+        registry,
+        record["run_id"],
+        status,
+        ["honest unsuccessful close"],
+        True,
+    )
+
+    events = store.events()
+    assert closed["status"] == status
+    assert [event["event_type"] for event in events] == [
+        "WorkflowRequested",
+        "WorkflowAdmitted",
+        "WorkflowCancelled",
+        "WorkflowClosed",
+    ]
+    assert store.snapshot(record["run_id"])["state"] == "closed"
+    assert not any(event["event_type"] in {"StepDispatched", "StepStarted"} for event in events)
+    assert store.snapshot(record["run_id"])["admission"]["admission_id"] == grant["admission_id"]
+
+
+def test_exact_agent_workflow_direct_ok_close_rejects_admitted_only_run(tmp_path, monkeypatch):
+    record, _identity, registry = _start_agent_workflow(tmp_path, monkeypatch)
+    store = WorkflowMeshStore(tmp_path / ".omo")
+
+    with pytest.raises(Exception, match="EXACT_WORKFLOW_EXECUTION_NOT_PERSISTED"):
+        workflow_lifecycle_mod.close_run(
+            registry,
+            record["run_id"],
+            "ok",
+            ["must not invent execution"],
+            True,
+        )
+
+    _path, run = workflow_lifecycle_mod.read_run(registry, record["run_id"])
+    assert run["status"] == "active"
+    assert store.snapshot(record["run_id"])["state"] == "admitted"
+    assert [event["event_type"] for event in store.events()] == ["WorkflowRequested", "WorkflowAdmitted"]
+
+
+def test_exact_agent_workflow_unsuccessful_closed_run_cannot_be_reclosed_ok(tmp_path, monkeypatch):
+    record, _identity, registry = _start_agent_workflow(tmp_path, monkeypatch)
+    workflow_lifecycle_mod.close_run(
+        registry,
+        record["run_id"],
+        "blocked",
+        ["honest blocked close"],
+        True,
+    )
+
+    with pytest.raises(Exception, match="EXACT_WORKFLOW_COMPLETION_RECEIPT_NOT_PERSISTED"):
+        workflow_lifecycle_mod.close_run(
+            registry,
+            record["run_id"],
+            "ok",
+            ["must not promote blocked close"],
+            True,
+        )
+
+    _path, persisted = workflow_lifecycle_mod.read_run(registry, record["run_id"])
+    assert persisted["status"] == "blocked"
+    assert WorkflowMeshStore(tmp_path / ".omo").snapshot(record["run_id"])["state"] == "closed"
+
+
+def test_legacy_agent_workflow_real_start_close_remains_supported(tmp_path, monkeypatch):
+    registry = _agent_workflow_registry(tmp_path, monkeypatch)
+    record = start_run(
+        registry,
+        registry["workflows"][0],
+        _agent_workflow_context(),
+        "legacy lifecycle",
+        False,
+        False,
+    )
+
+    closed = workflow_lifecycle_mod.close_run(
+        registry,
+        record["run_id"],
+        "ok",
+        ["legacy close"],
+        True,
+    )
+
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    assert closed["status"] == "ok"
+    assert store.snapshot(record["run_id"])["state"] == "closed"
+    assert [event["event_type"] for event in store.events()] == [
+        "WorkflowRequested",
+        "WorkflowAdmitted",
+        "StepDispatched",
+        "StepStarted",
+        "WorkflowSucceeded",
+        "WorkflowClosed",
+    ]
+
+
+def test_exact_request_cannot_bypass_strict_admission_by_omitting_backend(tmp_path, monkeypatch):
+    record, _identity, _registry = _start_agent_workflow(tmp_path, monkeypatch)
+    persisted = WorkflowMeshStore(tmp_path / ".omo").events()
+    requested = deepcopy(persisted[0])
+    admitted = deepcopy(persisted[1])
+    grant = admitted["payload"]["admission"]
+    grant.pop("backend")
+    grant["request_identity"]["actor_id"] = "actor:forged"
+    grant["proof"] = hashlib.sha256(
+        json.dumps(
+            {key: value for key, value in grant.items() if key != "proof"},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+    forged_store = WorkflowMeshStore(tmp_path / "forged-exact")
+    forged_store.append(requested)
+    with pytest.raises(WorkflowMeshEventError, match="Agent Workflow admission"):
+        forged_store.append(admitted)
+
+
+def test_exact_agent_workflow_start_failure_closes_run_and_releases_locks(tmp_path, monkeypatch):
+    registry = _agent_workflow_registry(tmp_path, monkeypatch)
+    registry["workflows"][0]["lock_scopes"] = ["path:owned.py"]
+    identity = _prepared_agent_workflow_identity()
+    monkeypatch.setattr(workflow_lifecycle_mod, "_prepare_bet_execution", lambda _bet_id: deepcopy(identity))
+
+    def reject_admission(*_args, **_kwargs):
+        raise RuntimeError("forged exact admission")
+
+    monkeypatch.setattr(workflow_lifecycle_mod, "admit_agent_workflow_start", reject_admission)
+
+    with pytest.raises(RuntimeError, match="forged exact admission"):
+        start_run(
+            registry,
+            registry["workflows"][0],
+            _agent_workflow_context(),
+            "reject exact admission",
+            False,
+            False,
+            bet_id="BET-BOUND",
+            start_preflight=lambda run_id, prepared: _agent_workflow_preflight(run_id, prepared),
+        )
+
+    run_paths = list((tmp_path / "runs").glob("*.yaml"))
+    assert len(run_paths) == 1
+    _run_path, run = workflow_lifecycle_mod.read_run(registry, run_paths[0].stem)
+    assert run["status"] == "failed"
+    assert run["released_locks"]
+    assert any("WORKFLOW_MESH_ADMISSION_FAILED" in item for item in run["evidence"])
+    assert list((tmp_path / "locks").glob("*.yaml")) == []
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    assert store.snapshot(run["run_id"])["state"] == "closed"
+    assert not any(event["event_type"] == "StepDispatched" for event in store.events())
+
+
+@pytest.mark.parametrize("interrupt_type", [KeyboardInterrupt, SystemExit])
+def test_exact_agent_workflow_base_exception_closes_run_and_releases_locks(
+    tmp_path,
+    monkeypatch,
+    interrupt_type,
+):
+    registry = _agent_workflow_registry(tmp_path, monkeypatch)
+    registry["workflows"][0]["lock_scopes"] = ["path:owned.py"]
+    identity = _prepared_agent_workflow_identity()
+    monkeypatch.setattr(workflow_lifecycle_mod, "_prepare_bet_execution", lambda _bet_id: deepcopy(identity))
+    interruption = interrupt_type("stable exact admission interruption")
+
+    def interrupt_admission(*_args, **_kwargs):
+        raise interruption
+
+    monkeypatch.setattr(workflow_lifecycle_mod, "admit_agent_workflow_start", interrupt_admission)
+
+    with pytest.raises(interrupt_type, match="stable exact admission interruption") as raised:
+        start_run(
+            registry,
+            registry["workflows"][0],
+            _agent_workflow_context(),
+            "interrupt exact admission",
+            False,
+            False,
+            bet_id="BET-BOUND",
+            start_preflight=lambda run_id, prepared: _agent_workflow_preflight(run_id, prepared),
+        )
+
+    assert raised.value is interruption
+    run_paths = list((tmp_path / "runs").glob("*.yaml"))
+    assert len(run_paths) == 1
+    _run_path, run = workflow_lifecycle_mod.read_run(registry, run_paths[0].stem)
+    assert run["status"] == "failed"
+    assert run["released_locks"]
+    assert list((tmp_path / "locks").glob("*.yaml")) == []
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    assert store.snapshot(run["run_id"])["state"] == "closed"
+    assert not any(event["event_type"] == "StepDispatched" for event in store.events())
+
+
+def test_exact_start_cleanup_rereads_durable_request_after_emitter_interrupt(tmp_path, monkeypatch):
+    registry = _agent_workflow_registry(tmp_path, monkeypatch)
+    registry["workflows"][0]["lock_scopes"] = ["path:owned.py"]
+    identity = _prepared_agent_workflow_identity()
+    monkeypatch.setattr(workflow_lifecycle_mod, "_prepare_bet_execution", lambda _bet_id: deepcopy(identity))
+    real_emit = workflow_lifecycle_mod.emit_workflow_mesh_event
+    interruption = KeyboardInterrupt("stable-after-durable-request-interruption")
+
+    def append_then_interrupt(event_type, run_id, payload=None, **kwargs):
+        stored = real_emit(event_type, run_id, payload, **kwargs)
+        if event_type == "AgentWorkflowStarted":
+            assert stored is True
+            raise interruption
+        return stored
+
+    monkeypatch.setattr(workflow_lifecycle_mod, "emit_workflow_mesh_event", append_then_interrupt)
+
+    with pytest.raises(KeyboardInterrupt, match="stable-after-durable-request-interruption") as raised:
+        start_run(
+            registry,
+            registry["workflows"][0],
+            _agent_workflow_context(),
+            "interrupt after durable request",
+            False,
+            False,
+            bet_id="BET-BOUND",
+            start_preflight=lambda run_id, prepared: _agent_workflow_preflight(run_id, prepared),
+        )
+
+    assert raised.value is interruption
+    run_path = next((tmp_path / "runs").glob("*.yaml"))
+    _path, run = workflow_lifecycle_mod.read_run(registry, run_path.stem)
+    assert run["status"] == "failed"
+    assert run["released_locks"]
+    assert list((tmp_path / "locks").glob("*.yaml")) == []
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    assert [event["event_type"] for event in store.events()] == [
+        "WorkflowRequested",
+        "WorkflowCancelled",
+        "WorkflowClosed",
+    ]
+    assert store.snapshot(run["run_id"])["state"] == "closed"
+
+
+@pytest.mark.parametrize("entrypoint", ["direct", "closeout"])
+def test_legacy_close_paths_do_not_import_heavy_workflow_dispatch(tmp_path, entrypoint):
+    script = "\n".join(
+        [
+            "import importlib.abc",
+            "import sys",
+            "from pathlib import Path",
+            "import yaml",
+            "class BlockWorkflowDispatch(importlib.abc.MetaPathFinder):",
+            "    def find_spec(self, fullname, path=None, target=None):",
+            "        if fullname == 'omo.workflow_dispatch':",
+            "            raise ImportError('heavy workflow_dispatch import forbidden')",
+            "        return None",
+            "sys.meta_path.insert(0, BlockWorkflowDispatch())",
+            "sys.modules.pop('omo.workflow_dispatch', None)",
+            "from omo.workflow import core, lifecycle",
+            "root = Path(sys.argv[1])",
+            "for relative in ('runs', 'locks', 'ledger', '.omo'):",
+            "    (root / relative).mkdir(parents=True, exist_ok=True)",
+            "core.WORKSPACE = root",
+            "lifecycle.WORKSPACE = root",
+            "registry = {'runner': {'run_state_dir': 'runs', 'lock_state_dir': 'locks', 'ledger_path': 'ledger/events.jsonl'}}",
+            "run_id = 'legacy-minimal-close'",
+            "record = {'run_id': run_id, 'workflow_id': 'legacy-workflow', 'status': 'active', 'evidence': [], 'locks': [], 'context': {}, 'plan': {}}",
+            "(root / 'runs' / f'{run_id}.yaml').write_text(yaml.safe_dump(record), encoding='utf-8')",
+            "entrypoint = sys.argv[2]",
+            "if entrypoint == 'direct':",
+            "    result = lifecycle.close_run(registry, run_id, 'failed', ['legacy'], False)",
+            "else:",
+            "    from omo.workflow import diagnostics",
+            "    diagnostics.build_verify_report = lambda *args, **kwargs: {'ok': True, 'check_count': 1}",
+            "    diagnostics.build_observe_report = lambda *args, **kwargs: {'ok': True, 'decision': 'continue'}",
+            "    result = lifecycle.closeout_run(registry, run_id, 'failed', ['legacy'], [], False, False, False, True)['run']",
+            "assert result['status'] == 'failed'",
+        ]
+    )
+    env = {**os.environ, "PYTHONPATH": str(Path(__file__).parents[1] / "src")}
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path), entrypoint],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=20,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+def _mutate_agent_workflow_admission(record: dict[str, Any], mutation: str) -> None:
+    requirements = record["work_packet"]["capability_requirements"]
+    preflight = record["capability_preflight"]
+    binding = preflight["binding"]
+    if mutation == "missing_requirements":
+        record["work_packet"].pop("capability_requirements")
+    elif mutation == "reordered_requirements":
+        record["work_packet"]["capability_requirements"] = list(reversed(requirements))
+    elif mutation == "requirements_digest":
+        record["capability_requirements_digest"] = "sha256:" + "9" * 64
+    elif mutation == "packet_id":
+        record["work_packet"]["packet_id"] = "WP-FORGED"
+    elif mutation == "packet_hash":
+        record["work_packet_hash"] = "sha256:" + "8" * 64
+    elif mutation == "workflow_run_id":
+        binding["workflow_run_id"] = "cross-run"
+    elif mutation == "actor_id":
+        binding["actor_id"] = "actor:forged"
+    elif mutation == "delivery_attempt_id":
+        binding["delivery_attempt_id"] = "attempt:forged"
+    elif mutation == "receipt_order":
+        preflight["receipts"] = list(reversed(preflight["receipts"]))
+    elif mutation == "value_indicator_policy":
+        preflight["value_indicator_policy"] = True
+    else:  # pragma: no cover - the parameter list is the authority.
+        raise AssertionError(mutation)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_requirements",
+        "reordered_requirements",
+        "requirements_digest",
+        "packet_id",
+        "packet_hash",
+        "workflow_run_id",
+        "actor_id",
+        "delivery_attempt_id",
+        "receipt_order",
+        "value_indicator_policy",
+    ],
+)
+def test_agent_workflow_start_rejects_forged_exact_identity_before_effects(
+    tmp_path,
+    monkeypatch,
+    mutation,
+):
+    registry = _agent_workflow_registry(tmp_path, monkeypatch)
+    prepared = _prepared_agent_workflow_identity()
+    monkeypatch.setattr(workflow_lifecycle_mod, "_prepare_bet_execution", lambda _bet_id: deepcopy(prepared))
+
+    counters = {"dispatch": 0, "subprocess": 0, "load": 0}
+
+    def unexpected_dispatch(*_args, **_kwargs):
+        counters["dispatch"] += 1
+
+    def unexpected_subprocess(*_args, **_kwargs):
+        counters["subprocess"] += 1
+
+    def unexpected_load(*_args, **_kwargs):
+        counters["load"] += 1
+
+    monkeypatch.setattr(worker_lifecycle_mod, "record_step_dispatch", unexpected_dispatch)
+    monkeypatch.setattr(workflow_lifecycle_mod.subprocess, "run", unexpected_subprocess)
+    monkeypatch.setattr(workflow_dispatch_mod, "load_yaml", unexpected_load)
+
+    real_admit = getattr(workflow_dispatch_mod, "admit_agent_workflow_start", None)
+
+    def forged_admit(
+        root,
+        *,
+        workflow_run_id,
+        workflow_id,
+        bet_id,
+        actor_id,
+        work_packet,
+        work_packet_hash,
+        capability_requirements_digest,
+        capability_preflight,
+        ttl_seconds=900,
+        now=None,
+        omo_dir=".omo",
+    ):
+        record = {
+            "run_id": workflow_run_id,
+            "workflow_id": workflow_id,
+            "bet_id": bet_id,
+            "work_packet": deepcopy(work_packet),
+            "work_packet_hash": work_packet_hash,
+            "capability_requirements_digest": capability_requirements_digest,
+            "capability_preflight": deepcopy(capability_preflight),
+        }
+        _mutate_agent_workflow_admission(record, mutation)
+        if real_admit is not None:
+            return real_admit(
+                root,
+                workflow_run_id=record["run_id"],
+                workflow_id=record["workflow_id"],
+                bet_id=record["bet_id"],
+                actor_id=actor_id,
+                work_packet=record["work_packet"],
+                work_packet_hash=record["work_packet_hash"],
+                capability_requirements_digest=record["capability_requirements_digest"],
+                capability_preflight=record["capability_preflight"],
+                ttl_seconds=ttl_seconds,
+                now=now,
+                omo_dir=omo_dir,
+            )
+        return None
+
+    monkeypatch.setattr(
+        workflow_lifecycle_mod,
+        "admit_agent_workflow_start",
+        forged_admit,
+        raising=False,
+    )
+
+    with pytest.raises(Exception):
+        start_run(
+            registry,
+            registry["workflows"][0],
+            _agent_workflow_context(),
+            "reject forged admission",
+            False,
+            False,
+            bet_id="BET-BOUND",
+            start_preflight=lambda run_id, identity: _agent_workflow_preflight(run_id, identity),
+        )
+
+    assert counters == {"dispatch": 0, "subprocess": 0, "load": 0}
+    events = WorkflowMeshStore(tmp_path / ".omo").events()
+    assert not any(event["event_type"] == "StepDispatched" for event in events)

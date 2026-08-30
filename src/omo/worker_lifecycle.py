@@ -7,6 +7,8 @@ as admission, step progress, recovery, and evidence.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import secrets
 from collections.abc import Mapping
@@ -14,12 +16,15 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from .orchestration_contract import OrchestrationContractError, validate_capability_requirements
 from .workflow_mesh import (
+    EXACT_REQUEST_DISCRIMINATOR,
     WorkflowMeshEventError,
     WorkflowMeshStore,
     new_workflow_event,
     worker_ack_origin_digest,
 )
+from .workflow_mesh import _exact_coordinator_capability as _mesh_exact_coordinator_capability
 
 
 class WorkerLifecycleError(ValueError):
@@ -29,6 +34,11 @@ class WorkerLifecycleError(ValueError):
 def new_worker_ack_origin_proof() -> str:
     """Return a high-entropy capability delivered only to the worker transport."""
     return secrets.token_urlsafe(32)
+
+
+def _exact_coordinator_capability() -> object:
+    """Return the module-private in-process coordinator capability."""
+    return _mesh_exact_coordinator_capability()
 
 
 def _utc(value: str | None = None) -> datetime:
@@ -46,6 +56,34 @@ def _stamp(value: str | None = None) -> str:
 
 def _store(omo_dir: Path | str) -> WorkflowMeshStore:
     return WorkflowMeshStore(omo_dir)
+
+
+def _remaining_exact_admission_seconds(
+    admission: Mapping[str, Any],
+    *,
+    now: str | None = None,
+) -> float:
+    try:
+        issued_at = datetime.fromisoformat(str(admission.get("issued_at") or "").replace("Z", "+00:00"))
+        expires_at = datetime.fromisoformat(str(admission.get("expires_at") or "").replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise WorkerLifecycleError("exact admission time window is invalid") from exc
+    if issued_at.tzinfo is None or expires_at.tzinfo is None:
+        raise WorkerLifecycleError("exact admission time window is invalid")
+    issued_at = issued_at.astimezone(UTC)
+    expires_at = expires_at.astimezone(UTC)
+    observed_at = _utc(now)
+    if expires_at <= issued_at:
+        raise WorkerLifecycleError("exact admission time window is invalid")
+    if observed_at < issued_at:
+        raise WorkerLifecycleError("exact admission is not yet valid")
+    if observed_at >= expires_at:
+        raise WorkerLifecycleError("exact admission is expired")
+    return (expires_at - observed_at).total_seconds()
+
+
+def _validate_exact_admission_window(admission: Mapping[str, Any]) -> None:
+    _remaining_exact_admission_seconds(admission)
 
 
 def _existing(store: WorkflowMeshStore, idempotency_key: str) -> dict[str, Any] | None:
@@ -131,6 +169,34 @@ def record_step_dispatch(
     snapshot = store.snapshot(workflow_run_id)
     admission = snapshot.get("admission")
     request_identity = admission.get("request_identity") if isinstance(admission, Mapping) else None
+    exact_request_identity = snapshot.get("exact_request_identity")
+    exact_admission = isinstance(exact_request_identity, Mapping)
+    try:
+        requirements = validate_capability_requirements(
+            request_identity.get("capability_requirements") if isinstance(request_identity, Mapping) else None
+        )
+    except OrchestrationContractError:
+        requirements = []
+    canonical_requirements = json.dumps(
+        requirements,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    requirements_digest = "sha256:" + hashlib.sha256(canonical_requirements.encode()).hexdigest()
+    validated_persisted_proof = (
+        hashlib.sha256(
+            json.dumps(
+                {key: value for key, value in admission.items() if key != "proof"},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        if isinstance(admission, Mapping)
+        else None
+    )
+    admitted_steps = admission.get("step_run_ids") if isinstance(admission, Mapping) else None
     if (
         # Mesh-legal StepDispatched origins: admitted, dispatched (renewal
         # self-loop), running (WorkerReclaimed replay).
@@ -138,11 +204,41 @@ def record_step_dispatch(
         or not isinstance(admission, dict)
         or not isinstance(request_identity, Mapping)
         or admission.get("admission_id") != admission_id
+        or admission.get("workflow_run_id") != workflow_run_id
         or admission.get("policy_digest") != policy_digest
         or request_identity.get("packet_id") != packet_id
         or request_identity.get("packet_hash") != packet_hash
+        or exact_admission
+        and (
+            admission.get("workflow_run_id") != workflow_run_id
+            or request_identity != exact_request_identity
+            or admission.get("exact_request_discriminator") != EXACT_REQUEST_DISCRIMINATOR
+            or request_identity.get("bet_id") != exact_request_identity.get("bet_id")
+            or request_identity.get("workflow_id") != exact_request_identity.get("workflow_id")
+            or not isinstance(request_identity.get("assignment_id"), str)
+            or not request_identity.get("assignment_id")
+            or not isinstance(request_identity.get("dispatch_id"), str)
+            or not request_identity.get("dispatch_id")
+            or dispatch_id != exact_request_identity.get("dispatch_id")
+            or request_identity.get("workflow_run_id") != workflow_run_id
+            or request_identity.get("correlation_id") != workflow_run_id
+            or not isinstance(request_identity.get("actor_id"), str)
+            or not request_identity.get("actor_id")
+            or not isinstance(request_identity.get("delivery_attempt_id"), str)
+            or not request_identity.get("delivery_attempt_id")
+            or requirements != request_identity.get("capability_requirements")
+            or request_identity.get("capability_requirements_digest") != requirements_digest
+            or admission.get("proof") != validated_persisted_proof
+            or not isinstance(admitted_steps, list)
+            or not any(
+                step_run_id == admitted_step or step_run_id.startswith(f"{admitted_step}:")
+                for admitted_step in admitted_steps
+            )
+        )
     ):
         raise WorkerLifecycleError("admission binding mismatch")
+    if exact_admission:
+        _validate_exact_admission_window(admission)
     nonce = secrets.token_hex(16) if ack_origin_proof else None
     payload = {
         "dispatch_id": dispatch_id,
@@ -156,13 +252,17 @@ def record_step_dispatch(
         "instruction_binding": dict(instruction_binding) if instruction_binding is not None else None,
         "ack_origin_nonce": nonce,
     }
+    if exact_admission:
+        payload["exact_request_discriminator"] = EXACT_REQUEST_DISCRIMINATOR
+        payload["bet_id"] = request_identity["bet_id"]
+        payload["workflow_id"] = request_identity["workflow_id"]
+        payload["capability_requirements_digest"] = requirements_digest
     if ack_origin_proof:
         payload["ack_origin_commitment"] = worker_ack_origin_digest(
             ack_origin_proof,
             {**payload, "workflow_run_id": workflow_run_id},
         )
-    return _append(
-        store,
+    event = new_workflow_event(
         "StepDispatched",
         workflow_run_id,
         trace_id=trace_id,
@@ -170,6 +270,22 @@ def record_step_dispatch(
         idempotency_key=f"{workflow_run_id}:step-dispatched:{dispatch_id}",
         payload=payload,
     )
+    if exact_admission:
+        if not ack_origin_proof:
+            raise WorkerLifecycleError("exact dispatch origin proof is required")
+        try:
+            return store.append_exact_step_dispatch(event, origin_proof=ack_origin_proof)
+        except WorkflowMeshEventError as exc:
+            raise WorkerLifecycleError(str(exc)) from exc
+    prior = _existing(store, event["idempotency_key"])
+    if prior is not None:
+        if prior.get("event_type") != "StepDispatched" or prior.get("payload") != payload:
+            raise WorkerLifecycleError(f"conflicting worker lifecycle event: {event['idempotency_key']}")
+        return prior
+    try:
+        return store.append(event)
+    except WorkflowMeshEventError as exc:
+        raise WorkerLifecycleError(str(exc)) from exc
 
 
 def acknowledge_worker(
@@ -240,6 +356,12 @@ def acknowledge_worker(
         admission_id=admission_id,
     )
     worker = snapshot.get("worker")
+    admission = snapshot.get("admission")
+    exact_ack = isinstance(snapshot.get("exact_request_identity"), Mapping)
+    if exact_ack:
+        if not isinstance(admission, Mapping):
+            raise WorkerLifecycleError("worker ACK requires exact admission")
+        _remaining_exact_admission_seconds(admission, now=now)
     if not isinstance(worker, Mapping):
         raise WorkerLifecycleError("worker ACK requires dispatch context")
     if not legacy_observer_ack and (
@@ -253,8 +375,13 @@ def acknowledge_worker(
     origin_commitment = str(worker.get("ack_origin_commitment") or "")
     if not legacy_observer_ack and not origin_commitment:
         raise WorkerLifecycleError("worker ACK dispatch has no origin proof commitment")
-    acknowledged_at = _stamp(now)
-    lease_expires_at = _stamp((_utc(now) + timedelta(seconds=lease_seconds)).isoformat())
+    acknowledged_at_value = _utc(now)
+    acknowledged_at = _stamp(acknowledged_at_value.isoformat())
+    requested_lease_expiry = acknowledged_at_value + timedelta(seconds=lease_seconds)
+    if isinstance(snapshot.get("exact_request_identity"), Mapping):
+        admission_expiry = _utc(str(admission.get("expires_at")))
+        requested_lease_expiry = min(requested_lease_expiry, admission_expiry)
+    lease_expires_at = _stamp(requested_lease_expiry.isoformat())
     payload = {
         "dispatch_id": dispatch_id,
         "worker_id": worker_id,
@@ -284,6 +411,110 @@ def acknowledge_worker(
         raise WorkerLifecycleError(str(exc)) from exc
 
 
+def record_worker_completion(
+    omo_dir: Path | str,
+    *,
+    workflow_run_id: str,
+    trace_id: str,
+    dispatch_id: str,
+    worker_id: str,
+    step_run_id: str,
+    admission_id: str,
+    origin_proof: str,
+    result_digest: str,
+) -> dict[str, Any]:
+    """Persist one successful completion receipt from an ACKed worker."""
+    result_digest = str(result_digest or "").lower()
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", result_digest):
+        raise WorkerLifecycleError("worker completion result_digest is invalid")
+    store = _store(omo_dir)
+    snapshot = _validate_context(
+        store,
+        workflow_run_id=workflow_run_id,
+        dispatch_id=dispatch_id,
+        worker_id=worker_id,
+        step_run_id=step_run_id,
+        admission_id=admission_id,
+    )
+    if snapshot.get("state") != "running":
+        raise WorkerLifecycleError("worker completion requires a running StepRun")
+    admission = snapshot.get("admission")
+    exact_identity = snapshot.get("exact_request_identity")
+    if isinstance(exact_identity, Mapping):
+        if not isinstance(admission, Mapping):
+            raise WorkerLifecycleError("worker completion requires exact admission")
+        _validate_exact_admission_window(admission)
+    worker = snapshot.get("worker")
+    if (
+        not isinstance(worker, Mapping)
+        or worker.get("state") not in {"acknowledged", "active"}
+        or worker.get("ack_decision") != "proceed"
+        or worker.get("ack_origin_proof_consumed") is not True
+    ):
+        raise WorkerLifecycleError("worker completion requires authenticated proceed ACK")
+    for field, expected in (
+        ("dispatch_id", dispatch_id),
+        ("worker_id", worker_id),
+        ("step_run_id", step_run_id),
+        ("admission_id", admission_id),
+    ):
+        if worker.get(field) != expected:
+            raise WorkerLifecycleError(f"worker completion context mismatch: {field}")
+    if not origin_proof:
+        raise WorkerLifecycleError("worker completion origin proof is required")
+    ack_context = {
+        **worker,
+        "workflow_run_id": workflow_run_id,
+        "result_digest": None,
+    }
+    expected_ack = worker_ack_origin_digest(origin_proof, ack_context)
+    if not secrets.compare_digest(expected_ack, str(worker.get("ack_origin_proof_digest") or "")):
+        raise WorkerLifecycleError("worker completion origin proof does not match durable ACK")
+    completion_context = {
+        **worker,
+        "workflow_run_id": workflow_run_id,
+        "result_digest": result_digest,
+    }
+    receipt = {
+        "status": "succeeded",
+        **(
+            {
+                "exact_request_discriminator": EXACT_REQUEST_DISCRIMINATOR,
+                "bet_id": exact_identity["bet_id"],
+                "workflow_id": exact_identity["workflow_id"],
+            }
+            if isinstance(exact_identity, Mapping)
+            else {}
+        ),
+        "workflow_run_id": workflow_run_id,
+        "admission_id": admission_id,
+        "step_run_id": step_run_id,
+        "dispatch_id": dispatch_id,
+        "worker_id": worker_id,
+        "ack_origin_proof_digest": str(worker.get("ack_origin_proof_digest") or ""),
+        "completion_origin_commitment": worker_ack_origin_digest(origin_proof, completion_context),
+        "result_digest": result_digest,
+    }
+    receipt["receipt_digest"] = (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+    )
+    event = new_workflow_event(
+        "WorkflowSucceeded",
+        workflow_run_id,
+        trace_id=trace_id,
+        producer="worker",
+        idempotency_key=f"{workflow_run_id}:worker-completed:{dispatch_id}",
+        payload={"worker_completion_receipt": receipt},
+    )
+    try:
+        return store.append_worker_completion(event, origin_proof=origin_proof)
+    except WorkflowMeshEventError as exc:
+        raise WorkerLifecycleError(str(exc)) from exc
+
+
 def renew_worker_lease(
     omo_dir: Path | str,
     *,
@@ -296,18 +527,12 @@ def renew_worker_lease(
     lease_seconds: int = 1200,
     now: str | None = None,
     heartbeat_id: str | None = None,
+    origin_proof: str | None = None,
 ) -> dict[str, Any]:
     """Renew a live lease; repeated heartbeat IDs are idempotent."""
     if lease_seconds <= 0:
         raise WorkerLifecycleError("lease_seconds must be positive")
     store = _store(omo_dir)
-    heartbeat_at = _stamp(now)
-    lease_expires_at = _stamp((_utc(now) + timedelta(seconds=lease_seconds)).isoformat())
-    event_key = heartbeat_id or lease_expires_at
-    idempotency_key = f"{workflow_run_id}:worker-heartbeat:{dispatch_id}:{event_key}"
-    prior = _existing(store, idempotency_key)
-    if prior is not None:
-        return prior
     snapshot = _validate_context(
         store,
         workflow_run_id=workflow_run_id,
@@ -324,6 +549,22 @@ def renew_worker_lease(
         raise WorkerLifecycleError("worker must ACK before renewing its lease")
     if current.get("dispatch_id") != dispatch_id or current.get("worker_id") != worker_id:
         raise WorkerLifecycleError("worker lease owner mismatch")
+    heartbeat_value = _utc(now)
+    requested_expiry = heartbeat_value + timedelta(seconds=lease_seconds)
+    exact_renewal = isinstance(snapshot.get("exact_request_identity"), Mapping)
+    if exact_renewal:
+        if not origin_proof:
+            raise WorkerLifecycleError("exact worker lease renewal requires origin proof")
+        admission = snapshot.get("admission")
+        if not isinstance(admission, Mapping):
+            raise WorkerLifecycleError("exact worker renewal requires persisted admission")
+        _remaining_exact_admission_seconds(admission)
+        _remaining_exact_admission_seconds(admission, now=now)
+        requested_expiry = min(requested_expiry, _utc(str(admission.get("expires_at"))))
+    heartbeat_at = _stamp(heartbeat_value.isoformat())
+    lease_expires_at = _stamp(requested_expiry.isoformat())
+    event_key = heartbeat_id or lease_expires_at
+    idempotency_key = f"{workflow_run_id}:worker-heartbeat:{dispatch_id}:{event_key}"
     payload = {
         "dispatch_id": dispatch_id,
         "worker_id": worker_id,
@@ -333,8 +574,7 @@ def renew_worker_lease(
         "heartbeat_at": heartbeat_at,
         "lease_expires_at": lease_expires_at,
     }
-    return _append(
-        store,
+    event = new_workflow_event(
         "WorkerLeaseRenewed",
         workflow_run_id,
         trace_id=trace_id,
@@ -342,6 +582,18 @@ def renew_worker_lease(
         idempotency_key=idempotency_key,
         payload=payload,
     )
+    if exact_renewal:
+        try:
+            return store.append_exact_worker_lease(event, origin_proof=origin_proof or "")
+        except WorkflowMeshEventError as exc:
+            raise WorkerLifecycleError(str(exc)) from exc
+    prior = _existing(store, idempotency_key)
+    if prior is not None:
+        return prior
+    try:
+        return store.append(event)
+    except WorkflowMeshEventError as exc:
+        raise WorkerLifecycleError(str(exc)) from exc
 
 
 def expire_worker_lease(
@@ -355,13 +607,11 @@ def expire_worker_lease(
     admission_id: str,
     now: str | None = None,
     reason: str = "lease_expired",
+    coordinator_capability: object | None = None,
 ) -> dict[str, Any]:
     """Mark an unresponsive worker unavailable only after its lease expires."""
     store = _store(omo_dir)
     event_key = f"{workflow_run_id}:worker-expired:{dispatch_id}"
-    prior = _existing(store, event_key)
-    if prior is not None:
-        return prior
     snapshot = _validate_context(
         store,
         workflow_run_id=workflow_run_id,
@@ -371,6 +621,12 @@ def expire_worker_lease(
         admission_id=admission_id,
     )
     current = snapshot.get("worker")
+    exact_expiry = isinstance(snapshot.get("exact_request_identity"), Mapping)
+    if exact_expiry and coordinator_capability is not _exact_coordinator_capability():
+        raise WorkerLifecycleError("exact worker lease expiry requires coordinator capability")
+    prior = _existing(store, event_key)
+    if prior is not None:
+        return prior
     if not isinstance(current, dict) or current.get("state") not in {
         "acknowledged",
         "active",
@@ -391,8 +647,7 @@ def expire_worker_lease(
         "expired_at": observed_at,
         "reason": reason,
     }
-    return _append(
-        store,
+    event = new_workflow_event(
         "WorkerLeaseExpired",
         workflow_run_id,
         trace_id=trace_id,
@@ -400,6 +655,18 @@ def expire_worker_lease(
         idempotency_key=event_key,
         payload=payload,
     )
+    if exact_expiry:
+        try:
+            return store.append_exact_worker_expiry(
+                event,
+                coordinator_capability=coordinator_capability,
+            )
+        except WorkflowMeshEventError as exc:
+            raise WorkerLifecycleError(str(exc)) from exc
+    try:
+        return store.append(event)
+    except WorkflowMeshEventError as exc:
+        raise WorkerLifecycleError(str(exc)) from exc
 
 
 def reclaim_worker(
@@ -415,15 +682,13 @@ def reclaim_worker(
     successor_dispatch_id: str,
     now: str | None = None,
     reason: str = "lease_expired",
+    coordinator_capability: object | None = None,
 ) -> dict[str, Any]:
     """Record coordinator reclaim and successor assignment after expiry."""
     if not successor_worker_id or not successor_dispatch_id:
         raise WorkerLifecycleError("successor_worker_id and successor_dispatch_id are required")
     store = _store(omo_dir)
     event_key = f"{workflow_run_id}:worker-reclaim:{dispatch_id}:{successor_dispatch_id}"
-    prior = _existing(store, event_key)
-    if prior is not None:
-        return prior
     snapshot = _validate_context(
         store,
         workflow_run_id=workflow_run_id,
@@ -433,6 +698,12 @@ def reclaim_worker(
         admission_id=admission_id,
     )
     current = snapshot.get("worker")
+    exact_reclaim = isinstance(snapshot.get("exact_request_identity"), Mapping)
+    if exact_reclaim and coordinator_capability is not _exact_coordinator_capability():
+        raise WorkerLifecycleError("exact worker reclaim requires coordinator capability")
+    prior = _existing(store, event_key)
+    if prior is not None:
+        return prior
     if not isinstance(current, dict) or current.get("state") != "lease_expired":
         raise WorkerLifecycleError("worker must be lease_expired before reclaim")
     payload = {
@@ -445,8 +716,7 @@ def reclaim_worker(
         "reclaimed_at": _stamp(now),
         "reason": reason,
     }
-    return _append(
-        store,
+    event = new_workflow_event(
         "WorkerReclaimed",
         workflow_run_id,
         trace_id=trace_id,
@@ -454,6 +724,18 @@ def reclaim_worker(
         idempotency_key=event_key,
         payload=payload,
     )
+    if exact_reclaim:
+        try:
+            return store.append_exact_worker_reclaim(
+                event,
+                coordinator_capability=coordinator_capability,
+            )
+        except WorkflowMeshEventError as exc:
+            raise WorkerLifecycleError(str(exc)) from exc
+    try:
+        return store.append(event)
+    except WorkflowMeshEventError as exc:
+        raise WorkerLifecycleError(str(exc)) from exc
 
 
 def scan_worker_leases(
@@ -552,6 +834,7 @@ def scan_worker_leases(
                 admission_id=context["admission_id"],
                 now=observed_at,
                 reason=reason,
+                coordinator_capability=_exact_coordinator_capability(),
             )
         except WorkerLifecycleError as exc:
             errors.append({"workflow_run_id": workflow_run_id, "error": str(exc)})
@@ -584,6 +867,7 @@ __all__ = [
     "acknowledge_worker",
     "expire_worker_lease",
     "reclaim_worker",
+    "record_worker_completion",
     "record_step_dispatch",
     "renew_worker_lease",
     "scan_worker_leases",

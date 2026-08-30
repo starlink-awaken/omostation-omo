@@ -33,7 +33,19 @@ from .workflow_dispatch_helpers import (
     _validated_request_identity,
     renew_admission,
 )
-from .workflow_mesh import WorkflowMeshStore, new_workflow_event
+from .workflow_mesh import EXACT_REQUEST_DISCRIMINATOR, WorkflowMeshStore, new_workflow_event
+
+_AGENT_WORKFLOW_BINDING_FIELDS = (
+    "correlation_id",
+    "workflow_run_id",
+    "packet_id",
+    "packet_hash",
+    "assignment_id",
+    "dispatch_id",
+    "actor_id",
+    "delivery_attempt_id",
+)
+_SHA256_REF_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 def _parse_health(health: dict[str, Any], required: list[str]) -> dict[str, Any]:
@@ -121,6 +133,326 @@ def _validate_admission_inputs(
     if remaining_budget is not None and requested_budget > remaining_budget:
         raise WorkflowDispatchError("insufficient execution budget")
     return required
+
+
+def admit_agent_workflow_start(
+    root: Path,
+    *,
+    workflow_run_id: str,
+    workflow_id: str,
+    bet_id: str,
+    actor_id: str,
+    work_packet: Mapping[str, Any],
+    work_packet_hash: str,
+    capability_requirements_digest: str,
+    capability_preflight: Mapping[str, Any],
+    ttl_seconds: int = 900,
+    now: str | None = None,
+    omo_dir: str | Path = ".omo",
+) -> dict[str, Any]:
+    """Persist one exact, non-executing admission for an Agent Workflow start."""
+    run_id = str(workflow_run_id or "")
+    store = WorkflowMeshStore(root / Path(omo_dir))
+    snapshot = store.snapshot(run_id)
+    if snapshot.get("state") != "planned":
+        raise WorkflowDispatchError(f"agent workflow admission requires planned state: {snapshot.get('state')}")
+
+    try:
+        requirements = validate_capability_requirements(work_packet.get("capability_requirements"))
+    except OrchestrationContractError as exc:
+        raise WorkflowDispatchError("agent workflow capability requirements are invalid") from exc
+    if requirements != work_packet.get("capability_requirements"):
+        raise WorkflowDispatchError("agent workflow capability requirements are not canonical")
+
+    requirements_digest = capability_requirements_digest
+    expected_requirements_digest = "sha256:" + hashlib.sha256(_canonical(requirements)).hexdigest()  # type: ignore[arg-type]
+    if requirements_digest != expected_requirements_digest:
+        raise WorkflowDispatchError("agent workflow capability requirements digest mismatch")
+
+    preflight = capability_preflight
+    if not isinstance(preflight, Mapping) or set(preflight) != {
+        "requirements_digest",
+        "binding",
+        "receipts",
+        "invoked",
+        "value_indicator_policy",
+    }:
+        raise WorkflowDispatchError("agent workflow capability preflight is invalid")
+    if preflight.get("requirements_digest") != requirements_digest:
+        raise WorkflowDispatchError("agent workflow preflight requirements digest mismatch")
+
+    receipts = preflight.get("receipts")
+    if not isinstance(receipts, list) or len(receipts) != len(requirements):
+        raise WorkflowDispatchError("agent workflow preflight receipts are invalid")
+    source_receipt_digests: list[str] = []
+    for requirement, receipt in zip(requirements, receipts):
+        if (
+            not isinstance(receipt, Mapping)
+            or set(receipt) != {"capability_id", "source_digest", "receipt_digest"}
+            or receipt.get("capability_id") != requirement["capability_id"]
+            or not isinstance(receipt.get("source_digest"), str)
+            or _SHA256_REF_RE.fullmatch(receipt["source_digest"]) is None
+            or not isinstance(receipt.get("receipt_digest"), str)
+            or _SHA256_REF_RE.fullmatch(receipt["receipt_digest"]) is None
+        ):
+            raise WorkflowDispatchError("agent workflow preflight receipt order or digest is invalid")
+        source_receipt_digests.append(receipt["source_digest"])
+
+    binding = preflight.get("binding")
+    if not isinstance(binding, Mapping) or set(binding) != set(_AGENT_WORKFLOW_BINDING_FIELDS):
+        raise WorkflowDispatchError("agent workflow preflight binding is invalid")
+    if any(not isinstance(binding.get(field), str) or not binding[field] for field in _AGENT_WORKFLOW_BINDING_FIELDS):
+        raise WorkflowDispatchError("agent workflow preflight binding fields must be non-empty")
+    packet_id = work_packet.get("packet_id")
+    packet_hash = work_packet_hash
+    if (
+        binding["correlation_id"] != run_id
+        or binding["workflow_run_id"] != run_id
+        or binding["packet_id"] != packet_id
+        or binding["packet_hash"] != packet_hash
+        or binding["actor_id"] != actor_id
+        or not isinstance(packet_id, str)
+        or not packet_id
+        or not isinstance(packet_hash, str)
+        or _SHA256_REF_RE.fullmatch(packet_hash) is None
+    ):
+        raise WorkflowDispatchError("agent workflow preflight binding mismatch")
+    if preflight.get("invoked") is not False or preflight.get("value_indicator_policy") is not False:
+        raise WorkflowDispatchError("agent workflow preflight must be non-executing and non-valuing")
+
+    request_identity = {
+        **{field: binding[field] for field in _AGENT_WORKFLOW_BINDING_FIELDS},
+        "bet_id": str(bet_id or ""),
+        "workflow_id": str(workflow_id or ""),
+    }
+    request_identity.update(
+        {
+            "capability_requirements": requirements,
+            "capability_requirements_digest": requirements_digest,
+        }
+    )
+    requested = _requested_event(store, run_id)
+    requested_payload = requested.get("payload")
+    if (
+        not isinstance(requested_payload, Mapping)
+        or requested_payload.get("exact_request_discriminator") != EXACT_REQUEST_DISCRIMINATOR
+        or requested_payload.get("bet_id") != request_identity["bet_id"]
+        or requested_payload.get("workflow_id") != request_identity["workflow_id"]
+        or requested_payload.get("request_identity") != request_identity
+    ):
+        raise WorkflowDispatchError("persisted agent workflow request identity mismatch")
+    if requested_payload.get("workflow_id") != workflow_id:
+        raise WorkflowDispatchError("persisted agent workflow request workflow mismatch")
+
+    policy = {
+        "exact_request_discriminator": EXACT_REQUEST_DISCRIMINATOR,
+        "bet_id": request_identity["bet_id"],
+        "workflow_id": workflow_id,
+        "workflow_run_id": run_id,
+        "packet_id": packet_id,
+        "packet_hash": packet_hash,
+        "capability_requirements": requirements,
+        "capability_requirements_digest": requirements_digest,
+        "actor_id": binding["actor_id"],
+        "delivery_attempt_id": binding["delivery_attempt_id"],
+        "source_receipt_digests": source_receipt_digests,
+        "requested_budget": 0.0,
+    }
+    if not isinstance(ttl_seconds, int) or ttl_seconds <= 0:
+        raise WorkflowDispatchError("agent workflow admission ttl_seconds must be positive")
+    issued = datetime.fromisoformat(now.replace("Z", "+00:00")) if now else datetime.now(UTC)
+    if issued.tzinfo is None:
+        issued = issued.replace(tzinfo=UTC)
+    issued_at = issued.astimezone(UTC).replace(microsecond=0).isoformat()
+    grant = {
+        "admission_id": f"admit-{uuid4().hex}",
+        "status": "admitted",
+        "workflow_run_id": run_id,
+        "trace_id": run_id,
+        "backend": "agent-workflow",
+        "exact_request_discriminator": EXACT_REQUEST_DISCRIMINATOR,
+        "bet_id": request_identity["bet_id"],
+        "workflow_id": request_identity["workflow_id"],
+        "step_run_ids": [f"{run_id}:execute"],
+        "capabilities": [requirement["capability_id"] for requirement in requirements],
+        "policy_digest": hashlib.sha256(_canonical(policy)).hexdigest(),
+        "issued_at": issued_at,
+        "expires_at": (datetime.fromisoformat(issued_at) + timedelta(seconds=ttl_seconds)).isoformat(),
+        "request_identity": request_identity,
+    }
+    grant["proof"] = _proof(grant)
+    admitted = store.append(
+        new_workflow_event(
+            "WorkflowAdmitted",
+            run_id,
+            trace_id=run_id,
+            producer="omo.workflow_dispatch",
+            idempotency_key=f"{run_id}:admitted",
+            payload={
+                "admission": grant,
+                "policy": policy,
+                "exact_request_discriminator": EXACT_REQUEST_DISCRIMINATOR,
+                "bet_id": request_identity["bet_id"],
+                "workflow_id": request_identity["workflow_id"],
+                "policy_digest": grant["policy_digest"],
+                "proof": grant["proof"],
+                "request_identity": request_identity,
+                "external_side_effects": "disabled",
+            },
+        )
+    )
+    persisted = store.snapshot(run_id)
+    persisted_grant = persisted.get("admission")
+    if (
+        persisted.get("state") != "admitted"
+        or not isinstance(persisted_grant, Mapping)
+        or any(
+            persisted_grant.get(field) != grant[field]
+            for field in ("admission_id", "policy_digest", "proof", "request_identity")
+        )
+    ):
+        raise WorkflowDispatchError("persisted agent workflow admission re-read mismatch")
+    return {
+        "status": "admitted",
+        "workflow_run_id": run_id,
+        "admission": dict(persisted_grant),
+        "event_id": admitted["event_id"],
+        "external_side_effects": "disabled",
+        "worker_launch": False,
+    }
+
+
+def close_agent_workflow_run(
+    root: Path,
+    *,
+    workflow_run_id: str,
+    status: str,
+    payload: Mapping[str, Any],
+    omo_dir: str | Path = ".omo",
+) -> bool:
+    """Close an exact Agent Workflow without inventing execution events."""
+    store = WorkflowMeshStore(root / Path(omo_dir))
+    snapshot = store.snapshot(workflow_run_id)
+    exact_request_identity = snapshot.get("exact_request_identity")
+    admission = snapshot.get("admission")
+    if not isinstance(exact_request_identity, Mapping):
+        return False
+
+    close_payload = {"agent_event_type": "AgentWorkflowClosed", **dict(payload)}
+    success_close = bool(payload.get("ok")) or status in {"ok", "succeeded", "verified", "merged"}
+    if not isinstance(admission, Mapping):
+        if success_close:
+            raise WorkflowDispatchError(
+                "EXACT_WORKFLOW_ADMISSION_NOT_PERSISTED: exact request has no persisted admission"
+            )
+        if snapshot.get("state") != "planned":
+            raise WorkflowDispatchError(
+                f"exact Agent Workflow without admission cannot close from state {snapshot.get('state')}"
+            )
+        store.append(
+            new_workflow_event(
+                "WorkflowCancelled",
+                workflow_run_id,
+                trace_id=workflow_run_id,
+                producer="omo.workflow_dispatch",
+                idempotency_key=f"{workflow_run_id}:exact-closeout:terminal",
+                payload=close_payload,
+            )
+        )
+        store.append(
+            new_workflow_event(
+                "WorkflowClosed",
+                workflow_run_id,
+                trace_id=workflow_run_id,
+                producer="omo.workflow_dispatch",
+                idempotency_key=f"{workflow_run_id}:exact-closeout:closed",
+                payload=close_payload,
+            )
+        )
+        if store.snapshot(workflow_run_id).get("state") != "closed":
+            raise WorkflowDispatchError("exact Agent Workflow request-only close did not reach closed")
+        return True
+
+    request_identity = admission.get("request_identity")
+    step_run_ids = admission.get("step_run_ids")
+    if (
+        not isinstance(admission, Mapping)
+        or not isinstance(request_identity, Mapping)
+        or request_identity != exact_request_identity
+        or not isinstance(step_run_ids, list)
+        or not step_run_ids
+        or not isinstance(step_run_ids[0], str)
+        or not step_run_ids[0]
+    ):
+        raise WorkflowDispatchError("exact Agent Workflow closeout requires persisted delivery identity")
+    admission_id = str(admission.get("admission_id") or "")
+    admission_proof = str(admission.get("proof") or "")
+    step_run_id = step_run_ids[0]
+
+    state = snapshot.get("state")
+    if success_close and state not in {"succeeded", "verified", "merged", "closed"}:
+        raise WorkflowDispatchError(
+            f"EXACT_WORKFLOW_EXECUTION_NOT_PERSISTED: cannot close exact run from state {state}"
+        )
+    if success_close and not isinstance(snapshot.get("worker_completion_receipt"), Mapping):
+        raise WorkflowDispatchError(
+            "EXACT_WORKFLOW_COMPLETION_RECEIPT_NOT_PERSISTED: exact success has no worker completion receipt"
+        )
+    if not success_close and state not in {"failed", "unavailable", "cancelled", "closed"}:
+        if state == "running":
+            terminal_type = "StepFailed"
+            terminal_payload = {
+                **close_payload,
+                "step_run_id": step_run_id,
+                "step_name": "execute",
+                "admission_id": admission_id,
+                "error": str(payload.get("error") or "workflow failed"),
+            }
+        elif state in {"admitted", "dispatched"}:
+            terminal_type = "WorkflowCancelled"
+            terminal_payload = close_payload
+        else:
+            raise WorkflowDispatchError(f"exact Agent Workflow cannot close honestly from state {state}")
+        store.append(
+            new_workflow_event(
+                terminal_type,
+                workflow_run_id,
+                trace_id=workflow_run_id,
+                producer="omo.workflow_dispatch",
+                idempotency_key=f"{workflow_run_id}:exact-closeout:terminal",
+                payload=terminal_payload,
+            )
+        )
+        snapshot = store.snapshot(workflow_run_id)
+
+    if snapshot.get("state") != "closed":
+        store.append(
+            new_workflow_event(
+                "WorkflowClosed",
+                workflow_run_id,
+                trace_id=workflow_run_id,
+                producer="omo.workflow_dispatch",
+                idempotency_key=f"{workflow_run_id}:exact-closeout:closed",
+                payload=close_payload,
+            )
+        )
+
+    persisted = store.snapshot(workflow_run_id)
+    persisted_admission = persisted.get("admission")
+    admissions = [
+        event
+        for event in store.events()
+        if event.get("workflow_run_id") == workflow_run_id and event.get("event_type") == "WorkflowAdmitted"
+    ]
+    if (
+        persisted.get("state") != "closed"
+        or not isinstance(persisted_admission, Mapping)
+        or persisted_admission.get("admission_id") != admission_id
+        or persisted_admission.get("proof") != admission_proof
+        or len(admissions) != 1
+    ):
+        raise WorkflowDispatchError("exact Agent Workflow closeout did not preserve its persisted admission")
+    return True
 
 
 def _check_scene_binding(event: dict[str, Any], scene_binding: Mapping[str, Any] | None) -> None:
@@ -580,7 +912,9 @@ def dispatch_admitted_workflow(
         return _dispatch_iris_via_executor(root, packet, iris_caps)
 
     from .omo_worker_dispatch import dispatch_task
+    from .worker_lifecycle import new_worker_ack_origin_proof
 
+    worker_ack_origin_proof = new_worker_ack_origin_proof()
     worker_dispatch = dispatch_task(
         root,
         task_id=task_id,
@@ -589,6 +923,7 @@ def dispatch_admitted_workflow(
         launch=launch,
         transport=transport,
         workflow_packet=packet,
+        worker_ack_origin_proof=worker_ack_origin_proof,
     )
     return {
         **packet,
@@ -692,7 +1027,9 @@ def consume_pending_workflow_requests(
                 result = _dispatch_iris_via_executor(root, packet, iris_caps, omo_dir=omo_dir)
             else:
                 from .omo_worker_dispatch import dispatch_task
+                from .worker_lifecycle import new_worker_ack_origin_proof
 
+                worker_ack_origin_proof = new_worker_ack_origin_proof()
                 result = dispatch_task(
                     root,
                     task_id=task_id,
@@ -701,6 +1038,7 @@ def consume_pending_workflow_requests(
                     launch=False,
                     transport="acp_stdio",
                     workflow_packet=packet,
+                    worker_ack_origin_proof=worker_ack_origin_proof,
                 )
         except Exception as exc:  # defensive: 单 run dispatch 失败不炸 tick
             failed.append({"workflow_run_id": run_id, "error": f"dispatch: {exc}"})

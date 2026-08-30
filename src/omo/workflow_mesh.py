@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timezone
 from pathlib import Path
@@ -179,10 +180,37 @@ _WORKER_EVENTS = {
     "WorkerReclaimed",
 }
 SCENE_BINDING_FIELDS = frozenset({"scene_id", "journey_id", "outcome_metric"})
+_AGENT_WORKFLOW_IDENTITY_FIELDS = {
+    "bet_id",
+    "workflow_id",
+    "correlation_id",
+    "workflow_run_id",
+    "packet_id",
+    "packet_hash",
+    "assignment_id",
+    "dispatch_id",
+    "actor_id",
+    "delivery_attempt_id",
+    "capability_requirements",
+    "capability_requirements_digest",
+}
+EXACT_REQUEST_DISCRIMINATOR = "agent-workflow-exact/v1"
+_EXACT_COORDINATOR_CAPABILITY = object()
+_SHA256_REF_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 class WorkflowMeshEventError(ValueError):
     """事件结构或状态转换不符合 Workflow Mesh 契约。"""
+
+
+def _exact_coordinator_capability() -> object:
+    """Return the module-private in-process exact coordinator capability."""
+    return _EXACT_COORDINATOR_CAPABILITY
+
+
+def _require_exact_coordinator_capability(capability: object, *, purpose: str) -> None:
+    if capability is not _EXACT_COORDINATOR_CAPABILITY:
+        raise WorkflowMeshEventError(f"exact {purpose} requires coordinator capability")
 
 
 def _scene_binding(payload: Mapping[str, Any]) -> dict[str, str] | None:
@@ -225,6 +253,7 @@ def worker_ack_origin_digest(origin_proof: str, payload: Mapping[str, Any]) -> s
             "packet_id",
             "packet_hash",
             "instruction_binding",
+            "result_digest",
         )
     }
     return (
@@ -237,7 +266,79 @@ def worker_ack_origin_digest(origin_proof: str, payload: Mapping[str, Any]) -> s
     )
 
 
-def _validate_admission_payload(payload: dict[str, Any]) -> dict[str, Any]:
+def _validated_exact_request_identity(
+    payload: Mapping[str, Any],
+    workflow_run_id: str,
+) -> dict[str, Any] | None:
+    discriminator = payload.get("exact_request_discriminator")
+    if discriminator is None:
+        identity = payload.get("request_identity")
+        if isinstance(identity, Mapping):
+            legacy_fields = {"bet_id", "packet_id", "packet_hash"}
+            if (
+                set(identity) == legacy_fields
+                and all(isinstance(identity.get(field), str) and identity.get(field) for field in legacy_fields)
+                and _SHA256_REF_RE.fullmatch(str(identity["packet_hash"])) is not None
+            ):
+                return None
+            raise WorkflowMeshEventError("exact Agent Workflow request discriminator is required")
+        return None
+    if discriminator != EXACT_REQUEST_DISCRIMINATOR:
+        raise WorkflowMeshEventError("exact Agent Workflow request discriminator is invalid")
+    identity = payload.get("request_identity")
+    if not isinstance(identity, Mapping) or set(identity) != _AGENT_WORKFLOW_IDENTITY_FIELDS:
+        raise WorkflowMeshEventError("exact Agent Workflow request identity shape is invalid")
+    if (
+        identity.get("bet_id") != payload.get("bet_id")
+        or not isinstance(identity.get("bet_id"), str)
+        or not identity.get("bet_id")
+        or identity.get("workflow_id") != payload.get("workflow_id")
+        or not isinstance(identity.get("workflow_id"), str)
+        or not identity.get("workflow_id")
+        or identity.get("workflow_run_id") != workflow_run_id
+        or identity.get("correlation_id") != workflow_run_id
+        or not isinstance(payload.get("workflow_id"), str)
+        or not payload.get("workflow_id")
+        or not isinstance(identity.get("packet_id"), str)
+        or not identity["packet_id"]
+        or not isinstance(identity.get("packet_hash"), str)
+        or _SHA256_REF_RE.fullmatch(identity["packet_hash"]) is None
+        or not isinstance(identity.get("assignment_id"), str)
+        or not identity["assignment_id"]
+        or not isinstance(identity.get("dispatch_id"), str)
+        or not identity["dispatch_id"]
+        or not isinstance(identity.get("actor_id"), str)
+        or not identity["actor_id"]
+        or not isinstance(identity.get("delivery_attempt_id"), str)
+        or not identity["delivery_attempt_id"]
+    ):
+        raise WorkflowMeshEventError("exact Agent Workflow request delivery identity is invalid")
+    requirements = identity.get("capability_requirements")
+    try:
+        from .orchestration_contract import validate_capability_requirements
+
+        canonical_requirements = validate_capability_requirements(requirements)
+    except (ImportError, ValueError):
+        canonical_requirements = None
+    if canonical_requirements is None or canonical_requirements != requirements:
+        raise WorkflowMeshEventError("Agent Workflow request capability requirements are invalid")
+    expected_digest = (
+        "sha256:"
+        + hashlib.sha256(
+            _canonical_admission(canonical_requirements)  # type: ignore[arg-type]
+        ).hexdigest()
+    )
+    if identity.get("capability_requirements_digest") != expected_digest:
+        raise WorkflowMeshEventError("Agent Workflow request capability requirements digest mismatch")
+    return dict(identity)
+
+
+def _validate_admission_payload(
+    payload: dict[str, Any],
+    *,
+    exact_request_identity: Mapping[str, Any] | None = None,
+    requested_workflow_id: str | None = None,
+) -> dict[str, Any]:
     admission = payload.get("admission") or payload
     if not isinstance(admission, dict):
         raise WorkflowMeshEventError("WorkflowAdmitted requires an admission grant")
@@ -264,6 +365,101 @@ def _validate_admission_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise WorkflowMeshEventError("Admission grant proof mismatch")
     if not isinstance(admission["step_run_ids"], list) or not admission["step_run_ids"]:
         raise WorkflowMeshEventError("Admission grant requires step_run_ids")
+    try:
+        issued_at = datetime.fromisoformat(str(admission["issued_at"]).replace("Z", "+00:00"))
+        expires_at = datetime.fromisoformat(str(admission["expires_at"]).replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise WorkflowMeshEventError("Admission grant time window is invalid") from exc
+    if issued_at.tzinfo is None or expires_at.tzinfo is None or expires_at <= issued_at:
+        raise WorkflowMeshEventError("Admission grant time window is invalid")
+    if exact_request_identity is not None:
+        identity = admission.get("request_identity")
+        if not isinstance(identity, Mapping) or set(identity) != _AGENT_WORKFLOW_IDENTITY_FIELDS:
+            raise WorkflowMeshEventError("Agent Workflow admission requires exact request_identity")
+        if identity != exact_request_identity:
+            raise WorkflowMeshEventError("Agent Workflow admission request identity mismatch")
+        if (
+            admission.get("exact_request_discriminator") != EXACT_REQUEST_DISCRIMINATOR
+            or admission.get("bet_id") != identity.get("bet_id")
+            or admission.get("workflow_id") != identity.get("workflow_id")
+        ):
+            raise WorkflowMeshEventError("Agent Workflow admission exact identity mismatch")
+        run_id = admission["workflow_run_id"]
+        if identity.get("workflow_run_id") != run_id or identity.get("correlation_id") != run_id:
+            raise WorkflowMeshEventError("Agent Workflow admission run identity mismatch")
+        if (
+            not isinstance(identity.get("packet_id"), str)
+            or not identity["packet_id"]
+            or not isinstance(identity.get("packet_hash"), str)
+            or _SHA256_REF_RE.fullmatch(identity["packet_hash"]) is None
+            or not isinstance(identity.get("assignment_id"), str)
+            or not identity["assignment_id"]
+            or not isinstance(identity.get("dispatch_id"), str)
+            or not identity["dispatch_id"]
+            or not isinstance(identity.get("actor_id"), str)
+            or not identity["actor_id"]
+            or not isinstance(identity.get("delivery_attempt_id"), str)
+            or not identity["delivery_attempt_id"]
+        ):
+            raise WorkflowMeshEventError("Agent Workflow admission delivery identity is invalid")
+        requirements = identity.get("capability_requirements")
+        try:
+            from .orchestration_contract import validate_capability_requirements
+
+            canonical_requirements = validate_capability_requirements(requirements)
+        except (ImportError, ValueError):
+            canonical_requirements = None
+        if canonical_requirements is None or canonical_requirements != requirements:
+            raise WorkflowMeshEventError("Agent Workflow admission capability requirements are invalid")
+        expected_digest = (
+            "sha256:"
+            + hashlib.sha256(
+                _canonical_admission(canonical_requirements)  # type: ignore[arg-type]
+            ).hexdigest()
+        )
+        if identity.get("capability_requirements_digest") != expected_digest:
+            raise WorkflowMeshEventError("Agent Workflow admission capability requirements digest mismatch")
+        policy = payload.get("policy")
+        expected_policy = {
+            "exact_request_discriminator": EXACT_REQUEST_DISCRIMINATOR,
+            "bet_id": identity["bet_id"],
+            "workflow_id": requested_workflow_id,
+            "workflow_run_id": run_id,
+            "packet_id": identity["packet_id"],
+            "packet_hash": identity["packet_hash"],
+            "capability_requirements": identity["capability_requirements"],
+            "capability_requirements_digest": identity["capability_requirements_digest"],
+            "actor_id": identity["actor_id"],
+            "delivery_attempt_id": identity["delivery_attempt_id"],
+            "source_receipt_digests": policy.get("source_receipt_digests") if isinstance(policy, Mapping) else None,
+            "requested_budget": 0.0,
+        }
+        source_receipt_digests = expected_policy["source_receipt_digests"]
+        if (
+            not isinstance(policy, Mapping)
+            or set(policy) != set(expected_policy)
+            or dict(policy) != expected_policy
+            or not isinstance(source_receipt_digests, list)
+            or len(source_receipt_digests) != len(identity["capability_requirements"])
+            or any(
+                not isinstance(digest, str) or _SHA256_REF_RE.fullmatch(digest) is None
+                for digest in source_receipt_digests
+            )
+        ):
+            raise WorkflowMeshEventError("Agent Workflow admission policy identity mismatch")
+        expected_policy_digest = (
+            hashlib.sha256(_canonical_admission(dict(policy))).hexdigest() if isinstance(policy, Mapping) else None
+        )
+        if (
+            payload.get("exact_request_discriminator") != EXACT_REQUEST_DISCRIMINATOR
+            or payload.get("bet_id") != identity.get("bet_id")
+            or payload.get("workflow_id") != identity.get("workflow_id")
+            or payload.get("request_identity") != identity
+            or payload.get("policy_digest") != admission["policy_digest"]
+            or expected_policy_digest != admission["policy_digest"]
+            or payload.get("proof") != admission["proof"]
+        ):
+            raise WorkflowMeshEventError("Agent Workflow admission policy or proof mismatch")
     return admission
 
 
@@ -275,6 +471,56 @@ def _step_is_admitted(step_run_id: str, admission: dict[str, Any]) -> bool:
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _parsed_utc_timestamp(value: Any) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise WorkflowMeshEventError("exact admission time window is invalid") from exc
+    if parsed.tzinfo is None:
+        raise WorkflowMeshEventError("exact admission time window is invalid")
+    return parsed.astimezone(UTC)
+
+
+def _require_live_exact_admission(snapshot: Mapping[str, Any], event: Mapping[str, Any]) -> None:
+    if not isinstance(snapshot.get("exact_request_identity"), Mapping):
+        return
+    admission = snapshot.get("admission")
+    if not isinstance(admission, Mapping):
+        raise WorkflowMeshEventError("exact authenticated append requires persisted admission")
+    issued_at = _parsed_utc_timestamp(admission.get("issued_at"))
+    expires_at = _parsed_utc_timestamp(admission.get("expires_at"))
+    event_at = _parsed_utc_timestamp(event.get("occurred_at"))
+    current = datetime.now(UTC)
+    if expires_at <= issued_at:
+        raise WorkflowMeshEventError("exact admission time window is invalid")
+    if event_at < issued_at or current < issued_at:
+        raise WorkflowMeshEventError("exact admission is not yet valid")
+    if event_at >= expires_at or current >= expires_at:
+        raise WorkflowMeshEventError("exact admission is expired")
+
+
+def _require_exact_worker_origin_proof(
+    snapshot: Mapping[str, Any],
+    workflow_run_id: str,
+    origin_proof: str,
+    *,
+    purpose: str,
+) -> None:
+    if not origin_proof:
+        raise WorkflowMeshEventError(f"exact {purpose} requires coordinator origin proof")
+    worker = snapshot.get("worker")
+    if not isinstance(worker, Mapping):
+        raise WorkflowMeshEventError(f"exact {purpose} requires persisted worker context")
+    context = {
+        **worker,
+        "workflow_run_id": workflow_run_id,
+        "result_digest": None,
+    }
+    expected = worker_ack_origin_digest(origin_proof, context)
+    if not hmac.compare_digest(expected, str(worker.get("ack_origin_proof_digest") or "")):
+        raise WorkflowMeshEventError(f"exact {purpose} origin proof mismatch")
 
 
 def new_workflow_event(
@@ -344,6 +590,10 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
         "worker": None,
         "worker_events": [],
         "scene_binding": None,
+        "exact_request_identity": None,
+        "exact_request_discriminator": None,
+        "requested_workflow_id": None,
+        "worker_completion_receipt": None,
     }
     for event in relevant:
         validate_workflow_event(event)
@@ -378,13 +628,22 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
         if event_type == "EvidenceRecorded" and not event["payload"].get("evidence_id"):
             raise WorkflowMeshEventError("EvidenceRecorded requires evidence_id")
         if event_type == "WorkflowAdmitted":
-            admission = _validate_admission_payload(event["payload"])
+            admission = _validate_admission_payload(
+                event["payload"],
+                exact_request_identity=snapshot.get("exact_request_identity"),
+                requested_workflow_id=snapshot.get("requested_workflow_id"),
+            )
             if admission["workflow_run_id"] != workflow_run_id:
                 raise WorkflowMeshEventError("Admission grant workflow_run_id mismatch")
             snapshot["admission"] = dict(admission)
         scene_binding = _scene_binding(event["payload"])
         if event_type == "WorkflowRequested":
             snapshot["scene_binding"] = scene_binding
+            exact_identity = _validated_exact_request_identity(event["payload"], workflow_run_id)
+            if exact_identity is not None:
+                snapshot["exact_request_identity"] = exact_identity
+                snapshot["exact_request_discriminator"] = event["payload"]["exact_request_discriminator"]
+                snapshot["requested_workflow_id"] = event["payload"]["workflow_id"]
         elif scene_binding is not None:
             if snapshot["scene_binding"] is None:
                 raise WorkflowMeshEventError("scene_binding requires a prior WorkflowRequested event")
@@ -412,6 +671,25 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
                 raise WorkflowMeshEventError(f"{event_type} admission_id mismatch")
             if not _step_is_admitted(step_run_id, admission):
                 raise WorkflowMeshEventError(f"StepRun is not admitted: {step_run_id}")
+            if (
+                event_type == "StepDispatched"
+                and isinstance(snapshot.get("exact_request_identity"), Mapping)
+                and isinstance(admission.get("request_identity"), Mapping)
+            ):
+                exact_identity = snapshot["exact_request_identity"]
+                requirements_digest = admission["request_identity"].get("capability_requirements_digest")
+                if (
+                    event["payload"].get("exact_request_discriminator") != EXACT_REQUEST_DISCRIMINATOR
+                    or event["payload"].get("bet_id") != exact_identity.get("bet_id")
+                    or event["payload"].get("workflow_id") != exact_identity.get("workflow_id")
+                    or event["payload"].get("dispatch_id") != exact_identity.get("dispatch_id")
+                    or event["payload"].get("packet_id") != exact_identity.get("packet_id")
+                    or event["payload"].get("packet_hash") != exact_identity.get("packet_hash")
+                    or event["payload"].get("policy_digest") != admission.get("policy_digest")
+                    or requirements_digest is not None
+                    and event["payload"].get("capability_requirements_digest") != requirements_digest
+                ):
+                    raise WorkflowMeshEventError("exact StepDispatched persisted admission binding mismatch")
             if event_type != "StepDispatched" and step_run_id not in snapshot["step_runs"]:
                 raise WorkflowMeshEventError(f"{event_type} requires prior StepDispatched")
         if event_type in _WORKER_EVENTS:
@@ -514,6 +792,63 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
                 raise WorkflowMeshEventError("ToolInvocationRecorded outcome must be succeeded, failed, or unavailable")
         if event_type == "WorkflowVerified" and not snapshot["evidence"]:
             raise WorkflowMeshEventError("WorkflowVerified requires at least one EvidenceRecorded event")
+        if event_type == "WorkflowSucceeded" and isinstance(snapshot.get("exact_request_identity"), Mapping):
+            receipt = event["payload"].get("worker_completion_receipt")
+            receipt_fields = {
+                "status",
+                "exact_request_discriminator",
+                "bet_id",
+                "workflow_id",
+                "workflow_run_id",
+                "admission_id",
+                "step_run_id",
+                "dispatch_id",
+                "worker_id",
+                "ack_origin_proof_digest",
+                "completion_origin_commitment",
+                "result_digest",
+                "receipt_digest",
+            }
+            if not isinstance(receipt, Mapping) or set(receipt) != receipt_fields:
+                raise WorkflowMeshEventError("exact WorkflowSucceeded requires worker completion receipt")
+            unsigned_receipt = {key: value for key, value in receipt.items() if key != "receipt_digest"}
+            expected_receipt_digest = "sha256:" + hashlib.sha256(_canonical_admission(unsigned_receipt)).hexdigest()
+            admission = snapshot.get("admission")
+            exact_identity = snapshot.get("exact_request_identity")
+            worker = snapshot.get("worker")
+            step = snapshot.get("step_runs", {}).get(receipt.get("step_run_id"))
+            if (
+                event.get("producer") != "worker"
+                or receipt.get("status") != "succeeded"
+                or receipt.get("exact_request_discriminator") != EXACT_REQUEST_DISCRIMINATOR
+                or not isinstance(exact_identity, Mapping)
+                or receipt.get("bet_id") != exact_identity.get("bet_id")
+                or receipt.get("workflow_id") != exact_identity.get("workflow_id")
+                or receipt.get("workflow_run_id") != workflow_run_id
+                or not isinstance(admission, Mapping)
+                or receipt.get("admission_id") != admission.get("admission_id")
+                or not isinstance(step, Mapping)
+                or step.get("state") != "running"
+                or step.get("admission_id") != admission.get("admission_id")
+                or not isinstance(worker, Mapping)
+                or worker.get("state") not in {"acknowledged", "active"}
+                or worker.get("ack_decision") != "proceed"
+                or worker.get("ack_origin_proof_consumed") is not True
+                or any(
+                    receipt.get(field) != worker.get(field)
+                    for field in ("dispatch_id", "worker_id", "step_run_id", "admission_id")
+                )
+                or receipt.get("ack_origin_proof_digest") != worker.get("ack_origin_proof_digest")
+                or not isinstance(receipt.get("ack_origin_proof_digest"), str)
+                or _SHA256_REF_RE.fullmatch(receipt["ack_origin_proof_digest"]) is None
+                or not isinstance(receipt.get("completion_origin_commitment"), str)
+                or _SHA256_REF_RE.fullmatch(receipt["completion_origin_commitment"]) is None
+                or not isinstance(receipt.get("result_digest"), str)
+                or _SHA256_REF_RE.fullmatch(receipt["result_digest"]) is None
+                or receipt.get("receipt_digest") != expected_receipt_digest
+            ):
+                raise WorkflowMeshEventError("exact worker completion receipt binding mismatch")
+            snapshot["worker_completion_receipt"] = dict(receipt)
         snapshot["trace_id"] = snapshot["trace_id"] or event["trace_id"]
         snapshot["state"] = next_state
         snapshot["event_count"] += 1
@@ -729,6 +1064,37 @@ class WorkflowMeshStore:
             event["payload"].get("ack_decision") != "stop" or event["payload"].get("packet_id") is not None
         ):
             raise WorkflowMeshEventError("WorkerAcknowledged requires authenticated worker append")
+        if event["event_type"] == "WorkflowSucceeded":
+            with self._lock:
+                current = self._log.read_all()
+                snapshot = project_workflow_run(current, event["workflow_run_id"])
+                if isinstance(snapshot.get("exact_request_identity"), Mapping):
+                    raise WorkflowMeshEventError(
+                        "exact WorkflowSucceeded requires authenticated worker completion append"
+                    )
+                return self._append_locked(event)
+        if event["event_type"] in {
+            "StepDispatched",
+            "WorkerLeaseRenewed",
+            "WorkerLeaseExpired",
+            "WorkerReclaimed",
+        }:
+            with self._lock:
+                current = self._log.read_all()
+                snapshot = project_workflow_run(current, event["workflow_run_id"])
+                if isinstance(snapshot.get("exact_request_identity"), Mapping):
+                    if event["event_type"] == "StepDispatched":
+                        raise WorkflowMeshEventError(
+                            "exact StepDispatched requires authenticated exact dispatch append"
+                        )
+                    if event["event_type"] == "WorkerLeaseRenewed":
+                        raise WorkflowMeshEventError(
+                            "exact WorkerLeaseRenewed requires authenticated exact lease renewal append"
+                        )
+                    raise WorkflowMeshEventError(
+                        f"exact {event['event_type']} requires authenticated coordinator append"
+                    )
+                return self._append_locked(event)
         with self._lock:
             return self._append_locked(event)
 
@@ -763,6 +1129,7 @@ class WorkflowMeshStore:
                 if existing.get("idempotency_key") == event["idempotency_key"]:
                     raise WorkflowMeshEventError("worker ACK origin proof already consumed")
             snapshot = project_workflow_run(current, event["workflow_run_id"])
+            _require_live_exact_admission(snapshot, event)
             worker = snapshot.get("worker")
             if not isinstance(worker, Mapping):
                 raise WorkflowMeshEventError("WorkerAcknowledged requires prior StepDispatched worker context")
@@ -776,6 +1143,188 @@ class WorkflowMeshStore:
                 raise WorkflowMeshEventError("worker ACK origin proof mismatch")
             if event["payload"].get("ack_origin_proof_digest") != commitment:
                 raise WorkflowMeshEventError("worker ACK origin proof digest mismatch")
+            return self._append_locked(event)
+
+    def append_exact_step_dispatch(self, event: dict[str, Any], *, origin_proof: str) -> dict[str, Any]:
+        """Atomically authenticate one exact coordinator-to-worker dispatch."""
+        validate_workflow_event(event)
+        if event["event_type"] != "StepDispatched" or not origin_proof:
+            raise WorkflowMeshEventError("authenticated exact dispatch requires StepDispatched and origin proof")
+        with self._lock:
+            current = self._log.read_all()
+            snapshot = project_workflow_run(current, event["workflow_run_id"])
+            if not isinstance(snapshot.get("exact_request_identity"), Mapping):
+                raise WorkflowMeshEventError("authenticated exact dispatch requires exact request")
+            _require_live_exact_admission(snapshot, event)
+            payload = event.get("payload", {})
+            if not payload.get("ack_origin_nonce"):
+                raise WorkflowMeshEventError("exact dispatch origin nonce is required")
+            expected = worker_ack_origin_digest(
+                origin_proof,
+                {**payload, "workflow_run_id": event["workflow_run_id"]},
+            )
+            if not hmac.compare_digest(expected, str(payload.get("ack_origin_commitment") or "")):
+                raise WorkflowMeshEventError("exact dispatch origin proof mismatch")
+            return self._append_locked(event)
+
+    def append_exact_worker_lease(self, event: dict[str, Any], *, origin_proof: str) -> dict[str, Any]:
+        """Atomically validate, cap, and append one exact worker lease renewal."""
+        validate_workflow_event(event)
+        if event["event_type"] != "WorkerLeaseRenewed":
+            raise WorkflowMeshEventError("exact lease renewal append requires WorkerLeaseRenewed")
+        with self._lock:
+            current = self._log.read_all()
+            snapshot = project_workflow_run(current, event["workflow_run_id"])
+            if not isinstance(snapshot.get("exact_request_identity"), Mapping):
+                raise WorkflowMeshEventError("exact lease renewal requires exact request")
+            _require_exact_worker_origin_proof(
+                snapshot,
+                event["workflow_run_id"],
+                origin_proof,
+                purpose="worker lease renewal",
+            )
+            _require_live_exact_admission(snapshot, event)
+            admission = snapshot.get("admission")
+            if not isinstance(admission, Mapping):
+                raise WorkflowMeshEventError("exact lease renewal requires persisted admission")
+            capped = dict(event)
+            payload = dict(event["payload"])
+            _require_live_exact_admission(
+                snapshot,
+                {**event, "occurred_at": payload.get("heartbeat_at")},
+            )
+            admission_expiry = _parsed_utc_timestamp(admission.get("expires_at"))
+            requested_expiry = _parsed_utc_timestamp(payload.get("lease_expires_at"))
+            if requested_expiry > admission_expiry:
+                payload["lease_expires_at"] = admission_expiry.isoformat().replace("+00:00", "Z")
+            capped["payload"] = payload
+            for existing in current:
+                if existing.get("idempotency_key") != capped["idempotency_key"]:
+                    continue
+                if existing.get("event_type") == "WorkerLeaseRenewed" and existing.get("payload") == payload:
+                    return existing
+                raise WorkflowMeshEventError("conflicting exact worker lease renewal")
+            return self._append_locked(capped)
+
+    def append_exact_worker_expiry(
+        self,
+        event: dict[str, Any],
+        *,
+        coordinator_capability: object,
+    ) -> dict[str, Any]:
+        """Atomically authenticate one exact worker lease expiry."""
+        validate_workflow_event(event)
+        if event["event_type"] != "WorkerLeaseExpired":
+            raise WorkflowMeshEventError("exact expiry append requires WorkerLeaseExpired")
+        with self._lock:
+            _require_exact_coordinator_capability(
+                coordinator_capability,
+                purpose="worker lease expiry",
+            )
+            current = self._log.read_all()
+            snapshot = project_workflow_run(current, event["workflow_run_id"])
+            if not isinstance(snapshot.get("exact_request_identity"), Mapping):
+                raise WorkflowMeshEventError("exact worker expiry requires exact request")
+            worker = snapshot.get("worker")
+            payload = event.get("payload", {})
+            if not isinstance(worker, Mapping) or any(
+                payload.get(field) != worker.get(field)
+                for field in ("dispatch_id", "worker_id", "step_run_id", "admission_id")
+            ):
+                raise WorkflowMeshEventError("exact worker expiry context mismatch")
+            for existing in current:
+                if existing.get("idempotency_key") != event["idempotency_key"]:
+                    continue
+                if existing.get("event_type") == "WorkerLeaseExpired" and existing.get("payload") == event["payload"]:
+                    return existing
+                raise WorkflowMeshEventError("conflicting exact worker lease expiry")
+            if worker.get("state") not in {"acknowledged", "active"}:
+                raise WorkflowMeshEventError("exact worker expiry requires live worker lease")
+            current_lease = str(worker.get("lease_expires_at") or "")
+            if payload.get("lease_expires_at") != current_lease:
+                raise WorkflowMeshEventError("exact worker expiry current lease mismatch")
+            lease_expiry = _parsed_utc_timestamp(current_lease)
+            expired_at = _parsed_utc_timestamp(payload.get("expired_at"))
+            if expired_at < lease_expiry or datetime.now(UTC) < lease_expiry:
+                raise WorkflowMeshEventError("exact worker lease has not expired")
+            return self._append_locked(event)
+
+    def append_exact_worker_reclaim(
+        self,
+        event: dict[str, Any],
+        *,
+        coordinator_capability: object,
+    ) -> dict[str, Any]:
+        """Atomically authenticate one exact coordinator reclaim."""
+        validate_workflow_event(event)
+        if event["event_type"] != "WorkerReclaimed":
+            raise WorkflowMeshEventError("exact reclaim append requires WorkerReclaimed")
+        with self._lock:
+            _require_exact_coordinator_capability(
+                coordinator_capability,
+                purpose="worker reclaim",
+            )
+            current = self._log.read_all()
+            snapshot = project_workflow_run(current, event["workflow_run_id"])
+            if not isinstance(snapshot.get("exact_request_identity"), Mapping):
+                raise WorkflowMeshEventError("exact worker reclaim requires exact request")
+            worker = snapshot.get("worker")
+            payload = event.get("payload", {})
+            if not isinstance(worker, Mapping) or any(
+                payload.get(field) != worker.get(field)
+                for field in ("dispatch_id", "worker_id", "step_run_id", "admission_id")
+            ):
+                raise WorkflowMeshEventError("exact worker reclaim context mismatch")
+            for existing in current:
+                if existing.get("idempotency_key") != event["idempotency_key"]:
+                    continue
+                if existing.get("event_type") == "WorkerReclaimed" and existing.get("payload") == event["payload"]:
+                    return existing
+                raise WorkflowMeshEventError("conflicting exact worker reclaim")
+            if worker.get("state") != "lease_expired":
+                raise WorkflowMeshEventError("exact worker reclaim requires expired lease")
+            return self._append_locked(event)
+
+    def append_worker_completion(self, event: dict[str, Any], *, origin_proof: str) -> dict[str, Any]:
+        """Authenticate one exact worker completion with its held origin proof."""
+        validate_workflow_event(event)
+        if event["event_type"] != "WorkflowSucceeded" or not origin_proof:
+            raise WorkflowMeshEventError("authenticated completion requires WorkflowSucceeded and origin proof")
+        with self._lock:
+            current = self._log.read_all()
+            snapshot = project_workflow_run(current, event["workflow_run_id"])
+            if not isinstance(snapshot.get("exact_request_identity"), Mapping):
+                raise WorkflowMeshEventError("authenticated completion requires an exact workflow request")
+            _require_live_exact_admission(snapshot, event)
+            worker = snapshot.get("worker")
+            receipt = event.get("payload", {}).get("worker_completion_receipt")
+            if not isinstance(worker, Mapping) or not isinstance(receipt, Mapping):
+                raise WorkflowMeshEventError("authenticated completion requires worker context and receipt")
+            ack_context = {
+                **worker,
+                "workflow_run_id": event["workflow_run_id"],
+                "result_digest": None,
+            }
+            expected_ack = worker_ack_origin_digest(origin_proof, ack_context)
+            if not hmac.compare_digest(expected_ack, str(worker.get("ack_origin_proof_digest") or "")):
+                raise WorkflowMeshEventError("worker completion origin proof does not match durable ACK")
+            completion_context = {
+                **worker,
+                "workflow_run_id": event["workflow_run_id"],
+                "result_digest": receipt.get("result_digest"),
+            }
+            expected_completion = worker_ack_origin_digest(origin_proof, completion_context)
+            if not hmac.compare_digest(
+                expected_completion,
+                str(receipt.get("completion_origin_commitment") or ""),
+            ):
+                raise WorkflowMeshEventError("worker completion origin commitment mismatch")
+            for existing in current:
+                if existing.get("idempotency_key") != event["idempotency_key"]:
+                    continue
+                if existing.get("event_type") == event["event_type"] and existing.get("payload") == event["payload"]:
+                    return existing
+                raise WorkflowMeshEventError("conflicting authenticated worker completion")
             return self._append_locked(event)
 
     def snapshot(self, workflow_run_id: str) -> dict[str, Any]:
