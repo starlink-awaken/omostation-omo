@@ -296,6 +296,129 @@ def admit_agent_workflow_start(
     }
 
 
+def close_agent_workflow_run(
+    root: Path,
+    *,
+    workflow_run_id: str,
+    status: str,
+    payload: Mapping[str, Any],
+    omo_dir: str | Path = ".omo",
+) -> bool:
+    """Close an exact Agent Workflow by advancing its persisted admission."""
+    store = WorkflowMeshStore(root / Path(omo_dir))
+    snapshot = store.snapshot(workflow_run_id)
+    admission = snapshot.get("admission")
+    if not isinstance(admission, Mapping) or admission.get("backend") != "agent-workflow":
+        return False
+
+    request_identity = admission.get("request_identity")
+    step_run_ids = admission.get("step_run_ids")
+    if (
+        not isinstance(request_identity, Mapping)
+        or not isinstance(step_run_ids, list)
+        or not step_run_ids
+        or not isinstance(step_run_ids[0], str)
+        or not step_run_ids[0]
+    ):
+        raise WorkflowDispatchError("exact Agent Workflow closeout requires persisted delivery identity")
+    admission_id = str(admission.get("admission_id") or "")
+    admission_proof = str(admission.get("proof") or "")
+    step_run_id = step_run_ids[0]
+
+    if snapshot.get("state") == "admitted" and status != "cancelled":
+        from .worker_lifecycle import record_step_dispatch
+
+        record_step_dispatch(
+            root / Path(omo_dir),
+            workflow_run_id=workflow_run_id,
+            trace_id=workflow_run_id,
+            dispatch_id=str(request_identity.get("dispatch_id") or ""),
+            worker_id="agent-workflow",
+            step_run_id=step_run_id,
+            admission_id=admission_id,
+            policy_digest=str(admission.get("policy_digest") or ""),
+            packet_id=str(request_identity.get("packet_id") or ""),
+            packet_hash=str(request_identity.get("packet_hash") or ""),
+        )
+        snapshot = store.snapshot(workflow_run_id)
+
+    if snapshot.get("state") == "dispatched" and status != "cancelled":
+        store.append(
+            new_workflow_event(
+                "StepStarted",
+                workflow_run_id,
+                trace_id=workflow_run_id,
+                producer="omo.workflow_dispatch",
+                idempotency_key=f"{workflow_run_id}:exact-closeout:started",
+                payload={
+                    "step_run_id": step_run_id,
+                    "step_name": "execute",
+                    "admission_id": admission_id,
+                },
+            )
+        )
+        snapshot = store.snapshot(workflow_run_id)
+
+    close_payload = {"agent_event_type": "AgentWorkflowClosed", **dict(payload)}
+    state = snapshot.get("state")
+    if state not in {"succeeded", "failed", "unavailable", "verified", "merged", "cancelled", "closed"}:
+        if status == "cancelled":
+            terminal_type = "WorkflowCancelled"
+            terminal_payload = close_payload
+        elif bool(payload.get("ok")) or status in {"ok", "succeeded", "verified", "merged"}:
+            terminal_type = "WorkflowSucceeded"
+            terminal_payload = close_payload
+        else:
+            terminal_type = "StepFailed"
+            terminal_payload = {
+                **close_payload,
+                "step_run_id": step_run_id,
+                "step_name": "execute",
+                "admission_id": admission_id,
+                "error": str(payload.get("error") or "workflow failed"),
+            }
+        store.append(
+            new_workflow_event(
+                terminal_type,
+                workflow_run_id,
+                trace_id=workflow_run_id,
+                producer="omo.workflow_dispatch",
+                idempotency_key=f"{workflow_run_id}:exact-closeout:terminal",
+                payload=terminal_payload,
+            )
+        )
+        snapshot = store.snapshot(workflow_run_id)
+
+    if snapshot.get("state") != "closed":
+        store.append(
+            new_workflow_event(
+                "WorkflowClosed",
+                workflow_run_id,
+                trace_id=workflow_run_id,
+                producer="omo.workflow_dispatch",
+                idempotency_key=f"{workflow_run_id}:exact-closeout:closed",
+                payload=close_payload,
+            )
+        )
+
+    persisted = store.snapshot(workflow_run_id)
+    persisted_admission = persisted.get("admission")
+    admissions = [
+        event
+        for event in store.events()
+        if event.get("workflow_run_id") == workflow_run_id and event.get("event_type") == "WorkflowAdmitted"
+    ]
+    if (
+        persisted.get("state") != "closed"
+        or not isinstance(persisted_admission, Mapping)
+        or persisted_admission.get("admission_id") != admission_id
+        or persisted_admission.get("proof") != admission_proof
+        or len(admissions) != 1
+    ):
+        raise WorkflowDispatchError("exact Agent Workflow closeout did not preserve its persisted admission")
+    return True
+
+
 def _check_scene_binding(event: dict[str, Any], scene_binding: Mapping[str, Any] | None) -> None:
     if scene_binding is None:
         return

@@ -100,6 +100,42 @@ def admit_agent_workflow_start(*args: Any, **kwargs: Any) -> dict[str, Any]:
     return _admit(*args, **kwargs)
 
 
+def close_agent_workflow_run(*args: Any, **kwargs: Any) -> bool:
+    """Load the exact closeout bridge only when lifecycle closeout needs it."""
+    from ..workflow_dispatch import close_agent_workflow_run as _close
+
+    return _close(*args, **kwargs)
+
+
+def _fail_exact_agent_workflow_start(
+    registry: dict[str, Any],
+    record: dict[str, Any],
+    error: Exception,
+    *,
+    request_persisted: bool,
+) -> None:
+    run_id = str(record["run_id"])
+    evidence = f"WORKFLOW_MESH_ADMISSION_FAILED: {type(error).__name__}"
+    close_run(registry, run_id, "failed", [evidence], True, emit_mesh=False)
+    if request_persisted:
+        workspace = registry_workspace_root(registry)
+        cancelled = emit_workflow_mesh_event(
+            "WorkflowCancelled",
+            run_id,
+            {"status": "failed", "ok": False, "error": evidence},
+            workspace=workspace,
+        )
+        closed = emit_workflow_mesh_event(
+            "WorkflowClosed",
+            run_id,
+            {"status": "failed", "ok": False, "error": evidence},
+            workspace=workspace,
+        )
+        if not cancelled or not closed:
+            raise WorkflowError("WORKFLOW_MESH_ADMISSION_CLEANUP_FAILED: exact request was not closed") from error
+    raise WorkflowError(evidence) from error
+
+
 def _load_spec_binding_contract() -> ModuleType:
     """Load the Workspace-owned BET/WorkPacket boundary or fail closed."""
     global _SPEC_BINDING_CONTRACT
@@ -440,21 +476,35 @@ def start_run(
                 "capability_requirements_digest": record.get("capability_requirements_digest"),
             }
         mesh_payload["request_identity"] = request_identity
-    request_persisted = emit_workflow_mesh_event(
-        "AgentWorkflowStarted",
-        run_id,
-        mesh_payload,
-        workspace=registry_workspace_root(registry),
+    exact_start = not parent_run_id and (
+        "capability_preflight" in record or "capability_requirements_digest" in record
     )
-    if not parent_run_id and ("capability_preflight" in record or "capability_requirements_digest" in record):
-        if not request_persisted:
-            raise WorkflowError("WORKFLOW_MESH_REQUEST_FAILED: exact Agent Workflow request was not persisted")
-        admission = admit_agent_workflow_start(
-            registry_workspace_root(registry),
-            record=record,
+    request_persisted = False
+    try:
+        request_persisted = emit_workflow_mesh_event(
+            "AgentWorkflowStarted",
+            run_id,
+            mesh_payload,
+            workspace=registry_workspace_root(registry),
         )
-        if admission.get("worker_launch") is not False or admission.get("external_side_effects") != "disabled":
-            raise WorkflowError("WORKFLOW_MESH_ADMISSION_UNSAFE: exact admission enabled execution")
+        if exact_start:
+            if not request_persisted:
+                raise WorkflowError("WORKFLOW_MESH_REQUEST_FAILED: exact Agent Workflow request was not persisted")
+            admission = admit_agent_workflow_start(
+                registry_workspace_root(registry),
+                record=record,
+            )
+            if admission.get("worker_launch") is not False or admission.get("external_side_effects") != "disabled":
+                raise WorkflowError("WORKFLOW_MESH_ADMISSION_UNSAFE: exact admission enabled execution")
+    except Exception as exc:
+        if exact_start:
+            _fail_exact_agent_workflow_start(
+                registry,
+                record,
+                exc,
+                request_persisted=request_persisted,
+            )
+        raise
     return record
 
 
@@ -838,20 +888,28 @@ def closeout_run(
         )
     except Exception:
         pass
-    emit_workflow_mesh_event(
-        "AgentWorkflowClosed",
-        run_id,
-        {
-            "status": status,
-            "ok": report["ok"],
-            # 透传真实错误 (同 direct close 侧修复)
-            "error": report.get("error") or verify_report.get("reason") or "",
-            "verify_ok": verify_report["ok"],
-            "observe_decision": observe_report["decision"],
-            "evidence_count": len(closeout_evidence),
-        },
-        workspace=registry_workspace_root(registry),
+    closeout_payload = {
+        "status": status,
+        "ok": report["ok"],
+        # 透传真实错误 (同 direct close 侧修复)
+        "error": report.get("error") or verify_report.get("reason") or "",
+        "verify_ok": verify_report["ok"],
+        "observe_decision": observe_report["decision"],
+        "evidence_count": len(closeout_evidence),
+    }
+    exact_closed = close_agent_workflow_run(
+        registry_workspace_root(registry),
+        workflow_run_id=run_id,
+        status=status,
+        payload=closeout_payload,
     )
+    if not exact_closed:
+        emit_workflow_mesh_event(
+            "AgentWorkflowClosed",
+            run_id,
+            closeout_payload,
+            workspace=registry_workspace_root(registry),
+        )
     return report
 
 
