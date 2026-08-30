@@ -604,12 +604,7 @@ def dispatch_task(
                 return True
 
             def kill_and_drain() -> tuple[str, str]:
-                if not signal_validated_group(signal.SIGKILL):
-                    try:
-                        kill = getattr(process, "kill")
-                        kill()
-                    except Exception:
-                        pass
+                signal_validated_group(signal.SIGKILL)
                 try:
                     output = process.communicate()
                 except Exception:
@@ -618,11 +613,7 @@ def dispatch_task(
                 return output
 
             if not signal_validated_group(signal.SIGTERM):
-                try:
-                    terminate = getattr(process, "terminate")
-                    terminate()
-                except Exception:
-                    return kill_and_drain()
+                return kill_and_drain()
             try:
                 output = process.communicate(timeout=5)
             except Exception:

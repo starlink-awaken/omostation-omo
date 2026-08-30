@@ -1124,9 +1124,19 @@ def test_exact_production_step_started_append_failure_reaps_spawned_child(
     _task_path, _pi = _exact_worker_fixture(tmp_path)
     packet, _exact_identity = _seed_exact_workflow_packet(tmp_path)
     origin_proof = new_worker_ack_origin_proof()
-    lifecycle = {"terminated": False, "killed": False, "drained": False, "communicate_calls": 0}
+    spawned_pid = 42410
+    lifecycle = {
+        "terminated": False,
+        "killed": False,
+        "drained": False,
+        "communicate_calls": 0,
+        "signals": [],
+    }
+    group = {"alive": True}
 
     class SpawnedWorker:
+        pid = spawned_pid
+
         def __init__(self, argv, *, cwd, stdout, stderr, text, env, start_new_session):
             del cwd, stdout, stderr, text
             assert start_new_session is True
@@ -1150,6 +1160,18 @@ def test_exact_production_step_started_append_failure_reaps_spawned_child(
         def kill(self):
             lifecycle["killed"] = True
 
+    def fake_killpg(process_group_id, sig):
+        assert process_group_id == spawned_pid
+        lifecycle["signals"].append(sig)
+        if sig == 0:
+            if group["alive"]:
+                return None
+            raise ProcessLookupError("expected process group is absent")
+        if sig == signal.SIGTERM and cleanup_failure == "terminate_error":
+            raise OSError("graceful group terminate failed")
+        if sig == signal.SIGKILL:
+            group["alive"] = False
+
     original_append = WorkflowMeshStore.append
 
     def reject_step_started(store, event):
@@ -1159,6 +1181,8 @@ def test_exact_production_step_started_append_failure_reaps_spawned_child(
 
     monkeypatch.setattr("omo.omo_worker_dispatch.subprocess.Popen", SpawnedWorker)
     monkeypatch.setattr(WorkflowMeshStore, "append", reject_step_started)
+    monkeypatch.setattr("omo.omo_worker_dispatch.os.getpgid", lambda pid: pid)
+    monkeypatch.setattr("omo.omo_worker_dispatch.os.killpg", fake_killpg)
 
     with pytest.raises(WorkflowMeshEventError, match="stable-step-start-failure"):
         dispatch_task(
@@ -1179,10 +1203,11 @@ def test_exact_production_step_started_append_failure_reaps_spawned_child(
         if path.is_file()
     )
     assert lifecycle == {
-        "terminated": True,
-        "killed": True,
+        "terminated": False,
+        "killed": False,
         "drained": True,
         "communicate_calls": 1 if cleanup_failure == "terminate_error" else 2,
+        "signals": [signal.SIGTERM, signal.SIGKILL, 0, 0],
     }
     assert not any(event["event_type"] == "StepStarted" for event in events)
     assert not any(event["event_type"] == "StepFailed" for event in events)
@@ -1268,10 +1293,18 @@ def test_exact_production_cleanup_fails_closed_when_validated_group_survives(
     assert signal.SIGTERM in lifecycle["signals"]
     assert signal.SIGKILL in lifecycle["signals"]
     assert 0 in lifecycle["signals"]
+    assert lifecycle["terminated"] is False
+    assert lifecycle["killed"] is False
     assert lifecycle["drained"] >= 1
     events = WorkflowMeshStore(tmp_path / ".omo").events()
+    persisted_text = "\n".join(
+        path.read_text(encoding="utf-8", errors="replace")
+        for path in (tmp_path / ".omo").rglob("*")
+        if path.is_file()
+    )
     assert not any(event["event_type"] == "WorkflowSucceeded" for event in events)
     assert origin_proof not in json.dumps(events)
+    assert origin_proof not in persisted_text
 
 
 def test_exact_production_step_started_failure_reaps_real_descendant_group(
