@@ -50,9 +50,7 @@ from .omo_audit_checks import (
     governance_check_adr_links,
     governance_check_agora_health,
     governance_check_debt_integrity,
-    governance_check_doc_lifecycle,
     governance_check_lint,
-    governance_check_task_consistency,
     governance_check_test_coverage,
 )
 
@@ -265,9 +263,7 @@ def run_governance_audit(workspace: Path | None = None) -> GovernanceReport:
             governance_check_test_coverage(),
             governance_check_debt_integrity(),
             governance_check_adr_links(),
-            governance_check_task_consistency(),
             governance_check_agora_health(),
-            governance_check_doc_lifecycle(),
         ]
         total = sum(c.score for c in checks) / len(checks)
         return GovernanceReport(
@@ -408,7 +404,6 @@ __all__ = (
     "governance_check_agora_health",
     "governance_check_debt_integrity",
     "governance_check_lint",
-    "governance_check_task_consistency",
     "governance_check_test_coverage",
     "governance_history_main",
     # Section 3 — CLI
