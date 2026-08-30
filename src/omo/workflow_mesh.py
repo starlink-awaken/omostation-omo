@@ -195,11 +195,22 @@ _AGENT_WORKFLOW_IDENTITY_FIELDS = {
     "capability_requirements_digest",
 }
 EXACT_REQUEST_DISCRIMINATOR = "agent-workflow-exact/v1"
+_EXACT_COORDINATOR_CAPABILITY = object()
 _SHA256_REF_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 class WorkflowMeshEventError(ValueError):
     """事件结构或状态转换不符合 Workflow Mesh 契约。"""
+
+
+def _exact_coordinator_capability() -> object:
+    """Return the module-private in-process exact coordinator capability."""
+    return _EXACT_COORDINATOR_CAPABILITY
+
+
+def _require_exact_coordinator_capability(capability: object, *, purpose: str) -> None:
+    if capability is not _EXACT_COORDINATOR_CAPABILITY:
+        raise WorkflowMeshEventError(f"exact {purpose} requires coordinator capability")
 
 
 def _scene_binding(payload: Mapping[str, Any]) -> dict[str, str] | None:
@@ -1191,52 +1202,83 @@ class WorkflowMeshStore:
                 raise WorkflowMeshEventError("conflicting exact worker lease renewal")
             return self._append_locked(capped)
 
-    def append_exact_worker_expiry(self, event: dict[str, Any], *, origin_proof: str) -> dict[str, Any]:
+    def append_exact_worker_expiry(
+        self,
+        event: dict[str, Any],
+        *,
+        coordinator_capability: object,
+    ) -> dict[str, Any]:
         """Atomically authenticate one exact worker lease expiry."""
         validate_workflow_event(event)
         if event["event_type"] != "WorkerLeaseExpired":
             raise WorkflowMeshEventError("exact expiry append requires WorkerLeaseExpired")
         with self._lock:
+            _require_exact_coordinator_capability(
+                coordinator_capability,
+                purpose="worker lease expiry",
+            )
             current = self._log.read_all()
             snapshot = project_workflow_run(current, event["workflow_run_id"])
             if not isinstance(snapshot.get("exact_request_identity"), Mapping):
                 raise WorkflowMeshEventError("exact worker expiry requires exact request")
-            _require_exact_worker_origin_proof(
-                snapshot,
-                event["workflow_run_id"],
-                origin_proof,
-                purpose="worker lease expiry",
-            )
+            worker = snapshot.get("worker")
+            payload = event.get("payload", {})
+            if not isinstance(worker, Mapping) or any(
+                payload.get(field) != worker.get(field)
+                for field in ("dispatch_id", "worker_id", "step_run_id", "admission_id")
+            ):
+                raise WorkflowMeshEventError("exact worker expiry context mismatch")
             for existing in current:
                 if existing.get("idempotency_key") != event["idempotency_key"]:
                     continue
                 if existing.get("event_type") == "WorkerLeaseExpired" and existing.get("payload") == event["payload"]:
                     return existing
                 raise WorkflowMeshEventError("conflicting exact worker lease expiry")
+            if worker.get("state") not in {"acknowledged", "active"}:
+                raise WorkflowMeshEventError("exact worker expiry requires live worker lease")
+            current_lease = str(worker.get("lease_expires_at") or "")
+            if payload.get("lease_expires_at") != current_lease:
+                raise WorkflowMeshEventError("exact worker expiry current lease mismatch")
+            lease_expiry = _parsed_utc_timestamp(current_lease)
+            expired_at = _parsed_utc_timestamp(payload.get("expired_at"))
+            if expired_at < lease_expiry or datetime.now(UTC) < lease_expiry:
+                raise WorkflowMeshEventError("exact worker lease has not expired")
             return self._append_locked(event)
 
-    def append_exact_worker_reclaim(self, event: dict[str, Any], *, origin_proof: str) -> dict[str, Any]:
+    def append_exact_worker_reclaim(
+        self,
+        event: dict[str, Any],
+        *,
+        coordinator_capability: object,
+    ) -> dict[str, Any]:
         """Atomically authenticate one exact coordinator reclaim."""
         validate_workflow_event(event)
         if event["event_type"] != "WorkerReclaimed":
             raise WorkflowMeshEventError("exact reclaim append requires WorkerReclaimed")
         with self._lock:
+            _require_exact_coordinator_capability(
+                coordinator_capability,
+                purpose="worker reclaim",
+            )
             current = self._log.read_all()
             snapshot = project_workflow_run(current, event["workflow_run_id"])
             if not isinstance(snapshot.get("exact_request_identity"), Mapping):
                 raise WorkflowMeshEventError("exact worker reclaim requires exact request")
-            _require_exact_worker_origin_proof(
-                snapshot,
-                event["workflow_run_id"],
-                origin_proof,
-                purpose="worker reclaim",
-            )
+            worker = snapshot.get("worker")
+            payload = event.get("payload", {})
+            if not isinstance(worker, Mapping) or any(
+                payload.get(field) != worker.get(field)
+                for field in ("dispatch_id", "worker_id", "step_run_id", "admission_id")
+            ):
+                raise WorkflowMeshEventError("exact worker reclaim context mismatch")
             for existing in current:
                 if existing.get("idempotency_key") != event["idempotency_key"]:
                     continue
                 if existing.get("event_type") == "WorkerReclaimed" and existing.get("payload") == event["payload"]:
                     return existing
                 raise WorkflowMeshEventError("conflicting exact worker reclaim")
+            if worker.get("state") != "lease_expired":
+                raise WorkflowMeshEventError("exact worker reclaim requires expired lease")
             return self._append_locked(event)
 
     def append_worker_completion(self, event: dict[str, Any], *, origin_proof: str) -> dict[str, Any]:

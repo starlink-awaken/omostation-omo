@@ -24,6 +24,7 @@ from .workflow_mesh import (
     new_workflow_event,
     worker_ack_origin_digest,
 )
+from .workflow_mesh import _exact_coordinator_capability as _mesh_exact_coordinator_capability
 
 
 class WorkerLifecycleError(ValueError):
@@ -33,6 +34,11 @@ class WorkerLifecycleError(ValueError):
 def new_worker_ack_origin_proof() -> str:
     """Return a high-entropy capability delivered only to the worker transport."""
     return secrets.token_urlsafe(32)
+
+
+def _exact_coordinator_capability() -> object:
+    """Return the module-private in-process coordinator capability."""
+    return _mesh_exact_coordinator_capability()
 
 
 def _utc(value: str | None = None) -> datetime:
@@ -598,7 +604,7 @@ def expire_worker_lease(
     admission_id: str,
     now: str | None = None,
     reason: str = "lease_expired",
-    origin_proof: str | None = None,
+    coordinator_capability: object | None = None,
 ) -> dict[str, Any]:
     """Mark an unresponsive worker unavailable only after its lease expires."""
     store = _store(omo_dir)
@@ -613,8 +619,8 @@ def expire_worker_lease(
     )
     current = snapshot.get("worker")
     exact_expiry = isinstance(snapshot.get("exact_request_identity"), Mapping)
-    if exact_expiry and not origin_proof:
-        raise WorkerLifecycleError("exact worker lease expiry requires coordinator origin proof")
+    if exact_expiry and coordinator_capability is not _exact_coordinator_capability():
+        raise WorkerLifecycleError("exact worker lease expiry requires coordinator capability")
     prior = _existing(store, event_key)
     if prior is not None:
         return prior
@@ -648,7 +654,10 @@ def expire_worker_lease(
     )
     if exact_expiry:
         try:
-            return store.append_exact_worker_expiry(event, origin_proof=origin_proof or "")
+            return store.append_exact_worker_expiry(
+                event,
+                coordinator_capability=coordinator_capability,
+            )
         except WorkflowMeshEventError as exc:
             raise WorkerLifecycleError(str(exc)) from exc
     try:
@@ -670,7 +679,7 @@ def reclaim_worker(
     successor_dispatch_id: str,
     now: str | None = None,
     reason: str = "lease_expired",
-    origin_proof: str | None = None,
+    coordinator_capability: object | None = None,
 ) -> dict[str, Any]:
     """Record coordinator reclaim and successor assignment after expiry."""
     if not successor_worker_id or not successor_dispatch_id:
@@ -687,8 +696,8 @@ def reclaim_worker(
     )
     current = snapshot.get("worker")
     exact_reclaim = isinstance(snapshot.get("exact_request_identity"), Mapping)
-    if exact_reclaim and not origin_proof:
-        raise WorkerLifecycleError("exact worker reclaim requires coordinator origin proof")
+    if exact_reclaim and coordinator_capability is not _exact_coordinator_capability():
+        raise WorkerLifecycleError("exact worker reclaim requires coordinator capability")
     prior = _existing(store, event_key)
     if prior is not None:
         return prior
@@ -714,7 +723,10 @@ def reclaim_worker(
     )
     if exact_reclaim:
         try:
-            return store.append_exact_worker_reclaim(event, origin_proof=origin_proof or "")
+            return store.append_exact_worker_reclaim(
+                event,
+                coordinator_capability=coordinator_capability,
+            )
         except WorkflowMeshEventError as exc:
             raise WorkerLifecycleError(str(exc)) from exc
     try:
@@ -819,6 +831,7 @@ def scan_worker_leases(
                 admission_id=context["admission_id"],
                 now=observed_at,
                 reason=reason,
+                coordinator_capability=_exact_coordinator_capability(),
             )
         except WorkerLifecycleError as exc:
             errors.append({"workflow_run_id": workflow_run_id, "error": str(exc)})

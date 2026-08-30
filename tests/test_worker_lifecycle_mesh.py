@@ -3,6 +3,7 @@ from __future__ import annotations
 # ruff: noqa: I001
 
 import hashlib
+import inspect
 import json
 from datetime import UTC, datetime, timedelta
 
@@ -1232,6 +1233,7 @@ def test_public_exact_lifecycle_cli_is_fail_closed_without_private_capability(tm
         tmp_path,
         run_id,
     )
+    elapsed_now = (datetime.now(UTC) - timedelta(seconds=2)).isoformat()
     acknowledge_worker(
         tmp_path,
         **context,
@@ -1241,6 +1243,7 @@ def test_public_exact_lifecycle_cli_is_fail_closed_without_private_capability(tm
         ack_decision="proceed",
         origin_proof=origin_proof,
         lease_seconds=1,
+        now=elapsed_now,
     )
     before = list(store.events())
     with pytest.raises(WorkerLifecycleError, match="origin proof"):
@@ -1258,18 +1261,19 @@ def test_public_exact_lifecycle_cli_is_fail_closed_without_private_capability(tm
     assert store.events() == before
 
     future_now = (datetime.now(UTC) + timedelta(seconds=2)).isoformat()
-    with pytest.raises(WorkerLifecycleError, match="coordinator origin proof"):
+    with pytest.raises(WorkerLifecycleError, match="coordinator capability"):
         cli_main(_mesh_cli_context("mesh-expire", context, tmp_path, "--now", future_now))
     assert store.events() == before
 
+    capability = worker_lifecycle_mod._exact_coordinator_capability()
     expire_worker_lease(
         tmp_path,
         **context,
         now=future_now,
-        origin_proof=origin_proof,
+        coordinator_capability=capability,
     )
     before_reclaim = list(store.events())
-    with pytest.raises(WorkerLifecycleError, match="coordinator origin proof"):
+    with pytest.raises(WorkerLifecycleError, match="coordinator capability"):
         cli_main(
             _mesh_cli_context(
                 "mesh-reclaim",
@@ -1290,6 +1294,58 @@ def test_trusted_exact_lifecycle_capability_allows_renew_expire_and_reclaim(tmp_
         tmp_path,
         run_id,
     )
+    elapsed_now = (datetime.now(UTC) - timedelta(seconds=2)).isoformat()
+    acknowledge_worker(
+        tmp_path,
+        **context,
+        packet_id=grant["request_identity"]["packet_id"],
+        packet_hash=grant["request_identity"]["packet_hash"],
+        instruction_binding=binding["instruction_binding"],
+        ack_decision="proceed",
+        origin_proof=origin_proof,
+        lease_seconds=1,
+        now=elapsed_now,
+    )
+    renewed = renew_worker_lease(
+        tmp_path,
+        **context,
+        lease_seconds=1,
+        heartbeat_id="trusted-heartbeat",
+        origin_proof=origin_proof,
+        now=elapsed_now,
+    )
+    expiry_time = (
+        datetime.fromisoformat(renewed["payload"]["lease_expires_at"].replace("Z", "+00:00"))
+        + timedelta(seconds=1)
+    ).isoformat()
+    capability = worker_lifecycle_mod._exact_coordinator_capability()
+    expired = expire_worker_lease(
+        tmp_path,
+        **context,
+        now=expiry_time,
+        coordinator_capability=capability,
+    )
+    reclaimed = reclaim_worker(
+        tmp_path,
+        **context,
+        successor_worker_id="worker-b",
+        successor_dispatch_id="dispatch-successor",
+        coordinator_capability=capability,
+    )
+    assert renewed["event_type"] == "WorkerLeaseRenewed"
+    assert expired["event_type"] == "WorkerLeaseExpired"
+    assert reclaimed["event_type"] == "WorkerReclaimed"
+    assert store.snapshot(run_id)["worker"]["state"] == "reclaimed"
+    assert origin_proof not in json.dumps(store.events())
+
+
+def test_worker_origin_proof_cannot_authorize_exact_expiry_or_reclaim(tmp_path):
+    assert "coordinator_capability" in inspect.signature(expire_worker_lease).parameters
+    run_id = "run-worker-proof-not-coordinator"
+    store, grant, binding, context, origin_proof, _issued_at, _expires_at = _live_exact_worker_for_ttl_boundary(
+        tmp_path,
+        run_id,
+    )
     acknowledge_worker(
         tmp_path,
         **context,
@@ -1300,32 +1356,145 @@ def test_trusted_exact_lifecycle_capability_allows_renew_expire_and_reclaim(tmp_
         origin_proof=origin_proof,
         lease_seconds=1,
     )
+    future_now = (datetime.now(UTC) + timedelta(seconds=2)).isoformat()
+    before = list(store.events())
+    with pytest.raises(WorkerLifecycleError, match="coordinator capability"):
+        expire_worker_lease(
+            tmp_path,
+            **context,
+            now=future_now,
+            coordinator_capability=origin_proof,
+        )
+    assert store.events() == before
+
+
+def test_exact_watchdog_uses_private_coordinator_capability(tmp_path):
+    run_id = "run-exact-watchdog-private-capability"
+    store, grant, binding, context, origin_proof, _issued_at, _expires_at = _live_exact_worker_for_ttl_boundary(
+        tmp_path,
+        run_id,
+    )
+    acknowledge_worker(
+        tmp_path,
+        **context,
+        packet_id=grant["request_identity"]["packet_id"],
+        packet_hash=grant["request_identity"]["packet_hash"],
+        instruction_binding=binding["instruction_binding"],
+        ack_decision="proceed",
+        origin_proof=origin_proof,
+        lease_seconds=1,
+        now=(datetime.now(UTC) - timedelta(seconds=2)).isoformat(),
+    )
+    result = scan_worker_leases(
+        tmp_path,
+        now=(datetime.now(UTC) + timedelta(seconds=2)).isoformat(),
+        apply=True,
+        reason="exact_watchdog_timeout",
+    )
+    assert result["expired_count"] == 1
+    assert result["errors"] == []
+    assert store.snapshot(run_id)["worker"]["state"] == "lease_expired"
+
+
+def test_exact_expiry_rejects_stale_lease_after_concurrent_renewal(tmp_path):
+    assert hasattr(worker_lifecycle_mod, "_exact_coordinator_capability")
+    run_id = "run-exact-stale-expiry-race"
+    store, grant, binding, context, origin_proof, _issued_at, _expires_at = _live_exact_worker_for_ttl_boundary(
+        tmp_path,
+        run_id,
+    )
+    acknowledge_worker(
+        tmp_path,
+        **context,
+        packet_id=grant["request_identity"]["packet_id"],
+        packet_hash=grant["request_identity"]["packet_hash"],
+        instruction_binding=binding["instruction_binding"],
+        ack_decision="proceed",
+        origin_proof=origin_proof,
+        lease_seconds=30,
+    )
+    stale_lease = store.snapshot(run_id)["worker"]["lease_expires_at"]
     renewed = renew_worker_lease(
         tmp_path,
         **context,
-        lease_seconds=1,
-        heartbeat_id="trusted-heartbeat",
+        lease_seconds=120,
+        heartbeat_id="concurrent-renewal",
         origin_proof=origin_proof,
     )
-    expiry_time = (
-        datetime.fromisoformat(renewed["payload"]["lease_expires_at"].replace("Z", "+00:00"))
-        + timedelta(seconds=1)
-    ).isoformat()
+    assert renewed["payload"]["lease_expires_at"] != stale_lease
+    stale_event = new_workflow_event(
+        "WorkerLeaseExpired",
+        run_id,
+        trace_id=run_id,
+        producer="omo.worker_lifecycle",
+        idempotency_key=f"{run_id}:worker-expired:{context['dispatch_id']}",
+        payload={
+            "dispatch_id": context["dispatch_id"],
+            "worker_id": context["worker_id"],
+            "step_run_id": context["step_run_id"],
+            "admission_id": context["admission_id"],
+            "lease_expires_at": stale_lease,
+            "expired_at": (datetime.now(UTC) + timedelta(seconds=60)).isoformat(),
+            "reason": "stale_race",
+        },
+    )
+    before = list(store.events())
+    with pytest.raises(WorkflowMeshEventError, match="current lease"):
+        store.append_exact_worker_expiry(
+            stale_event,
+            coordinator_capability=worker_lifecycle_mod._exact_coordinator_capability(),
+        )
+    assert store.events() == before
+
+
+def test_exact_expiry_and_reclaim_idempotent_retry_validate_coordinator_capability(tmp_path):
+    assert hasattr(worker_lifecycle_mod, "_exact_coordinator_capability")
+    run_id = "run-exact-capability-retry"
+    store, grant, binding, context, origin_proof, _issued_at, _expires_at = _live_exact_worker_for_ttl_boundary(
+        tmp_path,
+        run_id,
+    )
+    acknowledge_worker(
+        tmp_path,
+        **context,
+        packet_id=grant["request_identity"]["packet_id"],
+        packet_hash=grant["request_identity"]["packet_hash"],
+        instruction_binding=binding["instruction_binding"],
+        ack_decision="proceed",
+        origin_proof=origin_proof,
+        lease_seconds=1,
+        now=(datetime.now(UTC) - timedelta(seconds=2)).isoformat(),
+    )
+    capability = worker_lifecycle_mod._exact_coordinator_capability()
+    future_now = (datetime.now(UTC) + timedelta(seconds=2)).isoformat()
     expired = expire_worker_lease(
         tmp_path,
         **context,
-        now=expiry_time,
-        origin_proof=origin_proof,
+        now=future_now,
+        coordinator_capability=capability,
     )
+    with pytest.raises(WorkerLifecycleError, match="coordinator capability"):
+        expire_worker_lease(
+            tmp_path,
+            **context,
+            now=future_now,
+            coordinator_capability=object(),
+        )
     reclaimed = reclaim_worker(
         tmp_path,
         **context,
         successor_worker_id="worker-b",
         successor_dispatch_id="dispatch-successor",
-        origin_proof=origin_proof,
+        coordinator_capability=capability,
     )
-    assert renewed["event_type"] == "WorkerLeaseRenewed"
+    with pytest.raises(WorkerLifecycleError, match="coordinator capability"):
+        reclaim_worker(
+            tmp_path,
+            **context,
+            successor_worker_id="worker-b",
+            successor_dispatch_id="dispatch-successor",
+            coordinator_capability=object(),
+        )
     assert expired["event_type"] == "WorkerLeaseExpired"
     assert reclaimed["event_type"] == "WorkerReclaimed"
     assert store.snapshot(run_id)["worker"]["state"] == "reclaimed"
-    assert origin_proof not in json.dumps(store.events())
