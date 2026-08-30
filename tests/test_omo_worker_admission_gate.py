@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import shlex
+import signal
 import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -737,8 +742,9 @@ def test_exact_production_success_records_authenticated_completion_and_redacts_p
     chronology: list[str] = []
 
     class CompletedWorker:
-        def __init__(self, argv, *, cwd, stdout, stderr, text, env):
+        def __init__(self, argv, *, cwd, stdout, stderr, text, env, start_new_session):
             del stdout, stderr, text
+            assert start_new_session is True
             chronology.append("spawn")
             self.args = argv
             self.cwd = Path(cwd)
@@ -840,15 +846,20 @@ def test_exact_production_failure_or_missing_ack_never_completes(
     origin_proof = new_worker_ack_origin_proof()
 
     class WorkerResult:
-        def __init__(self, argv, *, cwd, stdout, stderr, text, env):
+        def __init__(self, argv, *, cwd, stdout, stderr, text, env, start_new_session):
             del stdout, stderr, text
+            assert start_new_session is True
             self.args = argv
             self.cwd = Path(cwd)
             self.env = env
             self.returncode = None
+            self.communications = 0
 
         def communicate(self, timeout=None):
             del timeout
+            self.communications += 1
+            if self.communications > 1:
+                return "worker-result", ""
             assert WorkflowMeshStore(tmp_path / ".omo").events()[-1]["event_type"] == "StepStarted"
             if durable_ack:
                 context = json.loads(self.env["OMO_WORKER_ACK_CONTEXT_JSON"])
@@ -862,8 +873,11 @@ def test_exact_production_failure_or_missing_ack_never_completes(
             self.returncode = returncode
             return "worker-result", ""
 
-        def kill(self):  # pragma: no cover - timeout has a separate test.
-            raise AssertionError("non-timeout worker must not be killed")
+        def terminate(self):
+            return None
+
+        def kill(self):  # pragma: no cover - graceful cleanup succeeds.
+            raise AssertionError("non-timeout worker should terminate gracefully")
 
     monkeypatch.setattr("omo.omo_worker_dispatch.subprocess.Popen", WorkerResult)
     monkeypatch.setattr(
@@ -929,8 +943,9 @@ def test_exact_production_timeout_records_honest_failure(
     packet, _exact_identity = _seed_exact_workflow_packet(tmp_path)
 
     class TimedOutWorker:
-        def __init__(self, argv, *, cwd, stdout, stderr, text, env):
+        def __init__(self, argv, *, cwd, stdout, stderr, text, env, start_new_session):
             del cwd, stdout, stderr, text, env
+            assert start_new_session is True
             self.args = argv
             self.returncode = None
             self.communications = 0
@@ -942,6 +957,9 @@ def test_exact_production_timeout_records_honest_failure(
                 raise subprocess.TimeoutExpired(self.args, timeout)
             self.returncode = -9
             return "partial", "timeout"
+
+        def terminate(self):
+            return None
 
         def kill(self):
             self.killed = True
@@ -982,8 +1000,9 @@ def test_exact_production_step_started_append_failure_reaps_spawned_child(
     lifecycle = {"terminated": False, "killed": False, "drained": False, "communicate_calls": 0}
 
     class SpawnedWorker:
-        def __init__(self, argv, *, cwd, stdout, stderr, text, env):
+        def __init__(self, argv, *, cwd, stdout, stderr, text, env, start_new_session):
             del cwd, stdout, stderr, text
+            assert start_new_session is True
             self.args = argv
             self.env = env
             self.returncode = None
@@ -1043,6 +1062,94 @@ def test_exact_production_step_started_append_failure_reaps_spawned_child(
     assert not any(event["event_type"] == "WorkflowSucceeded" for event in events)
     assert origin_proof not in json.dumps(events)
     assert origin_proof not in persisted_text
+
+
+def test_exact_production_step_started_failure_reaps_real_descendant_group(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _task_path, _pi = _exact_worker_fixture(tmp_path)
+    packet, _exact_identity = _seed_exact_workflow_packet(tmp_path)
+    origin_proof = new_worker_ack_origin_proof()
+    pid_path = tmp_path / "spawned-pids.txt"
+    script_path = tmp_path / "spawn-descendant.py"
+    script_path.write_text(
+        "\n".join(
+            [
+                "import os",
+                "from pathlib import Path",
+                "import subprocess",
+                "import sys",
+                "import time",
+                "child = subprocess.Popen(",
+                "    [sys.executable, '-c', 'import time; time.sleep(60)'],",
+                "    stdin=subprocess.DEVNULL,",
+                "    stdout=subprocess.DEVNULL,",
+                "    stderr=subprocess.DEVNULL,",
+                ")",
+                "Path(sys.argv[1]).write_text(f'{os.getpid()} {child.pid}', encoding='utf-8')",
+                "time.sleep(60)",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    registry_path = tmp_path / ".omo" / "_truth" / "registry" / "workers.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    registry["workers"][0]["transports"]["acp_stdio"]["command"] = " ".join(
+        [shlex.quote(sys.executable), shlex.quote(str(script_path)), shlex.quote(str(pid_path))]
+    )
+    registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
+    spawned_pids: list[int] = []
+    original_append = WorkflowMeshStore.append
+
+    def reject_after_descendant_exists(store, event):
+        if event["event_type"] != "StepStarted":
+            return original_append(store, event)
+        deadline = time.monotonic() + 5
+        while not pid_path.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert pid_path.exists(), "spawned parent never published descendant PID"
+        spawned_pids.extend(int(item) for item in pid_path.read_text(encoding="utf-8").split())
+        raise WorkflowMeshEventError("stable-real-step-start-failure")
+
+    def pid_alive(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    monkeypatch.setattr(WorkflowMeshStore, "append", reject_after_descendant_exists)
+    try:
+        with pytest.raises(WorkflowMeshEventError, match="stable-real-step-start-failure"):
+            dispatch_task(
+                tmp_path,
+                task_id="TASK-ADMISSION-GATE",
+                worker_id="pi",
+                allowed_write_paths=[],
+                workflow_packet=packet,
+                worker_ack_origin_proof=origin_proof,
+                launch=True,
+                now="2026-08-30T01:02:03+00:00",
+            )
+        deadline = time.monotonic() + 5
+        while any(pid_alive(pid) for pid in spawned_pids) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert len(spawned_pids) == 2
+        assert not any(pid_alive(pid) for pid in spawned_pids)
+        events = WorkflowMeshStore(tmp_path / ".omo").events()
+        assert not any(event["event_type"] == "WorkflowSucceeded" for event in events)
+        assert origin_proof not in json.dumps(events)
+    finally:
+        for pid in spawned_pids:
+            if pid_alive(pid):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
 
 
 def test_step_dispatch_rejects_forged_admission_without_writing(tmp_path: Path) -> None:

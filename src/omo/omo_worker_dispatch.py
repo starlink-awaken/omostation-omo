@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import shlex
+import signal
 import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -520,26 +521,50 @@ def dispatch_task(
                 )
             )
 
-        def reap_spawned_child(process: Any) -> None:
-            def kill_and_drain() -> None:
-                try:
-                    process.kill()
-                except (OSError, subprocess.SubprocessError):
-                    pass
-                try:
-                    process.communicate()
-                except (OSError, subprocess.SubprocessError):
-                    pass
+        def validated_process_group(process: Any) -> int | None:
+            pid = getattr(process, "pid", None)
+            if not isinstance(pid, int) or pid <= 1:
+                return None
+            try:
+                process_group_id = os.getpgid(pid)
+            except OSError:
+                return None
+            return process_group_id if process_group_id == pid else None
 
+        def reap_spawned_child(process: Any, process_group_id: int | None) -> tuple[str, str]:
+            def signal_validated_group(sig: signal.Signals) -> bool:
+                if process_group_id is None:
+                    return False
+                try:
+                    os.killpg(process_group_id, sig)
+                except ProcessLookupError:
+                    return True
+                except OSError:
+                    return False
+                return True
+
+            def kill_and_drain() -> tuple[str, str]:
+                if not signal_validated_group(signal.SIGKILL):
+                    try:
+                        kill = getattr(process, "kill")
+                        kill()
+                    except Exception:
+                        pass
+                try:
+                    return process.communicate()
+                except Exception:
+                    return "", ""
+
+            if not signal_validated_group(signal.SIGTERM):
+                try:
+                    terminate = getattr(process, "terminate")
+                    terminate()
+                except Exception:
+                    return kill_and_drain()
             try:
-                process.terminate()
-            except (OSError, subprocess.SubprocessError):
-                kill_and_drain()
-                return
-            try:
-                process.communicate(timeout=5)
-            except (OSError, subprocess.SubprocessError):
-                kill_and_drain()
+                return process.communicate(timeout=5)
+            except Exception:
+                return kill_and_drain()
 
         if exact_request_identity is not None:
             process = subprocess.Popen(
@@ -549,7 +574,9 @@ def dispatch_task(
                 stderr=subprocess.PIPE,
                 text=True,
                 env=worker_env,
+                start_new_session=True,
             )
+            process_group_id = validated_process_group(process)
             try:
                 store.append(
                     new_workflow_event(
@@ -566,7 +593,7 @@ def dispatch_task(
                     )
                 )
             except Exception:
-                reap_spawned_child(process)
+                reap_spawned_child(process, process_group_id)
                 try:
                     record_exact_failure("step_started_persist_failed")
                 except Exception:
@@ -575,8 +602,7 @@ def dispatch_task(
             try:
                 stdout, stderr = process.communicate(timeout=ack_context["lease_seconds"])
             except subprocess.TimeoutExpired as exc:
-                process.kill()
-                stdout, stderr = process.communicate()
+                stdout, stderr = reap_spawned_child(process, process_group_id)
                 log_content = redact_sensitive_text((stdout or "") + (stderr or "")).replace(
                     ack_origin_proof, "[REDACTED]"
                 )
@@ -596,6 +622,8 @@ def dispatch_task(
         )
         write_text_atomic(root / stdout_path, log_content)
         if returncode != 0:
+            if exact_request_identity is not None:
+                reap_spawned_child(process, process_group_id)
             record_exact_failure(f"worker_returncode_{returncode}")
             raise RuntimeError(
                 f"worker launch failed: worker_id={worker_id} returncode={returncode} log={stdout_path}"
@@ -610,23 +638,33 @@ def dispatch_task(
             or ack_worker.get("step_run_id") != ack_context["step_run_id"]
             or ack_worker.get("admission_id") != ack_context["admission_id"]
         ):
+            if exact_request_identity is not None:
+                reap_spawned_child(process, process_group_id)
             record_exact_failure("worker_ack_missing_or_mismatched")
             raise RuntimeError("worker transport returned without a durable proceed ACK")
         if exact_request_identity is not None:
             from .worker_lifecycle import record_worker_completion
 
             result_digest = "sha256:" + hashlib.sha256(log_content.encode("utf-8")).hexdigest()
-            record_worker_completion(
-                omo,
-                workflow_run_id=workflow_run_id,
-                trace_id=ack_context["trace_id"],
-                dispatch_id=dispatch_id,
-                worker_id=worker_id,
-                step_run_id=ack_context["step_run_id"],
-                admission_id=ack_context["admission_id"],
-                origin_proof=ack_origin_proof,
-                result_digest=result_digest,
-            )
+            try:
+                record_worker_completion(
+                    omo,
+                    workflow_run_id=workflow_run_id,
+                    trace_id=ack_context["trace_id"],
+                    dispatch_id=dispatch_id,
+                    worker_id=worker_id,
+                    step_run_id=ack_context["step_run_id"],
+                    admission_id=ack_context["admission_id"],
+                    origin_proof=ack_origin_proof,
+                    result_digest=result_digest,
+                )
+            except Exception:
+                reap_spawned_child(process, process_group_id)
+                try:
+                    record_exact_failure("worker_completion_persist_failed")
+                except Exception:
+                    pass
+                raise
 
         # Phase 28 Step 3: Tri-Plane Bus - Broadcast event to Agora EventBus
         def push_log_to_agora(dispatch_id: str, content: str):
