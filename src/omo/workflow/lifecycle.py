@@ -93,6 +93,13 @@ _PREFLIGHT_BINDING_KEYS = (
 )
 
 
+def admit_agent_workflow_start(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    """Load the exact admission bridge only for a qualifying root start."""
+    from ..workflow_dispatch import admit_agent_workflow_start as _admit
+
+    return _admit(*args, **kwargs)
+
+
 def _load_spec_binding_contract() -> ModuleType:
     """Load the Workspace-owned BET/WorkPacket boundary or fail closed."""
     global _SPEC_BINDING_CONTRACT
@@ -411,22 +418,43 @@ def start_run(
     if bet_id and isinstance(record.get("work_packet"), dict):
         # Canonical WorkPacket identity bridges into the Mesh so native-execution
         # verification can reconcile the binding against the persisted admission.
-        mesh_payload["request_identity"] = {
+        work_packet = record["work_packet"]
+        request_identity: dict[str, Any] = {
             "bet_id": bet_id,
-            "packet_id": str(record["work_packet"].get("packet_id") or ""),
+            "packet_id": str(work_packet.get("packet_id") or ""),
             "packet_hash": str(record.get("work_packet_hash") or ""),
         }
-        _requirements = record.get("capability_requirements")
-        if isinstance(_requirements, list):
+        requirements = work_packet.get("capability_requirements") if isinstance(work_packet, Mapping) else None
+        preflight = record.get("capability_preflight")
+        binding = preflight.get("binding") if isinstance(preflight, Mapping) else None
+        if isinstance(requirements, list):
             mesh_payload["capabilities"] = [
-                str(r.get("capability_id")) for r in _requirements if isinstance(r, dict) and r.get("capability_id")
+                str(requirement.get("capability_id"))
+                for requirement in requirements
+                if isinstance(requirement, Mapping) and requirement.get("capability_id")
             ]
-    emit_workflow_mesh_event(
+        if isinstance(binding, Mapping):
+            request_identity = {
+                **{key: binding.get(key) for key in _PREFLIGHT_BINDING_KEYS},
+                "capability_requirements": requirements,
+                "capability_requirements_digest": record.get("capability_requirements_digest"),
+            }
+        mesh_payload["request_identity"] = request_identity
+    request_persisted = emit_workflow_mesh_event(
         "AgentWorkflowStarted",
         run_id,
         mesh_payload,
         workspace=registry_workspace_root(registry),
     )
+    if not parent_run_id and ("capability_preflight" in record or "capability_requirements_digest" in record):
+        if not request_persisted:
+            raise WorkflowError("WORKFLOW_MESH_REQUEST_FAILED: exact Agent Workflow request was not persisted")
+        admission = admit_agent_workflow_start(
+            registry_workspace_root(registry),
+            record=record,
+        )
+        if admission.get("worker_launch") is not False or admission.get("external_side_effects") != "disabled":
+            raise WorkflowError("WORKFLOW_MESH_ADMISSION_UNSAFE: exact admission enabled execution")
     return record
 
 

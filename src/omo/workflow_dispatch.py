@@ -35,6 +35,18 @@ from .workflow_dispatch_helpers import (
 )
 from .workflow_mesh import WorkflowMeshStore, new_workflow_event
 
+_AGENT_WORKFLOW_BINDING_FIELDS = (
+    "correlation_id",
+    "workflow_run_id",
+    "packet_id",
+    "packet_hash",
+    "assignment_id",
+    "dispatch_id",
+    "actor_id",
+    "delivery_attempt_id",
+)
+_SHA256_REF_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+
 
 def _parse_health(health: dict[str, Any], required: list[str]) -> dict[str, Any]:
     if not isinstance(health, dict):
@@ -121,6 +133,167 @@ def _validate_admission_inputs(
     if remaining_budget is not None and requested_budget > remaining_budget:
         raise WorkflowDispatchError("insufficient execution budget")
     return required
+
+
+def admit_agent_workflow_start(
+    root: Path,
+    *,
+    record: Mapping[str, Any],
+    omo_dir: str | Path = ".omo",
+) -> dict[str, Any]:
+    """Persist one exact, non-executing admission for an Agent Workflow start."""
+    run_id = str(record.get("run_id") or "")
+    store = WorkflowMeshStore(root / Path(omo_dir))
+    snapshot = store.snapshot(run_id)
+    if snapshot.get("state") != "planned":
+        raise WorkflowDispatchError(f"agent workflow admission requires planned state: {snapshot.get('state')}")
+
+    work_packet = record.get("work_packet")
+    if not isinstance(work_packet, Mapping):
+        raise WorkflowDispatchError("agent workflow admission requires a WorkPacket")
+    try:
+        requirements = validate_capability_requirements(work_packet.get("capability_requirements"))
+    except OrchestrationContractError as exc:
+        raise WorkflowDispatchError("agent workflow capability requirements are invalid") from exc
+    if requirements != work_packet.get("capability_requirements"):
+        raise WorkflowDispatchError("agent workflow capability requirements are not canonical")
+
+    requirements_digest = record.get("capability_requirements_digest")
+    expected_requirements_digest = "sha256:" + hashlib.sha256(_canonical(requirements)).hexdigest()  # type: ignore[arg-type]
+    if requirements_digest != expected_requirements_digest:
+        raise WorkflowDispatchError("agent workflow capability requirements digest mismatch")
+
+    preflight = record.get("capability_preflight")
+    if not isinstance(preflight, Mapping) or set(preflight) != {
+        "requirements_digest",
+        "binding",
+        "receipts",
+        "invoked",
+        "value_indicator_policy",
+    }:
+        raise WorkflowDispatchError("agent workflow capability preflight is invalid")
+    if preflight.get("requirements_digest") != requirements_digest:
+        raise WorkflowDispatchError("agent workflow preflight requirements digest mismatch")
+
+    receipts = preflight.get("receipts")
+    if not isinstance(receipts, list) or len(receipts) != len(requirements):
+        raise WorkflowDispatchError("agent workflow preflight receipts are invalid")
+    source_receipt_digests: list[str] = []
+    for requirement, receipt in zip(requirements, receipts):
+        if (
+            not isinstance(receipt, Mapping)
+            or set(receipt) != {"capability_id", "source_digest", "receipt_digest"}
+            or receipt.get("capability_id") != requirement["capability_id"]
+            or not isinstance(receipt.get("source_digest"), str)
+            or _SHA256_REF_RE.fullmatch(receipt["source_digest"]) is None
+            or not isinstance(receipt.get("receipt_digest"), str)
+            or _SHA256_REF_RE.fullmatch(receipt["receipt_digest"]) is None
+        ):
+            raise WorkflowDispatchError("agent workflow preflight receipt order or digest is invalid")
+        source_receipt_digests.append(receipt["source_digest"])
+
+    binding = preflight.get("binding")
+    if not isinstance(binding, Mapping) or set(binding) != set(_AGENT_WORKFLOW_BINDING_FIELDS):
+        raise WorkflowDispatchError("agent workflow preflight binding is invalid")
+    if any(not isinstance(binding.get(field), str) or not binding[field] for field in _AGENT_WORKFLOW_BINDING_FIELDS):
+        raise WorkflowDispatchError("agent workflow preflight binding fields must be non-empty")
+    packet_id = work_packet.get("packet_id")
+    packet_hash = record.get("work_packet_hash")
+    if (
+        binding["correlation_id"] != run_id
+        or binding["workflow_run_id"] != run_id
+        or binding["packet_id"] != packet_id
+        or binding["packet_hash"] != packet_hash
+        or not isinstance(packet_id, str)
+        or not packet_id
+        or not isinstance(packet_hash, str)
+        or _SHA256_REF_RE.fullmatch(packet_hash) is None
+    ):
+        raise WorkflowDispatchError("agent workflow preflight binding mismatch")
+    if preflight.get("invoked") is not False or preflight.get("value_indicator_policy") is not False:
+        raise WorkflowDispatchError("agent workflow preflight must be non-executing and non-valuing")
+
+    request_identity = {
+        field: binding[field]
+        for field in _AGENT_WORKFLOW_BINDING_FIELDS
+    }
+    request_identity.update(
+        {
+            "capability_requirements": requirements,
+            "capability_requirements_digest": requirements_digest,
+        }
+    )
+    requested = _requested_event(store, run_id)
+    requested_payload = requested.get("payload")
+    if not isinstance(requested_payload, Mapping) or requested_payload.get("request_identity") != request_identity:
+        raise WorkflowDispatchError("persisted agent workflow request identity mismatch")
+    if requested_payload.get("workflow_id") != record.get("workflow_id"):
+        raise WorkflowDispatchError("persisted agent workflow request workflow mismatch")
+
+    policy = {
+        "workflow_id": record.get("workflow_id"),
+        "workflow_run_id": run_id,
+        "packet_id": packet_id,
+        "packet_hash": packet_hash,
+        "capability_requirements": requirements,
+        "capability_requirements_digest": requirements_digest,
+        "actor_id": binding["actor_id"],
+        "delivery_attempt_id": binding["delivery_attempt_id"],
+        "source_receipt_digests": source_receipt_digests,
+        "requested_budget": 0.0,
+    }
+    issued_at = datetime.now(UTC).replace(microsecond=0).isoformat()
+    grant = {
+        "admission_id": f"admit-{uuid4().hex}",
+        "status": "admitted",
+        "workflow_run_id": run_id,
+        "trace_id": run_id,
+        "backend": "agent-workflow",
+        "step_run_ids": [f"{run_id}:execute"],
+        "capabilities": [requirement["capability_id"] for requirement in requirements],
+        "policy_digest": hashlib.sha256(_canonical(policy)).hexdigest(),
+        "issued_at": issued_at,
+        "expires_at": (datetime.fromisoformat(issued_at) + timedelta(hours=1)).isoformat(),
+        "request_identity": request_identity,
+    }
+    grant["proof"] = _proof(grant)
+    admitted = store.append(
+        new_workflow_event(
+            "WorkflowAdmitted",
+            run_id,
+            trace_id=run_id,
+            producer="omo.workflow_dispatch",
+            idempotency_key=f"{run_id}:admitted",
+            payload={
+                "admission": grant,
+                "policy": policy,
+                "policy_digest": grant["policy_digest"],
+                "proof": grant["proof"],
+                "request_identity": request_identity,
+                "external_side_effects": "disabled",
+            },
+        )
+    )
+    persisted = store.snapshot(run_id)
+    persisted_grant = persisted.get("admission")
+    if (
+        persisted.get("state") != "admitted"
+        or not isinstance(persisted_grant, Mapping)
+        or any(
+            persisted_grant.get(field) != grant[field]
+            for field in ("admission_id", "policy_digest", "proof", "request_identity")
+        )
+    ):
+        raise WorkflowDispatchError("persisted agent workflow admission re-read mismatch")
+    return {
+        "status": "admitted",
+        "dispatch_state": "admitted",
+        "workflow_run_id": run_id,
+        "admission": dict(persisted_grant),
+        "event": admitted,
+        "external_side_effects": "disabled",
+        "worker_launch": False,
+    }
 
 
 def _check_scene_binding(event: dict[str, Any], scene_binding: Mapping[str, Any] | None) -> None:

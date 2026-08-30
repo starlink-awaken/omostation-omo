@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+import omo.worker_lifecycle as worker_lifecycle_mod
 from omo.worker_lifecycle import (
     WorkerLifecycleError,
     acknowledge_worker,
@@ -25,30 +26,16 @@ _ORIGIN_PROOFS: dict[str, str] = {}
 
 
 def _grant(run_id: str, step_run_id: str) -> dict:
-    grant = {
-        "admission_id": f"adm-{run_id}",
-        "status": "admitted",
-        "workflow_run_id": run_id,
-        "trace_id": run_id,
-        "backend": "test",
-        "step_run_ids": [step_run_id],
-        "capabilities": ["execute"],
-        "policy_digest": "policy-test",
-        "request_identity": {
-            "packet_id": "WP-BP-0123456789abcdef",
-            "packet_hash": "sha256:" + "a" * 64,
-            "instruction_binding": {
-                "instruction_ref": "repo://docs/operations/blueprint-agent-instruction-pack-v1.md",
-                "instruction_version": "blueprint-agent-instruction-pack/v1",
-                "content_digest": "sha256:" + "b" * 64,
-                "instruction_profile": "executor",
-            },
-        },
-        "issued_at": datetime.now(UTC).isoformat(),
-        "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
-    }
+    grant, _policy = _exact_grant(run_id, step_run_id)
+    grant["backend"] = "test"
+    grant["policy_digest"] = "policy-test"
     grant["proof"] = hashlib.sha256(
-        json.dumps(grant, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        json.dumps(
+            {key: value for key, value in grant.items() if key != "proof"},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
     ).hexdigest()
     return grant
 
@@ -56,6 +43,82 @@ def _grant(run_id: str, step_run_id: str) -> dict:
 def _admit(store: WorkflowMeshStore, run_id: str, grant: dict) -> None:
     store.append(new_workflow_event("WorkflowRequested", run_id))
     store.append(new_workflow_event("WorkflowAdmitted", run_id, payload={"admission": grant, **grant}))
+
+
+def _exact_grant(run_id: str, step_run_id: str) -> tuple[dict, dict]:
+    requirements = [
+        {"capability_id": "skill:git-discipline", "operation": "load", "effect": "read_only"},
+        {"capability_id": "workflow:bet-execution", "operation": "load", "effect": "read_only"},
+    ]
+    requirements_digest = "sha256:" + hashlib.sha256(
+        json.dumps(requirements, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    request_identity = {
+        "correlation_id": run_id,
+        "workflow_run_id": run_id,
+        "packet_id": "WP-BP-0123456789abcdef",
+        "packet_hash": "sha256:" + "a" * 64,
+        "assignment_id": f"preflight:{run_id}:assignment",
+        "dispatch_id": f"preflight:{run_id}:dispatch",
+        "actor_id": "actor:test",
+        "delivery_attempt_id": "attempt:test",
+        "capability_requirements": requirements,
+        "capability_requirements_digest": requirements_digest,
+    }
+    policy = {
+        "workflow_id": "test-workflow",
+        "workflow_run_id": run_id,
+        "packet_id": request_identity["packet_id"],
+        "packet_hash": request_identity["packet_hash"],
+        "capability_requirements": requirements,
+        "capability_requirements_digest": requirements_digest,
+        "actor_id": request_identity["actor_id"],
+        "delivery_attempt_id": request_identity["delivery_attempt_id"],
+        "source_receipt_digests": ["sha256:" + "3" * 64, "sha256:" + "4" * 64],
+        "requested_budget": 0.0,
+    }
+    grant = {
+        "admission_id": f"adm-{run_id}",
+        "status": "admitted",
+        "workflow_run_id": run_id,
+        "trace_id": run_id,
+        "backend": "agent-workflow",
+        "step_run_ids": [step_run_id],
+        "capabilities": [requirement["capability_id"] for requirement in requirements],
+        "policy_digest": hashlib.sha256(
+            json.dumps(policy, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+        "request_identity": request_identity,
+        "issued_at": datetime.now(UTC).isoformat(),
+        "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+    }
+    grant["proof"] = hashlib.sha256(
+        json.dumps(grant, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return grant, policy
+
+
+def _admit_exact(store: WorkflowMeshStore, run_id: str, grant: dict, policy: dict) -> None:
+    store.append(
+        new_workflow_event(
+            "WorkflowRequested",
+            run_id,
+            payload={"workflow_id": "test-workflow", "request_identity": grant["request_identity"]},
+        )
+    )
+    store.append(
+        new_workflow_event(
+            "WorkflowAdmitted",
+            run_id,
+            payload={
+                "admission": grant,
+                "policy": policy,
+                "policy_digest": grant["policy_digest"],
+                "proof": grant["proof"],
+                "request_identity": grant["request_identity"],
+            },
+        )
+    )
 
 
 def _context(tmp_path, run_id: str = "run-worker") -> dict[str, str]:
@@ -389,3 +452,95 @@ def test_bound_stop_and_raw_mesh_append_cannot_bypass_origin_proof(tmp_path):
         WorkflowMeshStore(tmp_path).append(forged)
 
     assert WorkflowMeshStore(tmp_path).events() == events_before
+
+
+def _forge_exact_admission(admission: dict, mutation: str) -> None:
+    identity = admission["request_identity"]
+    if mutation == "admission_id":
+        admission["admission_id"] = "adm-forged"
+    elif mutation == "policy_digest":
+        admission["policy_digest"] = "f" * 64
+    elif mutation == "proof":
+        admission["proof"] = "forged-proof"
+        return
+    elif mutation == "packet_id":
+        identity["packet_id"] = "WP-FORGED"
+    elif mutation == "packet_hash":
+        identity["packet_hash"] = "sha256:" + "f" * 64
+    elif mutation == "workflow_run_id":
+        identity["workflow_run_id"] = "cross-run"
+    elif mutation == "actor_id":
+        identity["actor_id"] = ""
+    elif mutation == "delivery_attempt_id":
+        identity["delivery_attempt_id"] = ""
+    elif mutation == "ordered_requirements":
+        identity["capability_requirements"] = list(reversed(identity["capability_requirements"]))
+    elif mutation == "requirements_digest":
+        identity["capability_requirements_digest"] = "sha256:" + "e" * 64
+    elif mutation == "admitted_step_id":
+        admission["step_run_ids"] = ["run-other:execute"]
+    else:  # pragma: no cover - the parameter list is the authority.
+        raise AssertionError(mutation)
+    admission["proof"] = hashlib.sha256(
+        json.dumps(
+            {key: value for key, value in admission.items() if key != "proof"},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "admission_id",
+        "policy_digest",
+        "proof",
+        "packet_id",
+        "packet_hash",
+        "workflow_run_id",
+        "actor_id",
+        "delivery_attempt_id",
+        "ordered_requirements",
+        "requirements_digest",
+        "admitted_step_id",
+    ],
+)
+def test_step_dispatch_rejects_forged_exact_admission_identity(tmp_path, monkeypatch, mutation):
+    run_id = "run-exact-dispatch"
+    step_run_id = f"{run_id}:execute"
+    grant, policy = _exact_grant(run_id, step_run_id)
+    store = WorkflowMeshStore(tmp_path)
+    _admit_exact(store, run_id, grant, policy)
+    forged_snapshot = store.snapshot(run_id)
+    _forge_exact_admission(forged_snapshot["admission"], mutation)
+
+    class ForgedSnapshotStore:
+        def snapshot(self, workflow_run_id):
+            assert workflow_run_id == run_id
+            return forged_snapshot
+
+        def events(self):
+            return store.events()
+
+        def append(self, event):
+            return store.append(event)
+
+    monkeypatch.setattr(worker_lifecycle_mod, "_store", lambda _omo_dir: ForgedSnapshotStore())
+
+    with pytest.raises(WorkerLifecycleError, match="admission binding mismatch"):
+        record_step_dispatch(
+            tmp_path,
+            workflow_run_id=run_id,
+            trace_id=run_id,
+            dispatch_id="dispatch-exact",
+            worker_id="worker-exact",
+            step_run_id=step_run_id,
+            admission_id=grant["admission_id"],
+            policy_digest=grant["policy_digest"],
+            packet_id=grant["request_identity"]["packet_id"],
+            packet_hash=grant["request_identity"]["packet_hash"],
+        )
+    assert WorkflowMeshStore(tmp_path).snapshot(run_id)["state"] == "admitted"
+    assert not any(event["event_type"] == "StepDispatched" for event in store.events())

@@ -7,6 +7,8 @@ as admission, step progress, recovery, and evidence.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import secrets
 from collections.abc import Mapping
@@ -14,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from .orchestration_contract import OrchestrationContractError, validate_capability_requirements
 from .workflow_mesh import (
     WorkflowMeshEventError,
     WorkflowMeshStore,
@@ -131,6 +134,33 @@ def record_step_dispatch(
     snapshot = store.snapshot(workflow_run_id)
     admission = snapshot.get("admission")
     request_identity = admission.get("request_identity") if isinstance(admission, Mapping) else None
+    exact_admission = isinstance(admission, Mapping) and admission.get("backend") == "agent-workflow"
+    try:
+        requirements = validate_capability_requirements(
+            request_identity.get("capability_requirements") if isinstance(request_identity, Mapping) else None
+        )
+    except OrchestrationContractError:
+        requirements = []
+    canonical_requirements = json.dumps(
+        requirements,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    requirements_digest = "sha256:" + hashlib.sha256(canonical_requirements.encode()).hexdigest()
+    validated_persisted_proof = (
+        hashlib.sha256(
+            json.dumps(
+                {key: value for key, value in admission.items() if key != "proof"},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        if isinstance(admission, Mapping)
+        else None
+    )
+    admitted_steps = admission.get("step_run_ids") if isinstance(admission, Mapping) else None
     if (
         # Mesh-legal StepDispatched origins: admitted, dispatched (renewal
         # self-loop), running (WorkerReclaimed replay).
@@ -138,9 +168,28 @@ def record_step_dispatch(
         or not isinstance(admission, dict)
         or not isinstance(request_identity, Mapping)
         or admission.get("admission_id") != admission_id
+        or admission.get("workflow_run_id") != workflow_run_id
         or admission.get("policy_digest") != policy_digest
         or request_identity.get("packet_id") != packet_id
         or request_identity.get("packet_hash") != packet_hash
+        or exact_admission
+        and (
+            admission.get("workflow_run_id") != workflow_run_id
+            or request_identity.get("workflow_run_id") != workflow_run_id
+            or request_identity.get("correlation_id") != workflow_run_id
+            or not isinstance(request_identity.get("actor_id"), str)
+            or not request_identity.get("actor_id")
+            or not isinstance(request_identity.get("delivery_attempt_id"), str)
+            or not request_identity.get("delivery_attempt_id")
+            or requirements != request_identity.get("capability_requirements")
+            or request_identity.get("capability_requirements_digest") != requirements_digest
+            or admission.get("proof") != validated_persisted_proof
+            or not isinstance(admitted_steps, list)
+            or not any(
+                step_run_id == admitted_step or step_run_id.startswith(f"{admitted_step}:")
+                for admitted_step in admitted_steps
+            )
+        )
     ):
         raise WorkerLifecycleError("admission binding mismatch")
     nonce = secrets.token_hex(16) if ack_origin_proof else None
@@ -156,6 +205,8 @@ def record_step_dispatch(
         "instruction_binding": dict(instruction_binding) if instruction_binding is not None else None,
         "ack_origin_nonce": nonce,
     }
+    if exact_admission:
+        payload["capability_requirements_digest"] = requirements_digest
     if ack_origin_proof:
         payload["ack_origin_commitment"] = worker_ack_origin_digest(
             ack_origin_proof,

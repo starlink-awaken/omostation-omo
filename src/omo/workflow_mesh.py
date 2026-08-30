@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import re
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timezone
 from pathlib import Path
@@ -179,6 +180,19 @@ _WORKER_EVENTS = {
     "WorkerReclaimed",
 }
 SCENE_BINDING_FIELDS = frozenset({"scene_id", "journey_id", "outcome_metric"})
+_AGENT_WORKFLOW_IDENTITY_FIELDS = {
+    "correlation_id",
+    "workflow_run_id",
+    "packet_id",
+    "packet_hash",
+    "assignment_id",
+    "dispatch_id",
+    "actor_id",
+    "delivery_attempt_id",
+    "capability_requirements",
+    "capability_requirements_digest",
+}
+_SHA256_REF_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 class WorkflowMeshEventError(ValueError):
@@ -264,6 +278,51 @@ def _validate_admission_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise WorkflowMeshEventError("Admission grant proof mismatch")
     if not isinstance(admission["step_run_ids"], list) or not admission["step_run_ids"]:
         raise WorkflowMeshEventError("Admission grant requires step_run_ids")
+    if admission.get("backend") == "agent-workflow":
+        identity = admission.get("request_identity")
+        if not isinstance(identity, Mapping) or set(identity) != _AGENT_WORKFLOW_IDENTITY_FIELDS:
+            raise WorkflowMeshEventError("Agent Workflow admission requires exact request_identity")
+        run_id = admission["workflow_run_id"]
+        if identity.get("workflow_run_id") != run_id or identity.get("correlation_id") != run_id:
+            raise WorkflowMeshEventError("Agent Workflow admission run identity mismatch")
+        if (
+            not isinstance(identity.get("packet_id"), str)
+            or not identity["packet_id"]
+            or not isinstance(identity.get("packet_hash"), str)
+            or _SHA256_REF_RE.fullmatch(identity["packet_hash"]) is None
+            or not isinstance(identity.get("actor_id"), str)
+            or not identity["actor_id"]
+            or not isinstance(identity.get("delivery_attempt_id"), str)
+            or not identity["delivery_attempt_id"]
+        ):
+            raise WorkflowMeshEventError("Agent Workflow admission delivery identity is invalid")
+        requirements = identity.get("capability_requirements")
+        try:
+            from .orchestration_contract import validate_capability_requirements
+
+            canonical_requirements = validate_capability_requirements(requirements)
+        except (ImportError, ValueError):
+            canonical_requirements = None
+        if canonical_requirements is None or canonical_requirements != requirements:
+            raise WorkflowMeshEventError("Agent Workflow admission capability requirements are invalid")
+        expected_digest = "sha256:" + hashlib.sha256(
+            _canonical_admission(canonical_requirements)  # type: ignore[arg-type]
+        ).hexdigest()
+        if identity.get("capability_requirements_digest") != expected_digest:
+            raise WorkflowMeshEventError("Agent Workflow admission capability requirements digest mismatch")
+        policy = payload.get("policy")
+        expected_policy_digest = (
+            hashlib.sha256(_canonical_admission(dict(policy))).hexdigest()
+            if isinstance(policy, Mapping)
+            else None
+        )
+        if (
+            payload.get("request_identity") != identity
+            or payload.get("policy_digest") != admission["policy_digest"]
+            or expected_policy_digest != admission["policy_digest"]
+            or payload.get("proof") != admission["proof"]
+        ):
+            raise WorkflowMeshEventError("Agent Workflow admission policy or proof mismatch")
     return admission
 
 
@@ -412,6 +471,16 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
                 raise WorkflowMeshEventError(f"{event_type} admission_id mismatch")
             if not _step_is_admitted(step_run_id, admission):
                 raise WorkflowMeshEventError(f"StepRun is not admitted: {step_run_id}")
+            if (
+                event_type == "StepDispatched"
+                and admission.get("backend") == "agent-workflow"
+                and isinstance(admission.get("request_identity"), Mapping)
+            ):
+                requirements_digest = admission["request_identity"].get("capability_requirements_digest")
+                if requirements_digest is not None and event["payload"].get(
+                    "capability_requirements_digest"
+                ) != requirements_digest:
+                    raise WorkflowMeshEventError("StepDispatched capability requirements digest mismatch")
             if event_type != "StepDispatched" and step_run_id not in snapshot["step_runs"]:
                 raise WorkflowMeshEventError(f"{event_type} requires prior StepDispatched")
         if event_type in _WORKER_EVENTS:
