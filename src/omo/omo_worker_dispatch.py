@@ -560,6 +560,7 @@ def dispatch_task(
                 separators=(",", ":"),
             ),
         }
+
         def record_exact_failure(reason: str) -> None:
             if exact_request_identity is None:
                 return
@@ -774,9 +775,9 @@ def dispatch_task(
                 except Exception:
                     pass
                 if isinstance(post_spawn_error, subprocess.TimeoutExpired):
-                    timeout_log = redact_sensitive_text(
-                        (cleaned_stdout or "") + (cleaned_stderr or "")
-                    ).replace(ack_origin_proof, "[REDACTED]")
+                    timeout_log = redact_sensitive_text((cleaned_stdout or "") + (cleaned_stderr or "")).replace(
+                        ack_origin_proof, "[REDACTED]"
+                    )
                     write_text_atomic(root / stdout_path, timeout_log)
                     raise RuntimeError(
                         f"worker launch timed out: worker_id={worker_id} "
@@ -804,9 +805,7 @@ def dispatch_task(
                 if process is not None and not cleanup_attempted:
                     if provisional_group_id is None:
                         cleanup_pid = getattr(process, "pid", None)
-                        provisional_group_id = (
-                            cleanup_pid if isinstance(cleanup_pid, int) and cleanup_pid > 1 else None
-                        )
+                        provisional_group_id = cleanup_pid if isinstance(cleanup_pid, int) and cleanup_pid > 1 else None
                     reap_or_fail_closed(process, provisional_group_id, popen_boundary_error)
                     try:
                         record_exact_failure("worker_post_popen_boundary_failed")
@@ -817,9 +816,7 @@ def dispatch_task(
             result = subprocess.run(argv, cwd=root, capture_output=True, text=True, env=worker_env)
             stdout, stderr = result.stdout, result.stderr
             returncode = result.returncode
-            log_content = redact_sensitive_text((stdout or "") + (stderr or "")).replace(
-                ack_origin_proof, "[REDACTED]"
-            )
+            log_content = redact_sensitive_text((stdout or "") + (stderr or "")).replace(ack_origin_proof, "[REDACTED]")
             write_text_atomic(root / stdout_path, log_content)
             if returncode != 0:
                 raise RuntimeError(

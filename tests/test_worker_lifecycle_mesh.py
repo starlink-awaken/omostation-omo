@@ -56,9 +56,9 @@ def _exact_grant(run_id: str, step_run_id: str) -> tuple[dict, dict]:
         {"capability_id": "skill:git-discipline", "operation": "load", "effect": "read_only"},
         {"capability_id": "workflow:bet-execution", "operation": "load", "effect": "read_only"},
     ]
-    requirements_digest = "sha256:" + hashlib.sha256(
-        json.dumps(requirements, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    requirements_digest = (
+        "sha256:" + hashlib.sha256(json.dumps(requirements, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    )
     request_identity = {
         "bet_id": "BET-BOUND",
         "workflow_id": "test-workflow",
@@ -903,9 +903,7 @@ def test_exact_worker_ack_lease_is_capped_by_admission_expiry(tmp_path):
         now=(issued_at + timedelta(seconds=10)).isoformat(),
     )
 
-    lease_expires_at = datetime.fromisoformat(
-        acknowledged["payload"]["lease_expires_at"].replace("Z", "+00:00")
-    )
+    lease_expires_at = datetime.fromisoformat(acknowledged["payload"]["lease_expires_at"].replace("Z", "+00:00"))
     assert lease_expires_at <= expires_at
 
 
@@ -1012,9 +1010,12 @@ def test_store_authenticated_append_rejects_event_outside_exact_admission_window
             "completion_origin_commitment": worker_ack_origin_digest(origin_proof, completion_context),
             "result_digest": result_digest,
         }
-        receipt["receipt_digest"] = "sha256:" + hashlib.sha256(
-            json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
+        receipt["receipt_digest"] = (
+            "sha256:"
+            + hashlib.sha256(
+                json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+        )
         event = new_workflow_event(
             "WorkflowSucceeded",
             run_id,
@@ -1315,8 +1316,7 @@ def test_trusted_exact_lifecycle_capability_allows_renew_expire_and_reclaim(tmp_
         now=elapsed_now,
     )
     expiry_time = (
-        datetime.fromisoformat(renewed["payload"]["lease_expires_at"].replace("Z", "+00:00"))
-        + timedelta(seconds=1)
+        datetime.fromisoformat(renewed["payload"]["lease_expires_at"].replace("Z", "+00:00")) + timedelta(seconds=1)
     ).isoformat()
     capability = worker_lifecycle_mod._exact_coordinator_capability()
     expired = expire_worker_lease(

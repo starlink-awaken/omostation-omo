@@ -618,12 +618,13 @@ def _seed_exact_workflow_packet(
     ttl_seconds: int = 900,
 ) -> tuple[dict, dict]:
     run_id = "run-production-exact"
-    requirements = [
-        {"capability_id": "skill:git-discipline", "operation": "load", "effect": "read_only"}
-    ]
-    requirements_digest = "sha256:" + hashlib.sha256(
-        json.dumps(requirements, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    requirements = [{"capability_id": "skill:git-discipline", "operation": "load", "effect": "read_only"}]
+    requirements_digest = (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(requirements, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+    )
     exact_identity = {
         "bet_id": "BET-BOUND",
         "workflow_id": "test-workflow",
@@ -761,9 +762,7 @@ def test_canonical_exact_dispatch_caller_mints_private_proof(
     )
 
     persisted_text = "\n".join(
-        path.read_text(encoding="utf-8", errors="replace")
-        for path in (tmp_path / ".omo").rglob("*")
-        if path.is_file()
+        path.read_text(encoding="utf-8", errors="replace") for path in (tmp_path / ".omo").rglob("*") if path.is_file()
     )
     snapshot = WorkflowMeshStore(tmp_path / ".omo").snapshot(packet["workflow_run_id"])
     assert result["worker_dispatch"]["dispatch_id"] == exact_identity["dispatch_id"]
@@ -1458,9 +1457,7 @@ def test_exact_production_rejects_public_private_proof_data_before_effects(
         )
 
     persisted_text = "\n".join(
-        path.read_text(encoding="utf-8", errors="replace")
-        for path in (tmp_path / ".omo").rglob("*")
-        if path.is_file()
+        path.read_text(encoding="utf-8", errors="replace") for path in (tmp_path / ".omo").rglob("*") if path.is_file()
     )
     assert _file_snapshot(tmp_path) == before
     assert not (tmp_path / ".omo" / "workers" / "runs").exists()
@@ -1727,9 +1724,7 @@ def test_exact_production_step_started_append_failure_reaps_spawned_child(
 
     events = WorkflowMeshStore(tmp_path / ".omo").events()
     persisted_text = "\n".join(
-        path.read_text(encoding="utf-8", errors="replace")
-        for path in (tmp_path / ".omo").rglob("*")
-        if path.is_file()
+        path.read_text(encoding="utf-8", errors="replace") for path in (tmp_path / ".omo").rglob("*") if path.is_file()
     )
     assert lifecycle == {
         "terminated": False,
@@ -1838,9 +1833,7 @@ def test_exact_production_cleanup_fails_closed_when_validated_group_survives(
         assert lifecycle["drained"] == 0
     events = WorkflowMeshStore(tmp_path / ".omo").events()
     persisted_text = "\n".join(
-        path.read_text(encoding="utf-8", errors="replace")
-        for path in (tmp_path / ".omo").rglob("*")
-        if path.is_file()
+        path.read_text(encoding="utf-8", errors="replace") for path in (tmp_path / ".omo").rglob("*") if path.is_file()
     )
     assert not any(event["event_type"] == "WorkflowSucceeded" for event in events)
     assert origin_proof not in json.dumps(events)
@@ -1866,8 +1859,8 @@ def test_exact_production_step_started_failure_reaps_real_descendant_group(
                 "import sys",
                 "import time",
                 "child_code = (",
-                "    \"import signal, sys, time; from pathlib import Path; \"",
-                "    \"signal.signal(signal.SIGTERM, signal.SIG_IGN); \"",
+                '    "import signal, sys, time; from pathlib import Path; "',
+                '    "signal.signal(signal.SIGTERM, signal.SIG_IGN); "',
                 "    \"Path(sys.argv[1]).write_text('ready', encoding='utf-8'); time.sleep(60)\"",
                 ")",
                 "child = subprocess.Popen(",
@@ -1966,8 +1959,8 @@ def test_exact_production_parent_exit_getpgid_race_reaps_expected_group(
                 "import sys",
                 "import time",
                 "child_code = (",
-                "    \"import signal, sys, time; from pathlib import Path; \"",
-                "    \"signal.signal(signal.SIGTERM, signal.SIG_IGN); \"",
+                '    "import signal, sys, time; from pathlib import Path; "',
+                '    "signal.signal(signal.SIGTERM, signal.SIG_IGN); "',
                 "    \"Path(sys.argv[1]).write_text('ready', encoding='utf-8'); time.sleep(60)\"",
                 ")",
                 "child = subprocess.Popen(",

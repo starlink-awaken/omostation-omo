@@ -322,9 +322,12 @@ def _validated_exact_request_identity(
         canonical_requirements = None
     if canonical_requirements is None or canonical_requirements != requirements:
         raise WorkflowMeshEventError("Agent Workflow request capability requirements are invalid")
-    expected_digest = "sha256:" + hashlib.sha256(
-        _canonical_admission(canonical_requirements)  # type: ignore[arg-type]
-    ).hexdigest()
+    expected_digest = (
+        "sha256:"
+        + hashlib.sha256(
+            _canonical_admission(canonical_requirements)  # type: ignore[arg-type]
+        ).hexdigest()
+    )
     if identity.get("capability_requirements_digest") != expected_digest:
         raise WorkflowMeshEventError("Agent Workflow request capability requirements digest mismatch")
     return dict(identity)
@@ -408,9 +411,12 @@ def _validate_admission_payload(
             canonical_requirements = None
         if canonical_requirements is None or canonical_requirements != requirements:
             raise WorkflowMeshEventError("Agent Workflow admission capability requirements are invalid")
-        expected_digest = "sha256:" + hashlib.sha256(
-            _canonical_admission(canonical_requirements)  # type: ignore[arg-type]
-        ).hexdigest()
+        expected_digest = (
+            "sha256:"
+            + hashlib.sha256(
+                _canonical_admission(canonical_requirements)  # type: ignore[arg-type]
+            ).hexdigest()
+        )
         if identity.get("capability_requirements_digest") != expected_digest:
             raise WorkflowMeshEventError("Agent Workflow admission capability requirements digest mismatch")
         policy = payload.get("policy")
@@ -442,9 +448,7 @@ def _validate_admission_payload(
         ):
             raise WorkflowMeshEventError("Agent Workflow admission policy identity mismatch")
         expected_policy_digest = (
-            hashlib.sha256(_canonical_admission(dict(policy))).hexdigest()
-            if isinstance(policy, Mapping)
-            else None
+            hashlib.sha256(_canonical_admission(dict(policy))).hexdigest() if isinstance(policy, Mapping) else None
         )
         if (
             payload.get("exact_request_discriminator") != EXACT_REQUEST_DISCRIMINATOR
@@ -808,9 +812,7 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
             if not isinstance(receipt, Mapping) or set(receipt) != receipt_fields:
                 raise WorkflowMeshEventError("exact WorkflowSucceeded requires worker completion receipt")
             unsigned_receipt = {key: value for key, value in receipt.items() if key != "receipt_digest"}
-            expected_receipt_digest = "sha256:" + hashlib.sha256(
-                _canonical_admission(unsigned_receipt)
-            ).hexdigest()
+            expected_receipt_digest = "sha256:" + hashlib.sha256(_canonical_admission(unsigned_receipt)).hexdigest()
             admission = snapshot.get("admission")
             exact_identity = snapshot.get("exact_request_identity")
             worker = snapshot.get("worker")
@@ -1082,7 +1084,9 @@ class WorkflowMeshStore:
                 snapshot = project_workflow_run(current, event["workflow_run_id"])
                 if isinstance(snapshot.get("exact_request_identity"), Mapping):
                     if event["event_type"] == "StepDispatched":
-                        raise WorkflowMeshEventError("exact StepDispatched requires authenticated exact dispatch append")
+                        raise WorkflowMeshEventError(
+                            "exact StepDispatched requires authenticated exact dispatch append"
+                        )
                     if event["event_type"] == "WorkerLeaseRenewed":
                         raise WorkflowMeshEventError(
                             "exact WorkerLeaseRenewed requires authenticated exact lease renewal append"

@@ -495,9 +495,12 @@ def record_worker_completion(
         "completion_origin_commitment": worker_ack_origin_digest(origin_proof, completion_context),
         "result_digest": result_digest,
     }
-    receipt["receipt_digest"] = "sha256:" + hashlib.sha256(
-        json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    receipt["receipt_digest"] = (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+    )
     event = new_workflow_event(
         "WorkflowSucceeded",
         workflow_run_id,

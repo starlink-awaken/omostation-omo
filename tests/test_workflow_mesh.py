@@ -822,12 +822,10 @@ def test_inherited_child_start_persists_documented_legacy_identity_without_execu
 )
 def test_exact_request_discriminator_rejects_identity_shape_downgrade(tmp_path, mutation):
     run_id = f"run-exact-discriminator-{mutation}"
-    requirements = [
-        {"capability_id": "skill:git-discipline", "operation": "load", "effect": "read_only"}
-    ]
-    requirements_digest = "sha256:" + hashlib.sha256(
-        json.dumps(requirements, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    requirements = [{"capability_id": "skill:git-discipline", "operation": "load", "effect": "read_only"}]
+    requirements_digest = (
+        "sha256:" + hashlib.sha256(json.dumps(requirements, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    )
     identity = {
         "bet_id": "BET-BOUND",
         "workflow_id": "test-workflow",
@@ -918,13 +916,48 @@ def test_documented_three_field_legacy_nested_identity_remains_supported(tmp_pat
             "packet_hash": "sha256:" + "a" * 64,
             "correlation_id": "run-malformed",
         },
-        {"bet_id": "BET-LEGACY", "packet_id": "WP-LEGACY", "packet_hash": "sha256:" + "a" * 64, "workflow_run_id": "run-malformed"},
-        {"bet_id": "BET-LEGACY", "packet_id": "WP-LEGACY", "packet_hash": "sha256:" + "a" * 64, "assignment_id": "assignment:exact"},
-        {"bet_id": "BET-LEGACY", "packet_id": "WP-LEGACY", "packet_hash": "sha256:" + "a" * 64, "dispatch_id": "dispatch:exact"},
-        {"bet_id": "BET-LEGACY", "packet_id": "WP-LEGACY", "packet_hash": "sha256:" + "a" * 64, "actor_id": "actor:exact"},
-        {"bet_id": "BET-LEGACY", "packet_id": "WP-LEGACY", "packet_hash": "sha256:" + "a" * 64, "delivery_attempt_id": "attempt:exact"},
-        {"bet_id": "BET-LEGACY", "packet_id": "WP-LEGACY", "packet_hash": "sha256:" + "a" * 64, "capability_requirements": []},
-        {"bet_id": "BET-LEGACY", "packet_id": "WP-LEGACY", "packet_hash": "sha256:" + "a" * 64, "capability_requirements_digest": "sha256:" + "b" * 64},
+        {
+            "bet_id": "BET-LEGACY",
+            "packet_id": "WP-LEGACY",
+            "packet_hash": "sha256:" + "a" * 64,
+            "workflow_run_id": "run-malformed",
+        },
+        {
+            "bet_id": "BET-LEGACY",
+            "packet_id": "WP-LEGACY",
+            "packet_hash": "sha256:" + "a" * 64,
+            "assignment_id": "assignment:exact",
+        },
+        {
+            "bet_id": "BET-LEGACY",
+            "packet_id": "WP-LEGACY",
+            "packet_hash": "sha256:" + "a" * 64,
+            "dispatch_id": "dispatch:exact",
+        },
+        {
+            "bet_id": "BET-LEGACY",
+            "packet_id": "WP-LEGACY",
+            "packet_hash": "sha256:" + "a" * 64,
+            "actor_id": "actor:exact",
+        },
+        {
+            "bet_id": "BET-LEGACY",
+            "packet_id": "WP-LEGACY",
+            "packet_hash": "sha256:" + "a" * 64,
+            "delivery_attempt_id": "attempt:exact",
+        },
+        {
+            "bet_id": "BET-LEGACY",
+            "packet_id": "WP-LEGACY",
+            "packet_hash": "sha256:" + "a" * 64,
+            "capability_requirements": [],
+        },
+        {
+            "bet_id": "BET-LEGACY",
+            "packet_id": "WP-LEGACY",
+            "packet_hash": "sha256:" + "a" * 64,
+            "capability_requirements_digest": "sha256:" + "b" * 64,
+        },
     ],
 )
 def test_discriminatorless_nested_identity_rejects_nonlegacy_shape(tmp_path, identity):
@@ -1023,9 +1056,12 @@ def test_exact_agent_workflow_rejects_raw_deterministic_completion_receipt(tmp_p
         "completion_origin_commitment": "sha256:" + "e" * 64,
         "result_digest": "sha256:" + "d" * 64,
     }
-    receipt["receipt_digest"] = "sha256:" + hashlib.sha256(
-        json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    receipt["receipt_digest"] = (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+    )
     forged = new_workflow_event(
         "WorkflowSucceeded",
         record["run_id"],

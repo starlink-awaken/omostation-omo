@@ -150,10 +150,7 @@ def _is_exact_agent_workflow_request(root: Path, workflow_run_id: str, *, omo_di
     from ..workflow_mesh import EXACT_REQUEST_DISCRIMINATOR, WorkflowMeshStore
 
     for event in WorkflowMeshStore(root / omo_dir).events():
-        if (
-            event.get("workflow_run_id") == workflow_run_id
-            and event.get("event_type") == "WorkflowRequested"
-        ):
+        if event.get("workflow_run_id") == workflow_run_id and event.get("event_type") == "WorkflowRequested":
             return event.get("payload", {}).get("exact_request_discriminator") == EXACT_REQUEST_DISCRIMINATOR
     return False
 
@@ -473,9 +470,7 @@ def start_run(
         "objective": objective,
         "actor": context["actor"],
     }
-    exact_start = not parent_run_id and (
-        "capability_preflight" in record or "capability_requirements_digest" in record
-    )
+    exact_start = not parent_run_id and ("capability_preflight" in record or "capability_requirements_digest" in record)
     if bet_id and isinstance(record.get("work_packet"), dict):
         # Canonical WorkPacket identity bridges into the Mesh so native-execution
         # verification can reconcile the binding against the persisted admission.
