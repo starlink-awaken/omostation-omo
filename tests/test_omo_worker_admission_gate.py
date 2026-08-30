@@ -828,7 +828,10 @@ def test_exact_production_missing_origin_proof_rejects_before_dispatch(
     assert not (tmp_path / ".omo" / "workers" / "runs").exists()
 
 
-@pytest.mark.parametrize("public_shape", ["top_level_key", "request_key", "capability_value"])
+@pytest.mark.parametrize(
+    "public_shape",
+    ["top_level_key", "request_key", "capability_value", "substring_value"],
+)
 def test_exact_production_rejects_public_private_proof_data_before_effects(
     tmp_path: Path,
     public_shape: str,
@@ -840,8 +843,10 @@ def test_exact_production_rejects_public_private_proof_data_before_effects(
         packet["worker_ack_origin_proof"] = private_proof
     elif public_shape == "request_key":
         packet["request_identity"]["ack origin proof"] = new_worker_ack_origin_proof()
-    else:
+    elif public_shape == "capability_value":
         packet["request_identity"]["capabilities"] = ["origin_proof"]
+    else:
+        packet["request_identity"]["note"] = f"prefix-{private_proof}-suffix"
     before = _file_snapshot(tmp_path)
 
     with pytest.raises(ValueError, match="private proof is forbidden in public dispatch data"):
@@ -1113,6 +1118,89 @@ def test_exact_production_step_started_append_failure_reaps_spawned_child(
     assert not any(event["event_type"] == "WorkflowSucceeded" for event in events)
     assert origin_proof not in json.dumps(events)
     assert origin_proof not in persisted_text
+
+
+@pytest.mark.parametrize("group_failure", ["persistent_live", "signal_failure"])
+def test_exact_production_cleanup_fails_closed_when_validated_group_survives(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    group_failure: str,
+) -> None:
+    _task_path, _pi = _exact_worker_fixture(tmp_path)
+    packet, _exact_identity = _seed_exact_workflow_packet(tmp_path)
+    origin_proof = new_worker_ack_origin_proof()
+    spawned_pid = 42420
+    lifecycle = {"terminated": False, "killed": False, "drained": 0, "signals": []}
+
+    class PersistentGroupWorker:
+        pid = spawned_pid
+
+        def __init__(self, argv, *, cwd, stdout, stderr, text, env, start_new_session):
+            del argv, cwd, stdout, stderr, text, env
+            assert start_new_session is True
+            self.returncode = None
+
+        def terminate(self):
+            lifecycle["terminated"] = True
+
+        def kill(self):
+            lifecycle["killed"] = True
+
+        def communicate(self, timeout=None):
+            del timeout
+            lifecycle["drained"] += 1
+            self.returncode = -9
+            return "partial", "cleanup"
+
+    original_append = WorkflowMeshStore.append
+
+    def reject_step_started(store, event):
+        if event["event_type"] == "StepStarted":
+            raise WorkflowMeshEventError("stable-persistent-group-step-start-failure")
+        return original_append(store, event)
+
+    def fake_killpg(process_group_id, sig):
+        assert process_group_id == spawned_pid
+        lifecycle["signals"].append(sig)
+        if sig == 0:
+            return None
+        if group_failure == "signal_failure":
+            raise PermissionError("group signal denied")
+        return None
+
+    clock = {"value": 0.0}
+
+    def fast_monotonic():
+        clock["value"] += 10.0
+        return clock["value"]
+
+    monkeypatch.setattr("omo.omo_worker_dispatch.subprocess.Popen", PersistentGroupWorker)
+    monkeypatch.setattr(WorkflowMeshStore, "append", reject_step_started)
+    monkeypatch.setattr("omo.omo_worker_dispatch.os.getpgid", lambda pid: pid)
+    monkeypatch.setattr("omo.omo_worker_dispatch.os.killpg", fake_killpg)
+    monkeypatch.setattr("omo.omo_worker_dispatch.time.monotonic", fast_monotonic)
+
+    with pytest.raises(RuntimeError, match="exact worker process-group cleanup failed") as raised:
+        dispatch_task(
+            tmp_path,
+            task_id="TASK-ADMISSION-GATE",
+            worker_id="pi",
+            allowed_write_paths=[],
+            workflow_packet=packet,
+            worker_ack_origin_proof=origin_proof,
+            launch=True,
+            now="2026-08-30T01:02:03+00:00",
+        )
+
+    assert isinstance(raised.value.__cause__, WorkflowMeshEventError)
+    assert str(raised.value.__cause__) == "stable-persistent-group-step-start-failure"
+    assert signal.SIGTERM in lifecycle["signals"]
+    assert signal.SIGKILL in lifecycle["signals"]
+    assert 0 in lifecycle["signals"]
+    assert lifecycle["drained"] >= 1
+    events = WorkflowMeshStore(tmp_path / ".omo").events()
+    assert not any(event["event_type"] == "WorkflowSucceeded" for event in events)
+    assert origin_proof not in json.dumps(events)
 
 
 def test_exact_production_step_started_failure_reaps_real_descendant_group(

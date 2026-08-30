@@ -51,7 +51,7 @@ def _contains_private_proof_data(value: Any, *, private_proof: str | None) -> bo
         return any(_contains_private_proof_data(item, private_proof=private_proof) for item in value)
     if not isinstance(value, str):
         return False
-    if private_proof and value == private_proof:
+    if private_proof and private_proof in value:
         return True
     token = _normalised_public_token(value)
     return "origin_proof" in token and not token.endswith("_digest")
@@ -589,6 +589,8 @@ def dispatch_task(
                     except OSError:
                         pass
                     time.sleep(0.01)
+                if validated_group_alive():
+                    raise RuntimeError("exact worker process-group cleanup failed")
 
             def signal_validated_group(sig: signal.Signals) -> bool:
                 if process_group_id is None:
@@ -629,6 +631,16 @@ def dispatch_task(
                 return kill_and_drain()
             return output
 
+        def reap_or_fail_closed(
+            process: Any,
+            process_group_id: int | None,
+            original_error: BaseException,
+        ) -> tuple[str, str]:
+            try:
+                return reap_spawned_child(process, process_group_id)
+            except Exception:
+                raise RuntimeError("exact worker process-group cleanup failed") from original_error
+
         if exact_request_identity is not None:
             process = subprocess.Popen(
                 argv,
@@ -655,8 +667,8 @@ def dispatch_task(
                         },
                     )
                 )
-            except Exception:
-                reap_spawned_child(process, process_group_id)
+            except Exception as step_started_error:
+                reap_or_fail_closed(process, process_group_id, step_started_error)
                 try:
                     record_exact_failure("step_started_persist_failed")
                 except Exception:
@@ -665,7 +677,7 @@ def dispatch_task(
             try:
                 stdout, stderr = process.communicate(timeout=ack_context["lease_seconds"])
             except subprocess.TimeoutExpired as exc:
-                stdout, stderr = reap_spawned_child(process, process_group_id)
+                stdout, stderr = reap_or_fail_closed(process, process_group_id, exc)
                 log_content = redact_sensitive_text((stdout or "") + (stderr or "")).replace(
                     ack_origin_proof, "[REDACTED]"
                 )
@@ -685,12 +697,13 @@ def dispatch_task(
         )
         write_text_atomic(root / stdout_path, log_content)
         if returncode != 0:
-            if exact_request_identity is not None:
-                reap_spawned_child(process, process_group_id)
-            record_exact_failure(f"worker_returncode_{returncode}")
-            raise RuntimeError(
+            launch_error = RuntimeError(
                 f"worker launch failed: worker_id={worker_id} returncode={returncode} log={stdout_path}"
             )
+            if exact_request_identity is not None:
+                reap_or_fail_closed(process, process_group_id, launch_error)
+            record_exact_failure(f"worker_returncode_{returncode}")
+            raise launch_error
         ack_worker = store.worker_snapshot(workflow_run_id)
         if (
             not isinstance(ack_worker, dict)
@@ -701,10 +714,11 @@ def dispatch_task(
             or ack_worker.get("step_run_id") != ack_context["step_run_id"]
             or ack_worker.get("admission_id") != ack_context["admission_id"]
         ):
+            ack_error = RuntimeError("worker transport returned without a durable proceed ACK")
             if exact_request_identity is not None:
-                reap_spawned_child(process, process_group_id)
+                reap_or_fail_closed(process, process_group_id, ack_error)
             record_exact_failure("worker_ack_missing_or_mismatched")
-            raise RuntimeError("worker transport returned without a durable proceed ACK")
+            raise ack_error
         if exact_request_identity is not None:
             from .worker_lifecycle import record_worker_completion
 
@@ -721,8 +735,8 @@ def dispatch_task(
                     origin_proof=ack_origin_proof,
                     result_digest=result_digest,
                 )
-            except Exception:
-                reap_spawned_child(process, process_group_id)
+            except Exception as completion_error:
+                reap_or_fail_closed(process, process_group_id, completion_error)
                 try:
                     record_exact_failure("worker_completion_persist_failed")
                 except Exception:
