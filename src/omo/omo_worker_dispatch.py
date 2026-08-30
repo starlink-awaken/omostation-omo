@@ -207,7 +207,11 @@ def dispatch_task(
         raise ValueError("unbound legacy dispatch is observer-only and cannot create worker state")
     from .worker_lifecycle import new_worker_ack_origin_proof
 
-    ack_origin_proof = worker_ack_origin_proof or new_worker_ack_origin_proof()
+    ack_origin_proof = (
+        worker_ack_origin_proof
+        if exact_request_identity is not None
+        else worker_ack_origin_proof or new_worker_ack_origin_proof()
+    )
     if not ack_origin_proof:
         raise ValueError("worker ACK origin proof is unavailable")
     # A supervised blueprint must not project dispatch artifacts or mutate the
@@ -489,18 +493,84 @@ def dispatch_task(
                 separators=(",", ":"),
             ),
         }
-        result = subprocess.run(argv, cwd=root, capture_output=True, text=True, env=worker_env)
-        log_content = redact_sensitive_text((result.stdout or "") + (result.stderr or "")).replace(
+        from .workflow_mesh import WorkflowMeshStore, new_workflow_event
+
+        store = WorkflowMeshStore(omo)
+        def record_exact_failure(reason: str) -> None:
+            if exact_request_identity is None:
+                return
+            snapshot = store.snapshot(workflow_run_id)
+            if snapshot.get("state") != "running":
+                return
+            store.append(
+                new_workflow_event(
+                    "StepFailed",
+                    workflow_run_id,
+                    trace_id=ack_context["trace_id"],
+                    producer="omo.worker_dispatch",
+                    idempotency_key=f"{workflow_run_id}:production-step-failed:{dispatch_id}",
+                    payload={
+                        "step_run_id": ack_context["step_run_id"],
+                        "step_name": "execute",
+                        "admission_id": ack_context["admission_id"],
+                        "dispatch_id": dispatch_id,
+                        "worker_id": worker_id,
+                        "error": reason,
+                    },
+                )
+            )
+
+        if exact_request_identity is not None:
+            process = subprocess.Popen(
+                argv,
+                cwd=root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=worker_env,
+            )
+            store.append(
+                new_workflow_event(
+                    "StepStarted",
+                    workflow_run_id,
+                    trace_id=ack_context["trace_id"],
+                    producer="omo.worker_dispatch",
+                    idempotency_key=f"{workflow_run_id}:production-step-started:{dispatch_id}",
+                    payload={
+                        "step_run_id": ack_context["step_run_id"],
+                        "step_name": "execute",
+                        "admission_id": ack_context["admission_id"],
+                    },
+                )
+            )
+            try:
+                stdout, stderr = process.communicate(timeout=ack_context["lease_seconds"])
+            except subprocess.TimeoutExpired as exc:
+                process.kill()
+                stdout, stderr = process.communicate()
+                log_content = redact_sensitive_text((stdout or "") + (stderr or "")).replace(
+                    ack_origin_proof, "[REDACTED]"
+                )
+                write_text_atomic(root / stdout_path, log_content)
+                record_exact_failure("worker_timeout")
+                raise RuntimeError(
+                    f"worker launch timed out: worker_id={worker_id} timeout={exc.timeout} log={stdout_path}"
+                ) from exc
+            returncode = process.returncode
+        else:
+            result = subprocess.run(argv, cwd=root, capture_output=True, text=True, env=worker_env)
+            stdout, stderr = result.stdout, result.stderr
+            returncode = result.returncode
+
+        log_content = redact_sensitive_text((stdout or "") + (stderr or "")).replace(
             ack_origin_proof, "[REDACTED]"
         )
         write_text_atomic(root / stdout_path, log_content)
-        if result.returncode != 0:
+        if returncode != 0:
+            record_exact_failure(f"worker_returncode_{returncode}")
             raise RuntimeError(
-                f"worker launch failed: worker_id={worker_id} returncode={result.returncode} log={stdout_path}"
+                f"worker launch failed: worker_id={worker_id} returncode={returncode} log={stdout_path}"
             )
-        from .workflow_mesh import WorkflowMeshStore
-
-        store = WorkflowMeshStore(omo)
         ack_worker = store.worker_snapshot(workflow_run_id)
         if (
             not isinstance(ack_worker, dict)
@@ -511,6 +581,7 @@ def dispatch_task(
             or ack_worker.get("step_run_id") != ack_context["step_run_id"]
             or ack_worker.get("admission_id") != ack_context["admission_id"]
         ):
+            record_exact_failure("worker_ack_missing_or_mismatched")
             raise RuntimeError("worker transport returned without a durable proceed ACK")
         if exact_request_identity is not None:
             from .worker_lifecycle import record_worker_completion

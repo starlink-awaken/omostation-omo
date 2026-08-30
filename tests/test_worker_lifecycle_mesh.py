@@ -415,7 +415,7 @@ def test_public_binding_cannot_forge_worker_ack(tmp_path):
             tmp_path,
             **context,
             **_binding(),
-            origin_proof="controller-knows-only-public-fields",
+            origin_proof=new_worker_ack_origin_proof(),
         )
 
     assert WorkflowMeshStore(tmp_path).events() == events_before

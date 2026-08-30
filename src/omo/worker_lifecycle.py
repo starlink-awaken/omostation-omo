@@ -363,8 +363,8 @@ def record_worker_completion(
         step_run_id=step_run_id,
         admission_id=admission_id,
     )
-    if snapshot.get("state") not in {"dispatched", "running"}:
-        raise WorkerLifecycleError("worker completion requires a dispatched or running StepRun")
+    if snapshot.get("state") != "running":
+        raise WorkerLifecycleError("worker completion requires a running StepRun")
     worker = snapshot.get("worker")
     if (
         not isinstance(worker, Mapping)
@@ -391,24 +391,6 @@ def record_worker_completion(
     expected_ack = worker_ack_origin_digest(origin_proof, ack_context)
     if not secrets.compare_digest(expected_ack, str(worker.get("ack_origin_proof_digest") or "")):
         raise WorkerLifecycleError("worker completion origin proof does not match durable ACK")
-    if snapshot.get("state") == "dispatched":
-        _append(
-            store,
-            "StepStarted",
-            workflow_run_id,
-            trace_id=trace_id,
-            producer="worker",
-            idempotency_key=f"{workflow_run_id}:worker-started:{dispatch_id}",
-            payload={
-                "step_run_id": step_run_id,
-                "step_name": "execute",
-                "admission_id": admission_id,
-            },
-        )
-        snapshot = store.snapshot(workflow_run_id)
-        if snapshot.get("state") != "running":
-            raise WorkerLifecycleError("worker completion could not persist StepStarted")
-        worker = snapshot["worker"]
     completion_context = {
         **worker,
         "workflow_run_id": workflow_run_id,

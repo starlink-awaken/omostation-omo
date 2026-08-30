@@ -15,7 +15,12 @@ from omo.omo_worker_core import (
     _require_worker_policy,
 )
 from omo.omo_worker_dispatch import dispatch_task
-from omo.worker_lifecycle import WorkerLifecycleError, acknowledge_worker, record_step_dispatch
+from omo.worker_lifecycle import (
+    WorkerLifecycleError,
+    acknowledge_worker,
+    new_worker_ack_origin_proof,
+    record_step_dispatch,
+)
 from omo.workflow_mesh import WorkflowMeshStore, new_workflow_event
 
 
@@ -709,7 +714,7 @@ def test_exact_production_dispatch_uses_persisted_request_dispatch_id(tmp_path: 
         worker_id="pi",
         allowed_write_paths=[],
         workflow_packet=packet,
-        worker_ack_origin_proof="p" * 64,
+        worker_ack_origin_proof=new_worker_ack_origin_proof(),
         launch=False,
         now="2026-08-30T01:02:03+00:00",
     )
@@ -725,25 +730,51 @@ def test_exact_production_success_records_authenticated_completion_and_redacts_p
 ) -> None:
     _task_path, _pi = _exact_worker_fixture(tmp_path)
     packet, exact_identity = _seed_exact_workflow_packet(tmp_path)
-    origin_proof = "production-origin-proof-" + "p" * 48
+    origin_proof = new_worker_ack_origin_proof()
+    public_proof = new_worker_ack_origin_proof()
+    packet["origin_proof"] = public_proof
+    packet["request_identity"]["origin_proof"] = public_proof
+    chronology: list[str] = []
 
-    def completed_worker(argv, *, cwd, capture_output, text, env):
-        del capture_output, text
-        context = json.loads(env["OMO_WORKER_ACK_CONTEXT_JSON"])
-        omo_dir = context.pop("omo_dir")
-        acknowledge_worker(
-            Path(cwd) / omo_dir,
-            **context,
-            ack_decision="proceed",
-            origin_proof=env["OMO_WORKER_ACK_ORIGIN_PROOF"],
-        )
-        return subprocess.CompletedProcess(argv, 0, stdout=f"completed {origin_proof}", stderr="")
+    class CompletedWorker:
+        def __init__(self, argv, *, cwd, stdout, stderr, text, env):
+            del stdout, stderr, text
+            chronology.append("spawn")
+            self.args = argv
+            self.cwd = Path(cwd)
+            self.env = env
+            self.returncode = None
+
+        def communicate(self, timeout=None):
+            del timeout
+            chronology.append("communicate")
+            before_ack = WorkflowMeshStore(tmp_path / ".omo").events()
+            assert before_ack[-1]["event_type"] == "StepStarted"
+            assert self.env["OMO_WORKER_ACK_ORIGIN_PROOF"] == origin_proof
+            assert self.env["OMO_WORKER_ACK_ORIGIN_PROOF"] != public_proof
+            context = json.loads(self.env["OMO_WORKER_ACK_CONTEXT_JSON"])
+            omo_dir = context.pop("omo_dir")
+            acknowledge_worker(
+                self.cwd / omo_dir,
+                **context,
+                ack_decision="proceed",
+                origin_proof=self.env["OMO_WORKER_ACK_ORIGIN_PROOF"],
+            )
+            self.returncode = 0
+            return f"completed {origin_proof}", ""
+
+        def kill(self):  # pragma: no cover - successful process is never killed.
+            raise AssertionError("successful worker must not be killed")
 
     class _NoopOpener:
         def open(self, *_args, **_kwargs):
             return None
 
-    monkeypatch.setattr("omo.omo_worker_dispatch.subprocess.run", completed_worker)
+    monkeypatch.setattr("omo.omo_worker_dispatch.subprocess.Popen", CompletedWorker)
+    monkeypatch.setattr(
+        "omo.omo_worker_dispatch.subprocess.run",
+        lambda *_args, **_kwargs: pytest.fail("exact synchronous production must use Popen"),
+    )
     monkeypatch.setattr("urllib.request.build_opener", lambda *_args, **_kwargs: _NoopOpener())
 
     dispatched = dispatch_task(
@@ -761,6 +792,7 @@ def test_exact_production_success_records_authenticated_completion_and_redacts_p
     snapshot = store.snapshot(packet["workflow_run_id"])
     log_path = tmp_path / ".omo" / "workers" / "runs" / f"{dispatched['dispatch_id']}-stdout.log"
     assert snapshot["state"] == "succeeded"
+    assert chronology == ["spawn", "communicate"]
     assert snapshot["worker_completion_receipt"]["dispatch_id"] == exact_identity["dispatch_id"]
     assert origin_proof not in json.dumps(store.events())
     assert origin_proof not in log_path.read_text(encoding="utf-8")
@@ -773,10 +805,11 @@ def test_exact_production_missing_origin_proof_rejects_before_dispatch(
 ) -> None:
     _task_path, _pi = _exact_worker_fixture(tmp_path)
     packet, _exact_identity = _seed_exact_workflow_packet(tmp_path)
+    packet["origin_proof"] = new_worker_ack_origin_proof()
+    packet["request_identity"]["origin_proof"] = new_worker_ack_origin_proof()
     before_events = WorkflowMeshStore(tmp_path / ".omo").events()
-    monkeypatch.setattr("omo.worker_lifecycle.new_worker_ack_origin_proof", lambda: "")
     monkeypatch.setattr(
-        "omo.omo_worker_dispatch.subprocess.run",
+        "omo.omo_worker_dispatch.subprocess.Popen",
         lambda *_args, **_kwargs: pytest.fail("missing proof must reject before subprocess"),
     )
 
@@ -804,22 +837,39 @@ def test_exact_production_failure_or_missing_ack_never_completes(
 ) -> None:
     _task_path, _pi = _exact_worker_fixture(tmp_path)
     packet, _exact_identity = _seed_exact_workflow_packet(tmp_path)
-    origin_proof = "failure-origin-proof-" + "q" * 48
+    origin_proof = new_worker_ack_origin_proof()
 
-    def worker_result(argv, *, cwd, capture_output, text, env):
-        del capture_output, text
-        if durable_ack:
-            context = json.loads(env["OMO_WORKER_ACK_CONTEXT_JSON"])
-            omo_dir = context.pop("omo_dir")
-            acknowledge_worker(
-                Path(cwd) / omo_dir,
-                **context,
-                ack_decision="proceed",
-                origin_proof=env["OMO_WORKER_ACK_ORIGIN_PROOF"],
-            )
-        return subprocess.CompletedProcess(argv, returncode, stdout="worker-result", stderr="")
+    class WorkerResult:
+        def __init__(self, argv, *, cwd, stdout, stderr, text, env):
+            del stdout, stderr, text
+            self.args = argv
+            self.cwd = Path(cwd)
+            self.env = env
+            self.returncode = None
 
-    monkeypatch.setattr("omo.omo_worker_dispatch.subprocess.run", worker_result)
+        def communicate(self, timeout=None):
+            del timeout
+            assert WorkflowMeshStore(tmp_path / ".omo").events()[-1]["event_type"] == "StepStarted"
+            if durable_ack:
+                context = json.loads(self.env["OMO_WORKER_ACK_CONTEXT_JSON"])
+                omo_dir = context.pop("omo_dir")
+                acknowledge_worker(
+                    self.cwd / omo_dir,
+                    **context,
+                    ack_decision="proceed",
+                    origin_proof=self.env["OMO_WORKER_ACK_ORIGIN_PROOF"],
+                )
+            self.returncode = returncode
+            return "worker-result", ""
+
+        def kill(self):  # pragma: no cover - timeout has a separate test.
+            raise AssertionError("non-timeout worker must not be killed")
+
+    monkeypatch.setattr("omo.omo_worker_dispatch.subprocess.Popen", WorkerResult)
+    monkeypatch.setattr(
+        "omo.omo_worker_dispatch.subprocess.run",
+        lambda *_args, **_kwargs: pytest.fail("exact synchronous production must use Popen"),
+    )
 
     with pytest.raises(RuntimeError):
         dispatch_task(
@@ -834,6 +884,89 @@ def test_exact_production_failure_or_missing_ack_never_completes(
         )
 
     events = WorkflowMeshStore(tmp_path / ".omo").events()
+    if returncode != 0:
+        assert any(event["event_type"] == "StepFailed" for event in events)
+    assert not any(event["event_type"] == "WorkflowSucceeded" for event in events)
+
+
+def test_exact_production_spawn_failure_has_no_step_started(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _task_path, _pi = _exact_worker_fixture(tmp_path)
+    packet, _exact_identity = _seed_exact_workflow_packet(tmp_path)
+    monkeypatch.setattr(
+        "omo.omo_worker_dispatch.subprocess.Popen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("spawn failed")),
+    )
+    monkeypatch.setattr(
+        "omo.omo_worker_dispatch.subprocess.run",
+        lambda *_args, **_kwargs: pytest.fail("exact synchronous production must use Popen"),
+    )
+
+    with pytest.raises(OSError, match="spawn failed"):
+        dispatch_task(
+            tmp_path,
+            task_id="TASK-ADMISSION-GATE",
+            worker_id="pi",
+            allowed_write_paths=[],
+            workflow_packet=packet,
+            worker_ack_origin_proof=new_worker_ack_origin_proof(),
+            launch=True,
+            now="2026-08-30T01:02:03+00:00",
+        )
+
+    events = WorkflowMeshStore(tmp_path / ".omo").events()
+    assert not any(event["event_type"] == "StepStarted" for event in events)
+    assert not any(event["event_type"] == "WorkflowSucceeded" for event in events)
+
+
+def test_exact_production_timeout_records_honest_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _task_path, _pi = _exact_worker_fixture(tmp_path)
+    packet, _exact_identity = _seed_exact_workflow_packet(tmp_path)
+
+    class TimedOutWorker:
+        def __init__(self, argv, *, cwd, stdout, stderr, text, env):
+            del cwd, stdout, stderr, text, env
+            self.args = argv
+            self.returncode = None
+            self.communications = 0
+            self.killed = False
+
+        def communicate(self, timeout=None):
+            self.communications += 1
+            if self.communications == 1:
+                raise subprocess.TimeoutExpired(self.args, timeout)
+            self.returncode = -9
+            return "partial", "timeout"
+
+        def kill(self):
+            self.killed = True
+
+    monkeypatch.setattr("omo.omo_worker_dispatch.subprocess.Popen", TimedOutWorker)
+    monkeypatch.setattr(
+        "omo.omo_worker_dispatch.subprocess.run",
+        lambda *_args, **_kwargs: pytest.fail("exact synchronous production must use Popen"),
+    )
+
+    with pytest.raises(RuntimeError, match="timed out"):
+        dispatch_task(
+            tmp_path,
+            task_id="TASK-ADMISSION-GATE",
+            worker_id="pi",
+            allowed_write_paths=[],
+            workflow_packet=packet,
+            worker_ack_origin_proof=new_worker_ack_origin_proof(),
+            launch=True,
+            now="2026-08-30T01:02:03+00:00",
+        )
+
+    events = WorkflowMeshStore(tmp_path / ".omo").events()
+    assert any(event["event_type"] == "StepStarted" for event in events)
+    assert any(event["event_type"] == "StepFailed" for event in events)
     assert not any(event["event_type"] == "WorkflowSucceeded" for event in events)
 
 
