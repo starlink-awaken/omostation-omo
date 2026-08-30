@@ -476,6 +476,7 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
         "scene_binding": None,
         "exact_request_identity": None,
         "requested_workflow_id": None,
+        "worker_completion_receipt": None,
     }
     for event in relevant:
         validate_workflow_event(event)
@@ -664,6 +665,54 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
                 raise WorkflowMeshEventError("ToolInvocationRecorded outcome must be succeeded, failed, or unavailable")
         if event_type == "WorkflowVerified" and not snapshot["evidence"]:
             raise WorkflowMeshEventError("WorkflowVerified requires at least one EvidenceRecorded event")
+        if event_type == "WorkflowSucceeded" and isinstance(snapshot.get("exact_request_identity"), Mapping):
+            receipt = event["payload"].get("worker_completion_receipt")
+            receipt_fields = {
+                "status",
+                "workflow_run_id",
+                "admission_id",
+                "step_run_id",
+                "dispatch_id",
+                "worker_id",
+                "ack_origin_proof_digest",
+                "result_digest",
+                "receipt_digest",
+            }
+            if not isinstance(receipt, Mapping) or set(receipt) != receipt_fields:
+                raise WorkflowMeshEventError("exact WorkflowSucceeded requires worker completion receipt")
+            unsigned_receipt = {key: value for key, value in receipt.items() if key != "receipt_digest"}
+            expected_receipt_digest = "sha256:" + hashlib.sha256(
+                _canonical_admission(unsigned_receipt)
+            ).hexdigest()
+            admission = snapshot.get("admission")
+            worker = snapshot.get("worker")
+            step = snapshot.get("step_runs", {}).get(receipt.get("step_run_id"))
+            if (
+                event.get("producer") != "worker"
+                or receipt.get("status") != "succeeded"
+                or receipt.get("workflow_run_id") != workflow_run_id
+                or not isinstance(admission, Mapping)
+                or receipt.get("admission_id") != admission.get("admission_id")
+                or not isinstance(step, Mapping)
+                or step.get("state") != "running"
+                or step.get("admission_id") != admission.get("admission_id")
+                or not isinstance(worker, Mapping)
+                or worker.get("state") not in {"acknowledged", "active"}
+                or worker.get("ack_decision") != "proceed"
+                or worker.get("ack_origin_proof_consumed") is not True
+                or any(
+                    receipt.get(field) != worker.get(field)
+                    for field in ("dispatch_id", "worker_id", "step_run_id", "admission_id")
+                )
+                or receipt.get("ack_origin_proof_digest") != worker.get("ack_origin_proof_digest")
+                or not isinstance(receipt.get("ack_origin_proof_digest"), str)
+                or _SHA256_REF_RE.fullmatch(receipt["ack_origin_proof_digest"]) is None
+                or not isinstance(receipt.get("result_digest"), str)
+                or _SHA256_REF_RE.fullmatch(receipt["result_digest"]) is None
+                or receipt.get("receipt_digest") != expected_receipt_digest
+            ):
+                raise WorkflowMeshEventError("exact worker completion receipt binding mismatch")
+            snapshot["worker_completion_receipt"] = dict(receipt)
         snapshot["trace_id"] = snapshot["trace_id"] or event["trace_id"]
         snapshot["state"] = next_state
         snapshot["event_count"] += 1

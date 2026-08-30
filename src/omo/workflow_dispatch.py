@@ -312,6 +312,41 @@ def close_agent_workflow_run(
     if not isinstance(exact_request_identity, Mapping):
         return False
 
+    close_payload = {"agent_event_type": "AgentWorkflowClosed", **dict(payload)}
+    success_close = bool(payload.get("ok")) or status in {"ok", "succeeded", "verified", "merged"}
+    if not isinstance(admission, Mapping):
+        if success_close:
+            raise WorkflowDispatchError(
+                "EXACT_WORKFLOW_ADMISSION_NOT_PERSISTED: exact request has no persisted admission"
+            )
+        if snapshot.get("state") != "planned":
+            raise WorkflowDispatchError(
+                f"exact Agent Workflow without admission cannot close from state {snapshot.get('state')}"
+            )
+        store.append(
+            new_workflow_event(
+                "WorkflowCancelled",
+                workflow_run_id,
+                trace_id=workflow_run_id,
+                producer="omo.workflow_dispatch",
+                idempotency_key=f"{workflow_run_id}:exact-closeout:terminal",
+                payload=close_payload,
+            )
+        )
+        store.append(
+            new_workflow_event(
+                "WorkflowClosed",
+                workflow_run_id,
+                trace_id=workflow_run_id,
+                producer="omo.workflow_dispatch",
+                idempotency_key=f"{workflow_run_id}:exact-closeout:closed",
+                payload=close_payload,
+            )
+        )
+        if store.snapshot(workflow_run_id).get("state") != "closed":
+            raise WorkflowDispatchError("exact Agent Workflow request-only close did not reach closed")
+        return True
+
     request_identity = admission.get("request_identity")
     step_run_ids = admission.get("step_run_ids")
     if (
@@ -328,12 +363,14 @@ def close_agent_workflow_run(
     admission_proof = str(admission.get("proof") or "")
     step_run_id = step_run_ids[0]
 
-    close_payload = {"agent_event_type": "AgentWorkflowClosed", **dict(payload)}
     state = snapshot.get("state")
-    success_close = bool(payload.get("ok")) or status in {"ok", "succeeded", "verified", "merged"}
     if success_close and state not in {"succeeded", "verified", "merged", "closed"}:
         raise WorkflowDispatchError(
             f"EXACT_WORKFLOW_EXECUTION_NOT_PERSISTED: cannot close exact run from state {state}"
+        )
+    if success_close and not isinstance(snapshot.get("worker_completion_receipt"), Mapping):
+        raise WorkflowDispatchError(
+            "EXACT_WORKFLOW_COMPLETION_RECEIPT_NOT_PERSISTED: exact success has no worker completion receipt"
         )
     if not success_close and state not in {"failed", "unavailable", "cancelled", "closed"}:
         if state == "running":

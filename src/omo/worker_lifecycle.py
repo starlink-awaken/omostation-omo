@@ -337,6 +337,72 @@ def acknowledge_worker(
         raise WorkerLifecycleError(str(exc)) from exc
 
 
+def record_worker_completion(
+    omo_dir: Path | str,
+    *,
+    workflow_run_id: str,
+    trace_id: str,
+    dispatch_id: str,
+    worker_id: str,
+    step_run_id: str,
+    admission_id: str,
+    result_digest: str,
+) -> dict[str, Any]:
+    """Persist one successful completion receipt from an ACKed worker."""
+    result_digest = str(result_digest or "").lower()
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", result_digest):
+        raise WorkerLifecycleError("worker completion result_digest is invalid")
+    store = _store(omo_dir)
+    snapshot = _validate_context(
+        store,
+        workflow_run_id=workflow_run_id,
+        dispatch_id=dispatch_id,
+        worker_id=worker_id,
+        step_run_id=step_run_id,
+        admission_id=admission_id,
+    )
+    if snapshot.get("state") != "running":
+        raise WorkerLifecycleError("worker completion requires a running StepRun")
+    worker = snapshot.get("worker")
+    if (
+        not isinstance(worker, Mapping)
+        or worker.get("state") not in {"acknowledged", "active"}
+        or worker.get("ack_decision") != "proceed"
+        or worker.get("ack_origin_proof_consumed") is not True
+    ):
+        raise WorkerLifecycleError("worker completion requires authenticated proceed ACK")
+    for field, expected in (
+        ("dispatch_id", dispatch_id),
+        ("worker_id", worker_id),
+        ("step_run_id", step_run_id),
+        ("admission_id", admission_id),
+    ):
+        if worker.get(field) != expected:
+            raise WorkerLifecycleError(f"worker completion context mismatch: {field}")
+    receipt = {
+        "status": "succeeded",
+        "workflow_run_id": workflow_run_id,
+        "admission_id": admission_id,
+        "step_run_id": step_run_id,
+        "dispatch_id": dispatch_id,
+        "worker_id": worker_id,
+        "ack_origin_proof_digest": str(worker.get("ack_origin_proof_digest") or ""),
+        "result_digest": result_digest,
+    }
+    receipt["receipt_digest"] = "sha256:" + hashlib.sha256(
+        json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return _append(
+        store,
+        "WorkflowSucceeded",
+        workflow_run_id,
+        trace_id=trace_id,
+        producer="worker",
+        idempotency_key=f"{workflow_run_id}:worker-completed:{dispatch_id}",
+        payload={"worker_completion_receipt": receipt},
+    )
+
+
 def renew_worker_lease(
     omo_dir: Path | str,
     *,
@@ -637,6 +703,7 @@ __all__ = [
     "acknowledge_worker",
     "expire_worker_lease",
     "reclaim_worker",
+    "record_worker_completion",
     "record_step_dispatch",
     "renew_worker_lease",
     "scan_worker_leases",

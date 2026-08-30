@@ -176,22 +176,50 @@ def _stub_successful_closeout(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(workflow_lifecycle_mod, "_run_closeout_side_effects", lambda *_args, **_kwargs: None)
 
 
-def _dispatch_and_start_exact(tmp_path: Path, record: dict[str, Any]) -> dict[str, Any]:
+def _dispatch_and_start_exact(
+    tmp_path: Path,
+    record: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, str]]:
     run_id = record["run_id"]
     store = WorkflowMeshStore(tmp_path / ".omo")
     grant = store.snapshot(run_id)["admission"]
     step_run_id = grant["step_run_ids"][0]
+    worker_id = "agent-workflow"
+    dispatch_id = grant["request_identity"]["dispatch_id"]
+    instruction_binding = {
+        "instruction_ref": "repo://docs/operations/blueprint-agent-instruction-pack-v1.md",
+        "instruction_version": "blueprint-agent-instruction-pack/v1",
+        "content_digest": "sha256:" + "b" * 64,
+        "instruction_profile": "executor",
+    }
+    origin_proof = worker_lifecycle_mod.new_worker_ack_origin_proof()
     worker_lifecycle_mod.record_step_dispatch(
         tmp_path / ".omo",
         workflow_run_id=run_id,
         trace_id=run_id,
-        dispatch_id=grant["request_identity"]["dispatch_id"],
-        worker_id="agent-workflow",
+        dispatch_id=dispatch_id,
+        worker_id=worker_id,
         step_run_id=step_run_id,
         admission_id=grant["admission_id"],
         policy_digest=grant["policy_digest"],
         packet_id=grant["request_identity"]["packet_id"],
         packet_hash=grant["request_identity"]["packet_hash"],
+        instruction_binding=instruction_binding,
+        ack_origin_proof=origin_proof,
+    )
+    worker_lifecycle_mod.acknowledge_worker(
+        tmp_path / ".omo",
+        workflow_run_id=run_id,
+        trace_id=run_id,
+        dispatch_id=dispatch_id,
+        worker_id=worker_id,
+        step_run_id=step_run_id,
+        admission_id=grant["admission_id"],
+        packet_id=grant["request_identity"]["packet_id"],
+        packet_hash=grant["request_identity"]["packet_hash"],
+        instruction_binding=instruction_binding,
+        ack_decision="proceed",
+        origin_proof=origin_proof,
     )
     store.append(
         new_workflow_event(
@@ -204,7 +232,44 @@ def _dispatch_and_start_exact(tmp_path: Path, record: dict[str, Any]) -> dict[st
             },
         )
     )
-    return grant
+    return grant, {
+        "workflow_run_id": run_id,
+        "trace_id": run_id,
+        "dispatch_id": dispatch_id,
+        "worker_id": worker_id,
+        "step_run_id": step_run_id,
+        "admission_id": grant["admission_id"],
+    }
+
+
+def _interrupt_exact_start_after_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    registry = _agent_workflow_registry(tmp_path, monkeypatch)
+    identity = _prepared_agent_workflow_identity()
+    monkeypatch.setattr(workflow_lifecycle_mod, "_prepare_bet_execution", lambda _bet_id: deepcopy(identity))
+
+    def interrupt_after_request(*_args, **_kwargs):
+        raise KeyboardInterrupt("simulated interruption after WorkflowRequested")
+
+    monkeypatch.setattr(workflow_lifecycle_mod, "admit_agent_workflow_start", interrupt_after_request)
+    with pytest.raises(KeyboardInterrupt, match="simulated interruption"):
+        start_run(
+            registry,
+            registry["workflows"][0],
+            _agent_workflow_context(),
+            "interrupted exact start",
+            False,
+            False,
+            bet_id="BET-BOUND",
+            start_preflight=lambda run_id, prepared: _agent_workflow_preflight(run_id, prepared),
+        )
+    run_path = next((tmp_path / "runs").glob("*.yaml"))
+    _path, record = workflow_lifecycle_mod.read_run(registry, run_path.stem)
+    assert record["status"] == "active"
+    assert WorkflowMeshStore(tmp_path / ".omo").snapshot(record["run_id"])["state"] == "planned"
+    return record, registry
 
 
 def test_workflow_mesh_store_projects_lifecycle_and_is_idempotent(tmp_path):
@@ -611,14 +676,12 @@ def test_agent_workflow_start_persists_exact_admission_before_return(tmp_path, m
 
 def test_exact_agent_workflow_persisted_start_dispatch_close(tmp_path, monkeypatch):
     record, _identity, registry = _start_agent_workflow(tmp_path, monkeypatch)
-    grant = _dispatch_and_start_exact(tmp_path, record)
+    grant, completion_context = _dispatch_and_start_exact(tmp_path, record)
     store = WorkflowMeshStore(tmp_path / ".omo")
-    store.append(
-        new_workflow_event(
-            "WorkflowSucceeded",
-            record["run_id"],
-            payload={"completed_step_run_id": grant["step_run_ids"][0]},
-        )
+    worker_lifecycle_mod.record_worker_completion(
+        tmp_path / ".omo",
+        **completion_context,
+        result_digest="sha256:" + "c" * 64,
     )
     _stub_successful_closeout(monkeypatch)
 
@@ -641,6 +704,7 @@ def test_exact_agent_workflow_persisted_start_dispatch_close(tmp_path, monkeypat
         "WorkflowRequested",
         "WorkflowAdmitted",
         "StepDispatched",
+        "WorkerAcknowledged",
         "StepStarted",
         "WorkflowSucceeded",
         "WorkflowClosed",
@@ -650,6 +714,97 @@ def test_exact_agent_workflow_persisted_start_dispatch_close(tmp_path, monkeypat
     assert len(admissions) == 1
     assert admissions[0]["payload"]["admission"]["admission_id"] == grant["admission_id"]
     assert admissions[0]["payload"]["admission"]["proof"] == grant["proof"]
+
+
+def test_exact_agent_workflow_rejects_forged_generic_success(tmp_path, monkeypatch):
+    record, _identity, _registry = _start_agent_workflow(tmp_path, monkeypatch)
+    _grant, _completion_context = _dispatch_and_start_exact(tmp_path, record)
+    store = WorkflowMeshStore(tmp_path / ".omo")
+
+    with pytest.raises(WorkflowMeshEventError, match="worker completion receipt"):
+        store.append(
+            new_workflow_event(
+                "WorkflowSucceeded",
+                record["run_id"],
+                payload={"completed_step_run_id": f"{record['run_id']}:execute"},
+            )
+        )
+
+
+@pytest.mark.parametrize("entrypoint", ["direct", "closeout"])
+@pytest.mark.parametrize("status", ["blocked", "failed"])
+def test_interrupted_exact_request_unsuccessful_close_is_honest_terminal(
+    tmp_path,
+    monkeypatch,
+    entrypoint,
+    status,
+):
+    record, registry = _interrupt_exact_start_after_request(tmp_path, monkeypatch)
+    if entrypoint == "closeout":
+        _stub_successful_closeout(monkeypatch)
+        result = workflow_lifecycle_mod.closeout_run(
+            registry,
+            record["run_id"],
+            status,
+            ["interrupted request close"],
+            [],
+            False,
+            False,
+            False,
+            False,
+        )["run"]
+    else:
+        result = workflow_lifecycle_mod.close_run(
+            registry,
+            record["run_id"],
+            status,
+            ["interrupted request close"],
+            True,
+        )
+
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    assert result["status"] == status
+    assert store.snapshot(record["run_id"])["state"] == "closed"
+    assert [event["event_type"] for event in store.events()] == [
+        "WorkflowRequested",
+        "WorkflowCancelled",
+        "WorkflowClosed",
+    ]
+
+
+@pytest.mark.parametrize("entrypoint", ["direct", "closeout"])
+def test_interrupted_exact_request_ok_close_rejects_stably(tmp_path, monkeypatch, entrypoint):
+    record, registry = _interrupt_exact_start_after_request(tmp_path, monkeypatch)
+    if entrypoint == "closeout":
+        _stub_successful_closeout(monkeypatch)
+        close = lambda: workflow_lifecycle_mod.closeout_run(
+            registry,
+            record["run_id"],
+            "ok",
+            ["must have admission and completion"],
+            [],
+            False,
+            False,
+            False,
+            False,
+        )
+    else:
+        close = lambda: workflow_lifecycle_mod.close_run(
+            registry,
+            record["run_id"],
+            "ok",
+            ["must have admission and completion"],
+            True,
+        )
+
+    with pytest.raises(Exception, match="EXACT_WORKFLOW_ADMISSION_NOT_PERSISTED"):
+        close()
+
+    _path, persisted = workflow_lifecycle_mod.read_run(registry, record["run_id"])
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    assert persisted["status"] == "active"
+    assert store.snapshot(record["run_id"])["state"] == "planned"
+    assert [event["event_type"] for event in store.events()] == ["WorkflowRequested"]
 
 
 def test_exact_agent_workflow_admitted_only_ok_closeout_rejects_without_synthetic_events(tmp_path, monkeypatch):
@@ -727,6 +882,30 @@ def test_exact_agent_workflow_direct_ok_close_rejects_admitted_only_run(tmp_path
     assert run["status"] == "active"
     assert store.snapshot(record["run_id"])["state"] == "admitted"
     assert [event["event_type"] for event in store.events()] == ["WorkflowRequested", "WorkflowAdmitted"]
+
+
+def test_exact_agent_workflow_unsuccessful_closed_run_cannot_be_reclosed_ok(tmp_path, monkeypatch):
+    record, _identity, registry = _start_agent_workflow(tmp_path, monkeypatch)
+    workflow_lifecycle_mod.close_run(
+        registry,
+        record["run_id"],
+        "blocked",
+        ["honest blocked close"],
+        True,
+    )
+
+    with pytest.raises(Exception, match="EXACT_WORKFLOW_COMPLETION_RECEIPT_NOT_PERSISTED"):
+        workflow_lifecycle_mod.close_run(
+            registry,
+            record["run_id"],
+            "ok",
+            ["must not promote blocked close"],
+            True,
+        )
+
+    _path, persisted = workflow_lifecycle_mod.read_run(registry, record["run_id"])
+    assert persisted["status"] == "blocked"
+    assert WorkflowMeshStore(tmp_path / ".omo").snapshot(record["run_id"])["state"] == "closed"
 
 
 def test_legacy_agent_workflow_real_start_close_remains_supported(tmp_path, monkeypatch):
