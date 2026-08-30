@@ -680,17 +680,22 @@ def dispatch_task(
             except Exception:
                 raise RuntimeError("exact worker process-group cleanup failed") from original_error
 
-        if exact_request_identity is not None:
-            process = subprocess.Popen(
-                argv,
-                cwd=root,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                env=worker_env,
-                start_new_session=True,
-            )
-            process_group_id = validated_process_group(process)
+        def require_durable_ack() -> dict[str, Any]:
+            ack_worker = store.worker_snapshot(workflow_run_id)
+            if (
+                not isinstance(ack_worker, dict)
+                or ack_worker.get("ack_decision") != "proceed"
+                or ack_worker.get("ack_origin_proof_consumed") is not True
+                or ack_worker.get("dispatch_id") != dispatch_id
+                or ack_worker.get("worker_id") != worker_id
+                or ack_worker.get("step_run_id") != ack_context["step_run_id"]
+                or ack_worker.get("admission_id") != ack_context["admission_id"]
+            ):
+                raise RuntimeError("worker transport returned without a durable proceed ACK")
+            return ack_worker
+
+        def run_exact_post_spawn(process: Any, process_group_id: int | None) -> tuple[str, str, int, str]:
+            stage = "step_started"
             try:
                 store.append(
                     new_workflow_event(
@@ -706,14 +711,7 @@ def dispatch_task(
                         },
                     )
                 )
-            except BaseException as step_started_error:
-                reap_or_fail_closed(process, process_group_id, step_started_error)
-                try:
-                    record_exact_failure("step_started_persist_failed")
-                except Exception:
-                    pass
-                raise
-            try:
+                stage = "admission_deadline"
                 persisted_admission = store.snapshot(workflow_run_id).get("admission")
                 if not isinstance(persisted_admission, dict):
                     raise RuntimeError("exact worker wait requires persisted admission")
@@ -721,80 +719,28 @@ def dispatch_task(
                 wait_timeout = min(float(ack_context["lease_seconds"]), remaining_admission_seconds)
                 if wait_timeout <= 0:
                     raise RuntimeError("exact admission expired before worker wait")
-            except BaseException as admission_deadline_error:
-                reap_or_fail_closed(process, process_group_id, admission_deadline_error)
-                try:
-                    record_exact_failure("admission_expired_before_worker_wait")
-                except Exception:
-                    pass
-                raise
-            try:
+                stage = "communicate"
                 stdout, stderr = process.communicate(timeout=wait_timeout)
-            except subprocess.TimeoutExpired as exc:
-                stdout, stderr = reap_or_fail_closed(process, process_group_id, exc)
+                stage = "log_write"
                 log_content = redact_sensitive_text((stdout or "") + (stderr or "")).replace(
                     ack_origin_proof, "[REDACTED]"
                 )
                 write_text_atomic(root / stdout_path, log_content)
-                record_exact_failure("worker_timeout")
-                raise RuntimeError(
-                    f"worker launch timed out: worker_id={worker_id} timeout={exc.timeout} log={stdout_path}"
-                ) from exc
-            except BaseException as wait_error:
-                reap_or_fail_closed(process, process_group_id, wait_error)
-                try:
-                    record_exact_failure("worker_wait_interrupted")
-                except Exception:
-                    pass
-                raise
-            returncode = process.returncode
-        else:
-            result = subprocess.run(argv, cwd=root, capture_output=True, text=True, env=worker_env)
-            stdout, stderr = result.stdout, result.stderr
-            returncode = result.returncode
+                stage = "return_handling"
+                returncode = process.returncode
+                if returncode != 0:
+                    raise RuntimeError(
+                        f"worker launch failed: worker_id={worker_id} returncode={returncode} log={stdout_path}"
+                    )
+                stage = "ack_snapshot"
+                require_durable_ack()
+                stage = "group_inspection"
+                if validated_group_alive(process_group_id):
+                    raise RuntimeError("exact worker process group remained live after successful return")
+                stage = "authenticated_completion"
+                from .worker_lifecycle import record_worker_completion
 
-        log_content = redact_sensitive_text((stdout or "") + (stderr or "")).replace(
-            ack_origin_proof, "[REDACTED]"
-        )
-        write_text_atomic(root / stdout_path, log_content)
-        if returncode != 0:
-            launch_error = RuntimeError(
-                f"worker launch failed: worker_id={worker_id} returncode={returncode} log={stdout_path}"
-            )
-            if exact_request_identity is not None:
-                reap_or_fail_closed(process, process_group_id, launch_error)
-            record_exact_failure(f"worker_returncode_{returncode}")
-            raise launch_error
-        ack_worker = store.worker_snapshot(workflow_run_id)
-        if (
-            not isinstance(ack_worker, dict)
-            or ack_worker.get("ack_decision") != "proceed"
-            or ack_worker.get("ack_origin_proof_consumed") is not True
-            or ack_worker.get("dispatch_id") != dispatch_id
-            or ack_worker.get("worker_id") != worker_id
-            or ack_worker.get("step_run_id") != ack_context["step_run_id"]
-            or ack_worker.get("admission_id") != ack_context["admission_id"]
-        ):
-            ack_error = RuntimeError("worker transport returned without a durable proceed ACK")
-            if exact_request_identity is not None:
-                reap_or_fail_closed(process, process_group_id, ack_error)
-            record_exact_failure("worker_ack_missing_or_mismatched")
-            raise ack_error
-        if exact_request_identity is not None:
-            if validated_group_alive(process_group_id):
-                lingering_group_error = RuntimeError(
-                    "exact worker process group remained live after successful return"
-                )
-                reap_or_fail_closed(process, process_group_id, lingering_group_error)
-                try:
-                    record_exact_failure("worker_process_group_remained_live")
-                except Exception:
-                    pass
-                raise lingering_group_error
-            from .worker_lifecycle import record_worker_completion
-
-            result_digest = "sha256:" + hashlib.sha256(log_content.encode("utf-8")).hexdigest()
-            try:
+                result_digest = "sha256:" + hashlib.sha256(log_content.encode("utf-8")).hexdigest()
                 record_worker_completion(
                     omo,
                     workflow_run_id=workflow_run_id,
@@ -806,13 +752,53 @@ def dispatch_task(
                     origin_proof=ack_origin_proof,
                     result_digest=result_digest,
                 )
-            except BaseException as completion_error:
-                reap_or_fail_closed(process, process_group_id, completion_error)
+                return stdout, stderr, int(returncode), log_content
+            except BaseException as post_spawn_error:
+                cleaned_stdout, cleaned_stderr = reap_or_fail_closed(
+                    process,
+                    process_group_id,
+                    post_spawn_error,
+                )
                 try:
-                    record_exact_failure("worker_completion_persist_failed")
+                    record_exact_failure(f"worker_{stage}_failed")
                 except Exception:
                     pass
+                if isinstance(post_spawn_error, subprocess.TimeoutExpired):
+                    timeout_log = redact_sensitive_text(
+                        (cleaned_stdout or "") + (cleaned_stderr or "")
+                    ).replace(ack_origin_proof, "[REDACTED]")
+                    write_text_atomic(root / stdout_path, timeout_log)
+                    raise RuntimeError(
+                        f"worker launch timed out: worker_id={worker_id} "
+                        f"timeout={post_spawn_error.timeout} log={stdout_path}"
+                    ) from post_spawn_error
                 raise
+
+        if exact_request_identity is not None:
+            process = subprocess.Popen(
+                argv,
+                cwd=root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=worker_env,
+                start_new_session=True,
+            )
+            process_group_id = validated_process_group(process)
+            stdout, stderr, returncode, log_content = run_exact_post_spawn(process, process_group_id)
+        else:
+            result = subprocess.run(argv, cwd=root, capture_output=True, text=True, env=worker_env)
+            stdout, stderr = result.stdout, result.stderr
+            returncode = result.returncode
+            log_content = redact_sensitive_text((stdout or "") + (stderr or "")).replace(
+                ack_origin_proof, "[REDACTED]"
+            )
+            write_text_atomic(root / stdout_path, log_content)
+            if returncode != 0:
+                raise RuntimeError(
+                    f"worker launch failed: worker_id={worker_id} returncode={returncode} log={stdout_path}"
+                )
+            require_durable_ack()
 
         # Phase 28 Step 3: Tri-Plane Bus - Broadcast event to Agora EventBus
         def push_log_to_agora(dispatch_id: str, content: str):

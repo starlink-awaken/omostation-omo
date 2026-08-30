@@ -507,13 +507,6 @@ def renew_worker_lease(
     if lease_seconds <= 0:
         raise WorkerLifecycleError("lease_seconds must be positive")
     store = _store(omo_dir)
-    heartbeat_at = _stamp(now)
-    lease_expires_at = _stamp((_utc(now) + timedelta(seconds=lease_seconds)).isoformat())
-    event_key = heartbeat_id or lease_expires_at
-    idempotency_key = f"{workflow_run_id}:worker-heartbeat:{dispatch_id}:{event_key}"
-    prior = _existing(store, idempotency_key)
-    if prior is not None:
-        return prior
     snapshot = _validate_context(
         store,
         workflow_run_id=workflow_run_id,
@@ -530,6 +523,22 @@ def renew_worker_lease(
         raise WorkerLifecycleError("worker must ACK before renewing its lease")
     if current.get("dispatch_id") != dispatch_id or current.get("worker_id") != worker_id:
         raise WorkerLifecycleError("worker lease owner mismatch")
+    heartbeat_value = _utc(now)
+    requested_expiry = heartbeat_value + timedelta(seconds=lease_seconds)
+    if isinstance(snapshot.get("exact_request_identity"), Mapping):
+        admission = snapshot.get("admission")
+        if not isinstance(admission, Mapping):
+            raise WorkerLifecycleError("exact worker renewal requires persisted admission")
+        _remaining_exact_admission_seconds(admission)
+        _remaining_exact_admission_seconds(admission, now=now)
+        requested_expiry = min(requested_expiry, _utc(str(admission.get("expires_at"))))
+    heartbeat_at = _stamp(heartbeat_value.isoformat())
+    lease_expires_at = _stamp(requested_expiry.isoformat())
+    event_key = heartbeat_id or lease_expires_at
+    idempotency_key = f"{workflow_run_id}:worker-heartbeat:{dispatch_id}:{event_key}"
+    prior = _existing(store, idempotency_key)
+    if prior is not None:
+        return prior
     payload = {
         "dispatch_id": dispatch_id,
         "worker_id": worker_id,

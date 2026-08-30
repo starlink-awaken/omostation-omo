@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+import omo.worker_lifecycle as worker_lifecycle_mod
 import omo.workflow_dispatch as workflow_dispatch_mod
 from omo.omo_worker_core import (
     _build_launch_argv,
@@ -1036,6 +1037,125 @@ def test_exact_post_spawn_base_exception_reaps_group_and_reraises_original(
     assert origin_proof not in json.dumps(events)
     if phase == "communicate":
         assert any(event["event_type"] == "StepFailed" for event in events)
+
+
+@pytest.mark.parametrize(
+    ("phase", "interrupt_type"),
+    [
+        ("log_write", KeyboardInterrupt),
+        ("ack_snapshot", SystemExit),
+        ("group_inspection", KeyboardInterrupt),
+        ("completion", SystemExit),
+    ],
+)
+def test_exact_outer_post_spawn_boundary_cleans_every_late_interruption(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    phase: str,
+    interrupt_type: type[BaseException],
+) -> None:
+    _task_path, _pi = _exact_worker_fixture(tmp_path)
+    packet, _exact_identity = _seed_exact_workflow_packet(tmp_path)
+    origin_proof = new_worker_ack_origin_proof()
+    interruption = interrupt_type(f"stable-late-{phase}-interruption")
+    spawned_pid = 42432
+    lifecycle = {
+        "group_alive": True,
+        "signals": [],
+        "communicate_calls": 0,
+        "main_communicate_done": False,
+        "group_interrupt_raised": False,
+    }
+
+    class LateInterruptedWorker:
+        pid = spawned_pid
+
+        def __init__(self, argv, *, cwd, stdout, stderr, text, env, start_new_session):
+            del stdout, stderr, text
+            assert start_new_session is True
+            self.args = argv
+            self.cwd = Path(cwd)
+            self.env = env
+            self.returncode = None
+
+        def communicate(self, timeout=None):
+            lifecycle["communicate_calls"] += 1
+            if not lifecycle["main_communicate_done"]:
+                context = json.loads(self.env["OMO_WORKER_ACK_CONTEXT_JSON"])
+                omo_dir = context.pop("omo_dir")
+                acknowledge_worker(
+                    self.cwd / omo_dir,
+                    **context,
+                    ack_decision="proceed",
+                    origin_proof=self.env["OMO_WORKER_ACK_ORIGIN_PROOF"],
+                )
+                lifecycle["main_communicate_done"] = True
+                self.returncode = 0
+            return "late-interruption", ""
+
+    original_write_text = __import__("omo.omo_worker_dispatch", fromlist=["write_text_atomic"]).write_text_atomic
+
+    def interrupt_log_write(path, content):
+        if phase == "log_write" and str(path).endswith("-stdout.log"):
+            raise interruption
+        return original_write_text(path, content)
+
+    original_worker_snapshot = WorkflowMeshStore.worker_snapshot
+
+    def interrupt_ack_snapshot(store, workflow_run_id):
+        if phase == "ack_snapshot":
+            raise interruption
+        return original_worker_snapshot(store, workflow_run_id)
+
+    def fake_killpg(process_group_id, sig):
+        assert process_group_id == spawned_pid
+        lifecycle["signals"].append(sig)
+        if sig == 0:
+            if phase == "group_inspection" and not lifecycle["group_interrupt_raised"]:
+                lifecycle["group_interrupt_raised"] = True
+                raise interruption
+            if phase == "completion" and lifecycle["main_communicate_done"]:
+                lifecycle["group_alive"] = False
+            if lifecycle["group_alive"]:
+                return None
+            raise ProcessLookupError("late-interruption group absent")
+        if not lifecycle["group_alive"]:
+            raise ProcessLookupError("late-interruption group absent")
+        if sig in {signal.SIGTERM, signal.SIGKILL}:
+            lifecycle["group_alive"] = False
+
+    original_completion = worker_lifecycle_mod.record_worker_completion
+
+    def interrupt_completion(*args, **kwargs):
+        if phase == "completion":
+            raise interruption
+        return original_completion(*args, **kwargs)
+
+    monkeypatch.setattr("omo.omo_worker_dispatch.subprocess.Popen", LateInterruptedWorker)
+    monkeypatch.setattr("omo.omo_worker_dispatch.write_text_atomic", interrupt_log_write)
+    monkeypatch.setattr(WorkflowMeshStore, "worker_snapshot", interrupt_ack_snapshot)
+    monkeypatch.setattr("omo.omo_worker_dispatch.os.getpgid", lambda pid: pid)
+    monkeypatch.setattr("omo.omo_worker_dispatch.os.killpg", fake_killpg)
+    monkeypatch.setattr(worker_lifecycle_mod, "record_worker_completion", interrupt_completion)
+
+    with pytest.raises(interrupt_type, match=f"stable-late-{phase}-interruption") as raised:
+        dispatch_task(
+            tmp_path,
+            task_id="TASK-ADMISSION-GATE",
+            worker_id="pi",
+            allowed_write_paths=[],
+            workflow_packet=packet,
+            worker_ack_origin_proof=origin_proof,
+            launch=True,
+            now="2026-08-30T01:02:03+00:00",
+        )
+
+    assert raised.value is interruption
+    assert lifecycle["group_alive"] is False
+    assert signal.SIGTERM in lifecycle["signals"]
+    events = WorkflowMeshStore(tmp_path / ".omo").events()
+    assert not any(event["event_type"] == "WorkflowSucceeded" for event in events)
+    assert origin_proof not in json.dumps(events)
 
 
 def test_exact_zero_return_parent_with_live_descendant_fails_before_completion(

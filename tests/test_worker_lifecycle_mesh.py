@@ -19,7 +19,12 @@ from omo.worker_lifecycle import (
     renew_worker_lease,
     scan_worker_leases,
 )
-from omo.workflow_mesh import WorkflowMeshEventError, WorkflowMeshStore, new_workflow_event
+from omo.workflow_mesh import (
+    WorkflowMeshEventError,
+    WorkflowMeshStore,
+    new_workflow_event,
+    worker_ack_origin_digest,
+)
 from omo.cli import main as cli_main
 
 _ORIGIN_PROOFS: dict[str, str] = {}
@@ -736,6 +741,58 @@ def test_step_dispatch_rejects_empty_persisted_exact_ids_without_event(tmp_path,
     assert not any(event["event_type"] == "StepDispatched" for event in store.events())
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "dispatch_id",
+        "packet_id",
+        "packet_hash",
+        "policy_digest",
+        "admission_id",
+        "step_run_id",
+        "requirements_digest",
+    ],
+)
+def test_raw_exact_step_dispatched_append_revalidates_persisted_binding(tmp_path, mutation):
+    run_id = f"run-raw-exact-dispatch-{mutation}"
+    step_run_id = f"{run_id}:execute"
+    grant, policy = _exact_grant(run_id, step_run_id)
+    store = WorkflowMeshStore(tmp_path)
+    _admit_exact(store, run_id, grant, policy)
+    identity = grant["request_identity"]
+    payload = {
+        "exact_request_discriminator": "agent-workflow-exact/v1",
+        "bet_id": identity["bet_id"],
+        "workflow_id": identity["workflow_id"],
+        "dispatch_id": identity["dispatch_id"],
+        "worker_id": "worker-exact",
+        "step_run_id": step_run_id,
+        "step_name": "execute",
+        "admission_id": grant["admission_id"],
+        "policy_digest": grant["policy_digest"],
+        "packet_id": identity["packet_id"],
+        "packet_hash": identity["packet_hash"],
+        "instruction_binding": None,
+        "ack_origin_nonce": None,
+        "capability_requirements_digest": identity["capability_requirements_digest"],
+    }
+    field = "capability_requirements_digest" if mutation == "requirements_digest" else mutation
+    payload[field] = "forged"
+    before = list(store.events())
+
+    with pytest.raises(WorkflowMeshEventError):
+        store.append(
+            new_workflow_event(
+                "StepDispatched",
+                run_id,
+                payload=payload,
+            )
+        )
+
+    assert store.events() == before
+    assert store.snapshot(run_id)["state"] == "admitted"
+
+
 def test_exact_worker_ack_lease_is_capped_by_admission_expiry(tmp_path):
     run_id = "run-exact-admission-bounded-lease"
     step_run_id = f"{run_id}:execute"
@@ -782,3 +839,159 @@ def test_exact_worker_ack_lease_is_capped_by_admission_expiry(tmp_path):
         acknowledged["payload"]["lease_expires_at"].replace("Z", "+00:00")
     )
     assert lease_expires_at <= expires_at
+
+
+def _live_exact_worker_for_ttl_boundary(tmp_path, run_id: str, *, ttl_seconds: int = 600):
+    step_run_id = f"{run_id}:execute"
+    issued_at = datetime.now(UTC).replace(microsecond=0) - timedelta(seconds=10)
+    expires_at = issued_at + timedelta(seconds=ttl_seconds)
+    grant, policy = _exact_grant(run_id, step_run_id)
+    grant["issued_at"] = issued_at.isoformat()
+    grant["expires_at"] = expires_at.isoformat()
+    _reproof(grant)
+    store = WorkflowMeshStore(tmp_path)
+    _admit_exact(store, run_id, grant, policy)
+    origin_proof = new_worker_ack_origin_proof()
+    binding = _binding()
+    context = {
+        "workflow_run_id": run_id,
+        "trace_id": run_id,
+        "dispatch_id": grant["request_identity"]["dispatch_id"],
+        "worker_id": "worker-a",
+        "step_run_id": step_run_id,
+        "admission_id": grant["admission_id"],
+    }
+    record_step_dispatch(
+        tmp_path,
+        **context,
+        policy_digest=grant["policy_digest"],
+        packet_id=grant["request_identity"]["packet_id"],
+        packet_hash=grant["request_identity"]["packet_hash"],
+        instruction_binding=binding["instruction_binding"],
+        ack_origin_proof=origin_proof,
+    )
+    return store, grant, binding, context, origin_proof, issued_at, expires_at
+
+
+@pytest.mark.parametrize("append_kind", ["ack", "completion"])
+def test_store_authenticated_append_rejects_event_outside_exact_admission_window(tmp_path, append_kind):
+    run_id = f"run-store-ttl-{append_kind}"
+    store, grant, binding, context, origin_proof, issued_at, expires_at = _live_exact_worker_for_ttl_boundary(
+        tmp_path,
+        run_id,
+    )
+    if append_kind == "ack":
+        worker = store.snapshot(run_id)["worker"]
+        ack_context = {**worker, "workflow_run_id": run_id}
+        commitment = worker_ack_origin_digest(origin_proof, ack_context)
+        event = new_workflow_event(
+            "WorkerAcknowledged",
+            run_id,
+            trace_id=run_id,
+            producer="worker",
+            idempotency_key=f"{run_id}:worker-ack:{context['dispatch_id']}",
+            payload={
+                **context,
+                "acknowledged_at": issued_at.isoformat(),
+                "lease_expires_at": (issued_at + timedelta(seconds=60)).isoformat(),
+                "packet_id": grant["request_identity"]["packet_id"],
+                "packet_hash": grant["request_identity"]["packet_hash"],
+                "instruction_binding": binding["instruction_binding"],
+                "ack_decision": "proceed",
+                "ack_origin_proof_digest": commitment,
+            },
+        )
+        event["occurred_at"] = (expires_at + timedelta(seconds=1)).isoformat()
+        before = list(store.events())
+        with pytest.raises(WorkflowMeshEventError, match="admission.*expired"):
+            store.append_worker_ack(event, origin_proof=origin_proof)
+    else:
+        acknowledge_worker(
+            tmp_path,
+            **context,
+            packet_id=grant["request_identity"]["packet_id"],
+            packet_hash=grant["request_identity"]["packet_hash"],
+            instruction_binding=binding["instruction_binding"],
+            ack_decision="proceed",
+            origin_proof=origin_proof,
+            lease_seconds=60,
+        )
+        store.append(
+            new_workflow_event(
+                "StepStarted",
+                run_id,
+                payload={
+                    "step_run_id": context["step_run_id"],
+                    "step_name": "execute",
+                    "admission_id": context["admission_id"],
+                },
+            )
+        )
+        worker = store.snapshot(run_id)["worker"]
+        result_digest = "sha256:" + "c" * 64
+        completion_context = {**worker, "workflow_run_id": run_id, "result_digest": result_digest}
+        receipt = {
+            "status": "succeeded",
+            "exact_request_discriminator": "agent-workflow-exact/v1",
+            "bet_id": grant["request_identity"]["bet_id"],
+            "workflow_id": grant["request_identity"]["workflow_id"],
+            "workflow_run_id": run_id,
+            "admission_id": context["admission_id"],
+            "step_run_id": context["step_run_id"],
+            "dispatch_id": context["dispatch_id"],
+            "worker_id": context["worker_id"],
+            "ack_origin_proof_digest": worker["ack_origin_proof_digest"],
+            "completion_origin_commitment": worker_ack_origin_digest(origin_proof, completion_context),
+            "result_digest": result_digest,
+        }
+        receipt["receipt_digest"] = "sha256:" + hashlib.sha256(
+            json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        event = new_workflow_event(
+            "WorkflowSucceeded",
+            run_id,
+            trace_id=run_id,
+            producer="worker",
+            idempotency_key=f"{run_id}:worker-completed:{context['dispatch_id']}",
+            payload={"worker_completion_receipt": receipt},
+        )
+        event["occurred_at"] = (expires_at + timedelta(seconds=1)).isoformat()
+        before = list(store.events())
+        with pytest.raises(WorkflowMeshEventError, match="admission.*expired"):
+            store.append_worker_completion(event, origin_proof=origin_proof)
+
+    assert store.events() == before
+
+
+def test_exact_renewed_lease_is_capped_to_admission_and_rejects_future_now(tmp_path):
+    run_id = "run-exact-renewal-admission-boundary"
+    store, grant, binding, context, origin_proof, _issued_at, expires_at = _live_exact_worker_for_ttl_boundary(
+        tmp_path,
+        run_id,
+        ttl_seconds=300,
+    )
+    acknowledge_worker(
+        tmp_path,
+        **context,
+        packet_id=grant["request_identity"]["packet_id"],
+        packet_hash=grant["request_identity"]["packet_hash"],
+        instruction_binding=binding["instruction_binding"],
+        ack_decision="proceed",
+        origin_proof=origin_proof,
+        lease_seconds=60,
+    )
+    renewed = renew_worker_lease(tmp_path, **context, lease_seconds=1200)
+    renewed_expiry = datetime.fromisoformat(renewed["payload"]["lease_expires_at"].replace("Z", "+00:00"))
+    assert renewed_expiry <= expires_at
+    before = list(store.events())
+
+    with pytest.raises(WorkerLifecycleError, match="admission.*expired"):
+        renew_worker_lease(
+            tmp_path,
+            **context,
+            lease_seconds=60,
+            now=(expires_at + timedelta(seconds=1)).isoformat(),
+            heartbeat_id="forged-future-now",
+        )
+
+    assert store.events() == before
