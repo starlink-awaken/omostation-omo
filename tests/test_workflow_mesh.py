@@ -239,6 +239,7 @@ def _dispatch_and_start_exact(
         "worker_id": worker_id,
         "step_run_id": step_run_id,
         "admission_id": grant["admission_id"],
+        "origin_proof": origin_proof,
     }
 
 
@@ -721,7 +722,7 @@ def test_exact_agent_workflow_rejects_forged_generic_success(tmp_path, monkeypat
     _grant, _completion_context = _dispatch_and_start_exact(tmp_path, record)
     store = WorkflowMeshStore(tmp_path / ".omo")
 
-    with pytest.raises(WorkflowMeshEventError, match="worker completion receipt"):
+    with pytest.raises(WorkflowMeshEventError, match="authenticated worker completion append"):
         store.append(
             new_workflow_event(
                 "WorkflowSucceeded",
@@ -729,6 +730,37 @@ def test_exact_agent_workflow_rejects_forged_generic_success(tmp_path, monkeypat
                 payload={"completed_step_run_id": f"{record['run_id']}:execute"},
             )
         )
+
+
+def test_exact_agent_workflow_rejects_raw_deterministic_completion_receipt(tmp_path, monkeypatch):
+    record, _identity, _registry = _start_agent_workflow(tmp_path, monkeypatch)
+    grant, completion_context = _dispatch_and_start_exact(tmp_path, record)
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    worker = store.snapshot(record["run_id"])["worker"]
+    receipt = {
+        "status": "succeeded",
+        "workflow_run_id": record["run_id"],
+        "admission_id": grant["admission_id"],
+        "step_run_id": completion_context["step_run_id"],
+        "dispatch_id": completion_context["dispatch_id"],
+        "worker_id": completion_context["worker_id"],
+        "ack_origin_proof_digest": worker["ack_origin_proof_digest"],
+        "completion_origin_commitment": "sha256:" + "e" * 64,
+        "result_digest": "sha256:" + "d" * 64,
+    }
+    receipt["receipt_digest"] = "sha256:" + hashlib.sha256(
+        json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    forged = new_workflow_event(
+        "WorkflowSucceeded",
+        record["run_id"],
+        producer="worker",
+        payload={"worker_completion_receipt": receipt},
+    )
+
+    with pytest.raises(WorkflowMeshEventError, match="authenticated worker completion append"):
+        store.append(forged)
+    assert store.snapshot(record["run_id"])["state"] == "running"
 
 
 @pytest.mark.parametrize("entrypoint", ["direct", "closeout"])

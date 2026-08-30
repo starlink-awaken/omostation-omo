@@ -177,6 +177,7 @@ def record_step_dispatch(
         and (
             admission.get("workflow_run_id") != workflow_run_id
             or request_identity != exact_request_identity
+            or dispatch_id != exact_request_identity.get("dispatch_id")
             or request_identity.get("workflow_run_id") != workflow_run_id
             or request_identity.get("correlation_id") != workflow_run_id
             or not isinstance(request_identity.get("actor_id"), str)
@@ -346,6 +347,7 @@ def record_worker_completion(
     worker_id: str,
     step_run_id: str,
     admission_id: str,
+    origin_proof: str,
     result_digest: str,
 ) -> dict[str, Any]:
     """Persist one successful completion receipt from an ACKed worker."""
@@ -361,8 +363,8 @@ def record_worker_completion(
         step_run_id=step_run_id,
         admission_id=admission_id,
     )
-    if snapshot.get("state") != "running":
-        raise WorkerLifecycleError("worker completion requires a running StepRun")
+    if snapshot.get("state") not in {"dispatched", "running"}:
+        raise WorkerLifecycleError("worker completion requires a dispatched or running StepRun")
     worker = snapshot.get("worker")
     if (
         not isinstance(worker, Mapping)
@@ -379,6 +381,39 @@ def record_worker_completion(
     ):
         if worker.get(field) != expected:
             raise WorkerLifecycleError(f"worker completion context mismatch: {field}")
+    if not origin_proof:
+        raise WorkerLifecycleError("worker completion origin proof is required")
+    ack_context = {
+        **worker,
+        "workflow_run_id": workflow_run_id,
+        "result_digest": None,
+    }
+    expected_ack = worker_ack_origin_digest(origin_proof, ack_context)
+    if not secrets.compare_digest(expected_ack, str(worker.get("ack_origin_proof_digest") or "")):
+        raise WorkerLifecycleError("worker completion origin proof does not match durable ACK")
+    if snapshot.get("state") == "dispatched":
+        _append(
+            store,
+            "StepStarted",
+            workflow_run_id,
+            trace_id=trace_id,
+            producer="worker",
+            idempotency_key=f"{workflow_run_id}:worker-started:{dispatch_id}",
+            payload={
+                "step_run_id": step_run_id,
+                "step_name": "execute",
+                "admission_id": admission_id,
+            },
+        )
+        snapshot = store.snapshot(workflow_run_id)
+        if snapshot.get("state") != "running":
+            raise WorkerLifecycleError("worker completion could not persist StepStarted")
+        worker = snapshot["worker"]
+    completion_context = {
+        **worker,
+        "workflow_run_id": workflow_run_id,
+        "result_digest": result_digest,
+    }
     receipt = {
         "status": "succeeded",
         "workflow_run_id": workflow_run_id,
@@ -387,13 +422,13 @@ def record_worker_completion(
         "dispatch_id": dispatch_id,
         "worker_id": worker_id,
         "ack_origin_proof_digest": str(worker.get("ack_origin_proof_digest") or ""),
+        "completion_origin_commitment": worker_ack_origin_digest(origin_proof, completion_context),
         "result_digest": result_digest,
     }
     receipt["receipt_digest"] = "sha256:" + hashlib.sha256(
         json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    return _append(
-        store,
+    event = new_workflow_event(
         "WorkflowSucceeded",
         workflow_run_id,
         trace_id=trace_id,
@@ -401,6 +436,10 @@ def record_worker_completion(
         idempotency_key=f"{workflow_run_id}:worker-completed:{dispatch_id}",
         payload={"worker_completion_receipt": receipt},
     )
+    try:
+        return store.append_worker_completion(event, origin_proof=origin_proof)
+    except WorkflowMeshEventError as exc:
+        raise WorkerLifecycleError(str(exc)) from exc
 
 
 def renew_worker_lease(

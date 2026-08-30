@@ -239,6 +239,7 @@ def worker_ack_origin_digest(origin_proof: str, payload: Mapping[str, Any]) -> s
             "packet_id",
             "packet_hash",
             "instruction_binding",
+            "result_digest",
         )
     }
     return (
@@ -675,6 +676,7 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
                 "dispatch_id",
                 "worker_id",
                 "ack_origin_proof_digest",
+                "completion_origin_commitment",
                 "result_digest",
                 "receipt_digest",
             }
@@ -707,6 +709,8 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
                 or receipt.get("ack_origin_proof_digest") != worker.get("ack_origin_proof_digest")
                 or not isinstance(receipt.get("ack_origin_proof_digest"), str)
                 or _SHA256_REF_RE.fullmatch(receipt["ack_origin_proof_digest"]) is None
+                or not isinstance(receipt.get("completion_origin_commitment"), str)
+                or _SHA256_REF_RE.fullmatch(receipt["completion_origin_commitment"]) is None
                 or not isinstance(receipt.get("result_digest"), str)
                 or _SHA256_REF_RE.fullmatch(receipt["result_digest"]) is None
                 or receipt.get("receipt_digest") != expected_receipt_digest
@@ -928,6 +932,15 @@ class WorkflowMeshStore:
             event["payload"].get("ack_decision") != "stop" or event["payload"].get("packet_id") is not None
         ):
             raise WorkflowMeshEventError("WorkerAcknowledged requires authenticated worker append")
+        if event["event_type"] == "WorkflowSucceeded":
+            with self._lock:
+                current = self._log.read_all()
+                snapshot = project_workflow_run(current, event["workflow_run_id"])
+                if isinstance(snapshot.get("exact_request_identity"), Mapping):
+                    raise WorkflowMeshEventError(
+                        "exact WorkflowSucceeded requires authenticated worker completion append"
+                    )
+                return self._append_locked(event)
         with self._lock:
             return self._append_locked(event)
 
@@ -975,6 +988,47 @@ class WorkflowMeshStore:
                 raise WorkflowMeshEventError("worker ACK origin proof mismatch")
             if event["payload"].get("ack_origin_proof_digest") != commitment:
                 raise WorkflowMeshEventError("worker ACK origin proof digest mismatch")
+            return self._append_locked(event)
+
+    def append_worker_completion(self, event: dict[str, Any], *, origin_proof: str) -> dict[str, Any]:
+        """Authenticate one exact worker completion with its held origin proof."""
+        validate_workflow_event(event)
+        if event["event_type"] != "WorkflowSucceeded" or not origin_proof:
+            raise WorkflowMeshEventError("authenticated completion requires WorkflowSucceeded and origin proof")
+        with self._lock:
+            current = self._log.read_all()
+            snapshot = project_workflow_run(current, event["workflow_run_id"])
+            if not isinstance(snapshot.get("exact_request_identity"), Mapping):
+                raise WorkflowMeshEventError("authenticated completion requires an exact workflow request")
+            worker = snapshot.get("worker")
+            receipt = event.get("payload", {}).get("worker_completion_receipt")
+            if not isinstance(worker, Mapping) or not isinstance(receipt, Mapping):
+                raise WorkflowMeshEventError("authenticated completion requires worker context and receipt")
+            ack_context = {
+                **worker,
+                "workflow_run_id": event["workflow_run_id"],
+                "result_digest": None,
+            }
+            expected_ack = worker_ack_origin_digest(origin_proof, ack_context)
+            if not hmac.compare_digest(expected_ack, str(worker.get("ack_origin_proof_digest") or "")):
+                raise WorkflowMeshEventError("worker completion origin proof does not match durable ACK")
+            completion_context = {
+                **worker,
+                "workflow_run_id": event["workflow_run_id"],
+                "result_digest": receipt.get("result_digest"),
+            }
+            expected_completion = worker_ack_origin_digest(origin_proof, completion_context)
+            if not hmac.compare_digest(
+                expected_completion,
+                str(receipt.get("completion_origin_commitment") or ""),
+            ):
+                raise WorkflowMeshEventError("worker completion origin commitment mismatch")
+            for existing in current:
+                if existing.get("idempotency_key") != event["idempotency_key"]:
+                    continue
+                if existing.get("event_type") == event["event_type"] and existing.get("payload") == event["payload"]:
+                    return existing
+                raise WorkflowMeshEventError("conflicting authenticated worker completion")
             return self._append_locked(event)
 
     def snapshot(self, workflow_run_id: str) -> dict[str, Any]:

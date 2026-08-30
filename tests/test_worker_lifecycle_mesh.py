@@ -473,6 +473,8 @@ def _forge_exact_admission(admission: dict, mutation: str) -> None:
         identity["actor_id"] = ""
     elif mutation == "delivery_attempt_id":
         identity["delivery_attempt_id"] = ""
+    elif mutation == "dispatch_id":
+        identity["dispatch_id"] = "dispatch-forged"
     elif mutation == "ordered_requirements":
         identity["capability_requirements"] = list(reversed(identity["capability_requirements"]))
     elif mutation == "requirements_digest":
@@ -502,6 +504,7 @@ def _forge_exact_admission(admission: dict, mutation: str) -> None:
         "workflow_run_id",
         "actor_id",
         "delivery_attempt_id",
+        "dispatch_id",
         "ordered_requirements",
         "requirements_digest",
         "admitted_step_id",
@@ -534,7 +537,7 @@ def test_step_dispatch_rejects_forged_exact_admission_identity(tmp_path, monkeyp
             tmp_path,
             workflow_run_id=run_id,
             trace_id=run_id,
-            dispatch_id="dispatch-exact",
+            dispatch_id=grant["request_identity"]["dispatch_id"],
             worker_id="worker-exact",
             step_run_id=step_run_id,
             admission_id=grant["admission_id"],
@@ -543,4 +546,29 @@ def test_step_dispatch_rejects_forged_exact_admission_identity(tmp_path, monkeyp
             packet_hash=grant["request_identity"]["packet_hash"],
         )
     assert WorkflowMeshStore(tmp_path).snapshot(run_id)["state"] == "admitted"
+    assert not any(event["event_type"] == "StepDispatched" for event in store.events())
+
+
+def test_step_dispatch_rejects_forged_caller_dispatch_id(tmp_path):
+    run_id = "run-exact-caller-dispatch"
+    step_run_id = f"{run_id}:execute"
+    grant, policy = _exact_grant(run_id, step_run_id)
+    store = WorkflowMeshStore(tmp_path)
+    _admit_exact(store, run_id, grant, policy)
+
+    with pytest.raises(WorkerLifecycleError, match="admission binding mismatch"):
+        record_step_dispatch(
+            tmp_path,
+            workflow_run_id=run_id,
+            trace_id=run_id,
+            dispatch_id="caller-forged-dispatch",
+            worker_id="worker-exact",
+            step_run_id=step_run_id,
+            admission_id=grant["admission_id"],
+            policy_digest=grant["policy_digest"],
+            packet_id=grant["request_identity"]["packet_id"],
+            packet_hash=grant["request_identity"]["packet_hash"],
+        )
+
+    assert store.snapshot(run_id)["state"] == "admitted"
     assert not any(event["event_type"] == "StepDispatched" for event in store.events())

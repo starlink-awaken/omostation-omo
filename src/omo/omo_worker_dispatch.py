@@ -122,7 +122,23 @@ def dispatch_task(
         raise ValueError(f"worker launch denied: controller direct start is required for worker_id={worker_id}")
 
     dispatch_now = now or _utc_now()
-    dispatch_id = f"{task_id.lower()}-{worker_id}-{_timestamp_slug(dispatch_now)}"
+    request_identity = workflow_packet.get("request_identity") if isinstance(workflow_packet, dict) else None
+    workflow_run_id = str(workflow_packet.get("workflow_run_id") or "") if isinstance(workflow_packet, dict) else ""
+    exact_request_identity: dict[str, Any] | None = None
+    if workflow_packet is not None:
+        from .workflow_mesh import WorkflowMeshStore
+
+        exact_snapshot = WorkflowMeshStore(omo).snapshot(workflow_run_id)
+        projected_identity = exact_snapshot.get("exact_request_identity")
+        if isinstance(projected_identity, dict):
+            exact_request_identity = projected_identity
+    dispatch_id = (
+        str(exact_request_identity.get("dispatch_id") or "")
+        if exact_request_identity is not None
+        else f"{task_id.lower()}-{worker_id}-{_timestamp_slug(dispatch_now)}"
+    )
+    if exact_request_identity is not None and not dispatch_id:
+        raise ValueError("exact workflow dispatch requires persisted request dispatch_id")
     run_dir = omo / "workers" / "runs"
 
     # OMO v4.0 Task Gate: Anti-Entropy Mechanism
@@ -151,8 +167,6 @@ def dispatch_task(
     reclaim_path = omo_ref / "workers" / "runs" / f"{dispatch_id}-reclaim.md"
     review_path = omo_ref / "workers" / "runs" / f"{dispatch_id}-review.md"
     stdout_path = omo_ref / "workers" / "runs" / f"{dispatch_id}-stdout.log"
-    request_identity = workflow_packet.get("request_identity") if isinstance(workflow_packet, dict) else None
-    workflow_run_id = str(workflow_packet.get("workflow_run_id") or "") if isinstance(workflow_packet, dict) else ""
     if workflow_packet is not None and not isinstance(request_identity, dict):
         raise ValueError("bound workflow dispatch requires request_identity")
     if isinstance(request_identity, dict):
@@ -194,6 +208,8 @@ def dispatch_task(
     from .worker_lifecycle import new_worker_ack_origin_proof
 
     ack_origin_proof = worker_ack_origin_proof or new_worker_ack_origin_proof()
+    if not ack_origin_proof:
+        raise ValueError("worker ACK origin proof is unavailable")
     # A supervised blueprint must not project dispatch artifacts or mutate the
     # Task until StepDispatched is durable.  If this append fails, every file
     # remains exactly at its pre-dispatch state and the exception propagates.
@@ -484,9 +500,33 @@ def dispatch_task(
             )
         from .workflow_mesh import WorkflowMeshStore
 
-        ack_worker = WorkflowMeshStore(omo).worker_snapshot(workflow_run_id)
-        if not isinstance(ack_worker, dict) or ack_worker.get("ack_decision") != "proceed":
+        store = WorkflowMeshStore(omo)
+        ack_worker = store.worker_snapshot(workflow_run_id)
+        if (
+            not isinstance(ack_worker, dict)
+            or ack_worker.get("ack_decision") != "proceed"
+            or ack_worker.get("ack_origin_proof_consumed") is not True
+            or ack_worker.get("dispatch_id") != dispatch_id
+            or ack_worker.get("worker_id") != worker_id
+            or ack_worker.get("step_run_id") != ack_context["step_run_id"]
+            or ack_worker.get("admission_id") != ack_context["admission_id"]
+        ):
             raise RuntimeError("worker transport returned without a durable proceed ACK")
+        if exact_request_identity is not None:
+            from .worker_lifecycle import record_worker_completion
+
+            result_digest = "sha256:" + hashlib.sha256(log_content.encode("utf-8")).hexdigest()
+            record_worker_completion(
+                omo,
+                workflow_run_id=workflow_run_id,
+                trace_id=ack_context["trace_id"],
+                dispatch_id=dispatch_id,
+                worker_id=worker_id,
+                step_run_id=ack_context["step_run_id"],
+                admission_id=ack_context["admission_id"],
+                origin_proof=ack_origin_proof,
+                result_digest=result_digest,
+            )
 
         # Phase 28 Step 3: Tri-Plane Bus - Broadcast event to Agora EventBus
         def push_log_to_agora(dispatch_id: str, content: str):

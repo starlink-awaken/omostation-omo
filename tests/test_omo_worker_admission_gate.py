@@ -15,8 +15,8 @@ from omo.omo_worker_core import (
     _require_worker_policy,
 )
 from omo.omo_worker_dispatch import dispatch_task
-from omo.worker_lifecycle import WorkerLifecycleError, record_step_dispatch
-from omo.workflow_mesh import WorkflowMeshStore
+from omo.worker_lifecycle import WorkerLifecycleError, acknowledge_worker, record_step_dispatch
+from omo.workflow_mesh import WorkflowMeshStore, new_workflow_event
 
 
 def _task_fixture(root: Path, *, worker: dict) -> Path:
@@ -596,6 +596,245 @@ INSTRUCTION_BINDING = {
     "content_digest": "sha256:" + "c" * 64,
     "instruction_profile": "executor",
 }
+
+
+def _seed_exact_workflow_packet(
+    root: Path,
+    *,
+    persisted_dispatch_id: str = "preflight:run-production-exact:dispatch",
+) -> tuple[dict, dict]:
+    run_id = "run-production-exact"
+    requirements = [
+        {"capability_id": "skill:git-discipline", "operation": "load", "effect": "read_only"}
+    ]
+    requirements_digest = "sha256:" + hashlib.sha256(
+        json.dumps(requirements, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    exact_identity = {
+        "correlation_id": run_id,
+        "workflow_run_id": run_id,
+        "packet_id": "WP-BET-PRODUCTION",
+        "packet_hash": "sha256:" + "a" * 64,
+        "assignment_id": "preflight:run-production-exact:assignment",
+        "dispatch_id": persisted_dispatch_id,
+        "actor_id": "actor:production-test",
+        "delivery_attempt_id": "attempt:production-test",
+        "capability_requirements": requirements,
+        "capability_requirements_digest": requirements_digest,
+    }
+    policy = {
+        "workflow_id": "test-workflow",
+        "workflow_run_id": run_id,
+        "packet_id": exact_identity["packet_id"],
+        "packet_hash": exact_identity["packet_hash"],
+        "capability_requirements": requirements,
+        "capability_requirements_digest": requirements_digest,
+        "actor_id": exact_identity["actor_id"],
+        "delivery_attempt_id": exact_identity["delivery_attempt_id"],
+        "source_receipt_digests": ["sha256:" + "3" * 64],
+        "requested_budget": 0.0,
+    }
+    grant = {
+        "admission_id": "admit-production-exact",
+        "status": "admitted",
+        "workflow_run_id": run_id,
+        "trace_id": run_id,
+        "backend": "agent-workflow",
+        "step_run_ids": [f"{run_id}:execute"],
+        "capabilities": ["reasoning"],
+        "policy_digest": hashlib.sha256(
+            json.dumps(policy, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+        "issued_at": "2026-08-30T00:00:00+00:00",
+        "expires_at": "2026-08-31T00:00:00+00:00",
+        "request_identity": exact_identity,
+    }
+    grant["proof"] = hashlib.sha256(
+        json.dumps(grant, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    store = WorkflowMeshStore(root / ".omo")
+    store.append(
+        new_workflow_event(
+            "WorkflowRequested",
+            run_id,
+            payload={"workflow_id": "test-workflow", "request_identity": exact_identity},
+        )
+    )
+    store.append(
+        new_workflow_event(
+            "WorkflowAdmitted",
+            run_id,
+            payload={
+                "admission": grant,
+                "policy": policy,
+                "policy_digest": grant["policy_digest"],
+                "proof": grant["proof"],
+                "request_identity": exact_identity,
+            },
+        )
+    )
+    packet = {
+        "workflow_run_id": run_id,
+        "trace_id": run_id,
+        "admission": grant,
+        "request_identity": {
+            "bet_id": "BET-BOUND",
+            "packet_id": exact_identity["packet_id"],
+            "packet_hash": exact_identity["packet_hash"],
+            "dispatch_id": "caller-forged-dispatch",
+            "instruction_binding": INSTRUCTION_BINDING,
+        },
+    }
+    return packet, exact_identity
+
+
+def _exact_worker_fixture(root: Path) -> tuple[Path, dict]:
+    pi = _admitted_pi_worker()
+    pi["transports"]["acp_stdio"]["worker_ack_protocol"] = "omo-worker-origin-ack/v1"
+    task_path = _task_fixture(root, worker=pi)
+    task = yaml.safe_load(task_path.read_text(encoding="utf-8"))
+    task["risk_level"] = "L0"
+    task["allowed_operation_level"] = "L0"
+    task_path.write_text(yaml.safe_dump(task, sort_keys=False), encoding="utf-8")
+    return task_path, pi
+
+
+def test_exact_production_dispatch_uses_persisted_request_dispatch_id(tmp_path: Path) -> None:
+    _task_path, _pi = _exact_worker_fixture(tmp_path)
+    packet, exact_identity = _seed_exact_workflow_packet(tmp_path)
+
+    dispatched = dispatch_task(
+        tmp_path,
+        task_id="TASK-ADMISSION-GATE",
+        worker_id="pi",
+        allowed_write_paths=[],
+        workflow_packet=packet,
+        worker_ack_origin_proof="p" * 64,
+        launch=False,
+        now="2026-08-30T01:02:03+00:00",
+    )
+
+    snapshot = WorkflowMeshStore(tmp_path / ".omo").snapshot(packet["workflow_run_id"])
+    assert dispatched["dispatch_id"] == exact_identity["dispatch_id"]
+    assert snapshot["worker"]["dispatch_id"] == exact_identity["dispatch_id"]
+
+
+def test_exact_production_success_records_authenticated_completion_and_redacts_proof(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _task_path, _pi = _exact_worker_fixture(tmp_path)
+    packet, exact_identity = _seed_exact_workflow_packet(tmp_path)
+    origin_proof = "production-origin-proof-" + "p" * 48
+
+    def completed_worker(argv, *, cwd, capture_output, text, env):
+        del capture_output, text
+        context = json.loads(env["OMO_WORKER_ACK_CONTEXT_JSON"])
+        omo_dir = context.pop("omo_dir")
+        acknowledge_worker(
+            Path(cwd) / omo_dir,
+            **context,
+            ack_decision="proceed",
+            origin_proof=env["OMO_WORKER_ACK_ORIGIN_PROOF"],
+        )
+        return subprocess.CompletedProcess(argv, 0, stdout=f"completed {origin_proof}", stderr="")
+
+    class _NoopOpener:
+        def open(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr("omo.omo_worker_dispatch.subprocess.run", completed_worker)
+    monkeypatch.setattr("urllib.request.build_opener", lambda *_args, **_kwargs: _NoopOpener())
+
+    dispatched = dispatch_task(
+        tmp_path,
+        task_id="TASK-ADMISSION-GATE",
+        worker_id="pi",
+        allowed_write_paths=[],
+        workflow_packet=packet,
+        worker_ack_origin_proof=origin_proof,
+        launch=True,
+        now="2026-08-30T01:02:03+00:00",
+    )
+
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    snapshot = store.snapshot(packet["workflow_run_id"])
+    log_path = tmp_path / ".omo" / "workers" / "runs" / f"{dispatched['dispatch_id']}-stdout.log"
+    assert snapshot["state"] == "succeeded"
+    assert snapshot["worker_completion_receipt"]["dispatch_id"] == exact_identity["dispatch_id"]
+    assert origin_proof not in json.dumps(store.events())
+    assert origin_proof not in log_path.read_text(encoding="utf-8")
+    assert "[REDACTED]" in log_path.read_text(encoding="utf-8")
+
+
+def test_exact_production_missing_origin_proof_rejects_before_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _task_path, _pi = _exact_worker_fixture(tmp_path)
+    packet, _exact_identity = _seed_exact_workflow_packet(tmp_path)
+    before_events = WorkflowMeshStore(tmp_path / ".omo").events()
+    monkeypatch.setattr("omo.worker_lifecycle.new_worker_ack_origin_proof", lambda: "")
+    monkeypatch.setattr(
+        "omo.omo_worker_dispatch.subprocess.run",
+        lambda *_args, **_kwargs: pytest.fail("missing proof must reject before subprocess"),
+    )
+
+    with pytest.raises(ValueError, match="origin proof is unavailable"):
+        dispatch_task(
+            tmp_path,
+            task_id="TASK-ADMISSION-GATE",
+            worker_id="pi",
+            allowed_write_paths=[],
+            workflow_packet=packet,
+            launch=True,
+            now="2026-08-30T01:02:03+00:00",
+        )
+
+    assert WorkflowMeshStore(tmp_path / ".omo").events() == before_events
+    assert not (tmp_path / ".omo" / "workers" / "runs").exists()
+
+
+@pytest.mark.parametrize(("returncode", "durable_ack"), [(1, True), (0, False)])
+def test_exact_production_failure_or_missing_ack_never_completes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    returncode: int,
+    durable_ack: bool,
+) -> None:
+    _task_path, _pi = _exact_worker_fixture(tmp_path)
+    packet, _exact_identity = _seed_exact_workflow_packet(tmp_path)
+    origin_proof = "failure-origin-proof-" + "q" * 48
+
+    def worker_result(argv, *, cwd, capture_output, text, env):
+        del capture_output, text
+        if durable_ack:
+            context = json.loads(env["OMO_WORKER_ACK_CONTEXT_JSON"])
+            omo_dir = context.pop("omo_dir")
+            acknowledge_worker(
+                Path(cwd) / omo_dir,
+                **context,
+                ack_decision="proceed",
+                origin_proof=env["OMO_WORKER_ACK_ORIGIN_PROOF"],
+            )
+        return subprocess.CompletedProcess(argv, returncode, stdout="worker-result", stderr="")
+
+    monkeypatch.setattr("omo.omo_worker_dispatch.subprocess.run", worker_result)
+
+    with pytest.raises(RuntimeError):
+        dispatch_task(
+            tmp_path,
+            task_id="TASK-ADMISSION-GATE",
+            worker_id="pi",
+            allowed_write_paths=[],
+            workflow_packet=packet,
+            worker_ack_origin_proof=origin_proof,
+            launch=True,
+            now="2026-08-30T01:02:03+00:00",
+        )
+
+    events = WorkflowMeshStore(tmp_path / ".omo").events()
+    assert not any(event["event_type"] == "WorkflowSucceeded" for event in events)
 
 
 def test_step_dispatch_rejects_forged_admission_without_writing(tmp_path: Path) -> None:
