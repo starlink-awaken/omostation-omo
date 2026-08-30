@@ -1154,3 +1154,49 @@ def test_locked_exact_renewal_append_caps_and_rejects_expiry_race(tmp_path):
     with pytest.raises(WorkflowMeshEventError, match="admission.*expired"):
         store.append_exact_worker_lease(expired_event)
     assert store.events() == before
+
+
+def test_exact_renewal_same_heartbeat_is_semantically_idempotent_and_conflicts_fail(tmp_path):
+    run_id = "run-exact-renewal-idempotency"
+    store, grant, binding, context, origin_proof, _issued_at, _expires_at = _live_exact_worker_for_ttl_boundary(
+        tmp_path,
+        run_id,
+    )
+    acknowledge_worker(
+        tmp_path,
+        **context,
+        packet_id=grant["request_identity"]["packet_id"],
+        packet_hash=grant["request_identity"]["packet_hash"],
+        instruction_binding=binding["instruction_binding"],
+        ack_decision="proceed",
+        origin_proof=origin_proof,
+        lease_seconds=60,
+    )
+    heartbeat_at = datetime.now(UTC).replace(microsecond=0).isoformat()
+    first = renew_worker_lease(
+        tmp_path,
+        **context,
+        lease_seconds=60,
+        now=heartbeat_at,
+        heartbeat_id="same-heartbeat",
+    )
+    before_repeat = list(store.events())
+    repeated = renew_worker_lease(
+        tmp_path,
+        **context,
+        lease_seconds=60,
+        now=heartbeat_at,
+        heartbeat_id="same-heartbeat",
+    )
+    assert repeated == first
+    assert store.events() == before_repeat
+
+    with pytest.raises(WorkerLifecycleError, match="conflicting exact worker lease renewal"):
+        renew_worker_lease(
+            tmp_path,
+            **context,
+            lease_seconds=30,
+            now=heartbeat_at,
+            heartbeat_id="same-heartbeat",
+        )
+    assert store.events() == before_repeat

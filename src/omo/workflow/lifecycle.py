@@ -494,7 +494,7 @@ def start_run(
                 for requirement in requirements
                 if isinstance(requirement, Mapping) and requirement.get("capability_id")
             ]
-        if isinstance(binding, Mapping):
+        if isinstance(binding, Mapping) and not parent_run_id:
             request_identity = {
                 "bet_id": bet_id,
                 "workflow_id": plan["id"],

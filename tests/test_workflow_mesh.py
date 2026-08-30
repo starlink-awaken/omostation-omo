@@ -705,6 +705,54 @@ def test_agent_workflow_start_persists_exact_admission_before_return(tmp_path, m
     assert persisted["proof"] == grant["proof"]
 
 
+def test_inherited_child_start_persists_documented_legacy_identity_without_execution(tmp_path, monkeypatch):
+    parent, _identity, registry = _start_agent_workflow(tmp_path, monkeypatch)
+    inherited_identity = {
+        key: deepcopy(parent[key])
+        for key in (
+            "spec_binding",
+            "work_packet",
+            "work_packet_hash",
+            "capability_requirements_digest",
+            "capability_preflight",
+        )
+    }
+    monkeypatch.setattr(
+        workflow_lifecycle_mod,
+        "resolve_parent_delivery_identity",
+        lambda *_args, **_kwargs: ("BET-BOUND", deepcopy(inherited_identity), "tester"),
+    )
+    monkeypatch.setattr(
+        workflow_lifecycle_mod,
+        "_validate_inherited_delivery_identity",
+        lambda _bet_id, value, **_kwargs: deepcopy(value),
+    )
+    child = start_run(
+        registry,
+        registry["workflows"][0],
+        _agent_workflow_context(),
+        "inherited child observability",
+        False,
+        False,
+        parent_run_id=parent["run_id"],
+    )
+
+    store = WorkflowMeshStore(tmp_path / ".omo")
+    child_events = [event for event in store.events() if event["workflow_run_id"] == child["run_id"]]
+    assert [event["event_type"] for event in child_events] == ["WorkflowRequested"]
+    payload = child_events[0]["payload"]
+    assert "exact_request_discriminator" not in payload
+    assert payload["request_identity"] == {
+        "bet_id": "BET-BOUND",
+        "packet_id": child["work_packet"]["packet_id"],
+        "packet_hash": child["work_packet_hash"],
+    }
+    snapshot = store.snapshot(child["run_id"])
+    assert snapshot["state"] == "planned"
+    assert snapshot["exact_request_identity"] is None
+    assert not any(event["event_type"] in {"WorkflowAdmitted", "StepDispatched"} for event in child_events)
+
+
 @pytest.mark.parametrize(
     "mutation",
     [

@@ -1226,6 +1226,76 @@ def test_exact_group_derivation_interruption_uses_provisional_pid_cleanup(
     assert origin_proof not in json.dumps(events)
 
 
+@pytest.mark.parametrize("interrupt_type", [KeyboardInterrupt, SystemExit])
+def test_exact_interruption_immediately_after_popen_return_reaps_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    interrupt_type: type[BaseException],
+) -> None:
+    _task_path, _pi = _exact_worker_fixture(tmp_path)
+    packet, _exact_identity = _seed_exact_workflow_packet(tmp_path)
+    origin_proof = new_worker_ack_origin_proof()
+    interruption = interrupt_type("stable-after-popen-return-interruption")
+    spawned_pid = 42434
+    lifecycle = {"pid_reads": 0, "group_alive": True, "signals": [], "communicate_calls": 0}
+
+    class ImmediatelyInterruptedWorker:
+        def __init__(self, argv, *, cwd, stdout, stderr, text, env, start_new_session):
+            del cwd, stdout, stderr, text, env
+            assert start_new_session is True
+            self.args = argv
+            self.returncode = None
+
+        @property
+        def pid(self):
+            lifecycle["pid_reads"] += 1
+            if lifecycle["pid_reads"] == 1:
+                raise interruption
+            return spawned_pid
+
+        def communicate(self, timeout=None):
+            lifecycle["communicate_calls"] += 1
+            self.returncode = -15
+            return "popen-interrupted", ""
+
+    def fake_killpg(process_group_id, sig):
+        assert process_group_id == spawned_pid
+        lifecycle["signals"].append(sig)
+        if sig == 0:
+            if lifecycle["group_alive"]:
+                return None
+            raise ProcessLookupError("post-popen group absent")
+        if not lifecycle["group_alive"]:
+            raise ProcessLookupError("post-popen group absent")
+        if sig in {signal.SIGTERM, signal.SIGKILL}:
+            lifecycle["group_alive"] = False
+
+    monkeypatch.setattr("omo.omo_worker_dispatch.subprocess.Popen", ImmediatelyInterruptedWorker)
+    monkeypatch.setattr("omo.omo_worker_dispatch.os.killpg", fake_killpg)
+
+    with pytest.raises(interrupt_type, match="stable-after-popen-return-interruption") as raised:
+        dispatch_task(
+            tmp_path,
+            task_id="TASK-ADMISSION-GATE",
+            worker_id="pi",
+            allowed_write_paths=[],
+            workflow_packet=packet,
+            worker_ack_origin_proof=origin_proof,
+            launch=True,
+            now="2026-08-30T01:02:03+00:00",
+        )
+
+    assert raised.value is interruption
+    assert lifecycle["pid_reads"] >= 2
+    assert lifecycle["group_alive"] is False
+    assert signal.SIGTERM in lifecycle["signals"]
+    assert lifecycle["communicate_calls"] >= 1
+    events = WorkflowMeshStore(tmp_path / ".omo").events()
+    assert not any(event["event_type"] == "StepStarted" for event in events)
+    assert not any(event["event_type"] == "WorkflowSucceeded" for event in events)
+    assert origin_proof not in json.dumps(events)
+
+
 def test_exact_zero_return_parent_with_live_descendant_fails_before_completion(
     tmp_path: Path,
 ) -> None:

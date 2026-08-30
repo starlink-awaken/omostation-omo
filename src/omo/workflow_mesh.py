@@ -1146,6 +1146,12 @@ class WorkflowMeshStore:
             if requested_expiry > admission_expiry:
                 payload["lease_expires_at"] = admission_expiry.isoformat().replace("+00:00", "Z")
             capped["payload"] = payload
+            for existing in current:
+                if existing.get("idempotency_key") != capped["idempotency_key"]:
+                    continue
+                if existing.get("event_type") == "WorkerLeaseRenewed" and existing.get("payload") == payload:
+                    return existing
+                raise WorkflowMeshEventError("conflicting exact worker lease renewal")
             return self._append_locked(capped)
 
     def append_worker_completion(self, event: dict[str, Any], *, origin_proof: str) -> dict[str, Any]:

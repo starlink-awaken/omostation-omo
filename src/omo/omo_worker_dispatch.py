@@ -670,11 +670,15 @@ def dispatch_task(
                 raise RuntimeError("exact worker process-group cleanup failed")
             return output
 
+        cleanup_attempted = False
+
         def reap_or_fail_closed(
             process: Any,
             process_group_id: int | None,
             original_error: BaseException,
         ) -> tuple[str, str]:
+            nonlocal cleanup_attempted
+            cleanup_attempted = True
             try:
                 return reap_spawned_child(process, process_group_id)
             except Exception:
@@ -781,18 +785,34 @@ def dispatch_task(
                 raise
 
         if exact_request_identity is not None:
-            process = subprocess.Popen(
-                argv,
-                cwd=root,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                env=worker_env,
-                start_new_session=True,
-            )
-            spawned_pid = getattr(process, "pid", None)
-            provisional_group_id = spawned_pid if isinstance(spawned_pid, int) and spawned_pid > 1 else None
-            stdout, stderr, returncode, log_content = run_exact_post_spawn(process, provisional_group_id)
+            process = None
+            provisional_group_id = None
+            try:
+                process = subprocess.Popen(
+                    argv,
+                    cwd=root,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=worker_env,
+                    start_new_session=True,
+                )
+                spawned_pid = getattr(process, "pid", None)
+                provisional_group_id = spawned_pid if isinstance(spawned_pid, int) and spawned_pid > 1 else None
+                stdout, stderr, returncode, log_content = run_exact_post_spawn(process, provisional_group_id)
+            except BaseException as popen_boundary_error:
+                if process is not None and not cleanup_attempted:
+                    if provisional_group_id is None:
+                        cleanup_pid = getattr(process, "pid", None)
+                        provisional_group_id = (
+                            cleanup_pid if isinstance(cleanup_pid, int) and cleanup_pid > 1 else None
+                        )
+                    reap_or_fail_closed(process, provisional_group_id, popen_boundary_error)
+                    try:
+                        record_exact_failure("worker_post_popen_boundary_failed")
+                    except Exception:
+                        pass
+                raise
         else:
             result = subprocess.run(argv, cwd=root, capture_output=True, text=True, env=worker_env)
             stdout, stderr = result.stdout, result.stderr
