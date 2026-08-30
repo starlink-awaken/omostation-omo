@@ -486,6 +486,28 @@ def _require_live_exact_admission(snapshot: Mapping[str, Any], event: Mapping[st
         raise WorkflowMeshEventError("exact admission is expired")
 
 
+def _require_exact_worker_origin_proof(
+    snapshot: Mapping[str, Any],
+    workflow_run_id: str,
+    origin_proof: str,
+    *,
+    purpose: str,
+) -> None:
+    if not origin_proof:
+        raise WorkflowMeshEventError(f"exact {purpose} requires coordinator origin proof")
+    worker = snapshot.get("worker")
+    if not isinstance(worker, Mapping):
+        raise WorkflowMeshEventError(f"exact {purpose} requires persisted worker context")
+    context = {
+        **worker,
+        "workflow_run_id": workflow_run_id,
+        "result_digest": None,
+    }
+    expected = worker_ack_origin_digest(origin_proof, context)
+    if not hmac.compare_digest(expected, str(worker.get("ack_origin_proof_digest") or "")):
+        raise WorkflowMeshEventError(f"exact {purpose} origin proof mismatch")
+
+
 def new_workflow_event(
     event_type: str,
     workflow_run_id: str,
@@ -1038,15 +1060,24 @@ class WorkflowMeshStore:
                         "exact WorkflowSucceeded requires authenticated worker completion append"
                     )
                 return self._append_locked(event)
-        if event["event_type"] in {"StepDispatched", "WorkerLeaseRenewed"}:
+        if event["event_type"] in {
+            "StepDispatched",
+            "WorkerLeaseRenewed",
+            "WorkerLeaseExpired",
+            "WorkerReclaimed",
+        }:
             with self._lock:
                 current = self._log.read_all()
                 snapshot = project_workflow_run(current, event["workflow_run_id"])
                 if isinstance(snapshot.get("exact_request_identity"), Mapping):
                     if event["event_type"] == "StepDispatched":
                         raise WorkflowMeshEventError("exact StepDispatched requires authenticated exact dispatch append")
+                    if event["event_type"] == "WorkerLeaseRenewed":
+                        raise WorkflowMeshEventError(
+                            "exact WorkerLeaseRenewed requires authenticated exact lease renewal append"
+                        )
                     raise WorkflowMeshEventError(
-                        "exact WorkerLeaseRenewed requires authenticated exact lease renewal append"
+                        f"exact {event['event_type']} requires authenticated coordinator append"
                     )
                 return self._append_locked(event)
         with self._lock:
@@ -1121,7 +1152,7 @@ class WorkflowMeshStore:
                 raise WorkflowMeshEventError("exact dispatch origin proof mismatch")
             return self._append_locked(event)
 
-    def append_exact_worker_lease(self, event: dict[str, Any]) -> dict[str, Any]:
+    def append_exact_worker_lease(self, event: dict[str, Any], *, origin_proof: str) -> dict[str, Any]:
         """Atomically validate, cap, and append one exact worker lease renewal."""
         validate_workflow_event(event)
         if event["event_type"] != "WorkerLeaseRenewed":
@@ -1131,6 +1162,12 @@ class WorkflowMeshStore:
             snapshot = project_workflow_run(current, event["workflow_run_id"])
             if not isinstance(snapshot.get("exact_request_identity"), Mapping):
                 raise WorkflowMeshEventError("exact lease renewal requires exact request")
+            _require_exact_worker_origin_proof(
+                snapshot,
+                event["workflow_run_id"],
+                origin_proof,
+                purpose="worker lease renewal",
+            )
             _require_live_exact_admission(snapshot, event)
             admission = snapshot.get("admission")
             if not isinstance(admission, Mapping):
@@ -1153,6 +1190,54 @@ class WorkflowMeshStore:
                     return existing
                 raise WorkflowMeshEventError("conflicting exact worker lease renewal")
             return self._append_locked(capped)
+
+    def append_exact_worker_expiry(self, event: dict[str, Any], *, origin_proof: str) -> dict[str, Any]:
+        """Atomically authenticate one exact worker lease expiry."""
+        validate_workflow_event(event)
+        if event["event_type"] != "WorkerLeaseExpired":
+            raise WorkflowMeshEventError("exact expiry append requires WorkerLeaseExpired")
+        with self._lock:
+            current = self._log.read_all()
+            snapshot = project_workflow_run(current, event["workflow_run_id"])
+            if not isinstance(snapshot.get("exact_request_identity"), Mapping):
+                raise WorkflowMeshEventError("exact worker expiry requires exact request")
+            _require_exact_worker_origin_proof(
+                snapshot,
+                event["workflow_run_id"],
+                origin_proof,
+                purpose="worker lease expiry",
+            )
+            for existing in current:
+                if existing.get("idempotency_key") != event["idempotency_key"]:
+                    continue
+                if existing.get("event_type") == "WorkerLeaseExpired" and existing.get("payload") == event["payload"]:
+                    return existing
+                raise WorkflowMeshEventError("conflicting exact worker lease expiry")
+            return self._append_locked(event)
+
+    def append_exact_worker_reclaim(self, event: dict[str, Any], *, origin_proof: str) -> dict[str, Any]:
+        """Atomically authenticate one exact coordinator reclaim."""
+        validate_workflow_event(event)
+        if event["event_type"] != "WorkerReclaimed":
+            raise WorkflowMeshEventError("exact reclaim append requires WorkerReclaimed")
+        with self._lock:
+            current = self._log.read_all()
+            snapshot = project_workflow_run(current, event["workflow_run_id"])
+            if not isinstance(snapshot.get("exact_request_identity"), Mapping):
+                raise WorkflowMeshEventError("exact worker reclaim requires exact request")
+            _require_exact_worker_origin_proof(
+                snapshot,
+                event["workflow_run_id"],
+                origin_proof,
+                purpose="worker reclaim",
+            )
+            for existing in current:
+                if existing.get("idempotency_key") != event["idempotency_key"]:
+                    continue
+                if existing.get("event_type") == "WorkerReclaimed" and existing.get("payload") == event["payload"]:
+                    return existing
+                raise WorkflowMeshEventError("conflicting exact worker reclaim")
+            return self._append_locked(event)
 
     def append_worker_completion(self, event: dict[str, Any], *, origin_proof: str) -> dict[str, Any]:
         """Authenticate one exact worker completion with its held origin proof."""

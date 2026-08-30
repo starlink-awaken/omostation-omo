@@ -1047,7 +1047,7 @@ def test_exact_renewed_lease_is_capped_to_admission_and_rejects_future_now(tmp_p
         origin_proof=origin_proof,
         lease_seconds=60,
     )
-    renewed = renew_worker_lease(tmp_path, **context, lease_seconds=1200)
+    renewed = renew_worker_lease(tmp_path, **context, lease_seconds=1200, origin_proof=origin_proof)
     renewed_expiry = datetime.fromisoformat(renewed["payload"]["lease_expires_at"].replace("Z", "+00:00"))
     assert renewed_expiry <= expires_at
     before = list(store.events())
@@ -1059,6 +1059,7 @@ def test_exact_renewed_lease_is_capped_to_admission_and_rejects_future_now(tmp_p
             lease_seconds=60,
             now=(expires_at + timedelta(seconds=1)).isoformat(),
             heartbeat_id="forged-future-now",
+            origin_proof=origin_proof,
         )
 
     assert store.events() == before
@@ -1139,7 +1140,7 @@ def test_locked_exact_renewal_append_caps_and_rejects_expiry_race(tmp_path):
         heartbeat_at=now,
         lease_expires_at=expires_at + timedelta(seconds=900),
     )
-    stored = store.append_exact_worker_lease(event)
+    stored = store.append_exact_worker_lease(event, origin_proof=origin_proof)
     stored_expiry = datetime.fromisoformat(stored["payload"]["lease_expires_at"].replace("Z", "+00:00"))
     assert stored_expiry <= expires_at
 
@@ -1152,7 +1153,7 @@ def test_locked_exact_renewal_append_caps_and_rejects_expiry_race(tmp_path):
     expired_event["idempotency_key"] += ":expired"
     before = list(store.events())
     with pytest.raises(WorkflowMeshEventError, match="admission.*expired"):
-        store.append_exact_worker_lease(expired_event)
+        store.append_exact_worker_lease(expired_event, origin_proof=origin_proof)
     assert store.events() == before
 
 
@@ -1179,6 +1180,7 @@ def test_exact_renewal_same_heartbeat_is_semantically_idempotent_and_conflicts_f
         lease_seconds=60,
         now=heartbeat_at,
         heartbeat_id="same-heartbeat",
+        origin_proof=origin_proof,
     )
     before_repeat = list(store.events())
     repeated = renew_worker_lease(
@@ -1187,10 +1189,10 @@ def test_exact_renewal_same_heartbeat_is_semantically_idempotent_and_conflicts_f
         lease_seconds=60,
         now=heartbeat_at,
         heartbeat_id="same-heartbeat",
+        origin_proof=origin_proof,
     )
     assert repeated == first
     assert store.events() == before_repeat
-
     with pytest.raises(WorkerLifecycleError, match="conflicting exact worker lease renewal"):
         renew_worker_lease(
             tmp_path,
@@ -1198,5 +1200,132 @@ def test_exact_renewal_same_heartbeat_is_semantically_idempotent_and_conflicts_f
             lease_seconds=30,
             now=heartbeat_at,
             heartbeat_id="same-heartbeat",
+            origin_proof=origin_proof,
         )
     assert store.events() == before_repeat
+
+
+def _mesh_cli_context(command: str, context: dict, omo_dir, *extra: str) -> list[str]:
+    return [
+        "worker",
+        command,
+        context["workflow_run_id"],
+        "--trace-id",
+        context["trace_id"],
+        "--dispatch-id",
+        context["dispatch_id"],
+        "--worker",
+        context["worker_id"],
+        "--step-run-id",
+        context["step_run_id"],
+        "--admission-id",
+        context["admission_id"],
+        "--omo-dir",
+        str(omo_dir),
+        *extra,
+    ]
+
+
+def test_public_exact_lifecycle_cli_is_fail_closed_without_private_capability(tmp_path):
+    run_id = "run-public-exact-lifecycle-denied"
+    store, grant, binding, context, origin_proof, _issued_at, _expires_at = _live_exact_worker_for_ttl_boundary(
+        tmp_path,
+        run_id,
+    )
+    acknowledge_worker(
+        tmp_path,
+        **context,
+        packet_id=grant["request_identity"]["packet_id"],
+        packet_hash=grant["request_identity"]["packet_hash"],
+        instruction_binding=binding["instruction_binding"],
+        ack_decision="proceed",
+        origin_proof=origin_proof,
+        lease_seconds=1,
+    )
+    before = list(store.events())
+    with pytest.raises(WorkerLifecycleError, match="origin proof"):
+        cli_main(
+            _mesh_cli_context(
+                "mesh-heartbeat",
+                context,
+                tmp_path,
+                "--lease-seconds",
+                "60",
+                "--heartbeat-id",
+                "public-heartbeat",
+            )
+        )
+    assert store.events() == before
+
+    future_now = (datetime.now(UTC) + timedelta(seconds=2)).isoformat()
+    with pytest.raises(WorkerLifecycleError, match="coordinator origin proof"):
+        cli_main(_mesh_cli_context("mesh-expire", context, tmp_path, "--now", future_now))
+    assert store.events() == before
+
+    expire_worker_lease(
+        tmp_path,
+        **context,
+        now=future_now,
+        origin_proof=origin_proof,
+    )
+    before_reclaim = list(store.events())
+    with pytest.raises(WorkerLifecycleError, match="coordinator origin proof"):
+        cli_main(
+            _mesh_cli_context(
+                "mesh-reclaim",
+                context,
+                tmp_path,
+                "--successor-worker",
+                "worker-b",
+                "--successor-dispatch",
+                "dispatch-successor",
+            )
+        )
+    assert store.events() == before_reclaim
+
+
+def test_trusted_exact_lifecycle_capability_allows_renew_expire_and_reclaim(tmp_path):
+    run_id = "run-trusted-exact-lifecycle"
+    store, grant, binding, context, origin_proof, _issued_at, _expires_at = _live_exact_worker_for_ttl_boundary(
+        tmp_path,
+        run_id,
+    )
+    acknowledge_worker(
+        tmp_path,
+        **context,
+        packet_id=grant["request_identity"]["packet_id"],
+        packet_hash=grant["request_identity"]["packet_hash"],
+        instruction_binding=binding["instruction_binding"],
+        ack_decision="proceed",
+        origin_proof=origin_proof,
+        lease_seconds=1,
+    )
+    renewed = renew_worker_lease(
+        tmp_path,
+        **context,
+        lease_seconds=1,
+        heartbeat_id="trusted-heartbeat",
+        origin_proof=origin_proof,
+    )
+    expiry_time = (
+        datetime.fromisoformat(renewed["payload"]["lease_expires_at"].replace("Z", "+00:00"))
+        + timedelta(seconds=1)
+    ).isoformat()
+    expired = expire_worker_lease(
+        tmp_path,
+        **context,
+        now=expiry_time,
+        origin_proof=origin_proof,
+    )
+    reclaimed = reclaim_worker(
+        tmp_path,
+        **context,
+        successor_worker_id="worker-b",
+        successor_dispatch_id="dispatch-successor",
+        origin_proof=origin_proof,
+    )
+    assert renewed["event_type"] == "WorkerLeaseRenewed"
+    assert expired["event_type"] == "WorkerLeaseExpired"
+    assert reclaimed["event_type"] == "WorkerReclaimed"
+    assert store.snapshot(run_id)["worker"]["state"] == "reclaimed"
+    assert origin_proof not in json.dumps(store.events())

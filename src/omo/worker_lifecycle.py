@@ -518,6 +518,7 @@ def renew_worker_lease(
     lease_seconds: int = 1200,
     now: str | None = None,
     heartbeat_id: str | None = None,
+    origin_proof: str | None = None,
 ) -> dict[str, Any]:
     """Renew a live lease; repeated heartbeat IDs are idempotent."""
     if lease_seconds <= 0:
@@ -543,6 +544,8 @@ def renew_worker_lease(
     requested_expiry = heartbeat_value + timedelta(seconds=lease_seconds)
     exact_renewal = isinstance(snapshot.get("exact_request_identity"), Mapping)
     if exact_renewal:
+        if not origin_proof:
+            raise WorkerLifecycleError("exact worker lease renewal requires origin proof")
         admission = snapshot.get("admission")
         if not isinstance(admission, Mapping):
             raise WorkerLifecycleError("exact worker renewal requires persisted admission")
@@ -572,7 +575,7 @@ def renew_worker_lease(
     )
     if exact_renewal:
         try:
-            return store.append_exact_worker_lease(event)
+            return store.append_exact_worker_lease(event, origin_proof=origin_proof or "")
         except WorkflowMeshEventError as exc:
             raise WorkerLifecycleError(str(exc)) from exc
     prior = _existing(store, idempotency_key)
@@ -595,13 +598,11 @@ def expire_worker_lease(
     admission_id: str,
     now: str | None = None,
     reason: str = "lease_expired",
+    origin_proof: str | None = None,
 ) -> dict[str, Any]:
     """Mark an unresponsive worker unavailable only after its lease expires."""
     store = _store(omo_dir)
     event_key = f"{workflow_run_id}:worker-expired:{dispatch_id}"
-    prior = _existing(store, event_key)
-    if prior is not None:
-        return prior
     snapshot = _validate_context(
         store,
         workflow_run_id=workflow_run_id,
@@ -611,6 +612,12 @@ def expire_worker_lease(
         admission_id=admission_id,
     )
     current = snapshot.get("worker")
+    exact_expiry = isinstance(snapshot.get("exact_request_identity"), Mapping)
+    if exact_expiry and not origin_proof:
+        raise WorkerLifecycleError("exact worker lease expiry requires coordinator origin proof")
+    prior = _existing(store, event_key)
+    if prior is not None:
+        return prior
     if not isinstance(current, dict) or current.get("state") not in {
         "acknowledged",
         "active",
@@ -631,8 +638,7 @@ def expire_worker_lease(
         "expired_at": observed_at,
         "reason": reason,
     }
-    return _append(
-        store,
+    event = new_workflow_event(
         "WorkerLeaseExpired",
         workflow_run_id,
         trace_id=trace_id,
@@ -640,6 +646,15 @@ def expire_worker_lease(
         idempotency_key=event_key,
         payload=payload,
     )
+    if exact_expiry:
+        try:
+            return store.append_exact_worker_expiry(event, origin_proof=origin_proof or "")
+        except WorkflowMeshEventError as exc:
+            raise WorkerLifecycleError(str(exc)) from exc
+    try:
+        return store.append(event)
+    except WorkflowMeshEventError as exc:
+        raise WorkerLifecycleError(str(exc)) from exc
 
 
 def reclaim_worker(
@@ -655,15 +670,13 @@ def reclaim_worker(
     successor_dispatch_id: str,
     now: str | None = None,
     reason: str = "lease_expired",
+    origin_proof: str | None = None,
 ) -> dict[str, Any]:
     """Record coordinator reclaim and successor assignment after expiry."""
     if not successor_worker_id or not successor_dispatch_id:
         raise WorkerLifecycleError("successor_worker_id and successor_dispatch_id are required")
     store = _store(omo_dir)
     event_key = f"{workflow_run_id}:worker-reclaim:{dispatch_id}:{successor_dispatch_id}"
-    prior = _existing(store, event_key)
-    if prior is not None:
-        return prior
     snapshot = _validate_context(
         store,
         workflow_run_id=workflow_run_id,
@@ -673,6 +686,12 @@ def reclaim_worker(
         admission_id=admission_id,
     )
     current = snapshot.get("worker")
+    exact_reclaim = isinstance(snapshot.get("exact_request_identity"), Mapping)
+    if exact_reclaim and not origin_proof:
+        raise WorkerLifecycleError("exact worker reclaim requires coordinator origin proof")
+    prior = _existing(store, event_key)
+    if prior is not None:
+        return prior
     if not isinstance(current, dict) or current.get("state") != "lease_expired":
         raise WorkerLifecycleError("worker must be lease_expired before reclaim")
     payload = {
@@ -685,8 +704,7 @@ def reclaim_worker(
         "reclaimed_at": _stamp(now),
         "reason": reason,
     }
-    return _append(
-        store,
+    event = new_workflow_event(
         "WorkerReclaimed",
         workflow_run_id,
         trace_id=trace_id,
@@ -694,6 +712,15 @@ def reclaim_worker(
         idempotency_key=event_key,
         payload=payload,
     )
+    if exact_reclaim:
+        try:
+            return store.append_exact_worker_reclaim(event, origin_proof=origin_proof or "")
+        except WorkflowMeshEventError as exc:
+            raise WorkerLifecycleError(str(exc)) from exc
+    try:
+        return store.append(event)
+    except WorkflowMeshEventError as exc:
+        raise WorkerLifecycleError(str(exc)) from exc
 
 
 def scan_worker_leases(
