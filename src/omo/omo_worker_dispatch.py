@@ -4,9 +4,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shlex
 import signal
 import subprocess
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -30,6 +32,29 @@ from .omo_worker_core import (
     _utc_now,
     _write_yaml,
 )
+
+
+def _normalised_public_token(value: str) -> str:
+    return re.sub(r"_+", "_", re.sub(r"[^a-z0-9]+", "_", value.lower())).strip("_")
+
+
+def _contains_private_proof_data(value: Any, *, private_proof: str | None) -> bool:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            token = _normalised_public_token(str(key))
+            if "origin_proof" in token and not token.endswith("_digest"):
+                return True
+            if _contains_private_proof_data(item, private_proof=private_proof):
+                return True
+        return False
+    if isinstance(value, (list, tuple, set)):
+        return any(_contains_private_proof_data(item, private_proof=private_proof) for item in value)
+    if not isinstance(value, str):
+        return False
+    if private_proof and value == private_proof:
+        return True
+    token = _normalised_public_token(value)
+    return "origin_proof" in token and not token.endswith("_digest")
 
 
 def _bridge_dispatch_to_mesh(
@@ -108,6 +133,15 @@ def dispatch_task(
         raise ValueError("; ".join(validation_errors))
     task = _load_yaml(task_file)
     registry = _load_yaml(omo / "_truth" / "registry" / "workers.yaml")
+    public_dispatch_data = {
+        "task": task,
+        "workflow_packet": workflow_packet,
+        "allowed_write_paths": allowed_write_paths,
+        "prior_evidence": prior_evidence,
+        "prompt_addendum": prompt_addendum,
+    }
+    if _contains_private_proof_data(public_dispatch_data, private_proof=worker_ack_origin_proof):
+        raise ValueError("private proof is forbidden in public dispatch data")
     # Admission is a hard precondition.  Validate before deriving a dispatch
     # id or creating any run/envelope/task/Mesh state so rejection is side-effect free.
     worker = _require_admitted_worker(registry, worker_id, transport)
@@ -532,6 +566,30 @@ def dispatch_task(
             return process_group_id if process_group_id == pid else None
 
         def reap_spawned_child(process: Any, process_group_id: int | None) -> tuple[str, str]:
+            def validated_group_alive() -> bool:
+                if process_group_id is None:
+                    return False
+                try:
+                    os.killpg(process_group_id, 0)
+                except ProcessLookupError:
+                    return False
+                except OSError:
+                    return True
+                return True
+
+            def ensure_validated_group_absent() -> None:
+                if process_group_id is None:
+                    return
+                deadline = time.monotonic() + 5
+                while validated_group_alive() and time.monotonic() < deadline:
+                    try:
+                        os.killpg(process_group_id, signal.SIGKILL)
+                    except ProcessLookupError:
+                        return
+                    except OSError:
+                        pass
+                    time.sleep(0.01)
+
             def signal_validated_group(sig: signal.Signals) -> bool:
                 if process_group_id is None:
                     return False
@@ -551,9 +609,11 @@ def dispatch_task(
                     except Exception:
                         pass
                 try:
-                    return process.communicate()
+                    output = process.communicate()
                 except Exception:
-                    return "", ""
+                    output = ("", "")
+                ensure_validated_group_absent()
+                return output
 
             if not signal_validated_group(signal.SIGTERM):
                 try:
@@ -562,9 +622,12 @@ def dispatch_task(
                 except Exception:
                     return kill_and_drain()
             try:
-                return process.communicate(timeout=5)
+                output = process.communicate(timeout=5)
             except Exception:
                 return kill_and_drain()
+            if validated_group_alive():
+                return kill_and_drain()
+            return output
 
         if exact_request_identity is not None:
             process = subprocess.Popen(

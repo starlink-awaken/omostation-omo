@@ -736,9 +736,6 @@ def test_exact_production_success_records_authenticated_completion_and_redacts_p
     _task_path, _pi = _exact_worker_fixture(tmp_path)
     packet, exact_identity = _seed_exact_workflow_packet(tmp_path)
     origin_proof = new_worker_ack_origin_proof()
-    public_proof = new_worker_ack_origin_proof()
-    packet["origin_proof"] = public_proof
-    packet["request_identity"]["origin_proof"] = public_proof
     chronology: list[str] = []
 
     class CompletedWorker:
@@ -757,7 +754,6 @@ def test_exact_production_success_records_authenticated_completion_and_redacts_p
             before_ack = WorkflowMeshStore(tmp_path / ".omo").events()
             assert before_ack[-1]["event_type"] == "StepStarted"
             assert self.env["OMO_WORKER_ACK_ORIGIN_PROOF"] == origin_proof
-            assert self.env["OMO_WORKER_ACK_ORIGIN_PROOF"] != public_proof
             context = json.loads(self.env["OMO_WORKER_ACK_CONTEXT_JSON"])
             omo_dir = context.pop("omo_dir")
             acknowledge_worker(
@@ -811,8 +807,6 @@ def test_exact_production_missing_origin_proof_rejects_before_dispatch(
 ) -> None:
     _task_path, _pi = _exact_worker_fixture(tmp_path)
     packet, _exact_identity = _seed_exact_workflow_packet(tmp_path)
-    packet["origin_proof"] = new_worker_ack_origin_proof()
-    packet["request_identity"]["origin_proof"] = new_worker_ack_origin_proof()
     before_events = WorkflowMeshStore(tmp_path / ".omo").events()
     monkeypatch.setattr(
         "omo.omo_worker_dispatch.subprocess.Popen",
@@ -832,6 +826,63 @@ def test_exact_production_missing_origin_proof_rejects_before_dispatch(
 
     assert WorkflowMeshStore(tmp_path / ".omo").events() == before_events
     assert not (tmp_path / ".omo" / "workers" / "runs").exists()
+
+
+@pytest.mark.parametrize("public_shape", ["top_level_key", "request_key", "capability_value"])
+def test_exact_production_rejects_public_private_proof_data_before_effects(
+    tmp_path: Path,
+    public_shape: str,
+) -> None:
+    _task_path, _pi = _exact_worker_fixture(tmp_path)
+    packet, _exact_identity = _seed_exact_workflow_packet(tmp_path)
+    private_proof = new_worker_ack_origin_proof()
+    if public_shape == "top_level_key":
+        packet["worker_ack_origin_proof"] = private_proof
+    elif public_shape == "request_key":
+        packet["request_identity"]["ack origin proof"] = new_worker_ack_origin_proof()
+    else:
+        packet["request_identity"]["capabilities"] = ["origin_proof"]
+    before = _file_snapshot(tmp_path)
+
+    with pytest.raises(ValueError, match="private proof is forbidden in public dispatch data"):
+        dispatch_task(
+            tmp_path,
+            task_id="TASK-ADMISSION-GATE",
+            worker_id="pi",
+            allowed_write_paths=[],
+            workflow_packet=packet,
+            worker_ack_origin_proof=private_proof,
+            launch=False,
+            now="2026-08-30T01:02:03+00:00",
+        )
+
+    persisted_text = "\n".join(
+        path.read_text(encoding="utf-8", errors="replace")
+        for path in (tmp_path / ".omo").rglob("*")
+        if path.is_file()
+    )
+    assert _file_snapshot(tmp_path) == before
+    assert not (tmp_path / ".omo" / "workers" / "runs").exists()
+    assert private_proof not in persisted_text
+
+
+def test_exact_production_allows_public_ack_origin_digest(tmp_path: Path) -> None:
+    _task_path, _pi = _exact_worker_fixture(tmp_path)
+    packet, exact_identity = _seed_exact_workflow_packet(tmp_path)
+    packet["request_identity"]["ack_origin_proof_digest"] = "sha256:" + "d" * 64
+
+    dispatched = dispatch_task(
+        tmp_path,
+        task_id="TASK-ADMISSION-GATE",
+        worker_id="pi",
+        allowed_write_paths=[],
+        workflow_packet=packet,
+        worker_ack_origin_proof=new_worker_ack_origin_proof(),
+        launch=False,
+        now="2026-08-30T01:02:03+00:00",
+    )
+
+    assert dispatched["dispatch_id"] == exact_identity["dispatch_id"]
 
 
 @pytest.mark.parametrize(("returncode", "durable_ack"), [(1, True), (0, False)])
@@ -1072,6 +1123,7 @@ def test_exact_production_step_started_failure_reaps_real_descendant_group(
     packet, _exact_identity = _seed_exact_workflow_packet(tmp_path)
     origin_proof = new_worker_ack_origin_proof()
     pid_path = tmp_path / "spawned-pids.txt"
+    ready_path = tmp_path / "descendant-ready.txt"
     script_path = tmp_path / "spawn-descendant.py"
     script_path.write_text(
         "\n".join(
@@ -1081,12 +1133,18 @@ def test_exact_production_step_started_failure_reaps_real_descendant_group(
                 "import subprocess",
                 "import sys",
                 "import time",
+                "child_code = (",
+                "    \"import signal, sys, time; from pathlib import Path; \"",
+                "    \"signal.signal(signal.SIGTERM, signal.SIG_IGN); \"",
+                "    \"Path(sys.argv[1]).write_text('ready', encoding='utf-8'); time.sleep(60)\"",
+                ")",
                 "child = subprocess.Popen(",
-                "    [sys.executable, '-c', 'import time; time.sleep(60)'],",
+                "    [sys.executable, '-c', child_code, sys.argv[2]],",
                 "    stdin=subprocess.DEVNULL,",
                 "    stdout=subprocess.DEVNULL,",
                 "    stderr=subprocess.DEVNULL,",
                 ")",
+                "while not Path(sys.argv[2]).exists(): time.sleep(0.01)",
                 "Path(sys.argv[1]).write_text(f'{os.getpid()} {child.pid}', encoding='utf-8')",
                 "time.sleep(60)",
             ]
@@ -1097,7 +1155,12 @@ def test_exact_production_step_started_failure_reaps_real_descendant_group(
     registry_path = tmp_path / ".omo" / "_truth" / "registry" / "workers.yaml"
     registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
     registry["workers"][0]["transports"]["acp_stdio"]["command"] = " ".join(
-        [shlex.quote(sys.executable), shlex.quote(str(script_path)), shlex.quote(str(pid_path))]
+        [
+            shlex.quote(sys.executable),
+            shlex.quote(str(script_path)),
+            shlex.quote(str(pid_path)),
+            shlex.quote(str(ready_path)),
+        ]
     )
     registry_path.write_text(yaml.safe_dump(registry, sort_keys=False), encoding="utf-8")
     spawned_pids: list[int] = []
