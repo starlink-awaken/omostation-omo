@@ -21,7 +21,7 @@ from omo.worker_lifecycle import (
     new_worker_ack_origin_proof,
     record_step_dispatch,
 )
-from omo.workflow_mesh import WorkflowMeshStore, new_workflow_event
+from omo.workflow_mesh import WorkflowMeshEventError, WorkflowMeshStore, new_workflow_event
 
 
 def _task_fixture(root: Path, *, worker: dict) -> Path:
@@ -968,6 +968,81 @@ def test_exact_production_timeout_records_honest_failure(
     assert any(event["event_type"] == "StepStarted" for event in events)
     assert any(event["event_type"] == "StepFailed" for event in events)
     assert not any(event["event_type"] == "WorkflowSucceeded" for event in events)
+
+
+@pytest.mark.parametrize("cleanup_failure", ["terminate_error", "terminate_timeout"])
+def test_exact_production_step_started_append_failure_reaps_spawned_child(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cleanup_failure: str,
+) -> None:
+    _task_path, _pi = _exact_worker_fixture(tmp_path)
+    packet, _exact_identity = _seed_exact_workflow_packet(tmp_path)
+    origin_proof = new_worker_ack_origin_proof()
+    lifecycle = {"terminated": False, "killed": False, "drained": False, "communicate_calls": 0}
+
+    class SpawnedWorker:
+        def __init__(self, argv, *, cwd, stdout, stderr, text, env):
+            del cwd, stdout, stderr, text
+            self.args = argv
+            self.env = env
+            self.returncode = None
+
+        def terminate(self):
+            lifecycle["terminated"] = True
+            if cleanup_failure == "terminate_error":
+                raise OSError("graceful terminate failed")
+
+        def communicate(self, timeout=None):
+            lifecycle["communicate_calls"] += 1
+            if cleanup_failure == "terminate_timeout" and lifecycle["communicate_calls"] == 1:
+                raise subprocess.TimeoutExpired(self.args, timeout)
+            lifecycle["drained"] = True
+            self.returncode = -9
+            return "partial", "terminated"
+
+        def kill(self):
+            lifecycle["killed"] = True
+
+    original_append = WorkflowMeshStore.append
+
+    def reject_step_started(store, event):
+        if event["event_type"] == "StepStarted":
+            raise WorkflowMeshEventError("stable-step-start-failure")
+        return original_append(store, event)
+
+    monkeypatch.setattr("omo.omo_worker_dispatch.subprocess.Popen", SpawnedWorker)
+    monkeypatch.setattr(WorkflowMeshStore, "append", reject_step_started)
+
+    with pytest.raises(WorkflowMeshEventError, match="stable-step-start-failure"):
+        dispatch_task(
+            tmp_path,
+            task_id="TASK-ADMISSION-GATE",
+            worker_id="pi",
+            allowed_write_paths=[],
+            workflow_packet=packet,
+            worker_ack_origin_proof=origin_proof,
+            launch=True,
+            now="2026-08-30T01:02:03+00:00",
+        )
+
+    events = WorkflowMeshStore(tmp_path / ".omo").events()
+    persisted_text = "\n".join(
+        path.read_text(encoding="utf-8", errors="replace")
+        for path in (tmp_path / ".omo").rglob("*")
+        if path.is_file()
+    )
+    assert lifecycle == {
+        "terminated": True,
+        "killed": True,
+        "drained": True,
+        "communicate_calls": 1 if cleanup_failure == "terminate_error" else 2,
+    }
+    assert not any(event["event_type"] == "StepStarted" for event in events)
+    assert not any(event["event_type"] == "StepFailed" for event in events)
+    assert not any(event["event_type"] == "WorkflowSucceeded" for event in events)
+    assert origin_proof not in json.dumps(events)
+    assert origin_proof not in persisted_text
 
 
 def test_step_dispatch_rejects_forged_admission_without_writing(tmp_path: Path) -> None:

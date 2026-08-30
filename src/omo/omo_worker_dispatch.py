@@ -520,6 +520,27 @@ def dispatch_task(
                 )
             )
 
+        def reap_spawned_child(process: Any) -> None:
+            def kill_and_drain() -> None:
+                try:
+                    process.kill()
+                except (OSError, subprocess.SubprocessError):
+                    pass
+                try:
+                    process.communicate()
+                except (OSError, subprocess.SubprocessError):
+                    pass
+
+            try:
+                process.terminate()
+            except (OSError, subprocess.SubprocessError):
+                kill_and_drain()
+                return
+            try:
+                process.communicate(timeout=5)
+            except (OSError, subprocess.SubprocessError):
+                kill_and_drain()
+
         if exact_request_identity is not None:
             process = subprocess.Popen(
                 argv,
@@ -529,20 +550,28 @@ def dispatch_task(
                 text=True,
                 env=worker_env,
             )
-            store.append(
-                new_workflow_event(
-                    "StepStarted",
-                    workflow_run_id,
-                    trace_id=ack_context["trace_id"],
-                    producer="omo.worker_dispatch",
-                    idempotency_key=f"{workflow_run_id}:production-step-started:{dispatch_id}",
-                    payload={
-                        "step_run_id": ack_context["step_run_id"],
-                        "step_name": "execute",
-                        "admission_id": ack_context["admission_id"],
-                    },
+            try:
+                store.append(
+                    new_workflow_event(
+                        "StepStarted",
+                        workflow_run_id,
+                        trace_id=ack_context["trace_id"],
+                        producer="omo.worker_dispatch",
+                        idempotency_key=f"{workflow_run_id}:production-step-started:{dispatch_id}",
+                        payload={
+                            "step_run_id": ack_context["step_run_id"],
+                            "step_name": "execute",
+                            "admission_id": ack_context["admission_id"],
+                        },
+                    )
                 )
-            )
+            except Exception:
+                reap_spawned_child(process)
+                try:
+                    record_exact_failure("step_started_persist_failed")
+                except Exception:
+                    pass
+                raise
             try:
                 stdout, stderr = process.communicate(timeout=ack_context["lease_seconds"])
             except subprocess.TimeoutExpired as exc:
