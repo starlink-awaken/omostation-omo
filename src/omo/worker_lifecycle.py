@@ -134,7 +134,8 @@ def record_step_dispatch(
     snapshot = store.snapshot(workflow_run_id)
     admission = snapshot.get("admission")
     request_identity = admission.get("request_identity") if isinstance(admission, Mapping) else None
-    exact_admission = isinstance(admission, Mapping) and admission.get("backend") == "agent-workflow"
+    exact_request_identity = snapshot.get("exact_request_identity")
+    exact_admission = isinstance(exact_request_identity, Mapping)
     try:
         requirements = validate_capability_requirements(
             request_identity.get("capability_requirements") if isinstance(request_identity, Mapping) else None
@@ -175,6 +176,7 @@ def record_step_dispatch(
         or exact_admission
         and (
             admission.get("workflow_run_id") != workflow_run_id
+            or request_identity != exact_request_identity
             or request_identity.get("workflow_run_id") != workflow_run_id
             or request_identity.get("correlation_id") != workflow_run_id
             or not isinstance(request_identity.get("actor_id"), str)

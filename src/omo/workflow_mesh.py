@@ -251,7 +251,51 @@ def worker_ack_origin_digest(origin_proof: str, payload: Mapping[str, Any]) -> s
     )
 
 
-def _validate_admission_payload(payload: dict[str, Any]) -> dict[str, Any]:
+def _validated_exact_request_identity(
+    payload: Mapping[str, Any],
+    workflow_run_id: str,
+) -> dict[str, Any] | None:
+    identity = payload.get("request_identity")
+    if not isinstance(identity, Mapping) or set(identity) != _AGENT_WORKFLOW_IDENTITY_FIELDS:
+        return None
+    if (
+        identity.get("workflow_run_id") != workflow_run_id
+        or identity.get("correlation_id") != workflow_run_id
+        or not isinstance(payload.get("workflow_id"), str)
+        or not payload.get("workflow_id")
+        or not isinstance(identity.get("packet_id"), str)
+        or not identity["packet_id"]
+        or not isinstance(identity.get("packet_hash"), str)
+        or _SHA256_REF_RE.fullmatch(identity["packet_hash"]) is None
+        or not isinstance(identity.get("actor_id"), str)
+        or not identity["actor_id"]
+        or not isinstance(identity.get("delivery_attempt_id"), str)
+        or not identity["delivery_attempt_id"]
+    ):
+        raise WorkflowMeshEventError("Agent Workflow request delivery identity is invalid")
+    requirements = identity.get("capability_requirements")
+    try:
+        from .orchestration_contract import validate_capability_requirements
+
+        canonical_requirements = validate_capability_requirements(requirements)
+    except (ImportError, ValueError):
+        canonical_requirements = None
+    if canonical_requirements is None or canonical_requirements != requirements:
+        raise WorkflowMeshEventError("Agent Workflow request capability requirements are invalid")
+    expected_digest = "sha256:" + hashlib.sha256(
+        _canonical_admission(canonical_requirements)  # type: ignore[arg-type]
+    ).hexdigest()
+    if identity.get("capability_requirements_digest") != expected_digest:
+        raise WorkflowMeshEventError("Agent Workflow request capability requirements digest mismatch")
+    return dict(identity)
+
+
+def _validate_admission_payload(
+    payload: dict[str, Any],
+    *,
+    exact_request_identity: Mapping[str, Any] | None = None,
+    requested_workflow_id: str | None = None,
+) -> dict[str, Any]:
     admission = payload.get("admission") or payload
     if not isinstance(admission, dict):
         raise WorkflowMeshEventError("WorkflowAdmitted requires an admission grant")
@@ -278,10 +322,12 @@ def _validate_admission_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise WorkflowMeshEventError("Admission grant proof mismatch")
     if not isinstance(admission["step_run_ids"], list) or not admission["step_run_ids"]:
         raise WorkflowMeshEventError("Admission grant requires step_run_ids")
-    if admission.get("backend") == "agent-workflow":
+    if exact_request_identity is not None:
         identity = admission.get("request_identity")
         if not isinstance(identity, Mapping) or set(identity) != _AGENT_WORKFLOW_IDENTITY_FIELDS:
             raise WorkflowMeshEventError("Agent Workflow admission requires exact request_identity")
+        if identity != exact_request_identity:
+            raise WorkflowMeshEventError("Agent Workflow admission request identity mismatch")
         run_id = admission["workflow_run_id"]
         if identity.get("workflow_run_id") != run_id or identity.get("correlation_id") != run_id:
             raise WorkflowMeshEventError("Agent Workflow admission run identity mismatch")
@@ -311,6 +357,31 @@ def _validate_admission_payload(payload: dict[str, Any]) -> dict[str, Any]:
         if identity.get("capability_requirements_digest") != expected_digest:
             raise WorkflowMeshEventError("Agent Workflow admission capability requirements digest mismatch")
         policy = payload.get("policy")
+        expected_policy = {
+            "workflow_id": requested_workflow_id,
+            "workflow_run_id": run_id,
+            "packet_id": identity["packet_id"],
+            "packet_hash": identity["packet_hash"],
+            "capability_requirements": identity["capability_requirements"],
+            "capability_requirements_digest": identity["capability_requirements_digest"],
+            "actor_id": identity["actor_id"],
+            "delivery_attempt_id": identity["delivery_attempt_id"],
+            "source_receipt_digests": policy.get("source_receipt_digests") if isinstance(policy, Mapping) else None,
+            "requested_budget": 0.0,
+        }
+        source_receipt_digests = expected_policy["source_receipt_digests"]
+        if (
+            not isinstance(policy, Mapping)
+            or set(policy) != set(expected_policy)
+            or dict(policy) != expected_policy
+            or not isinstance(source_receipt_digests, list)
+            or len(source_receipt_digests) != len(identity["capability_requirements"])
+            or any(
+                not isinstance(digest, str) or _SHA256_REF_RE.fullmatch(digest) is None
+                for digest in source_receipt_digests
+            )
+        ):
+            raise WorkflowMeshEventError("Agent Workflow admission policy identity mismatch")
         expected_policy_digest = (
             hashlib.sha256(_canonical_admission(dict(policy))).hexdigest()
             if isinstance(policy, Mapping)
@@ -403,6 +474,8 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
         "worker": None,
         "worker_events": [],
         "scene_binding": None,
+        "exact_request_identity": None,
+        "requested_workflow_id": None,
     }
     for event in relevant:
         validate_workflow_event(event)
@@ -437,13 +510,21 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
         if event_type == "EvidenceRecorded" and not event["payload"].get("evidence_id"):
             raise WorkflowMeshEventError("EvidenceRecorded requires evidence_id")
         if event_type == "WorkflowAdmitted":
-            admission = _validate_admission_payload(event["payload"])
+            admission = _validate_admission_payload(
+                event["payload"],
+                exact_request_identity=snapshot.get("exact_request_identity"),
+                requested_workflow_id=snapshot.get("requested_workflow_id"),
+            )
             if admission["workflow_run_id"] != workflow_run_id:
                 raise WorkflowMeshEventError("Admission grant workflow_run_id mismatch")
             snapshot["admission"] = dict(admission)
         scene_binding = _scene_binding(event["payload"])
         if event_type == "WorkflowRequested":
             snapshot["scene_binding"] = scene_binding
+            exact_identity = _validated_exact_request_identity(event["payload"], workflow_run_id)
+            if exact_identity is not None:
+                snapshot["exact_request_identity"] = exact_identity
+                snapshot["requested_workflow_id"] = event["payload"]["workflow_id"]
         elif scene_binding is not None:
             if snapshot["scene_binding"] is None:
                 raise WorkflowMeshEventError("scene_binding requires a prior WorkflowRequested event")
@@ -473,7 +554,7 @@ def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> 
                 raise WorkflowMeshEventError(f"StepRun is not admitted: {step_run_id}")
             if (
                 event_type == "StepDispatched"
-                and admission.get("backend") == "agent-workflow"
+                and isinstance(snapshot.get("exact_request_identity"), Mapping)
                 and isinstance(admission.get("request_identity"), Mapping)
             ):
                 requirements_digest = admission["request_identity"].get("capability_requirements_digest")

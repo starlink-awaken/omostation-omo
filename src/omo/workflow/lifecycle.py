@@ -702,6 +702,20 @@ def close_run(
     emit_mesh: bool = True,
 ) -> dict[str, Any]:
     path, payload = read_run(registry, run_id)
+    direct_close_payload = {
+        "status": status,
+        "ok": status == "ok",
+        "error": payload.get("error") or payload.get("failure_reason") or "",
+        "evidence_count": len(evidence),
+    }
+    exact_closed = False
+    if emit_mesh:
+        exact_closed = close_agent_workflow_run(
+            registry_workspace_root(registry),
+            workflow_run_id=run_id,
+            status=status,
+            payload=direct_close_payload,
+        )
     payload["status"] = status
     payload["updated_at"] = utc_now()
     payload["closed_at"] = utc_now()
@@ -726,18 +740,11 @@ def close_run(
     )
     # Direct `close` owns its Mesh terminal event. `closeout` suppresses this
     # narrow payload and emits one richer terminal event after verify/observe.
-    if emit_mesh:
+    if emit_mesh and not exact_closed:
         emit_workflow_mesh_event(
             "AgentWorkflowClosed",
             payload["run_id"],
-            {
-                "status": status,
-                "ok": status == "ok",
-                # 透传真实错误 (2026-08-28 sediment 分类: 153 StepFailed 全是
-                # 模糊 "workflow failed" — 根因是 close 侧不传 error)
-                "error": payload.get("error") or payload.get("failure_reason") or "",
-                "evidence_count": len(evidence),
-            },
+            direct_close_payload,
             workspace=registry_workspace_root(registry),
         )
     return payload
@@ -851,6 +858,20 @@ def closeout_run(
         f"agent-workflow verify: {verify_report['check_count']} checks ok={verify_report['ok']}",
         f"agent-workflow observe: {observe_report['decision']}",
     ]
+    closeout_payload = {
+        "status": status,
+        "ok": status == "ok",
+        "error": verify_report.get("reason") or "",
+        "verify_ok": verify_report["ok"],
+        "observe_decision": observe_report["decision"],
+        "evidence_count": len(closeout_evidence),
+    }
+    exact_closed = close_agent_workflow_run(
+        registry_workspace_root(registry),
+        workflow_run_id=run_id,
+        status=status,
+        payload=closeout_payload,
+    )
     payload = close_run(
         registry,
         run_id,
@@ -888,21 +909,6 @@ def closeout_run(
         )
     except Exception:
         pass
-    closeout_payload = {
-        "status": status,
-        "ok": report["ok"],
-        # 透传真实错误 (同 direct close 侧修复)
-        "error": report.get("error") or verify_report.get("reason") or "",
-        "verify_ok": verify_report["ok"],
-        "observe_decision": observe_report["decision"],
-        "evidence_count": len(closeout_evidence),
-    }
-    exact_closed = close_agent_workflow_run(
-        registry_workspace_root(registry),
-        workflow_run_id=run_id,
-        status=status,
-        payload=closeout_payload,
-    )
     if not exact_closed:
         emit_workflow_mesh_event(
             "AgentWorkflowClosed",
