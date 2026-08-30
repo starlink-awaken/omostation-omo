@@ -402,15 +402,29 @@ def start_run(
     append_ledger_event(registry, start_event)
     # Phase 1b/4: Bridge to Workflow Mesh with scene_binding
     _scene_binding = extract_scene_binding(context=context, workflow=workflow)
+    mesh_payload: dict[str, Any] = {
+        "workflow_id": plan["id"],
+        "agent_profile": context.get("profile", ""),
+        "objective": objective,
+        "actor": context["actor"],
+    }
+    if bet_id and isinstance(record.get("work_packet"), dict):
+        # Canonical WorkPacket identity bridges into the Mesh so native-execution
+        # verification can reconcile the binding against the persisted admission.
+        mesh_payload["request_identity"] = {
+            "bet_id": bet_id,
+            "packet_id": str(record["work_packet"].get("packet_id") or ""),
+            "packet_hash": str(record.get("work_packet_hash") or ""),
+        }
+        _requirements = record.get("capability_requirements")
+        if isinstance(_requirements, list):
+            mesh_payload["capabilities"] = [
+                str(r.get("capability_id")) for r in _requirements if isinstance(r, dict) and r.get("capability_id")
+            ]
     emit_workflow_mesh_event(
         "AgentWorkflowStarted",
         run_id,
-        {
-            "workflow_id": plan["id"],
-            "agent_profile": context.get("profile", ""),
-            "objective": objective,
-            "actor": context["actor"],
-        },
+        mesh_payload,
         workspace=registry_workspace_root(registry),
     )
     return record

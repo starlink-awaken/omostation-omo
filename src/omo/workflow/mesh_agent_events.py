@@ -98,11 +98,15 @@ def _emit_admission_chain(
         "trace_id": run_id,
         "backend": "agent-workflow",
         "step_run_ids": [step_run_id],
-        "capabilities": [],
+        "capabilities": [str(c) for c in (payload.get("capabilities") or []) if c],
         "policy_digest": hashlib.sha256(f"{run_id}:agent-workflow".encode()).hexdigest(),
         "issued_at": now.isoformat(),
         "expires_at": expires_at,
     }
+    if isinstance(payload.get("request_identity"), dict):
+        # Canonical WorkPacket identity propagates into the grant so downstream
+        # native-execution verification can reconcile binding ↔ admission.
+        grant["request_identity"] = dict(payload["request_identity"])
     unsigned = {k: v for k, v in grant.items() if k != "proof"}
     grant["proof"] = hashlib.sha256(
         json.dumps(unsigned, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
