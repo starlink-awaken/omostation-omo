@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from omo.omo_cockpit_bridge import (
+    append_hitl_override,
     approve_hitl_proposal_async,
     list_hitl_proposals,
     record_hitl_proposal,
@@ -169,3 +170,23 @@ def test_record_rejects_secret_like_values(tmp_path: Path) -> None:
             requested_by="service://family-dashboard",
             now="2026-08-30T23:00:00Z",
         )
+
+
+def test_override_append_returns_per_proposal_immutable_receipt(tmp_path: Path) -> None:
+    omo = tmp_path / ".omo"
+    first_ref = Path(
+        append_hitl_override(
+            omo,
+            "budget_overrides.jsonl",
+            {"proposal_id": "proposal-1", "action": "increase_limit", "status": "applied"},
+        )
+    )
+    first_bytes = first_ref.read_bytes()
+    assert first_ref.relative_to(omo).as_posix() == "_delivery/hitl/overrides/proposal-1.json"
+    append_hitl_override(
+        omo,
+        "budget_overrides.jsonl",
+        {"proposal_id": "proposal-2", "action": "increase_limit", "status": "applied"},
+    )
+    assert first_ref.read_bytes() == first_bytes
+    assert len((omo / "state" / "budget_overrides.jsonl").read_text().splitlines()) == 2

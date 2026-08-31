@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, Final
 
-from .omo_io import AppendOnlyLog, fcntl_lock, write_yaml_atomic
+from .omo_io import AppendOnlyLog, fcntl_lock, write_text_atomic, write_yaml_atomic
 from .omo_redaction import redact_sensitive_text
 from .omo_shared import load_yaml
 
@@ -214,7 +214,26 @@ def reject_hitl_proposal(
 def append_hitl_override(omo_dir: Path, stream_name: str, record: dict[str, Any]) -> str:
     if Path(stream_name).name != stream_name or not stream_name.endswith(".jsonl"):
         raise ValueError("override stream invalid")
-    path = omo_dir / "state" / stream_name
-    lock = fcntl_lock(path.with_suffix(path.suffix + ".lock"))
-    AppendOnlyLog(path, lock=lock).append(record, sort_keys=False)
-    return str(path)
+    proposal_id = str(record.get("proposal_id", ""))
+    if not _valid_proposal_id(proposal_id):
+        raise ValueError("proposal id invalid")
+    stream_path = omo_dir / "state" / stream_name
+    receipt_path = omo_dir / "_delivery" / "hitl" / "overrides" / f"{proposal_id}.json"
+    encoded_record = json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    receipt = {
+        "schema": "omo-hitl-override-receipt/v1",
+        "proposal_id": proposal_id,
+        "status": "applied",
+        "stream_ref": stream_path.relative_to(omo_dir).as_posix(),
+        "record_sha256": "sha256:" + hashlib.sha256(encoded_record).hexdigest(),
+    }
+    with fcntl_lock(receipt_path.with_suffix(".lock")):
+        if receipt_path.exists():
+            current = json.loads(receipt_path.read_text(encoding="utf-8"))
+            if current != receipt:
+                raise ValueError("override receipt collision")
+            return str(receipt_path)
+        stream_lock = fcntl_lock(stream_path.with_suffix(stream_path.suffix + ".lock"))
+        AppendOnlyLog(stream_path, lock=stream_lock).append(record, sort_keys=False)
+        write_text_atomic(receipt_path, json.dumps(receipt, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
+    return str(receipt_path)
