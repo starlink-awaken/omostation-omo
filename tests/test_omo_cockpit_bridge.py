@@ -11,6 +11,7 @@ from omo.omo_cockpit_bridge import (
     record_hitl_proposal,
     reject_hitl_proposal,
 )
+from omo.omo_governance_surfaces_snapshots import _mutation_surface_registry_snapshot
 from omo.omo_shared import load_yaml
 
 
@@ -190,3 +191,11 @@ def test_override_append_returns_per_proposal_immutable_receipt(tmp_path: Path) 
     )
     assert first_ref.read_bytes() == first_bytes
     assert len((omo / "state" / "budget_overrides.jsonl").read_text().splitlines()) == 2
+
+
+def test_family_dashboard_hitl_writer_is_a_canonical_mutation_surface() -> None:
+    surface = next(
+        item for item in _mutation_surface_registry_snapshot() if item["name"] == "omo-hitl-family-dashboard-documents"
+    )
+    assert surface["broker_ref"] == "projects/omo/src/omo/omo_cockpit_bridge.py"
+    assert "family-hub CAS owner" in surface["mutation_target"]
