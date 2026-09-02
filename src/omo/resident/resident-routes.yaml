@@ -22,6 +22,16 @@ routes:
     topic: mesh:perception:inbox
     action: knowledge_sediment
     safe: true
+  # 数字大脑管线 supervisor (BET-Y1Q4-T2-05): 定时晨报 + OCR 入站编排,
+  # execute 角色 — 产物全部落盘不外发, 告警进 convergence-pulse health
+  - event_type: PipelineTick
+    topic: mesh:pipeline:tick
+    action: pipeline_supervisor
+    safe: true
+  - event_type: PipelineInbound
+    topic: mesh:pipeline:inbound
+    action: pipeline_supervisor
+    safe: true
   # workflow 生命周期事件 (T10-12 消费端补全) → 知识沉淀 (safe, 只写知识草稿)
   - event_type: WorkflowRequested
     topic: mesh:workflow:requested
