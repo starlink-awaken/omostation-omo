@@ -116,6 +116,23 @@ def request_work_case_plan_confirmation(omo_dir: Path, *, case_id: str, plan_dig
     )
 
 
+def record_work_case_submission(
+    omo_dir: Path, *, case_id: str, unit_id: str, digest: str, valid: bool
+) -> dict[str, Any]:
+    """Record a privacy-safe submission reference through the evidence broker."""
+    from omo.omo_ingress_task_execution import update_planned_task_evidence_paths
+
+    validity = "true" if valid else "false"
+    evidence_ref = f"work-case://{case_id}/submissions/{unit_id}/{digest}?valid={validity}"
+    return update_planned_task_evidence_paths(
+        omo_dir,
+        task_id=case_id,
+        evidence_paths=[evidence_ref],
+        actor="projects/omo:work_case",
+        source_ref=f"work-case:{case_id}:submission:{unit_id}",
+    )
+
+
 @dataclass
 class ExternalAction:
     action_id: str

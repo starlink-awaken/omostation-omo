@@ -6,6 +6,7 @@ from omo.work_case import (
     WorkCase,
     WorkCaseState,
     create_work_case_draft,
+    record_work_case_submission,
     request_work_case_plan_confirmation,
 )
 
@@ -72,3 +73,17 @@ def test_work_case_plan_request_uses_the_contract_request_broker(monkeypatch, tm
 
     assert seen["actor"] == "projects/omo:work_case"
     assert seen["request_record"]["plan_digest"] == "sha256:plan-v1"
+
+
+def test_work_case_submission_uses_planned_task_evidence_broker(monkeypatch, tmp_path):
+    seen = {}
+
+    def fake_update(omo_dir: Path, **kwargs):
+        seen.update(omo_dir=omo_dir, **kwargs)
+        return {"id": kwargs["task_id"]}
+
+    monkeypatch.setattr("omo.omo_ingress_task_execution.update_planned_task_evidence_paths", fake_update)
+    record_work_case_submission(tmp_path, case_id="CASE-001", unit_id="unit-a", digest="sha256:reply-v1", valid=True)
+
+    assert seen["actor"] == "projects/omo:work_case"
+    assert seen["evidence_paths"] == ["work-case://CASE-001/submissions/unit-a/sha256:reply-v1?valid=true"]
