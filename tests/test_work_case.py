@@ -1,6 +1,13 @@
 from pathlib import Path
 
-from omo.work_case import ExternalAction, ExternalActionState, WorkCase, WorkCaseState, create_work_case_draft
+from omo.work_case import (
+    ExternalAction,
+    ExternalActionState,
+    WorkCase,
+    WorkCaseState,
+    create_work_case_draft,
+    request_work_case_plan_confirmation,
+)
 
 
 def test_external_action_requires_the_exact_approved_snapshot_before_execution():
@@ -51,3 +58,17 @@ def test_work_case_draft_uses_the_planned_task_ingress(monkeypatch, tmp_path):
     assert created["id"] == "CASE-001"
     assert seen["ingress_plane"] == "projects/omo:work_case"
     assert seen["task_data"]["work_case"]["status"] == "draft"
+
+
+def test_work_case_plan_request_uses_the_contract_request_broker(monkeypatch, tmp_path):
+    seen = {}
+
+    def fake_record(omo_dir: Path, **kwargs):
+        seen.update(omo_dir=omo_dir, **kwargs)
+        return {"id": kwargs["task_id"]}
+
+    monkeypatch.setattr("omo.omo_ingress_task_contract.record_task_contract_request", fake_record)
+    request_work_case_plan_confirmation(tmp_path, case_id="CASE-001", plan_digest="sha256:plan-v1")
+
+    assert seen["actor"] == "projects/omo:work_case"
+    assert seen["request_record"]["plan_digest"] == "sha256:plan-v1"
