@@ -101,6 +101,21 @@ def create_work_case_draft(omo_dir: Path, *, case_id: str, title: str, source_re
     )
 
 
+def request_work_case_plan_confirmation(omo_dir: Path, *, case_id: str, plan_digest: str) -> dict[str, Any]:
+    """Record a plan-confirmation request through OMO's contract broker."""
+    from omo.omo_ingress_task_contract import record_task_contract_request
+
+    request_ref = f".omo/workers/runs/{case_id}-work-case-plan-request.yaml"
+    return record_task_contract_request(
+        omo_dir,
+        task_id=case_id,
+        actor="projects/omo:work_case",
+        request_ref=request_ref,
+        request_record={"request_id": f"{case_id}-work-case-plan", "task_id": case_id, "plan_digest": plan_digest},
+        source_ref=f"work-case:{case_id}:plan",
+    )
+
+
 @dataclass
 class ExternalAction:
     action_id: str
