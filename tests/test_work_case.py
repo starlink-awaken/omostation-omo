@@ -7,6 +7,7 @@ from omo.work_case import (
     WorkCaseState,
     build_external_action_proposal,
     create_work_case_draft,
+    record_external_action_proposal,
     record_work_case_submission,
     request_work_case_plan_confirmation,
 )
@@ -106,3 +107,27 @@ def test_external_action_proposal_contains_only_snapshot_metadata():
     assert proposal["action_snapshot_digest"] == action.approval_digest
     assert "recipients" not in proposal
     assert "content" not in proposal
+
+
+def test_external_action_proposal_persists_pending_hitl_metadata_without_raw_delivery_data(tmp_path):
+    action = ExternalAction.propose(
+        case_id="CASE-001",
+        action_type="email_send",
+        recipients=["unit-a@example.test"],
+        content_digest="sha256:content",
+        attachment_digests=["sha256:attachment"],
+    )
+
+    stored = record_external_action_proposal(tmp_path / ".omo", action, now="2026-09-03T10:00:00Z")
+
+    assert stored["status"] == "pending"
+    assert stored["type"] == "work_case_external_action"
+    assert stored["debt_id"] == "CASE-001"
+    assert stored["action_snapshot_digest"] == action.approval_digest
+    assert stored["recipient_count"] == 1
+    assert stored["attachment_count"] == 1
+    assert stored["approval_required"] is True
+    assert stored["auto_apply"] == "disabled"
+    assert "recipients" not in stored
+    assert "content" not in stored
+    assert "attachment_digests" not in stored

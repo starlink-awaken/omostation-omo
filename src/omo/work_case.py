@@ -196,3 +196,32 @@ def build_external_action_proposal(action: ExternalAction) -> dict[str, Any]:
         "approval_required": True,
         "auto_apply": "disabled",
     }
+
+
+def record_external_action_proposal(omo_dir: Path, action: ExternalAction, *, now: str) -> dict[str, Any]:
+    """Queue external-action metadata for human review without exposing delivery data."""
+    from omo.omo_cockpit_bridge import record_hitl_proposal
+
+    metadata = build_external_action_proposal(action)
+    proposal: dict[str, Any] = {
+        "id": metadata["id"],
+        "type": "work_case_external_action",
+        "debt_id": action.case_id,
+        "source": f"work-case:{action.case_id}",
+        "target": f"external-action:{action.action_type}",
+        "expected_change": "stage one external action for human review; execution remains disabled",
+        "operation_level": "L3",
+        "approval_required": True,
+        "rollback": "reject the pending proposal; no external action is executed",
+        "verification": "verify the immutable action snapshot before any future execution adapter",
+        "auto_apply": "disabled",
+        **metadata,
+    }
+    canonical = dumps(proposal, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
+    proposal["proposal_digest"] = "sha256:" + sha256(canonical).hexdigest()
+    return record_hitl_proposal(
+        omo_dir,
+        proposal,
+        requested_by="projects/omo:work_case",
+        now=now,
+    )
