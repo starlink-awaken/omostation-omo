@@ -6,7 +6,7 @@ action only after OMO has matched the operator-approved immutable snapshot.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from hashlib import sha256
 from json import dumps
@@ -16,6 +16,60 @@ from uuid import uuid4
 class ExternalActionState(StrEnum):
     PROPOSED = "proposed"
     CONFIRMED = "confirmed"
+
+
+class WorkCaseState(StrEnum):
+    DRAFT = "draft"
+    PLANNED = "planned"
+    EXECUTING = "executing"
+
+
+@dataclass(frozen=True)
+class Submission:
+    unit_id: str
+    version: int
+    digest: str
+    valid: bool
+
+
+@dataclass
+class WorkCase:
+    case_id: str
+    title: str
+    state: WorkCaseState = WorkCaseState.DRAFT
+    plan_digest: str | None = None
+    submissions: list[Submission] = field(default_factory=list)
+
+    @classmethod
+    def draft(cls, *, case_id: str, title: str) -> WorkCase:
+        return cls(case_id=case_id, title=title)
+
+    def set_plan(self, plan_digest: str) -> None:
+        if self.state is not WorkCaseState.DRAFT:
+            raise ValueError("only draft cases accept a plan")
+        self.plan_digest = plan_digest
+
+    def confirm_plan(self, plan_digest: str) -> None:
+        if self.plan_digest != plan_digest:
+            raise ValueError("plan confirmation does not match the current plan")
+        self.state = WorkCaseState.PLANNED
+
+    def start_execution(self) -> None:
+        if self.state is not WorkCaseState.PLANNED:
+            raise ValueError("only planned cases can start execution")
+        self.state = WorkCaseState.EXECUTING
+
+    def record_submission(self, unit_id: str, digest: str, *, valid: bool) -> Submission:
+        if self.state is not WorkCaseState.EXECUTING:
+            raise ValueError("submissions require an executing case")
+        version = 1 + sum(item.unit_id == unit_id for item in self.submissions)
+        submission = Submission(unit_id=unit_id, version=version, digest=digest, valid=valid)
+        self.submissions.append(submission)
+        return submission
+
+    def current_submission(self, unit_id: str) -> Submission | None:
+        candidates = [item for item in self.submissions if item.unit_id == unit_id and item.valid]
+        return candidates[-1] if candidates else None
 
 
 @dataclass
