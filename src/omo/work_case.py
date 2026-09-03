@@ -182,3 +182,17 @@ class ExternalAction:
 
     def can_execute(self, approval_digest: str) -> bool:
         return self.state is ExternalActionState.CONFIRMED and approval_digest == self.approval_digest
+
+
+def build_external_action_proposal(action: ExternalAction) -> dict[str, Any]:
+    """Build a privacy-safe HITL envelope; persistence is delegated to OMO later."""
+    return {
+        "id": f"work-case-action:{action.action_id}",
+        "case_id": action.case_id,
+        "action_type": action.action_type,
+        "recipient_count": len(action.recipients),
+        "attachment_count": len(action.attachment_digests),
+        "action_snapshot_digest": action.approval_digest,
+        "approval_required": True,
+        "auto_apply": "disabled",
+    }
