@@ -133,10 +133,24 @@ def _format_row(row: sqlite3.Row) -> str:
 
 
 # 2026-08-28: cmd_migrate extracted to omo_cards_migrate.py
-from .omo_cards_migrate import cmd_migrate  # noqa: F401 -- re-export
-
 # 2026-08-28: cmd_minerva_ingest extracted to omo_cards_minerva.py
-from .omo_cards_minerva import cmd_minerva_ingest  # noqa: F401 -- re-export
+# 2026-09-04: 模块级 re-export 改 PEP 562 惰性 — 打开 omo_cards ↔ omo_cards_migrate
+# 循环导入 (migrate 先入 sys.modules 时, 本模块 line-136 反向导入其未初始化的
+# cmd_migrate → ImportError; cockpit cards 裸命令触发, 第三轮命令审计发现)。
+# 外部 `from omo.omo_cards import cmd_migrate` 经 __getattr__ 兜底; main() 内
+# dispatch 前显式延迟导入。
+
+
+def __getattr__(name: str):
+    if name == "cmd_migrate":
+        from .omo_cards_migrate import cmd_migrate
+
+        return cmd_migrate
+    if name == "cmd_minerva_ingest":
+        from .omo_cards_minerva import cmd_minerva_ingest
+
+        return cmd_minerva_ingest
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def cmd_init(args=None):
@@ -870,6 +884,10 @@ def main(argv: list[str] | None = None) -> int:
     if not args.command:
         parser.print_help()
         return 0
+
+    # 惰性导入 (循环导入修复): migrate/minerva 反向依赖本模块, 需本模块初始化完成后再入
+    from .omo_cards_migrate import cmd_migrate
+    from .omo_cards_minerva import cmd_minerva_ingest
 
     cmd_map = {
         "init": cmd_init,
