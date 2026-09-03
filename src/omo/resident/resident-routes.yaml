@@ -96,3 +96,33 @@ routes:
     topic: mesh:system:alive
     action: heartbeat
     safe: true
+
+  # ── Harness 7 探针 Event Bus 接线 (harness-policy.yaml § probes) ──────
+  - event_type: arch_upgrade
+    topic: mesh:observability:arch
+    action: knowledge_sediment
+    safe: true
+  - event_type: feature_add
+    topic: mesh:workflow:step
+    action: knowledge_sediment
+    safe: true
+  - event_type: bug_fix
+    topic: mesh:workflow:failed
+    action: knowledge_sediment
+    safe: true
+  - event_type: experience
+    topic: mesh:personal:signal
+    action: knowledge_sediment
+    safe: true
+  - event_type: doc_governance
+    topic: mesh:workflow:doc
+    action: knowledge_sediment
+    safe: true
+  - event_type: toolchain
+    topic: mesh:system:health
+    action: knowledge_sediment
+    safe: true
+  - event_type: business_process
+    topic: mesh:pipeline:episode
+    action: knowledge_sediment
+    safe: true
