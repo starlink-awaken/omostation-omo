@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from hashlib import sha256
 from json import dumps
+from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 
@@ -70,6 +72,33 @@ class WorkCase:
     def current_submission(self, unit_id: str) -> Submission | None:
         candidates = [item for item in self.submissions if item.unit_id == unit_id and item.valid]
         return candidates[-1] if candidates else None
+
+
+def create_work_case_draft(omo_dir: Path, *, case_id: str, title: str, source_ref: str) -> dict[str, Any]:
+    """Create a case draft through the canonical planned-task ingress."""
+    from omo.omo_ingress_task_lifecycle import create_planned_task
+
+    task_data: dict[str, Any] = {
+        "id": case_id,
+        "title": title,
+        "status": "candidate",
+        "task_type": "feature",
+        "risk_level": "L2",
+        "depends_on": [],
+        "source_docs": [source_ref],
+        "deliverables": ["confirmed work-case plan"],
+        "evidence_required": [],
+        "test_plan": [],
+        "allowed_operation_level": "L0",
+        "human_approval_required": True,
+        "work_case": {"status": "draft", "source_ref": source_ref},
+    }
+    return create_planned_task(
+        omo_dir,
+        task_data=task_data,
+        ingress_plane="projects/omo:work_case",
+        source_ref=source_ref,
+    )
 
 
 @dataclass
