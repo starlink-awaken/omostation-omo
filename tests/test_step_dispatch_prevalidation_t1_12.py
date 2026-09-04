@@ -16,6 +16,7 @@ The implementation re-validates:
 These checks already exist; this test pins the behavior so future regressions
 are caught at CI time rather than at production canary.
 """
+
 from __future__ import annotations
 
 import json
@@ -103,9 +104,7 @@ def _rewrite_persisted_log(events, jsonl_path: Path) -> None:
             fh.write(json.dumps(ev, ensure_ascii=False) + "\n")
 
 
-def test_step_dispatched_rejects_tampered_admission_id(
-    tmp_path, monkeypatch
-) -> None:
+def test_step_dispatched_rejects_tampered_admission_id(tmp_path, monkeypatch) -> None:
     """If persisted admission_id is mutated, StepDispatched must fail-closed."""
     store, run_id, grant, origin_proof = _bootstrap_exact_admitted_run(tmp_path, monkeypatch)
 
@@ -127,9 +126,7 @@ def test_step_dispatched_rejects_tampered_admission_id(
     )
 
 
-def test_step_dispatched_rejects_expired_admission(
-    tmp_path, monkeypatch
-) -> None:
+def test_step_dispatched_rejects_expired_admission(tmp_path, monkeypatch) -> None:
     """If persisted admission's expires_at is in the past, StepDispatched must fail-closed."""
     store, run_id, grant, origin_proof = _bootstrap_exact_admitted_run(tmp_path, monkeypatch)
 
@@ -150,9 +147,7 @@ def test_step_dispatched_rejects_expired_admission(
     )
 
 
-def test_step_dispatched_accepts_clean_persisted_admission(
-    tmp_path, monkeypatch
-) -> None:
+def test_step_dispatched_accepts_clean_persisted_admission(tmp_path, monkeypatch) -> None:
     """Sanity: legitimate StepDispatched on clean admission is accepted.
 
     Positive control ensures the negative tests above don't pass for the wrong

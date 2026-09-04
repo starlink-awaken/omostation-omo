@@ -17,11 +17,14 @@ class TestMemoryNetwork(unittest.TestCase):
         from omo.resident.cell_memory_network import MemoryNetwork
 
         network = MemoryNetwork()
-        memory_id = network.publish("cell-001", {
-            "content": "Architecture decision: use microservices",
-            "type": "semantic",
-            "tags": ["architecture", "decision"],
-        })
+        memory_id = network.publish(
+            "cell-001",
+            {
+                "content": "Architecture decision: use microservices",
+                "type": "semantic",
+                "tags": ["architecture", "decision"],
+            },
+        )
 
         self.assertIsNotNone(memory_id)
         self.assertTrue(memory_id.startswith("mem-"))
@@ -33,14 +36,20 @@ class TestMemoryNetwork(unittest.TestCase):
         network = MemoryNetwork()
 
         # 发布一些记忆
-        network.publish("cell-001", {
-            "content": "Use Python for backend",
-            "tags": ["tech-stack"],
-        })
-        network.publish("cell-002", {
-            "content": "Use React for frontend",
-            "tags": ["tech-stack"],
-        })
+        network.publish(
+            "cell-001",
+            {
+                "content": "Use Python for backend",
+                "tags": ["tech-stack"],
+            },
+        )
+        network.publish(
+            "cell-002",
+            {
+                "content": "Use React for frontend",
+                "tags": ["tech-stack"],
+            },
+        )
 
         # 搜索
         results = network.search("Python")
@@ -63,10 +72,13 @@ class TestMemoryNetwork(unittest.TestCase):
 
         network = MemoryNetwork()
 
-        network.publish("cell-001", {
-            "content": "Database optimization completed",
-            "tags": ["database", "optimization"],
-        })
+        network.publish(
+            "cell-001",
+            {
+                "content": "Database optimization completed",
+                "tags": ["database", "optimization"],
+            },
+        )
 
         results = network.search("", tags=["database"])
         self.assertGreater(len(results), 0)
@@ -98,5 +110,7 @@ if __name__ == "__main__":
     suite.addTests(loader.loadTestsFromTestCase(TestMemoryNetwork))
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
-    print(f"\nTests run: {result.testsRun}, Successes: {result.testsRun - len(result.failures) - len(result.errors)}, Failures: {len(result.failures)}, Errors: {len(result.errors)}")
+    print(
+        f"\nTests run: {result.testsRun}, Successes: {result.testsRun - len(result.failures) - len(result.errors)}, Failures: {len(result.failures)}, Errors: {len(result.errors)}"
+    )
     sys.exit(0 if result.wasSuccessful() else 1)
