@@ -1,6 +1,6 @@
 ---
 type: ssot
-last-reviewed: 2026-08-26
+last_updated: 2026-08-26
 owner: governance-team
 ---
 
