@@ -1,6 +1,7 @@
 ---
 type: ssot
 last-reviewed: 2026-08-26
+owner: governance-team
 ---
 
 # Phase 45 — 治理可观测性: 从"执行"到"自维护"
