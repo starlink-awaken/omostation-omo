@@ -228,7 +228,7 @@ def test_human_review_is_idempotent_and_projects_primary_log_and_mos(tmp_path):
         _review(),
         workflow_run_id="run-delivery-1",
         principal_assertion=_assertion(_review()),
-     )
+    )
 
     assert first["status"] == "recorded"
     assert replay["status"] == "deduplicated"

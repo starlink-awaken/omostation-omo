@@ -79,8 +79,11 @@ def parse_eml(path: Path, source: str) -> MailEvent | None:
         if not from_ and not subject:
             return None  # 垃圾字节流被宽容解析成空壳 — 视为无效 (circuit_breaker)
         return MailEvent(
-            from_=from_[:120], subject=subject[:200], date=date,
-            snippet=str(body).strip()[:200], source=source,
+            from_=from_[:120],
+            subject=subject[:200],
+            date=date,
+            snippet=str(body).strip()[:200],
+            source=source,
         )
     except Exception:
         return None
@@ -104,12 +107,25 @@ def collect(sources: dict[str, Path] | None = None) -> dict[str, Any]:
     ledger.parent.mkdir(parents=True, exist_ok=True)
     with ledger.open("a", encoding="utf-8") as f:
         for ev in events:
-            f.write(json.dumps({
-                "topic": EVENT_TOPIC, "ts": datetime.now(UTC).isoformat(),
-                "priority": "normal", **asdict(ev),
-            }, ensure_ascii=False) + "\n")
-    return {"schema": SCHEMA, "collected": len(events), "skipped": skipped,
-            "ledger": str(ledger), "sources_scanned": list((sources or SOURCES))}
+            f.write(
+                json.dumps(
+                    {
+                        "topic": EVENT_TOPIC,
+                        "ts": datetime.now(UTC).isoformat(),
+                        "priority": "normal",
+                        **asdict(ev),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+    return {
+        "schema": SCHEMA,
+        "collected": len(events),
+        "skipped": skipped,
+        "ledger": str(ledger),
+        "sources_scanned": list(sources or SOURCES),
+    }
 
 
 def _ws() -> Path:

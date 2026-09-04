@@ -155,5 +155,7 @@ if __name__ == "__main__":
     suite.addTests(loader.loadTestsFromTestCase(TestDAGVisualization))
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
-    print(f"\nTests run: {result.testsRun}, Successes: {result.testsRun - len(result.failures) - len(result.errors)}, Failures: {len(result.failures)}, Errors: {len(result.errors)}")
+    print(
+        f"\nTests run: {result.testsRun}, Successes: {result.testsRun - len(result.failures) - len(result.errors)}, Failures: {len(result.failures)}, Errors: {len(result.errors)}"
+    )
     sys.exit(0 if result.wasSuccessful() else 1)
