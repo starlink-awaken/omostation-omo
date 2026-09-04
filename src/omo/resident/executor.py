@@ -35,6 +35,47 @@ class Executor:
     # BET-Y1Q3-T4-05 (WP2): fixed-success effectful actions — 需要 admitted
     # workflow context 才能执行; 无 context 一律 not_executed (spec §4)。
     EFFECTFUL_ACTIONS = frozenset({"generate_doc", "create_draft", "format_code", "run_tests", "backup", "snapshot"})
+    BACKEND_CONTRACTS = {
+        "local": {
+            "role": "read_only_adapter",
+            "writes_state": False,
+            "requires_approval": False,
+            "decision_rights": "none",
+            "allowed_actions": frozenset({"read_file", "list_files", "search", "query_status", "get_info", "scan", "check", "validate"}),
+        },
+        "pi-worker": {
+            "role": "reversible_execution_adapter",
+            "writes_state": False,
+            "requires_approval": True,
+            "decision_rights": "none",
+            "allowed_actions": frozenset({"commit_code", "create_pr", "modify_config", "deploy_staging"}),
+        },
+        "multica": {
+            "role": "remote_execution_adapter",
+            "writes_state": False,
+            "requires_approval": True,
+            "decision_rights": "none",
+            "allowed_actions": frozenset({"deploy_production", "delete_data", "modify_permissions", "push_main"}),
+        },
+    }
+
+    def _enforce_backend_contract(self, action: str, target: str) -> dict | None:
+        """Guardrail: adapters may execute but never write .omo / state paths directly."""
+        contract = self.BACKEND_CONTRACTS.get(self.backend)
+        if contract is None:
+            return None
+        normalized = str(target or "").replace("\\", "/").strip()
+        if any(normalized.startswith(prefix) or f"/{prefix}" in normalized for prefix in (".omo/", "state/", "runtime/")):
+            return {
+                "ok": False,
+                "effect": "not_executed",
+                "error": f"adapter boundary violation: {self.backend} cannot write .omo/state/runtime paths directly; use the control-plane broker",
+            }
+
+        allowed = contract["allowed_actions"]
+        if action not in allowed and action not in self.EFFECTFUL_ACTIONS:
+            return {"ok": False, "effect": "not_executed", "error": f"backend contract violation: action '{action}' not allowed for {self.backend}"}
+        return None
 
     def execute_task(self, task: dict) -> dict:
         action = task.get("action", "")
@@ -49,6 +90,9 @@ class Executor:
                     "error": f"admitted workflow context required for effectful action: {action}",
                 }
             return self._execute_effectful(action, target, context)
+        boundary_violation = self._enforce_backend_contract(action, target)
+        if boundary_violation is not None:
+            return boundary_violation
         try:
             if self.backend == "local":
                 return self._execute_local(action, target)

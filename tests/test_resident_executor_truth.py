@@ -52,6 +52,14 @@ class TestHonestExecutor:
         assert result["ok"] is True
         assert "effect" not in result  # 只读不受影响
 
+    def test_backend_contract_rejects_direct_state_writes(self, tmp_path: Path) -> None:
+        ex = Executor(backend="local", omo_dir=tmp_path)
+        result = ex.execute_task({"action": "write_state", "target": ".omo/state/system.yaml"})
+        assert result["ok"] is False
+        assert result["effect"] == "not_executed"
+        assert "adapter boundary violation" in result["error"]
+        assert Executor.BACKEND_CONTRACTS["pi-worker"]["writes_state"] is False
+
     def test_execute_plan_completed_only_from_real_results(self, tmp_path: Path) -> None:
         """completed 只由真实结果推导——effectful 无 context 时 completed=False。"""
         ex = Executor(omo_dir=tmp_path)
