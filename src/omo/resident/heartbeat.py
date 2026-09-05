@@ -85,6 +85,17 @@ def _should_write_stream(payload: dict[str, Any]) -> bool:
     return now.minute < 2  # 整点窗口: 每小时第一次 tick 写 1 条存证
 
 
+def _ledger_recover_best_effort() -> None:
+    """Explicit T9-02 tick-path recover (cold-start non-fatal; status also recovers)."""
+    try:
+        from omo.resident.ledger_check import check_and_recover  # noqa: PLC0415
+        from omo.resident.status import LEDGER  # noqa: PLC0415
+
+        check_and_recover(LEDGER)
+    except Exception:  # noqa: BLE001 - recover must not block heartbeat publish
+        return
+
+
 def publish_heartbeat(*, dry_run: bool = False) -> dict[str, Any]:
     """heartbeat 角色私有 tick 的发布侧: 生成 system.alive 事件进统一事件流.
 
@@ -93,6 +104,7 @@ def publish_heartbeat(*, dry_run: bool = False) -> dict[str, Any]:
     脑电采样 (2026-08-28): 正常态只在整点写流 (存证), 其余 tick 直接写台账;
     降级态恢复每次写流 (告警链路可见)。
     """
+    _ledger_recover_best_effort()
     snap = _snapshot()
     payload = {
         "health": snap.get("health"),

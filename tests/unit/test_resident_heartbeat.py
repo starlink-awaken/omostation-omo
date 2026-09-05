@@ -152,3 +152,20 @@ def test_register_with_daemon(monkeypatch: pytest.MonkeyPatch) -> None:
     fn, safe = fake.registered["heartbeat"]
     assert safe is True
     assert fn is heartbeat._heartbeat_handler
+
+
+def test_publish_heartbeat_invokes_check_and_recover(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """BET-Y1Q4-T9-02: heartbeat publish path must call ledger_check.check_and_recover."""
+    calls: list[Path] = []
+    ledger = tmp_path / "event-ledger.sqlite3"
+    ledger.touch()
+
+    def _fake_recover(path: Path) -> dict:
+        calls.append(path)
+        return {"ok": True, "locked": False}
+
+    monkeypatch.setattr("omo.resident.ledger_check.check_and_recover", _fake_recover)
+    monkeypatch.setattr("omo.resident.status.LEDGER", ledger)
+    monkeypatch.setattr(heartbeat, "_should_write_stream", lambda payload: False)
+    heartbeat.publish_heartbeat()
+    assert calls == [ledger]

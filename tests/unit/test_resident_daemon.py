@@ -347,3 +347,17 @@ def test_tick_once_independent_projectors(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert set(json.loads(p.read_text())["byte_offset"] for p in (tmp_path / "watermarks").glob("*.json")) == {
         events_file.stat().st_size
     }
+
+
+def test_tick_once_invokes_check_and_recover(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _ledger) -> None:
+    """BET-Y1Q4-T9-02: daemon tick path must call ledger_check.check_and_recover."""
+    calls: list[Path] = []
+
+    def _fake_recover(ledger: Path) -> dict:
+        calls.append(ledger)
+        return {"ok": True, "locked": False}
+
+    monkeypatch.setattr("omo.resident.ledger_check.check_and_recover", _fake_recover)
+    events_file, _, _ = _tick_setup(monkeypatch, tmp_path, [])
+    daemon.tick_once(_ledger, events_file)
+    assert calls == [daemon.DEFAULT_LEDGER]
