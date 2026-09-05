@@ -216,6 +216,16 @@ def _read_incremental(events_jsonl: Path, byte_offset: int) -> tuple[list[dict[s
     return events, file_size
 
 
+def _ledger_recover_best_effort() -> None:
+    """Run T9-01 lock monitor on each daemon tick (cold-start non-fatal)."""
+    try:
+        from omo.resident.ledger_check import check_and_recover  # noqa: PLC0415
+
+        check_and_recover(DEFAULT_LEDGER)
+    except Exception as exc:  # noqa: BLE001 - recover must not block ticks
+        _log(f"ledger_recover_skipped: {type(exc).__name__}: {exc}")
+
+
 def tick_once(
     broker: Any, events_jsonl: Path, *, projector: str = PROJECTOR_ID, topic_filter: set[str] | None = None
 ) -> dict[str, Any]:
@@ -226,6 +236,7 @@ def tick_once(
     handles. The ledger checkpoint stores the row watermark (compat); the local
     watermark file stores the byte offset for incremental tail reads.
     """
+    _ledger_recover_best_effort()
     cp = broker.checkpoint_get(projector)
     last_index = int((cp or {}).get("last_sequence", 0))
     byte_offset = _load_byte_offset(projector)
