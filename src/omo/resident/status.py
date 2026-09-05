@@ -61,9 +61,15 @@ def _daemon_snapshot() -> dict[str, Any]:
     # 只统计五类角色水位 resident-{role}.json (由 daemon --once --role 每 2min 推进),
     # 排除订阅层 resident-sub.json — subscribe 非 cron daemon tick 证据, 更新频率低,
     # 混入会让健康体系被陈旧 sub 水位误判 degraded。
+    # Cold start (never ticked) is non-fatal for status health (BET-Y1Q4-T9-01 Spec).
     watermark_files = sorted(p for p in DAEMON_WATERMARKS.glob("resident-*.json") if p.name != "resident-sub.json")
     if not watermark_files:
-        return {"ok": False, "detail": "no daemon watermark (daemon never ticked)", "tick_age_seconds": None}
+        return {
+            "ok": True,
+            "detail": "no daemon watermark (daemon never ticked) — cold start non-fatal",
+            "tick_age_seconds": None,
+            "cold_start": True,
+        }
     newest = min(watermark_files, key=lambda p: p.stat().st_mtime)
     age = time.time() - newest.stat().st_mtime
     ok = age <= STALE_THRESHOLD_SECONDS
@@ -139,23 +145,73 @@ def _probe_ledger_once() -> dict[str, Any]:
 
 
 def _ledger_snapshot() -> dict[str, Any]:
+    # Missing ledger is cold-start non-fatal (BET-Y1Q4-T9-01 Spec).
     if not LEDGER.is_file():
-        return {"ok": False, "detail": "ledger sqlite missing"}
+        return {
+            "ok": True,
+            "detail": "ledger sqlite missing — cold start non-fatal",
+            "lock_age_seconds": None,
+            "missing": True,
+        }
+
+    from omo.resident.ledger_check import check_and_recover  # noqa: PLC0415
+
+    recovery = check_and_recover(LEDGER)
+    lock_age = recovery.get("lock_age_seconds")
+
+    chain: dict[str, Any] | None = None
     for attempt in range(LEDGER_RETRY_ATTEMPTS):
         try:
-            return _probe_ledger_once()
+            chain = _probe_ledger_once()
+            break
         except sqlite3.OperationalError as exc:
             if not _is_lock_error(exc):
-                return {"ok": False, "detail": f"ledger check failed: {type(exc).__name__}: {exc}"}
+                return {
+                    "ok": False,
+                    "detail": f"ledger check failed: {type(exc).__name__}: {exc}",
+                    "lock_age_seconds": lock_age,
+                    "lock_monitor": recovery,
+                }
             if attempt + 1 >= LEDGER_RETRY_ATTEMPTS:
                 return {
                     "ok": False,
                     "detail": (f"ledger check failed: {type(exc).__name__}: {exc}; retry budget exhausted"),
+                    "lock_age_seconds": lock_age,
+                    "lock_monitor": recovery,
                 }
             time.sleep(LEDGER_RETRY_DELAY_SECONDS)
         except Exception as exc:  # noqa: BLE001 - best-effort
-            return {"ok": False, "detail": f"ledger check failed: {type(exc).__name__}: {exc}"}
-    return {"ok": False, "detail": "ledger check failed: retry budget exhausted"}
+            return {
+                "ok": False,
+                "detail": f"ledger check failed: {type(exc).__name__}: {exc}",
+                "lock_age_seconds": lock_age,
+                "lock_monitor": recovery,
+            }
+    if chain is None:
+        return {
+            "ok": False,
+            "detail": "ledger check failed: retry budget exhausted",
+            "lock_age_seconds": lock_age,
+            "lock_monitor": recovery,
+        }
+
+    # Recovery failure (stale lock + checkpoint exhausted + no zombie kill) degrades.
+    ok = bool(chain.get("ok")) and bool(recovery.get("ok", True))
+    detail = chain.get("detail", "")
+    if not recovery.get("ok", True):
+        detail = f"{detail}; lock_monitor: {recovery.get('detail')}"
+    return {
+        "ok": ok,
+        "detail": detail,
+        "sequence": chain.get("sequence"),
+        "lock_age_seconds": lock_age,
+        "lock_monitor": {
+            "locked": recovery.get("locked"),
+            "checkpoint": recovery.get("checkpoint"),
+            "recovery": recovery.get("recovery"),
+            "detail": recovery.get("detail"),
+        },
+    }
 
 
 def snapshot() -> dict[str, Any]:

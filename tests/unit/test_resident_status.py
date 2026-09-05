@@ -88,10 +88,30 @@ def test_snapshot_sediment_counts(_snapshot_paths: Path, tmp_path: Path) -> None
 
 
 def test_snapshot_no_files_not_crash(_snapshot_paths: Path) -> None:
-    # 无事件/sediment/ledger 时不应崩溃
+    # 无事件/sediment/ledger 时不应崩溃；缺 ledger 冷启动非致命 (T9-01)
     report = status.snapshot()
     assert report["components"]["events"]["lines"] == 0
-    assert report["components"]["ledger"]["ok"] is False
+    assert report["components"]["ledger"]["ok"] is True
+    assert report["components"]["ledger"]["lock_age_seconds"] is None
+    assert report["components"]["ledger"].get("missing") is True
+
+
+def test_snapshot_cold_daemon_non_fatal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cold start (no watermark) must not degrade health (BET-Y1Q4-T9-01 Spec)."""
+    wm_dir = tmp_path / "watermarks"
+    wm_dir.mkdir()
+    monkeypatch.setattr(status, "DAEMON_WATERMARKS", wm_dir)
+    monkeypatch.setattr(status, "EVENTS_JSONL", tmp_path / "events.jsonl")
+    monkeypatch.setattr(status, "SEDIMENT_ROOT", tmp_path / "sediment")
+    monkeypatch.setattr(status, "ALERT_WATERMARK", tmp_path / "watermark.json")
+    monkeypatch.setattr(status, "LEDGER", tmp_path / "ledger.sqlite3")
+    report = status.snapshot()
+    assert report["components"]["daemon"]["ok"] is True
+    assert report["components"]["daemon"].get("cold_start") is True
+    assert report["components"]["ledger"]["ok"] is True
+    assert report["health"] in {"recovered", "ok"}
+    assert "daemon" not in report["degraded_components"]
+    assert "ledger" not in report["degraded_components"]
 
 
 class _LockingBroker:
@@ -129,9 +149,16 @@ def test_ledger_probe_retries_transient_lock_and_closes_each_broker(
     _LockingBroker.closes = 0
     status.LEDGER.touch()
 
+    monkeypatch.setattr(
+        "omo.resident.ledger_check.check_and_recover",
+        lambda _ledger: {"ok": True, "lock_age_seconds": None, "locked": False, "detail": "unlocked"},
+    )
     result = status._ledger_snapshot()
 
-    assert result == {"ok": True, "detail": "chain ok", "sequence": 42}
+    assert result["ok"] is True
+    assert result["detail"] == "chain ok"
+    assert result["sequence"] == 42
+    assert result["lock_age_seconds"] is None
     assert _LockingBroker.attempts == 3
     assert _LockingBroker.closes == 3
 
@@ -142,12 +169,17 @@ def test_ledger_probe_exhausts_lock_budget_truthfully(_snapshot_paths: Path, mon
     _AlwaysLockingBroker.attempts = 0
     _AlwaysLockingBroker.closes = 0
     status.LEDGER.touch()
+    monkeypatch.setattr(
+        "omo.resident.ledger_check.check_and_recover",
+        lambda _ledger: {"ok": True, "lock_age_seconds": 12, "locked": True, "detail": "within budget"},
+    )
 
     result = status._ledger_snapshot()
 
     assert result["ok"] is False
     assert "database is locked" in result["detail"]
     assert "retry budget exhausted" in result["detail"]
+    assert result["lock_age_seconds"] == 12
     assert _AlwaysLockingBroker.attempts == status.LEDGER_RETRY_ATTEMPTS
     assert _AlwaysLockingBroker.closes == status.LEDGER_RETRY_ATTEMPTS
 
@@ -163,6 +195,10 @@ def test_ledger_probe_does_not_retry_non_lock_errors(_snapshot_paths: Path, monk
     monkeypatch.setattr(status.time, "sleep", lambda _seconds: None)
     BrokenBroker.attempts = 0
     status.LEDGER.touch()
+    monkeypatch.setattr(
+        "omo.resident.ledger_check.check_and_recover",
+        lambda _ledger: {"ok": True, "lock_age_seconds": None, "locked": False, "detail": "unlocked"},
+    )
 
     result = status._ledger_snapshot()
 
