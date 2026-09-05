@@ -122,7 +122,7 @@ def _user_value_scenarios() -> list[dict[str, Any]]:
             "user_goal": "Turn a research question into structured outputs with traceable capability bindings.",
             "projects_used": ["kairon", "gbrain", "agentmesh"],
             "evidence_refs": [
-                ".omo/_truth/scenarios/research-pipeline.yaml",
+                "docs/scene-cards/research-pipeline.yaml",
                 ".omo/_delivery/evidence/phase12/research-pipeline-trace.yaml",
                 _agentmesh_ref("README.md", fallback="src/index.ts"),
             ],
@@ -195,7 +195,7 @@ def ledger_payload() -> dict[str, Any]:
             "id": "p15-scenario-trace-entry",
             "type": "scenario-trace",
             "evidence_refs": [
-                ".omo/_truth/scenarios/research-pipeline.yaml",
+                "docs/scene-cards/research-pipeline.yaml",
                 ".omo/_delivery/evidence/phase12/research-pipeline-trace.yaml",
             ],
             "verification": "Scenario trace remains ready and reproducible as evidence input.",

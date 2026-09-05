@@ -273,7 +273,7 @@ def walkthrough_payload() -> dict[str, Any]:
             "kairon": "governance-trace",
         },
         "evidence_refs": [
-            ".omo/_truth/scenarios/knowledge-capture-search.yaml",
+            ".omo/_truth/contracts/knowledge-capture-search.yaml",
             ".omo/_delivery/evidence/phase16/scenario-shell.yaml",
             ".omo/_delivery/evidence/phase16/knowledge-capture-run-record.yaml",
             "projects/knowledge/gbrain/README.md",
@@ -322,7 +322,7 @@ def run_record_payload() -> dict[str, Any]:
         ],
         "result_summary": "Fixture-backed knowledge capture/search run now has a single request_id and trace_id that can be followed across kairon routing, gbrain capture/query, and OMO evidence.",
         "omo_evidence_refs": [
-            ".omo/_truth/scenarios/knowledge-capture-search.yaml",
+            ".omo/_truth/contracts/knowledge-capture-search.yaml",
             ".omo/_delivery/evidence/phase16/scenario-shell.yaml",
             ".omo/_delivery/evidence/phase16/capture-search-walkthrough.yaml",
             ".omo/_delivery/evidence/phase16/adoption-closeout.yaml",
@@ -431,7 +431,7 @@ def external_docs() -> dict[Path, str]:
 
 Pointer:
 - `{workspace}_knowledge/design/plans/phase16-product-surface-convergence-preplanning.md`
-- `{workspace}_truth/scenarios/knowledge-capture-search.yaml`
+- `{workspace}_truth/contracts/knowledge-capture-search.yaml`
 - `{workspace}_delivery/evidence/phase16/capture-search-walkthrough.yaml`
 
 ## 关键判断
@@ -489,7 +489,7 @@ Pointer:
 5. 检查外部 OMO 未复制 live phase、active queue 等 mutable facts。
 
 Pointer:
-- `{workspace}_truth/scenarios/knowledge-capture-search.yaml`
+- `{workspace}_truth/contracts/knowledge-capture-search.yaml`
 - `{workspace}_delivery/evidence/phase16/journey-baseline.yaml`
 - `{workspace}_knowledge/summaries/phase16/phase16-closeout.md`
 
