@@ -100,6 +100,16 @@ def _mutation_surface_registry_snapshot() -> list[dict[str, Any]]:
             "category": "human_cli",
         },
         {
+            "name": "portfolio-projection-control",
+            "entrypoint": "python3 bin/plan/portfolio_projection.py --apply-omo",
+            "runtime_ref": "bin/plan/portfolio_projection.py:apply_omo_via_broker",
+            "mutation_target": ".omo/_control/portfolio-status.json",
+            "broker_ref": "bin/plan/portfolio_projection.py:apply_omo_via_broker",
+            "delivery_artifact_root": "runtime/omo/_delivery/ingress/portfolio/",
+            "mode": "brokered",
+            "category": "governance_ingress",
+        },
+        {
             "name": "omo-task-create",
             "entrypoint": "omo task create",
             "runtime_ref": "projects/omo/src/omo/omo_task.py:cmd_task_create",

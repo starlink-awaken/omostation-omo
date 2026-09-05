@@ -406,6 +406,16 @@ def _seed_workspace(root: Path) -> None:
                     "category": "human_cli",
                 },
                 {
+                    "name": "portfolio-projection-control",
+                    "entrypoint": "python3 bin/plan/portfolio_projection.py --apply-omo",
+                    "runtime_ref": "bin/plan/portfolio_projection.py:apply_omo_via_broker",
+                    "mutation_target": ".omo/_control/portfolio-status.json",
+                    "broker_ref": "bin/plan/portfolio_projection.py:apply_omo_via_broker",
+                    "delivery_artifact_root": "runtime/omo/_delivery/ingress/portfolio/",
+                    "mode": "brokered",
+                    "category": "governance_ingress",
+                },
+                {
                     "name": "omo-task-create",
                     "entrypoint": "omo task create",
                     "runtime_ref": "projects/omo/src/omo/omo_task.py:cmd_task_create",
@@ -1211,11 +1221,12 @@ def test_build_governance_surfaces_report_ok(tmp_path: Path) -> None:
         "omo-worker-task-normalize-planned",
         "omo-worker-task-route-self-evolution-remediation",
         "opc-p6-self-evolve-task-emit",
+        "portfolio-projection-control",
     ]
     assert report["mutation_surface_registry"]["runtime_category_counts"] == {
         "bridge_import": 4,
         "c2g_adapter": 2,
-        "governance_ingress": 12,
+        "governance_ingress": 13,
         "human_cli": 11,
         "runtime_cache": 2,
     }
