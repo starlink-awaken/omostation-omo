@@ -31,8 +31,11 @@ SEDIMENT_ROOT = WORKSPACE / ".omo" / "_knowledge" / "sediment"
 ALERT_WATERMARK = DELIVERY / "alert-forwarder" / "watermark.json"
 LEDGER = WORKSPACE / "runtime" / "omo" / "event-ledger.sqlite3"
 STALE_THRESHOLD_SECONDS = 1800  # 30min
-LEDGER_RETRY_ATTEMPTS = 3
-LEDGER_RETRY_DELAY_SECONDS = 0.2
+
+# Backward-compat: LEDGER_RETRY_* constants kept for legacy tests
+# (new code uses single read-only probe, no retries needed)
+LEDGER_RETRY_ATTEMPTS = 1
+LEDGER_RETRY_DELAY_SECONDS = 0.0
 
 
 def _file_age(path: Path) -> float | None:
@@ -145,7 +148,10 @@ def _probe_ledger_once() -> dict[str, Any]:
 
 
 def _ledger_snapshot() -> dict[str, Any]:
-    # Missing ledger is cold-start non-fatal (BET-Y1Q4-T9-01 Spec).
+    # T10-126: read-only probe path. No write locks, no journal_mode mutation.
+    # If lock recovery is needed, use `make resident-recover` (explicit opt-in).
+    from omo.resident.ledger_check import check_lock_state_only  # noqa: PLC0415
+
     if not LEDGER.is_file():
         return {
             "ok": True,
@@ -154,64 +160,35 @@ def _ledger_snapshot() -> dict[str, Any]:
             "missing": True,
         }
 
-    from omo.resident.ledger_check import check_and_recover  # noqa: PLC0415
-
-    recovery = check_and_recover(LEDGER)
-    lock_age = recovery.get("lock_age_seconds")
-
-    chain: dict[str, Any] | None = None
-    for attempt in range(LEDGER_RETRY_ATTEMPTS):
-        try:
-            chain = _probe_ledger_once()
-            break
-        except sqlite3.OperationalError as exc:
-            if not _is_lock_error(exc):
-                return {
-                    "ok": False,
-                    "detail": f"ledger check failed: {type(exc).__name__}: {exc}",
-                    "lock_age_seconds": lock_age,
-                    "lock_monitor": recovery,
-                }
-            if attempt + 1 >= LEDGER_RETRY_ATTEMPTS:
-                return {
-                    "ok": False,
-                    "detail": (f"ledger check failed: {type(exc).__name__}: {exc}; retry budget exhausted"),
-                    "lock_age_seconds": lock_age,
-                    "lock_monitor": recovery,
-                }
-            time.sleep(LEDGER_RETRY_DELAY_SECONDS)
-        except Exception as exc:  # noqa: BLE001 - best-effort
-            return {
-                "ok": False,
-                "detail": f"ledger check failed: {type(exc).__name__}: {exc}",
-                "lock_age_seconds": lock_age,
-                "lock_monitor": recovery,
-            }
-    if chain is None:
+    state = check_lock_state_only(LEDGER)
+    # chain integrity (read-only via _probe_ledger_once, no recovery write)
+    try:
+        chain = _probe_ledger_once()
+        ok = bool(chain.get("ok"))
+        detail = chain.get("detail", "chain probe failed")
+        return {
+            "ok": ok,
+            "detail": detail,
+            "sequence": chain.get("sequence"),
+            "lock_age_seconds": state.get("lock_age_seconds"),
+            "journal_mode": state.get("journal_mode"),
+            "lock_monitor": {
+                "locked": state.get("locked"),
+                "detail": state.get("detail"),
+            },
+        }
+    except sqlite3.OperationalError as exc:
+        # Read-only probe can still hit locked if -wal/-shm files are mid-rotate
         return {
             "ok": False,
-            "detail": "ledger check failed: retry budget exhausted",
-            "lock_age_seconds": lock_age,
-            "lock_monitor": recovery,
+            "detail": f"ledger check failed: {type(exc).__name__}: {exc}",
+            "lock_age_seconds": state.get("lock_age_seconds"),
+            "journal_mode": state.get("journal_mode"),
+            "lock_monitor": {
+                "locked": state.get("locked"),
+                "detail": state.get("detail"),
+            },
         }
-
-    # Recovery failure (stale lock + checkpoint exhausted + no zombie kill) degrades.
-    ok = bool(chain.get("ok")) and bool(recovery.get("ok", True))
-    detail = chain.get("detail", "")
-    if not recovery.get("ok", True):
-        detail = f"{detail}; lock_monitor: {recovery.get('detail')}"
-    return {
-        "ok": ok,
-        "detail": detail,
-        "sequence": chain.get("sequence"),
-        "lock_age_seconds": lock_age,
-        "lock_monitor": {
-            "locked": recovery.get("locked"),
-            "checkpoint": recovery.get("checkpoint"),
-            "recovery": recovery.get("recovery"),
-            "detail": recovery.get("detail"),
-        },
-    }
 
 
 def snapshot() -> dict[str, Any]:

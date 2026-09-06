@@ -72,8 +72,61 @@ def _lock_age_from_sidecars(ledger: Path) -> float | None:
     return max(ages)
 
 
+def check_lock_state_only(ledger: Path) -> dict[str, Any]:
+    """Read-only lock + journal_mode probe (T10-126).
+
+    Used by status.py and other read-only paths. NEVER applies
+    `PRAGMA journal_mode` (which would attempt to write) or any
+    PRAGMA that can mutate state.
+
+    Returns dict with:
+      ok: bool (True if probe succeeded)
+      locked: bool (True if ledger is currently held)
+      lock_age_seconds: int|None (estimated hold age)
+      journal_mode: str|None (current mode from open file)
+      detail: str (human-readable status)
+    """
+    if not ledger.is_file():
+        return {
+            "ok": True,
+            "locked": False,
+            "lock_age_seconds": None,
+            "journal_mode": None,
+            "detail": "ledger sqlite missing",
+            "missing": True,
+        }
+    age = lock_age_seconds(ledger)
+    # Probe journal_mode via the existing lock_age_seconds ro connection
+    journal_mode = None
+    try:
+        conn = sqlite3.connect(f"file:{ledger}?mode=ro", uri=True, timeout=0.1)
+        try:
+            row = conn.execute("PRAGMA journal_mode").fetchone()
+            if row:
+                journal_mode = str(row[0]).lower()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        pass
+    return {
+        "ok": True,
+        "locked": age is not None,
+        "lock_age_seconds": None if age is None else int(age),
+        "journal_mode": journal_mode,
+        "detail": (f"read-only probe ok, mode={journal_mode}, "
+                   f"{'locked' if age is not None else 'unlocked'}"),
+    }
+
+
 def wal_checkpoint(ledger: Path) -> tuple[bool, str]:
-    """Run WAL truncate checkpoint. Returns (ok, detail)."""
+    """Run WAL truncate checkpoint. Returns (ok, detail).
+
+    ⚠️  WRITES: opens ledger with default (rw) mode and runs
+    `PRAGMA wal_checkpoint(TRUNCATE)`. NEVER call this from read-only
+    paths. Use `check_lock_state_only()` for read-only probes, and
+    `recover_ledger_with_wal_checkpoint()` (alias of `check_and_recover`)
+    only for explicit ops-driven recovery.
+    """
     global _checkpoint_failures
     if not ledger.is_file():
         return True, "ledger missing — nothing to checkpoint"
@@ -149,7 +202,15 @@ def maybe_kill_zombie_holders(ledger: Path) -> dict[str, Any]:
 
 
 def check_and_recover(ledger: Path) -> dict[str, Any]:
-    """Probe lock age; checkpoint if stale; optionally kill zombies."""
+    """⚠️  WRITES: Probe lock age; checkpoint if stale; optionally kill zombies.
+
+    This function applies `wal_checkpoint(TRUNCATE)` which acquires a
+    write lock. NEVER call from read-only paths. Use
+    `check_lock_state_only()` for read-only probes. This function is
+    kept for explicit ops-driven recovery; an alias
+    `recover_ledger_with_wal_checkpoint` is provided for clarity at
+    call sites.
+    """
     age = lock_age_seconds(ledger)
     result: dict[str, Any] = {
         "ok": True,
@@ -181,3 +242,9 @@ def check_and_recover(ledger: Path) -> dict[str, Any]:
         result["ok"] = True
         result["detail"] = f"recovered after killing zombies {recovery['killed']}"
     return result
+
+
+# Explicit-name alias for clarity at call sites. The actual write is in
+# wal_checkpoint(TRUNCATE) inside check_and_recover. Never call from
+# read-only paths.
+recover_ledger_with_wal_checkpoint = check_and_recover
