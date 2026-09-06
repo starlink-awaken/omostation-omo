@@ -44,6 +44,33 @@ IO_FUNCTION_NAMES = {"open", "read_text", "write_text", "read_bytes", "write_byt
 IO_PATHLIB_CTOR = {"Path", "PurePath", "PosixPath", "WindowsPath"}
 
 
+DEFAULT_BASELINE = ".omo/_truth/registry/direct-io-baseline.yaml"
+
+
+def _load_baseline(path: str | None) -> set[str]:
+    """T10-134: grace 清单 (默认 direct-io-baseline.yaml, grandfather-existing-only)。
+    存量违规降级 warn 不 FAIL; 清单 shrink_only — 修复后移除条目, 禁止新增。"""
+    path = path or DEFAULT_BASELINE
+    import yaml
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+        data = {}
+        for doc in yaml.safe_load_all(text):
+            if isinstance(doc, dict) and doc.get("entries") is not None:
+                data = doc  # 多文档: frontmatter + 正文, 取含 entries 的末文档
+    except FileNotFoundError:
+        return set()
+    except Exception as exc:
+        print(f"[gatekeeper] ⚠️ baseline 读取失败 ({exc}), 忽略 grace", file=sys.stderr)
+        return set()
+    entries = data.get("entries") or []
+    files = set()
+    for e in entries:
+        if isinstance(e, dict) and isinstance(e.get("path"), str):
+            files.add(e["path"])
+    return files
+
+
 def _is_exempt(path: Path) -> bool:
     """Return True if the file is exempt from gatekeeping."""
     s = str(path)
@@ -171,6 +198,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="OMO Contract Gatekeeper")
     parser.add_argument("paths", nargs="*", help="Files or directories to check")
     parser.add_argument("--diff", action="store_true", help="Only check Python files in git diff")
+    parser.add_argument("--baseline", help="grace 清单 yaml (grace_files: [...]); 存量违规降级 warn 不 FAIL")
     args = parser.parse_args(argv)
 
     if args.diff:
@@ -191,16 +219,25 @@ def main(argv: list[str] | None = None) -> int:
 
     exit_code = 0
     checked = 0
+    graced = 0
+    baseline = _load_baseline(args.baseline)
     for f in files:
         if _is_exempt(f):
             continue
         checked += 1
         violations = check_file(f)
         if violations:
-            print(f"\n{f}")
+            graced_hit = str(f) in baseline
+            print(f"\n{f}" + ("  [grace]" if graced_hit else ""))
             for lineno, detail in violations:
                 print(f"  {lineno}: {detail}")
+            if graced_hit:
+                graced += 1
+                continue
             exit_code = 1
+
+    if graced:
+        print(f"[gatekeeper] {graced} files in grace (shrink_only — 修复后请从清单移除)")
 
     if exit_code == 0:
         print(f"Gatekeeper: {checked} files checked — PASS")
