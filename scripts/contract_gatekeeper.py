@@ -44,7 +44,7 @@ IO_FUNCTION_NAMES = {"open", "read_text", "write_text", "read_bytes", "write_byt
 IO_PATHLIB_CTOR = {"Path", "PurePath", "PosixPath", "WindowsPath"}
 
 
-DEFAULT_BASELINE = ".omo/_truth/registry/direct-io-baseline.yaml"
+DEFAULT_BASELINE = ".omo/_truth/registry/gatekeeper-grace.yaml"
 
 
 def _load_baseline(path: str | None) -> set[str]:
