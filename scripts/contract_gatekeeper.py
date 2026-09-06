@@ -51,24 +51,26 @@ def _load_baseline(path: str | None) -> set[str]:
     """T10-134: grace 清单 (默认 direct-io-baseline.yaml, grandfather-existing-only)。
     存量违规降级 warn 不 FAIL; 清单 shrink_only — 修复后移除条目, 禁止新增。"""
     path = path or DEFAULT_BASELINE
-    import yaml
-
     try:
         text = Path(path).read_text(encoding="utf-8")
-        data = {}
-        for doc in yaml.safe_load_all(text):
-            if isinstance(doc, dict) and doc.get("entries") is not None:
-                data = doc  # 多文档: frontmatter + 正文, 取含 entries 的末文档
     except FileNotFoundError:
         return set()
-    except Exception as exc:
-        print(f"[gatekeeper] ⚠️ baseline 读取失败 ({exc}), 忽略 grace", file=sys.stderr)
+    except OSError as exc:
+        print(f"[gatekeeper] warning: baseline read failed ({exc}), ignore grace", file=sys.stderr)
         return set()
-    entries = data.get("entries") or []
-    files = set()
-    for e in entries:
-        if isinstance(e, dict) and isinstance(e.get("path"), str):
-            files.add(e["path"])
+    files: set[str] = set()
+    # 零依赖行解析 (保持本脚本 no-yaml-import 惯例): 只认 entries: 段内的 "- path: X"
+    in_entries = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped == "entries:":
+            in_entries = True
+            continue
+        if in_entries:
+            if stripped.startswith("- path:"):
+                files.add(stripped.removeprefix("- path:").strip().strip('"').strip("'"))
+            elif stripped and not stripped.startswith("-") and not line.startswith((" ", "\t")):
+                in_entries = False  # 回到顶层键, entries 段结束
     return files
 
 
