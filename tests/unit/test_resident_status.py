@@ -3,7 +3,7 @@
 M2.4: 验证状态快照:
 - 组件字段完整 (daemon/events/sediment/alert/ledger)
 - daemon 水位新鲜度 → health
-- ledger 链完整性
+- ledger 链完整性 (read-only probe, zero write locks)
 """
 
 from __future__ import annotations
@@ -33,6 +33,25 @@ def _snapshot_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(status, "ALERT_WATERMARK", delivery / "alert-forwarder" / "watermark.json")
     monkeypatch.setattr(status, "LEDGER", tmp_path / "ledger.sqlite3")
     return delivery
+
+
+def _create_test_ledger(path: Path, rows: list[tuple[int, str, str]] | None = None) -> None:
+    """Create a minimal SQLite ledger for testing (outside the status module)."""
+    conn = sqlite3.connect(str(path))
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS event_log ("
+        " sequence INTEGER PRIMARY KEY,"
+        " event_hash TEXT NOT NULL,"
+        " previous_hash TEXT NOT NULL"
+        ")"
+    )
+    if rows:
+        conn.executemany(
+            "INSERT INTO event_log (sequence, event_hash, previous_hash) VALUES (?, ?, ?)",
+            rows,
+        )
+    conn.commit()
+    conn.close()
 
 
 def test_snapshot_structure(_snapshot_paths: Path, tmp_path: Path) -> None:
@@ -114,94 +133,165 @@ def test_snapshot_cold_daemon_non_fatal(tmp_path: Path, monkeypatch: pytest.Monk
     assert "ledger" not in report["degraded_components"]
 
 
-class _LockingBroker:
-    attempts = 0
-    closes = 0
-    failures_before_success = 2
-
-    @classmethod
-    def connect(cls, _path: str):
-        cls.attempts += 1
-        return cls()
-
-    def verify_chain(self):
-        if self.attempts <= self.failures_before_success:
-            raise sqlite3.OperationalError("database is locked")
-        return {"ok": True}
-
-    def last_sequence(self):
-        return 42
-
-    def close(self):
-        type(self).closes += 1
+# ── Zero-lock probe tests (BET-Y1Q4-T10-126) ─────────────────────────────
 
 
-class _AlwaysLockingBroker(_LockingBroker):
-    failures_before_success = 99
-
-
-def test_ledger_probe_retries_transient_lock_and_closes_each_broker(
-    _snapshot_paths: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(status, "_ledger_broker", lambda: _LockingBroker)
-    monkeypatch.setattr(status.time, "sleep", lambda _seconds: None)
-    _LockingBroker.attempts = 0
-    _LockingBroker.closes = 0
-    status.LEDGER.touch()
-
+def test_ledger_probe_readonly_ok(_snapshot_paths: Path) -> None:
+    """Read-only probe with valid chain returns ok."""
+    ledger = status.LEDGER
+    rows = [
+        (1, "hash_a", ""),
+        (2, "hash_b", "hash_a"),
+        (3, "hash_c", "hash_b"),
+    ]
+    _create_test_ledger(ledger, rows)
+    monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(
         "omo.resident.ledger_check.check_and_recover",
         lambda _ledger: {"ok": True, "lock_age_seconds": None, "locked": False, "detail": "unlocked"},
     )
-    result = status._ledger_snapshot()
+    result = status._probe_ledger_once()
+    assert result["ok"] is True
+    assert result["sequence"] == 3
+    assert "read-only probe" in result["detail"]
+    monkeypatch.undo()
+
+
+def test_ledger_probe_readonly_broken_chain(_snapshot_paths: Path) -> None:
+    """Read-only probe detects broken chain."""
+    ledger = status.LEDGER
+    rows = [
+        (1, "hash_a", ""),
+        (2, "hash_b", "WRONG_PREV"),  # broken chain
+    ]
+    _create_test_ledger(ledger, rows)
+    result = status._probe_ledger_once()
+    assert result["ok"] is False
+    assert "chain broken" in result["detail"]
+    assert result["sequence"] == 2
+
+
+def test_ledger_probe_readonly_empty_ledger(_snapshot_paths: Path) -> None:
+    """Read-only probe handles empty ledger (cold start)."""
+    ledger = status.LEDGER
+    _create_test_ledger(ledger)
+    result = status._probe_ledger_once()
+    assert result["ok"] is True
+    assert result["sequence"] == 0
+    assert "cold start" in result["detail"]
+
+
+def test_ledger_probe_readonly_no_write_lock(_snapshot_paths: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify that _probe_ledger_once never opens a write connection."""
+    import unittest.mock as mock
+
+    original_connect = sqlite3.connect
+    write_attempts: list[str] = []
+
+    def tracking_connect(*args, **kwargs):
+        # Track if any non-URI or write connection is attempted
+        if args and isinstance(args[0], str) and "mode=ro" not in args[0] and not kwargs.get("uri"):
+            write_attempts.append(args[0])
+        return original_connect(*args, **kwargs)
+
+    ledger = status.LEDGER
+    _create_test_ledger(ledger, [(1, "h1", "")])
+
+    with mock.patch("sqlite3.connect", side_effect=tracking_connect):
+        result = status._probe_ledger_once()
 
     assert result["ok"] is True
-    assert result["detail"] == "chain ok"
-    assert result["sequence"] == 42
-    assert result["lock_age_seconds"] is None
-    assert _LockingBroker.attempts == 3
-    assert _LockingBroker.closes == 3
+    assert write_attempts == [], f"Write connections attempted: {write_attempts}"
 
 
-def test_ledger_probe_exhausts_lock_budget_truthfully(_snapshot_paths: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(status, "_ledger_broker", lambda: _AlwaysLockingBroker)
-    monkeypatch.setattr(status.time, "sleep", lambda _seconds: None)
-    _AlwaysLockingBroker.attempts = 0
-    _AlwaysLockingBroker.closes = 0
+def test_ledger_snapshot_retry_on_lock(_snapshot_paths: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ledger snapshot retries on transient lock errors in read-only probe."""
+    call_count = [0]
+
+    def flaky_probe():
+        call_count[0] += 1
+        if call_count[0] <= 2:
+            return {"ok": False, "detail": "database is locked", "sequence": None}
+        return {"ok": True, "detail": "chain ok (read-only probe)", "sequence": 42}
+
     status.LEDGER.touch()
+    monkeypatch.setattr(status, "_probe_ledger_once", flaky_probe)
+    monkeypatch.setattr(status.time, "sleep", lambda _: None)
     monkeypatch.setattr(
         "omo.resident.ledger_check.check_and_recover",
-        lambda _ledger: {"ok": True, "lock_age_seconds": 12, "locked": True, "detail": "within budget"},
+        lambda _: {"ok": True, "lock_age_seconds": None, "locked": False, "detail": "unlocked"},
     )
 
     result = status._ledger_snapshot()
+    assert result["ok"] is True
+    assert result["sequence"] == 42
+    assert call_count[0] == 3
 
+
+def test_ledger_snapshot_exhausts_retry_budget(_snapshot_paths: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ledger snapshot gives up after LEDGER_RETRY_ATTEMPTS lock errors."""
+    status.LEDGER.touch()
+    monkeypatch.setattr(
+        status,
+        "_probe_ledger_once",
+        lambda: {"ok": False, "detail": "database is locked", "sequence": None},
+    )
+    monkeypatch.setattr(status.time, "sleep", lambda _: None)
+    monkeypatch.setattr(
+        "omo.resident.ledger_check.check_and_recover",
+        lambda _: {"ok": True, "lock_age_seconds": 12, "locked": True, "detail": "within budget"},
+    )
+
+    result = status._ledger_snapshot()
     assert result["ok"] is False
-    assert "database is locked" in result["detail"]
     assert "retry budget exhausted" in result["detail"]
     assert result["lock_age_seconds"] == 12
-    assert _AlwaysLockingBroker.attempts == status.LEDGER_RETRY_ATTEMPTS
-    assert _AlwaysLockingBroker.closes == status.LEDGER_RETRY_ATTEMPTS
 
 
-def test_ledger_probe_does_not_retry_non_lock_errors(_snapshot_paths: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    class BrokenBroker(_LockingBroker):
-        @classmethod
-        def connect(cls, _path: str):
-            cls.attempts += 1
-            raise sqlite3.OperationalError("disk I/O error")
-
-    monkeypatch.setattr(status, "_ledger_broker", lambda: BrokenBroker)
-    monkeypatch.setattr(status.time, "sleep", lambda _seconds: None)
-    BrokenBroker.attempts = 0
+def test_ledger_snapshot_no_retry_on_non_lock_error(_snapshot_paths: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Non-lock errors are not retried."""
     status.LEDGER.touch()
     monkeypatch.setattr(
+        status,
+        "_probe_ledger_once",
+        lambda: {"ok": False, "detail": "read-only probe failed: disk I/O error", "sequence": None},
+    )
+    monkeypatch.setattr(
         "omo.resident.ledger_check.check_and_recover",
-        lambda _ledger: {"ok": True, "lock_age_seconds": None, "locked": False, "detail": "unlocked"},
+        lambda _: {"ok": True, "lock_age_seconds": None, "locked": False, "detail": "unlocked"},
     )
 
     result = status._ledger_snapshot()
-
     assert result["ok"] is False
     assert "disk I/O error" in result["detail"]
-    assert BrokenBroker.attempts == 1
+
+
+def test_concurrent_readonly_probes_no_interference(tmp_path: Path) -> None:
+    """Multiple concurrent read-only probes don't interfere (zero contention)."""
+    import threading
+
+    ledger = tmp_path / "test_ledger.sqlite3"
+    _create_test_ledger(ledger, [(1, "h1", ""), (2, "h2", "h1")])
+
+    results: list[dict] = []
+    errors: list[Exception] = []
+
+    def probe():
+        try:
+            uri = f"file:{ledger}?mode=ro"
+            conn = sqlite3.connect(uri, uri=True, timeout=0.05)
+            rows = list(conn.execute("SELECT sequence, event_hash, previous_hash FROM event_log ORDER BY sequence"))
+            conn.close()
+            results.append({"ok": True, "count": len(rows)})
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=probe) for _ in range(10)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5)
+
+    assert errors == [], f"Errors during concurrent probes: {errors}"
+    assert len(results) == 10
+    assert all(r["ok"] and r["count"] == 2 for r in results)

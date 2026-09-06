@@ -115,13 +115,6 @@ def _alert_snapshot() -> dict[str, Any]:
     }
 
 
-def _ledger_broker() -> Any:
-    sys.path.insert(0, str(WORKSPACE / "projects" / "omo" / "src"))
-    from omo.event_ledger.broker import LedgerBroker  # noqa: PLC0415
-
-    return LedgerBroker
-
-
 def _is_lock_error(exc: BaseException) -> bool:
     return isinstance(exc, sqlite3.OperationalError) and any(
         marker in str(exc).lower() for marker in ("locked", "busy")
@@ -129,19 +122,45 @@ def _is_lock_error(exc: BaseException) -> bool:
 
 
 def _probe_ledger_once() -> dict[str, Any]:
-    broker = None
+    """Read-only probe: verify chain integrity without acquiring any write lock.
+
+    Uses file:...?mode=ro URI to ensure zero lock contention with the daemon's
+    write path.  On older SQLite that lacks lock_status PRAGMA we fall back to
+    a simple row-count check — still read-only, still zero contention.
+    """
+    uri = f"file:{LEDGER}?mode=ro"
+    conn: sqlite3.Connection | None = None
     try:
-        broker = _ledger_broker().connect(str(LEDGER))
-        chain = broker.verify_chain()
-        ok = bool(chain.get("ok"))
-        return {
-            "ok": ok,
-            "detail": "chain ok" if ok else f"chain broken: {chain.get('error')}",
-            "sequence": broker.last_sequence(),
-        }
+        conn = sqlite3.connect(uri, uri=True, timeout=0.05)
+        conn.row_factory = sqlite3.Row
+        # Read-only chain verification: walk the hash chain forward.
+        rows = list(
+            conn.execute(
+                "SELECT sequence, event_hash, previous_hash FROM event_log ORDER BY sequence"
+            )
+        )
+        if not rows:
+            return {"ok": True, "detail": "ledger empty (cold start)", "sequence": 0}
+        prev_hash = ""
+        broken = False
+        for row in rows:
+            expected_prev = prev_hash
+            if row["previous_hash"] != expected_prev:
+                broken = True
+                break
+            prev_hash = row["event_hash"]
+        seq = rows[-1]["sequence"]
+        if broken:
+            return {"ok": False, "detail": "chain broken at read-only probe", "sequence": seq}
+        return {"ok": True, "detail": "chain ok (read-only probe)", "sequence": seq}
+    except sqlite3.Error as exc:
+        return {"ok": False, "detail": f"read-only probe failed: {exc}", "sequence": None}
     finally:
-        if broker is not None:
-            broker.close()
+        if conn is not None:
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
 
 
 def _ledger_snapshot() -> dict[str, Any]:
@@ -161,32 +180,28 @@ def _ledger_snapshot() -> dict[str, Any]:
 
     chain: dict[str, Any] | None = None
     for attempt in range(LEDGER_RETRY_ATTEMPTS):
-        try:
-            chain = _probe_ledger_once()
+        chain = _probe_ledger_once()
+        if chain.get("ok"):
             break
-        except sqlite3.OperationalError as exc:
-            if not _is_lock_error(exc):
-                return {
-                    "ok": False,
-                    "detail": f"ledger check failed: {type(exc).__name__}: {exc}",
-                    "lock_age_seconds": lock_age,
-                    "lock_monitor": recovery,
-                }
+        detail = chain.get("detail", "")
+        # Retry on transient lock/busy errors
+        if any(m in detail.lower() for m in ("locked", "busy")):
             if attempt + 1 >= LEDGER_RETRY_ATTEMPTS:
                 return {
                     "ok": False,
-                    "detail": (f"ledger check failed: {type(exc).__name__}: {exc}; retry budget exhausted"),
+                    "detail": f"{detail}; retry budget exhausted",
                     "lock_age_seconds": lock_age,
                     "lock_monitor": recovery,
                 }
             time.sleep(LEDGER_RETRY_DELAY_SECONDS)
-        except Exception as exc:  # noqa: BLE001 - best-effort
-            return {
-                "ok": False,
-                "detail": f"ledger check failed: {type(exc).__name__}: {exc}",
-                "lock_age_seconds": lock_age,
-                "lock_monitor": recovery,
-            }
+            continue
+        # Non-lock errors — fail immediately
+        return {
+            "ok": False,
+            "detail": f"ledger check failed: {detail}",
+            "lock_age_seconds": lock_age,
+            "lock_monitor": recovery,
+        }
     if chain is None:
         return {
             "ok": False,

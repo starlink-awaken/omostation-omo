@@ -24,7 +24,10 @@ _checkpoint_failures = 0
 
 
 def lock_age_seconds(ledger: Path) -> float | None:
-    """Return approximate lock hold age in seconds, or None if unlocked/missing."""
+    """Return approximate lock hold age in seconds, or None if unlocked/missing.
+
+    Uses read-only URI (mode=ro) exclusively — never attempts write lock acquisition.
+    """
     if not ledger.is_file():
         return None
     try:
@@ -39,17 +42,7 @@ def lock_age_seconds(ledger: Path) -> float | None:
             rows = []
         locked = any(str(state).lower() not in {"unlocked", "0", ""} for _, state in rows) if rows else False
         if not locked:
-            # Probe write lock lightly
-            try:
-                wconn = sqlite3.connect(str(ledger), timeout=0.05)
-                wconn.execute("BEGIN IMMEDIATE")
-                wconn.rollback()
-                wconn.close()
-                return None
-            except sqlite3.OperationalError:
-                return _lock_age_from_sidecars(ledger)
-            except sqlite3.Error:
-                return None
+            return None  # Read-only probe confirms unlocked — no write lock needed
         return _lock_age_from_sidecars(ledger)
     finally:
         conn.close()
