@@ -52,6 +52,7 @@ def _load_baseline(path: str | None) -> set[str]:
     存量违规降级 warn 不 FAIL; 清单 shrink_only — 修复后移除条目, 禁止新增。"""
     path = path or DEFAULT_BASELINE
     import yaml
+
     try:
         text = Path(path).read_text(encoding="utf-8")
         data = {}
