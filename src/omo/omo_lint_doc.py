@@ -300,7 +300,7 @@ def cmd_lint_doc_lifecycle(workspace_root: str = ".", verbose: bool = False) -> 
                 rel_src = src
             print(f"  {rel_src} 引用 {bad}")
     else:
-        print("❌ 矛盾路径: 0 ✅")
+        print("✅ 矛盾路径: 0")
     print()
 
     if dead_docs or frontmatter_missing:
