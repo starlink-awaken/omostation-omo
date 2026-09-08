@@ -24,7 +24,6 @@ from typing import Any, Callable
 
 from omo.resident.rlm_kernel import RLMKernel, VariableStore, get_kernel, reset_kernel
 
-
 # ── Resource Limits ─────────────────────────────────────────────
 
 
@@ -239,7 +238,7 @@ _DANGEROUS_ATTRS = frozenset([
 ])
 
 
-class SecurityViolation(Exception):
+class SecurityViolationError(Exception):
     """安全违规错误."""
     pass
 
@@ -396,7 +395,7 @@ class GaCGovernor:
         report = self.gate.scan(code)
         if not report.safe:
             self.metrics.security_violations += 1
-            raise SecurityViolation(
+            raise SecurityViolationError(
                 f"Security violation: {'; '.join(report.violations)}"
             )
         # 2. 资源记录

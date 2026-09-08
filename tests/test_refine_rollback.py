@@ -14,19 +14,19 @@
 from __future__ import annotations
 
 import asyncio
+
 import pytest
 
 from omo.resident.refine_rollback import (
     AtomicRollback,
     RefinementStore,
     RefinementVersion,
-    SnapshotManager,
     SkillSnapshot,
+    SnapshotManager,
     get_refinement_store,
     get_snapshot_manager,
     reset_refinement_state,
 )
-
 
 # ── RefinementStore Tests ────────────────────────────────────────
 

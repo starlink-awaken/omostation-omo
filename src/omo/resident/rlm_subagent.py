@@ -24,7 +24,6 @@ from typing import Any, Callable
 
 from omo.resident.rlm_kernel import RLMKernel, get_kernel
 
-
 # ── Retry Policy ────────────────────────────────────────────────
 
 
