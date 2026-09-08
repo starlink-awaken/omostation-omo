@@ -30,6 +30,7 @@ from typing import Any
 @dataclass
 class RefinementVersion:
     """单个 refinement 版本."""
+
     refinement_id: str
     name: str
     description: str
@@ -59,6 +60,7 @@ class RefinementStore:
         for f in sorted(self._store_dir.glob("*.yaml")):
             try:
                 import yaml
+
                 data = yaml.safe_load(f.read_text(encoding="utf-8"))
                 ver = RefinementVersion(**data)
                 self._versions[ver.refinement_id] = ver
@@ -70,6 +72,7 @@ class RefinementStore:
     def _save(self, ver: RefinementVersion) -> None:
         """持久化版本."""
         import yaml
+
         path = self._store_dir / f"{ver.refinement_id}.yaml"
         path.write_text(
             yaml.dump(ver.__dict__, default_flow_style=False, allow_unicode=True),
@@ -137,6 +140,7 @@ class RefinementStore:
 @dataclass
 class SkillSnapshot:
     """技能快照."""
+
     snap_id: str
     skill_name: str
     files: dict[str, str]  # path -> content hash
@@ -273,6 +277,7 @@ class AtomicRollback:
 
         if loop and loop.is_running():
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 future = pool.submit(asyncio.run, self.rollback(refinement_id))
                 return future.result()

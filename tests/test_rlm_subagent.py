@@ -100,9 +100,7 @@ class TestLowFrictionMembrane:
 
     @pytest.mark.asyncio
     async def test_execute_retry_then_success(self):
-        membrane = LowFrictionMembrane(
-            RetryPolicy(max_attempts=3, base_delay=0.01)
-        )
+        membrane = LowFrictionMembrane(RetryPolicy(max_attempts=3, base_delay=0.01))
         call_count = 0
 
         async def fn():
@@ -118,9 +116,7 @@ class TestLowFrictionMembrane:
 
     @pytest.mark.asyncio
     async def test_execute_non_retryable_raises_immediately(self):
-        membrane = LowFrictionMembrane(
-            RetryPolicy(max_attempts=3, base_delay=0.01)
-        )
+        membrane = LowFrictionMembrane(RetryPolicy(max_attempts=3, base_delay=0.01))
 
         async def fn():
             raise PermissionError("access denied")
@@ -130,9 +126,7 @@ class TestLowFrictionMembrane:
 
     @pytest.mark.asyncio
     async def test_execute_max_attempts_exhausted(self):
-        membrane = LowFrictionMembrane(
-            RetryPolicy(max_attempts=2, base_delay=0.01)
-        )
+        membrane = LowFrictionMembrane(RetryPolicy(max_attempts=2, base_delay=0.01))
 
         async def fn():
             raise TimeoutError("always timeout")

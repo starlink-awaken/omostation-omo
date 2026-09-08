@@ -252,6 +252,7 @@ class TestStress:
 
     def test_concurrent_snapshots(self, tmp_path):
         import concurrent.futures
+
         manager = SnapshotManager(tmp_path / "snapshots")
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir()

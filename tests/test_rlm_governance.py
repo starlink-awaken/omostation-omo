@@ -47,6 +47,7 @@ class TestNamespaceGC:
         assert not gc.should_gc(store)
         # 等待 TTL
         import time
+
         time.sleep(0.02)
         assert gc.should_gc(store)
 
@@ -64,6 +65,7 @@ class TestNamespaceGC:
         store = VariableStore()
         store.set("temp", "data")
         import time
+
         time.sleep(0.02)
         result = asyncio.run(gc.run_gc(store))
         assert result["expired"] >= 1
@@ -245,6 +247,7 @@ class TestGaCGovernor:
         governor = GaCGovernor(gc_policy=GCPolicy(ttl_seconds=0.01))
         governor.governed_put("temp", "data")
         import time
+
         time.sleep(0.02)
         result = governor.force_gc()
         assert result["expired"] >= 1
@@ -261,6 +264,7 @@ class TestGaCGovernor:
         reset_kernel()
         governor = GaCGovernor(gc_policy=GCPolicy(ttl_seconds=0.01))
         governor.governed_put("temp", "data")
+
         async def run():
             task = asyncio.create_task(governor.start())
             await asyncio.sleep(0.05)
@@ -269,6 +273,7 @@ class TestGaCGovernor:
                 await asyncio.wait_for(task, timeout=1.0)
             except (TimeoutError, asyncio.CancelledError):
                 pass
+
         asyncio.run(run())
         assert governor.metrics.gc_runs >= 1
 
@@ -322,6 +327,7 @@ class TestIntegration:
         for i in range(10):
             governor.governed_put(f"var_{i}", f"value_{i}")
         import time
+
         time.sleep(0.02)
         result = governor.force_gc()
         assert result["expired"] == 10
@@ -337,6 +343,7 @@ class TestStress:
         for i in range(500):
             governor.governed_put(f"var_{i}", i)
         import time
+
         time.sleep(0.02)
         result = governor.force_gc()
         assert result["expired"] == 500

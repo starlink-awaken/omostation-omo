@@ -61,9 +61,7 @@ class HydrationStateMachine:
 
     def _read_state(self) -> str | None:
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT state FROM hydration_frames WHERE agent_id = ?", (self.agent_id,)
-            ).fetchone()
+            row = conn.execute("SELECT state FROM hydration_frames WHERE agent_id = ?", (self.agent_id,)).fetchone()
             return row[0] if row else None
 
     def _set_state(self, state: str) -> None:
@@ -91,9 +89,7 @@ class HydrationStateMachine:
         self._set_state("HYDRATING")
         t0 = time.perf_counter()
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT frame FROM hydration_frames WHERE agent_id = ?", (self.agent_id,)
-            ).fetchone()
+            row = conn.execute("SELECT frame FROM hydration_frames WHERE agent_id = ?", (self.agent_id,)).fetchone()
         frame = json.loads(row[0]) if row else {}
         elapsed_ms = (time.perf_counter() - t0) * 1000
         self._check("ACTIVE")

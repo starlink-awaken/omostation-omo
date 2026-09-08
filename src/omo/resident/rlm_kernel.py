@@ -106,9 +106,7 @@ class VariableStore:
         """估算所有变量的总 token 数."""
         return sum(m.size_estimate for m in self._meta.values())
 
-    def slice(
-        self, name: str, start: int | None = None, stop: int | None = None, step: int | None = None
-    ) -> Any:
+    def slice(self, name: str, start: int | None = None, stop: int | None = None, step: int | None = None) -> Any:
         """原地切片 — 支持 list/dict/str/bytes."""
         value = self.get(name)
         if isinstance(value, (list, tuple)):
@@ -252,7 +250,7 @@ def _compact_sequence(value: Sequence, name: str, budget: int) -> str:
     if value and isinstance(value[0], (int, float)):
         nums = [x for x in value if isinstance(x, (int, float))]
         if nums:
-            lines.append(f"  stats: min={min(nums)}, max={max(nums)}, avg={sum(nums)/len(nums):.2f}")
+            lines.append(f"  stats: min={min(nums)}, max={max(nums)}, avg={sum(nums) / len(nums):.2f}")
 
     return "\n".join(lines)
 
@@ -353,9 +351,7 @@ class RLMKernel:
         """从沙箱命名空间检索变量."""
         return self.store.get(name)
 
-    def slice(
-        self, name: str, start: int | None = None, stop: int | None = None, step: int | None = None
-    ) -> Any:
+    def slice(self, name: str, start: int | None = None, stop: int | None = None, step: int | None = None) -> Any:
         """原地切片."""
         return self.store.slice(name, start, stop, step)
 
@@ -378,8 +374,7 @@ class RLMKernel:
             "total_tokens": self.store.total_tokens(),
             "budget": self.store.token_budget,
             "variables": [
-                {"name": m.name, "type": m.type_name, "tokens": m.size_estimate}
-                for m in self.store.list_vars()
+                {"name": m.name, "type": m.type_name, "tokens": m.size_estimate} for m in self.store.list_vars()
             ],
         }
 

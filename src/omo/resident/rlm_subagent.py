@@ -29,21 +29,38 @@ from omo.resident.rlm_kernel import RLMKernel, get_kernel
 
 class RetryCategory(enum.Enum):
     """错误分类."""
-    RETRYABLE = "retryable"        # 网络抖动/超时 — 可重试
+
+    RETRYABLE = "retryable"  # 网络抖动/超时 — 可重试
     NON_RETRYABLE = "non_retryable"  # 权限/幻觉/语法 — 不可重试
 
 
 # 可重试错误关键词
-_RETRYABLE_KEYWORDS = frozenset([
-    "timeout", "connection", "network", "503", "502", "504",
-    "unavailable", "reset", "refused", "temporarily",
-])
+_RETRYABLE_KEYWORDS = frozenset(
+    [
+        "timeout",
+        "connection",
+        "network",
+        "503",
+        "502",
+        "504",
+        "unavailable",
+        "reset",
+        "refused",
+        "temporarily",
+    ]
+)
 
 # 不可重试错误类型
-_NON_RETRYABLE_TYPES = frozenset([
-    "PermissionError", "AuthenticationError", "SyntaxError",
-    "ValidationError", "NotFoundError", "ValueError",
-])
+_NON_RETRYABLE_TYPES = frozenset(
+    [
+        "PermissionError",
+        "AuthenticationError",
+        "SyntaxError",
+        "ValidationError",
+        "NotFoundError",
+        "ValueError",
+    ]
+)
 
 
 def classify_error(error: Exception) -> RetryCategory:
@@ -64,14 +81,15 @@ def classify_error(error: Exception) -> RetryCategory:
 @dataclass
 class RetryPolicy:
     """重试策略配置."""
+
     max_attempts: int = 3
     base_delay: float = 0.1  # 100ms
-    max_delay: float = 5.0   # 5s
+    max_delay: float = 5.0  # 5s
     exponential_base: float = 2.0
 
     def delay_for(self, attempt: int) -> float:
         """计算退避延迟."""
-        delay = self.base_delay * (self.exponential_base ** attempt)
+        delay = self.base_delay * (self.exponential_base**attempt)
         return min(delay, self.max_delay)
 
 
@@ -81,6 +99,7 @@ class RetryPolicy:
 @dataclass
 class SubagentTask:
     """子代理任务."""
+
     name: str
     prompt: str
     args: dict[str, Any] = field(default_factory=dict)
@@ -93,6 +112,7 @@ class SubagentTask:
 @dataclass
 class SubagentResult:
     """子代理执行结果."""
+
     task_id: str
     ok: bool
     output: Any = None
@@ -340,6 +360,7 @@ def run_async(coro: Any) -> Any:
     if loop and loop.is_running():
         # 已在事件循环中, 创建新线程运行
         import concurrent.futures
+
         with concurrent.futures.ThreadPoolExecutor() as pool:
             future = pool.submit(asyncio.run, coro)
             return future.result()

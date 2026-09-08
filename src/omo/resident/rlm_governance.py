@@ -30,11 +30,12 @@ from omo.resident.rlm_kernel import RLMKernel, VariableStore, get_kernel, reset_
 @dataclass
 class ResourceLimits:
     """资源限制配置."""
-    max_variable_bytes: int = 10 * 1024 * 1024    # 10MB per variable
+
+    max_variable_bytes: int = 10 * 1024 * 1024  # 10MB per variable
     max_namespace_bytes: int = 100 * 1024 * 1024  # 100MB total
-    max_token_budget: int = 8192                   # default token budget
-    max_steps: int = 100000                         # max execution steps
-    gc_ttl_seconds: float = 3600.0                 # 1 hour default TTL
+    max_token_budget: int = 8192  # default token budget
+    max_steps: int = 100000  # max execution steps
+    gc_ttl_seconds: float = 3600.0  # 1 hour default TTL
 
 
 # ── Resource Accountant ─────────────────────────────────────────
@@ -43,6 +44,7 @@ class ResourceLimits:
 @dataclass
 class ResourceSnapshot:
     """资源快照."""
+
     step_count: int
     token_consumed: int
     memory_bytes: int
@@ -64,9 +66,7 @@ class ResourceAccountant:
         self._step_count += 1
         self._token_consumed += tokens
         if self._step_count > self.limits.max_steps:
-            raise ResourceExhaustedError(
-                f"Step limit exceeded: {self._step_count}/{self.limits.max_steps}"
-            )
+            raise ResourceExhaustedError(f"Step limit exceeded: {self._step_count}/{self.limits.max_steps}")
 
     def record_tokens(self, tokens: int) -> None:
         """记录 Token 消耗."""
@@ -76,9 +76,7 @@ class ResourceAccountant:
         """检查变量内存是否超限."""
         size = sys.getsizeof(value)
         if size > self.limits.max_variable_bytes:
-            raise ResourceExhaustedError(
-                f"Variable size {size} bytes exceeds limit {self.limits.max_variable_bytes}"
-            )
+            raise ResourceExhaustedError(f"Variable size {size} bytes exceeds limit {self.limits.max_variable_bytes}")
         return True
 
     def snapshot(self, store: VariableStore) -> ResourceSnapshot:
@@ -115,6 +113,7 @@ class ResourceAccountant:
 
 class ResourceExhaustedError(Exception):
     """资源耗尽错误."""
+
     pass
 
 
@@ -124,9 +123,10 @@ class ResourceExhaustedError(Exception):
 @dataclass
 class GCPolicy:
     """GC 策略配置."""
-    ttl_seconds: float = 3600.0     # 1 hour
-    lru_threshold: int = 1000       # trigger GC when vars exceed this
-    dirty_check: bool = True        # enable dirty state detection
+
+    ttl_seconds: float = 3600.0  # 1 hour
+    lru_threshold: int = 1000  # trigger GC when vars exceed this
+    dirty_check: bool = True  # enable dirty state detection
 
 
 class NamespaceGC:
@@ -217,35 +217,82 @@ class NamespaceGC:
 
 
 # 危险的内置函数和属性
-_DANGEROUS_BUILTINS = frozenset([
-    "eval", "exec", "__import__", "compile", "open", "input",
-    "globals", "locals", "vars", "dir", "getattr", "setattr", "delattr",
-    "breakpoint", "exit", "quit",
-])
+_DANGEROUS_BUILTINS = frozenset(
+    [
+        "eval",
+        "exec",
+        "__import__",
+        "compile",
+        "open",
+        "input",
+        "globals",
+        "locals",
+        "vars",
+        "dir",
+        "getattr",
+        "setattr",
+        "delattr",
+        "breakpoint",
+        "exit",
+        "quit",
+    ]
+)
 
-_DANGEROUS_MODULES = frozenset([
-    "os", "sys", "subprocess", "shutil", "pathlib", "importlib",
-    "socket", "http", "urllib", "ftplib", "telnetlib",
-    "pickle", "shelve", "marshal",
-    "ctypes", "multiprocessing", "threading",
-])
+_DANGEROUS_MODULES = frozenset(
+    [
+        "os",
+        "sys",
+        "subprocess",
+        "shutil",
+        "pathlib",
+        "importlib",
+        "socket",
+        "http",
+        "urllib",
+        "ftplib",
+        "telnetlib",
+        "pickle",
+        "shelve",
+        "marshal",
+        "ctypes",
+        "multiprocessing",
+        "threading",
+    ]
+)
 
-_DANGEROUS_ATTRS = frozenset([
-    "system", "popen", "spawn", "fork", "kill",
-    "remove", "unlink", "rmdir", "rename",
-    "write", "read", "send", "recv",
-    "__class__", "__bases__", "__subclasses__", "__globals__",
-])
+_DANGEROUS_ATTRS = frozenset(
+    [
+        "system",
+        "popen",
+        "spawn",
+        "fork",
+        "kill",
+        "remove",
+        "unlink",
+        "rmdir",
+        "rename",
+        "write",
+        "read",
+        "send",
+        "recv",
+        "__class__",
+        "__bases__",
+        "__subclasses__",
+        "__globals__",
+    ]
+)
 
 
 class SecurityViolationError(Exception):
     """安全违规错误."""
+
     pass
 
 
 @dataclass
 class SecurityReport:
     """安全审查报告."""
+
     safe: bool
     violations: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -340,6 +387,7 @@ class ASTSecurityGate:
 @dataclass
 class GovernorMetrics:
     """治理指标."""
+
     gc_runs: int = 0
     variables_reclaimed: int = 0
     security_violations: int = 0
@@ -395,9 +443,7 @@ class GaCGovernor:
         report = self.gate.scan(code)
         if not report.safe:
             self.metrics.security_violations += 1
-            raise SecurityViolationError(
-                f"Security violation: {'; '.join(report.violations)}"
-            )
+            raise SecurityViolationError(f"Security violation: {'; '.join(report.violations)}")
         # 2. 资源记录
         self.accountant.record_step(tokens=len(code) // 4)
         # 3. 执行
