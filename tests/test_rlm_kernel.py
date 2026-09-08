@@ -14,17 +14,17 @@
 from __future__ import annotations
 
 import json
+
 import pytest
 
 from omo.resident.rlm_kernel import (
     RLMKernel,
-    VariableStore,
     VariableMeta,
+    VariableStore,
+    _estimate_tokens,
     get_kernel,
     reset_kernel,
-    _estimate_tokens,
 )
-
 
 # ── VariableStore Tests ─────────────────────────────────────────
 

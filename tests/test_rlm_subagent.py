@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+
 import pytest
 
 from omo.resident.rlm_kernel import RLMKernel, VariableStore, get_kernel, reset_kernel
@@ -30,7 +31,6 @@ from omo.resident.rlm_subagent import (
     run_async,
     spawn_subagent,
 )
-
 
 # ── RetryPolicy Tests ───────────────────────────────────────────
 

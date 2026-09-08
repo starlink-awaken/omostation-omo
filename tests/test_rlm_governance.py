@@ -15,9 +15,9 @@
 from __future__ import annotations
 
 import asyncio
+
 import pytest
 
-from omo.resident.rlm_kernel import RLMKernel, VariableStore, get_kernel, reset_kernel
 from omo.resident.rlm_governance import (
     ASTSecurityGate,
     GaCGovernor,
@@ -32,7 +32,7 @@ from omo.resident.rlm_governance import (
     get_governor,
     reset_governor,
 )
-
+from omo.resident.rlm_kernel import RLMKernel, VariableStore, get_kernel, reset_kernel
 
 # ── NamespaceGC Tests ───────────────────────────────────────────
 
@@ -267,7 +267,7 @@ class TestGaCGovernor:
             governor.stop()
             try:
                 await asyncio.wait_for(task, timeout=1.0)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
+            except (TimeoutError, asyncio.CancelledError):
                 pass
         asyncio.run(run())
         assert governor.metrics.gc_runs >= 1

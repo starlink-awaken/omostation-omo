@@ -22,7 +22,6 @@ import textwrap
 from dataclasses import dataclass, field
 from typing import Any, Callable, Sequence
 
-
 # ── Variable Store ──────────────────────────────────────────────
 
 
@@ -395,11 +394,11 @@ class RLMKernel:
         try:
             # 先尝试作为表达式求值
             try:
-                output = eval(code, {"__builtins__": {}}, local_ns)
+                output = eval(code, {"__builtins__": {}}, local_ns)  # noqa: S307
                 result["output"] = output
             except SyntaxError:
                 # 不是表达式, 作为语句执行
-                exec(code, {"__builtins__": {}}, local_ns)
+                exec(code, {"__builtins__": {}}, local_ns)  # noqa: S102
             # 检测新增变量
             for k, v in local_ns.items():
                 if k not in self.sandbox_locals:
