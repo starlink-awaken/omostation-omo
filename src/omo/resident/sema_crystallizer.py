@@ -131,7 +131,7 @@ metadata:
   origin: sema-crystallizer
   trigger_key: {json.dumps(key)}
   evidence_count: {len(events)}
-  created: {time.strftime('%Y-%m-%d')}
+  created: {time.strftime("%Y-%m-%d")}
 ---
 
 # {description}
@@ -142,13 +142,13 @@ metadata:
 
 - 模式: `{first.pattern}`
 - 类型: `{first.rule_type}`
-- 证据: {len(events)} 次同类人工纠偏（sample ids: {', '.join(e.sample_id for e in events[:5] if e.sample_id) or 'n/a'}）
+- 证据: {len(events)} 次同类人工纠偏（sample ids: {", ".join(e.sample_id for e in events[:5] if e.sample_id) or "n/a"}）
 
 ## 操作步骤
 
 1. 定位草稿中匹配该模式的内容。
 2. 按{first.rule_type}语义处理：
-   {('直接删除该表述，不保留同义改写。' if first.rule_type == 'banned_phrase' else '按署名偏好改写并复核上下文衔接。' if first.rule_type == 'terminology_replace' else '压缩为实质内容，删除铺垫性文字。')}
+   {("直接删除该表述，不保留同义改写。" if first.rule_type == "banned_phrase" else "按署名偏好改写并复核上下文衔接。" if first.rule_type == "terminology_replace" else "压缩为实质内容，删除铺垫性文字。")}
 3. 输出前自检：全文不再命中该模式。
 
 ## 反例（不应发生）
@@ -164,7 +164,7 @@ metadata:
 
 import re
 
-from {name.replace('-', '_')} import run  # skill entry contract
+from {name.replace("-", "_")} import run  # skill entry contract
 
 
 def test_pattern_is_detected():
@@ -176,8 +176,12 @@ def test_clean_draft_passes():
     assert run("无该模式的干净草稿")["violation_found"] is False
 '''
     return SkillCandidate(
-        name=name, description=description, skill_md=skill_md,
-        test_py=test_py, trigger_key=key, evidence_count=len(events),
+        name=name,
+        description=description,
+        skill_md=skill_md,
+        test_py=test_py,
+        trigger_key=key,
+        evidence_count=len(events),
     )
 
 

@@ -15,7 +15,9 @@ from omo.resident.sema_crystallizer import (
 
 
 def _ev(key: str, i: int = 0) -> CorrectionEvent:
-    return CorrectionEvent(key=key, rule_type="banned_phrase", pattern="为进一步推进", source="signature_diff", sample_id=f"s{i}")
+    return CorrectionEvent(
+        key=key, rule_type="banned_phrase", pattern="为进一步推进", source="signature_diff", sample_id=f"s{i}"
+    )
 
 
 def test_threshold_second_occurrence_triggers():
@@ -41,7 +43,9 @@ def test_ledger_loads_rules_as_pre_aggregated_events(tmp_path: Path):
 
 
 def test_crystallize_skill_md_schema():
-    cand = crystallize("banned_phrase:为进一步推进", [_ev("banned_phrase:为进一步推进"), _ev("banned_phrase:为进一步推进", 1)])
+    cand = crystallize(
+        "banned_phrase:为进一步推进", [_ev("banned_phrase:为进一步推进"), _ev("banned_phrase:为进一步推进", 1)]
+    )
     md = cand.skill_md
     assert md.startswith("---\n")
     assert "name: sema-" in md
@@ -58,7 +62,9 @@ def test_install_and_index_refresh(tmp_path: Path):
         encoding="utf-8",
     )
     cr = SemaCrystallizer(workspace_root=tmp_path)
-    cand = crystallize("banned_phrase:为进一步推进", [_ev("banned_phrase:为进一步推进"), _ev("banned_phrase:为进一步推进", 1)])
+    cand = crystallize(
+        "banned_phrase:为进一步推进", [_ev("banned_phrase:为进一步推进"), _ev("banned_phrase:为进一步推进", 1)]
+    )
     d = cr.install(cand)
     assert (d / "SKILL.md").is_file() and (d / "test_skill.py").is_file()
     assert cand.name in cr.index_path().read_text(encoding="utf-8")

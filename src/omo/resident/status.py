@@ -134,11 +134,7 @@ def _probe_ledger_once() -> dict[str, Any]:
         conn = sqlite3.connect(uri, uri=True, timeout=0.05)
         conn.row_factory = sqlite3.Row
         # Read-only chain verification: walk the hash chain forward.
-        rows = list(
-            conn.execute(
-                "SELECT sequence, event_hash, previous_hash FROM event_log ORDER BY sequence"
-            )
-        )
+        rows = list(conn.execute("SELECT sequence, event_hash, previous_hash FROM event_log ORDER BY sequence"))
         if not rows:
             return {"ok": True, "detail": "ledger empty (cold start)", "sequence": 0}
         prev_hash = ""

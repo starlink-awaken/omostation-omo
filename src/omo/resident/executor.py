@@ -41,7 +41,9 @@ class Executor:
             "writes_state": False,
             "requires_approval": False,
             "decision_rights": "none",
-            "allowed_actions": frozenset({"read_file", "list_files", "search", "query_status", "get_info", "scan", "check", "validate"}),
+            "allowed_actions": frozenset(
+                {"read_file", "list_files", "search", "query_status", "get_info", "scan", "check", "validate"}
+            ),
         },
         "pi-worker": {
             "role": "reversible_execution_adapter",
@@ -65,7 +67,9 @@ class Executor:
         if contract is None:
             return None
         normalized = str(target or "").replace("\\", "/").strip()
-        if any(normalized.startswith(prefix) or f"/{prefix}" in normalized for prefix in (".omo/", "state/", "runtime/")):
+        if any(
+            normalized.startswith(prefix) or f"/{prefix}" in normalized for prefix in (".omo/", "state/", "runtime/")
+        ):
             return {
                 "ok": False,
                 "effect": "not_executed",
@@ -74,7 +78,11 @@ class Executor:
 
         allowed = contract["allowed_actions"]
         if action not in allowed and action not in self.EFFECTFUL_ACTIONS:
-            return {"ok": False, "effect": "not_executed", "error": f"backend contract violation: action '{action}' not allowed for {self.backend}"}
+            return {
+                "ok": False,
+                "effect": "not_executed",
+                "error": f"backend contract violation: action '{action}' not allowed for {self.backend}",
+            }
         return None
 
     def execute_task(self, task: dict) -> dict:
