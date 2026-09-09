@@ -31,8 +31,6 @@ SEDIMENT_ROOT = WORKSPACE / ".omo" / "_knowledge" / "sediment"
 ALERT_WATERMARK = DELIVERY / "alert-forwarder" / "watermark.json"
 LEDGER = WORKSPACE / "runtime" / "omo" / "event-ledger.sqlite3"
 STALE_THRESHOLD_SECONDS = 1800  # 30min
-LEDGER_RETRY_ATTEMPTS = 3
-LEDGER_RETRY_DELAY_SECONDS = 0.2
 
 
 def _file_age(path: Path) -> float | None:
@@ -167,61 +165,49 @@ def _ledger_snapshot() -> dict[str, Any]:
             "detail": "ledger sqlite missing — cold start non-fatal",
             "lock_age_seconds": None,
             "missing": True,
+            "observation_mode": "read_only",
+            "recovery_performed": False,
+            "lock_monitor": {
+                "locked": False,
+                "checkpoint": None,
+                "recovery": None,
+                "detail": "ledger missing",
+                "state": "missing",
+                "observation_mode": "read_only",
+                "recovery_performed": False,
+            },
         }
 
-    from omo.resident.ledger_check import check_and_recover  # noqa: PLC0415
+    from omo.resident.ledger_check import check_lock_state_only  # noqa: PLC0415
 
-    recovery = check_and_recover(LEDGER)
-    lock_age = recovery.get("lock_age_seconds")
-
-    chain: dict[str, Any] | None = None
-    for attempt in range(LEDGER_RETRY_ATTEMPTS):
-        chain = _probe_ledger_once()
-        if chain.get("ok"):
-            break
-        detail = chain.get("detail", "")
-        # Retry on transient lock/busy errors
-        if any(m in detail.lower() for m in ("locked", "busy")):
-            if attempt + 1 >= LEDGER_RETRY_ATTEMPTS:
-                return {
-                    "ok": False,
-                    "detail": f"{detail}; retry budget exhausted",
-                    "lock_age_seconds": lock_age,
-                    "lock_monitor": recovery,
-                }
-            time.sleep(LEDGER_RETRY_DELAY_SECONDS)
-            continue
-        # Non-lock errors — fail immediately
-        return {
-            "ok": False,
-            "detail": f"ledger check failed: {detail}",
-            "lock_age_seconds": lock_age,
-            "lock_monitor": recovery,
-        }
-    if chain is None:
-        return {
-            "ok": False,
-            "detail": "ledger check failed: retry budget exhausted",
-            "lock_age_seconds": lock_age,
-            "lock_monitor": recovery,
-        }
-
-    # Recovery failure (stale lock + checkpoint exhausted + no zombie kill) degrades.
-    ok = bool(chain.get("ok")) and bool(recovery.get("ok", True))
-    detail = chain.get("detail", "")
-    if not recovery.get("ok", True):
-        detail = f"{detail}; lock_monitor: {recovery.get('detail')}"
+    lock_state = check_lock_state_only(LEDGER)
+    chain = _probe_ledger_once()
+    state = str(lock_state.get("state") or "unknown")
+    locked = True if state in {"locked", "busy"} else False if state == "unlocked" else None
+    lock_monitor = {
+        "locked": locked,
+        "checkpoint": None,
+        "recovery": None,
+        "detail": str(lock_state.get("detail") or "lock observation unavailable"),
+        "state": state,
+        "observation_mode": "read_only",
+        "recovery_performed": False,
+    }
+    ok = bool(lock_state.get("ok")) and bool(chain.get("ok"))
+    if not lock_state.get("ok"):
+        detail = str(lock_state.get("detail") or "ledger lock observation failed")
+    elif not chain.get("ok"):
+        detail = f"ledger check failed: {chain.get('detail', 'unknown read-only probe failure')}"
+    else:
+        detail = str(chain.get("detail") or "chain ok (read-only probe)")
     return {
         "ok": ok,
         "detail": detail,
         "sequence": chain.get("sequence"),
-        "lock_age_seconds": lock_age,
-        "lock_monitor": {
-            "locked": recovery.get("locked"),
-            "checkpoint": recovery.get("checkpoint"),
-            "recovery": recovery.get("recovery"),
-            "detail": recovery.get("detail"),
-        },
+        "lock_age_seconds": lock_state.get("lock_age_seconds"),
+        "observation_mode": "read_only",
+        "recovery_performed": False,
+        "lock_monitor": lock_monitor,
     }
 
 
@@ -237,7 +223,7 @@ def snapshot() -> dict[str, Any]:
     return {
         "domain": "runtime",
         "event_type": "resident.status",
-        "health": "degraded" if degraded else "recovered",
+        "health": "degraded" if degraded else "ok",
         "degraded_components": degraded,
         "components": components,
         "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -249,7 +235,7 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     report = snapshot()
     print(json.dumps(report, ensure_ascii=False, indent=2))
-    return 0 if report["health"] == "recovered" else 2
+    return 0 if report["health"] == "ok" else 2
 
 
 if __name__ == "__main__":

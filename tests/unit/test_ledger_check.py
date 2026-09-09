@@ -29,6 +29,108 @@ def test_lock_age_unlocked_ledger(tmp_path: Path) -> None:
     assert ledger_check.lock_age_seconds(ledger) is None
 
 
+def test_check_lock_state_only_missing_is_typed_and_never_connects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _unexpected_connect(*_args, **_kwargs):
+        raise AssertionError("missing-ledger query must not open SQLite")
+
+    monkeypatch.setattr(ledger_check.sqlite3, "connect", _unexpected_connect)
+
+    result = ledger_check.check_lock_state_only(tmp_path / "missing.sqlite3")
+
+    assert result == {
+        "ok": True,
+        "state": "missing",
+        "lock_age_seconds": None,
+        "observation_mode": "read_only",
+        "recovery_performed": False,
+        "detail": "ledger missing",
+    }
+
+
+def test_check_lock_state_only_unlocked_uses_readonly_uri(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ledger = _make_ledger(tmp_path / "ledger.sqlite3")
+    original_connect = sqlite3.connect
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def _tracking_connect(database, **kwargs):
+        calls.append((str(database), dict(kwargs)))
+        return original_connect(database, **kwargs)
+
+    monkeypatch.setattr(ledger_check.sqlite3, "connect", _tracking_connect)
+
+    result = ledger_check.check_lock_state_only(ledger)
+
+    assert result["ok"] is True
+    assert result["state"] == "unlocked"
+    assert result["lock_age_seconds"] is None
+    assert result["observation_mode"] == "read_only"
+    assert result["recovery_performed"] is False
+    assert calls
+    assert all("mode=ro" in database and kwargs.get("uri") is True for database, kwargs in calls)
+
+
+def test_check_lock_state_only_reports_locked_without_recovery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ledger = _make_ledger(tmp_path / "ledger.sqlite3")
+
+    class _LockedConnection:
+        def execute(self, _statement: str):
+            return [("main", "reserved")]
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(ledger_check.sqlite3, "connect", lambda *_args, **_kwargs: _LockedConnection())
+    monkeypatch.setattr(ledger_check, "_lock_age_from_sidecars", lambda _ledger: 12.9)
+    monkeypatch.setattr(
+        ledger_check,
+        "wal_checkpoint",
+        lambda _ledger: (_ for _ in ()).throw(AssertionError("query must not checkpoint")),
+    )
+
+    result = ledger_check.check_lock_state_only(ledger)
+
+    assert result["ok"] is False
+    assert result["state"] == "locked"
+    assert result["lock_age_seconds"] == 12
+    assert result["observation_mode"] == "read_only"
+    assert result["recovery_performed"] is False
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_state"),
+    [
+        (sqlite3.OperationalError("database is locked"), "busy"),
+        (sqlite3.OperationalError("disk I/O error"), "io_error"),
+        (RuntimeError("unexpected probe failure"), "unknown"),
+    ],
+)
+def test_check_lock_state_only_normalizes_open_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    expected_state: str,
+) -> None:
+    ledger = _make_ledger(tmp_path / "ledger.sqlite3")
+
+    def _raise(*_args, **_kwargs):
+        raise error
+
+    monkeypatch.setattr(ledger_check.sqlite3, "connect", _raise)
+
+    result = ledger_check.check_lock_state_only(ledger)
+
+    assert result["ok"] is False
+    assert result["state"] == expected_state
+    assert result["observation_mode"] == "read_only"
+    assert result["recovery_performed"] is False
+
+
+def test_explicit_recovery_alias_preserves_existing_command() -> None:
+    assert ledger_check.recover_ledger_with_wal_checkpoint is ledger_check.check_and_recover
+
+
 def test_wal_checkpoint_ok(tmp_path: Path) -> None:
     ledger = _make_ledger(tmp_path / "ledger.sqlite3")
     ok, detail = ledger_check.wal_checkpoint(ledger)
