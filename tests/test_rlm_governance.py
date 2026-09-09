@@ -29,10 +29,16 @@ from omo.resident.rlm_governance import (
     ResourceLimits,
     ResourceSnapshot,
     SecurityViolation,
+    SecurityViolationError,
     get_governor,
     reset_governor,
 )
 from omo.resident.rlm_kernel import RLMKernel, VariableStore, get_kernel, reset_kernel
+
+
+def test_security_violation_public_names_share_identity():
+    assert SecurityViolation is SecurityViolationError
+
 
 # ── NamespaceGC Tests ───────────────────────────────────────────
 

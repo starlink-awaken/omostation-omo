@@ -289,6 +289,10 @@ class SecurityViolationError(Exception):
     pass
 
 
+# Backward-compatible public exception identity.
+SecurityViolation = SecurityViolationError
+
+
 @dataclass
 class SecurityReport:
     """安全审查报告."""
