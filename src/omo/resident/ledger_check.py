@@ -65,6 +65,64 @@ def _lock_age_from_sidecars(ledger: Path) -> float | None:
     return max(ages)
 
 
+def check_lock_state_only(ledger: Path) -> dict[str, Any]:
+    """Observe ledger lock state without attempting recovery or mutation."""
+    result: dict[str, Any] = {
+        "ok": True,
+        "state": "unlocked",
+        "lock_age_seconds": None,
+        "observation_mode": "read_only",
+        "recovery_performed": False,
+        "detail": "ledger unlocked",
+    }
+    if not ledger.is_file():
+        result.update(state="missing", detail="ledger missing")
+        return result
+
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = sqlite3.connect(f"file:{ledger}?mode=ro", uri=True, timeout=0.05)
+        try:
+            rows = list(conn.execute("PRAGMA lock_status"))
+            if not rows:
+                conn.execute("SELECT 1").fetchone()
+        except sqlite3.Error as exc:
+            message = str(exc)
+            state = "busy" if any(marker in message.lower() for marker in ("locked", "busy")) else "io_error"
+            result.update(ok=False, state=state, detail=f"read-only lock observation failed: {message}")
+            return result
+
+        locked = any(str(state).lower() not in {"unlocked", "0", ""} for _, state in rows)
+        if not locked:
+            return result
+
+        age = _lock_age_from_sidecars(ledger)
+        if age is None:
+            result.update(ok=False, state="unknown", detail="ledger lock observed; lock age unknown")
+            return result
+        result.update(
+            ok=False,
+            state="locked",
+            lock_age_seconds=int(age),
+            detail=f"ledger lock observed for {int(age)}s",
+        )
+        return result
+    except sqlite3.Error as exc:
+        message = str(exc)
+        state = "busy" if any(marker in message.lower() for marker in ("locked", "busy")) else "io_error"
+        result.update(ok=False, state=state, detail=f"read-only lock observation failed: {message}")
+        return result
+    except Exception as exc:  # noqa: BLE001 - observation must degrade, never trigger recovery.
+        result.update(ok=False, state="unknown", detail=f"read-only lock observation failed: {exc}")
+        return result
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+
+
 def wal_checkpoint(ledger: Path) -> tuple[bool, str]:
     """Run WAL truncate checkpoint. Returns (ok, detail)."""
     global _checkpoint_failures
@@ -174,3 +232,6 @@ def check_and_recover(ledger: Path) -> dict[str, Any]:
         result["ok"] = True
         result["detail"] = f"recovered after killing zombies {recovery['killed']}"
     return result
+
+
+recover_ledger_with_wal_checkpoint = check_and_recover

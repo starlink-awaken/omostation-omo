@@ -9,7 +9,11 @@ M2.4: 验证状态快照:
 from __future__ import annotations
 
 import json
+import multiprocessing
 import sqlite3
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, wait
 from pathlib import Path
 
 import pytest
@@ -60,10 +64,11 @@ def test_snapshot_structure(_snapshot_paths: Path, tmp_path: Path) -> None:
     assert report["event_type"] == "resident.status"
 
 
-def test_snapshot_daemon_fresh_is_recovered(_snapshot_paths: Path) -> None:
+def test_snapshot_daemon_fresh_is_ok(_snapshot_paths: Path) -> None:
     report = status.snapshot()
     assert report["components"]["daemon"]["ok"] is True
     assert report["components"]["daemon"]["byte_offset"] == 123
+    assert report["health"] == "ok"
 
 
 def test_snapshot_daemon_stale_is_degraded(_snapshot_paths: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -113,6 +118,18 @@ def test_snapshot_no_files_not_crash(_snapshot_paths: Path) -> None:
     assert report["components"]["ledger"]["ok"] is True
     assert report["components"]["ledger"]["lock_age_seconds"] is None
     assert report["components"]["ledger"].get("missing") is True
+    assert report["components"]["ledger"]["observation_mode"] == "read_only"
+    assert report["components"]["ledger"]["recovery_performed"] is False
+    assert report["components"]["ledger"]["lock_monitor"] == {
+        "locked": False,
+        "checkpoint": None,
+        "recovery": None,
+        "detail": "ledger missing",
+        "state": "missing",
+        "observation_mode": "read_only",
+        "recovery_performed": False,
+    }
+    assert report["health"] == "ok"
 
 
 def test_snapshot_cold_daemon_non_fatal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -128,9 +145,16 @@ def test_snapshot_cold_daemon_non_fatal(tmp_path: Path, monkeypatch: pytest.Monk
     assert report["components"]["daemon"]["ok"] is True
     assert report["components"]["daemon"].get("cold_start") is True
     assert report["components"]["ledger"]["ok"] is True
-    assert report["health"] in {"recovered", "ok"}
+    assert report["health"] == "ok"
     assert "daemon" not in report["degraded_components"]
     assert "ledger" not in report["degraded_components"]
+
+
+def test_main_returns_zero_for_ok_health(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    monkeypatch.setattr(status, "snapshot", lambda: {"health": "ok"})
+
+    assert status.main([]) == 0
+    assert json.loads(capsys.readouterr().out) == {"health": "ok"}
 
 
 # ── Zero-lock probe tests (BET-Y1Q4-T10-126) ─────────────────────────────
@@ -145,16 +169,10 @@ def test_ledger_probe_readonly_ok(_snapshot_paths: Path) -> None:
         (3, "hash_c", "hash_b"),
     ]
     _create_test_ledger(ledger, rows)
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(
-        "omo.resident.ledger_check.check_and_recover",
-        lambda _ledger: {"ok": True, "lock_age_seconds": None, "locked": False, "detail": "unlocked"},
-    )
     result = status._probe_ledger_once()
     assert result["ok"] is True
     assert result["sequence"] == 3
     assert "read-only probe" in result["detail"]
-    monkeypatch.undo()
 
 
 def test_ledger_probe_readonly_broken_chain(_snapshot_paths: Path) -> None:
@@ -204,94 +222,266 @@ def test_ledger_probe_readonly_no_write_lock(_snapshot_paths: Path, monkeypatch:
     assert write_attempts == [], f"Write connections attempted: {write_attempts}"
 
 
-def test_ledger_snapshot_retry_on_lock(_snapshot_paths: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ledger snapshot retries on transient lock errors in read-only probe."""
-    call_count = [0]
-
-    def flaky_probe():
-        call_count[0] += 1
-        if call_count[0] <= 2:
-            return {"ok": False, "detail": "database is locked", "sequence": None}
-        return {"ok": True, "detail": "chain ok (read-only probe)", "sequence": 42}
+def test_ledger_snapshot_observes_lock_and_chain_once_without_recovery_or_sleep(
+    _snapshot_paths: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from omo.resident import ledger_check
 
     status.LEDGER.touch()
-    monkeypatch.setattr(status, "_probe_ledger_once", flaky_probe)
-    monkeypatch.setattr(status.time, "sleep", lambda _: None)
+    calls = {"lock": 0, "probe": 0, "sleep": 0, "recovery": 0}
+
+    def _lock_state(_ledger: Path) -> dict:
+        calls["lock"] += 1
+        return {
+            "ok": False,
+            "state": "busy",
+            "lock_age_seconds": None,
+            "observation_mode": "read_only",
+            "recovery_performed": False,
+            "detail": "database is busy",
+        }
+
+    def _probe() -> dict:
+        calls["probe"] += 1
+        return {"ok": False, "detail": "database is busy", "sequence": None}
+
+    def _unexpected_recovery(_ledger: Path) -> dict:
+        calls["recovery"] += 1
+        raise AssertionError("status Query must not call recovery")
+
+    monkeypatch.setattr(ledger_check, "check_lock_state_only", _lock_state)
+    monkeypatch.setattr(ledger_check, "check_and_recover", _unexpected_recovery)
+    monkeypatch.setattr(ledger_check, "recover_ledger_with_wal_checkpoint", _unexpected_recovery)
     monkeypatch.setattr(
-        "omo.resident.ledger_check.check_and_recover",
-        lambda _: {"ok": True, "lock_age_seconds": None, "locked": False, "detail": "unlocked"},
+        ledger_check,
+        "maybe_kill_zombie_holders",
+        lambda _ledger: (_ for _ in ()).throw(AssertionError("status Query must not kill holders")),
     )
+    monkeypatch.setattr(status, "_probe_ledger_once", _probe)
+    monkeypatch.setattr(status.time, "sleep", lambda _delay: calls.__setitem__("sleep", calls["sleep"] + 1))
 
     result = status._ledger_snapshot()
-    assert result["ok"] is True
-    assert result["sequence"] == 42
-    assert call_count[0] == 3
 
-
-def test_ledger_snapshot_exhausts_retry_budget(_snapshot_paths: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ledger snapshot gives up after LEDGER_RETRY_ATTEMPTS lock errors."""
-    status.LEDGER.touch()
-    monkeypatch.setattr(
-        status,
-        "_probe_ledger_once",
-        lambda: {"ok": False, "detail": "database is locked", "sequence": None},
-    )
-    monkeypatch.setattr(status.time, "sleep", lambda _: None)
-    monkeypatch.setattr(
-        "omo.resident.ledger_check.check_and_recover",
-        lambda _: {"ok": True, "lock_age_seconds": 12, "locked": True, "detail": "within budget"},
-    )
-
-    result = status._ledger_snapshot()
     assert result["ok"] is False
-    assert "retry budget exhausted" in result["detail"]
-    assert result["lock_age_seconds"] == 12
+    assert result["lock_monitor"]["state"] == "busy"
+    assert result["lock_monitor"]["observation_mode"] == "read_only"
+    assert result["lock_monitor"]["recovery_performed"] is False
+    assert result["lock_monitor"]["checkpoint"] is None
+    assert result["lock_monitor"]["recovery"] is None
+    assert calls == {"lock": 1, "probe": 1, "sleep": 0, "recovery": 0}
 
 
-def test_ledger_snapshot_no_retry_on_non_lock_error(_snapshot_paths: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Non-lock errors are not retried."""
+@pytest.mark.parametrize(
+    ("state", "detail", "lock_age", "expected_locked"),
+    [
+        ("locked", "ledger lock observed for 12s", 12, True),
+        ("io_error", "read-only lock observation failed: disk I/O error", None, None),
+        ("unknown", "read-only lock observation failed: unexpected probe failure", None, None),
+    ],
+)
+def test_snapshot_maps_non_ok_lock_observations_without_mutation(
+    _snapshot_paths: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    state: str,
+    detail: str,
+    lock_age: int | None,
+    expected_locked: bool | None,
+) -> None:
+    from omo.resident import ledger_check
+
     status.LEDGER.touch()
+    calls = {"lock": 0, "probe": 0}
+
+    def _lock_state(_ledger: Path) -> dict:
+        calls["lock"] += 1
+        return {
+            "ok": False,
+            "state": state,
+            "lock_age_seconds": lock_age,
+            "observation_mode": "read_only",
+            "recovery_performed": False,
+            "detail": detail,
+        }
+
+    def _probe() -> dict:
+        calls["probe"] += 1
+        return {"ok": True, "detail": "chain ok (read-only probe)", "sequence": 2}
+
+    def _forbidden(*_args, **_kwargs):
+        raise AssertionError("resident status reached a mutation-capable helper")
+
+    monkeypatch.setattr(ledger_check, "check_lock_state_only", _lock_state)
+    monkeypatch.setattr(status, "_probe_ledger_once", _probe)
+    monkeypatch.setattr(ledger_check, "check_and_recover", _forbidden)
+    monkeypatch.setattr(ledger_check, "recover_ledger_with_wal_checkpoint", _forbidden)
+    monkeypatch.setattr(ledger_check, "wal_checkpoint", _forbidden)
+    monkeypatch.setattr(ledger_check, "maybe_kill_zombie_holders", _forbidden)
+    monkeypatch.setattr(ledger_check, "find_sqlite_holders", _forbidden)
+    monkeypatch.setattr(ledger_check, "_cpu_pct", _forbidden)
+    monkeypatch.setattr(ledger_check.os, "kill", _forbidden)
+
+    report = status.snapshot()
+    ledger = report["components"]["ledger"]
+
+    assert report["health"] == "degraded"
+    assert report["degraded_components"] == ["ledger"]
+    assert ledger["ok"] is False
+    assert ledger["detail"] == detail
+    assert ledger["lock_age_seconds"] == lock_age
+    assert ledger["observation_mode"] == "read_only"
+    assert ledger["recovery_performed"] is False
+    assert ledger["lock_monitor"] == {
+        "locked": expected_locked,
+        "checkpoint": None,
+        "recovery": None,
+        "detail": detail,
+        "state": state,
+        "observation_mode": "read_only",
+        "recovery_performed": False,
+    }
+    assert calls == {"lock": 1, "probe": 1}
+
+
+def test_ledger_snapshot_non_lock_error_is_single_observation(
+    _snapshot_paths: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from omo.resident import ledger_check
+
+    status.LEDGER.touch()
+    calls = {"lock": 0, "probe": 0}
+
+    def _lock_state(_ledger: Path) -> dict:
+        calls["lock"] += 1
+        return {
+            "ok": True,
+            "state": "unlocked",
+            "lock_age_seconds": None,
+            "observation_mode": "read_only",
+            "recovery_performed": False,
+            "detail": "ledger unlocked",
+        }
+
+    def _probe() -> dict:
+        calls["probe"] += 1
+        return {"ok": False, "detail": "read-only probe failed: disk I/O error", "sequence": None}
+
+    monkeypatch.setattr(ledger_check, "check_lock_state_only", _lock_state)
+    monkeypatch.setattr(status, "_probe_ledger_once", _probe)
     monkeypatch.setattr(
-        status,
-        "_probe_ledger_once",
-        lambda: {"ok": False, "detail": "read-only probe failed: disk I/O error", "sequence": None},
-    )
-    monkeypatch.setattr(
-        "omo.resident.ledger_check.check_and_recover",
-        lambda _: {"ok": True, "lock_age_seconds": None, "locked": False, "detail": "unlocked"},
+        ledger_check,
+        "check_and_recover",
+        lambda _ledger: (_ for _ in ()).throw(AssertionError("status Query must not call recovery")),
     )
 
     result = status._ledger_snapshot()
+
     assert result["ok"] is False
     assert "disk I/O error" in result["detail"]
+    assert calls == {"lock": 1, "probe": 1}
 
 
-def test_concurrent_readonly_probes_no_interference(tmp_path: Path) -> None:
-    """Multiple concurrent read-only probes don't interfere (zero contention)."""
-    import threading
+def test_snapshot_query_cannot_reach_ledger_mutators(_snapshot_paths: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from omo.resident import ledger_check
 
-    ledger = tmp_path / "test_ledger.sqlite3"
-    _create_test_ledger(ledger, [(1, "h1", ""), (2, "h2", "h1")])
+    _create_test_ledger(status.LEDGER, [(1, "h1", "")])
 
-    results: list[dict] = []
-    errors: list[Exception] = []
+    def _forbidden(*_args, **_kwargs):
+        raise AssertionError("resident status reached a mutation-capable helper")
 
-    def probe():
+    monkeypatch.setattr(ledger_check, "check_and_recover", _forbidden)
+    monkeypatch.setattr(ledger_check, "recover_ledger_with_wal_checkpoint", _forbidden)
+    monkeypatch.setattr(ledger_check, "wal_checkpoint", _forbidden)
+    monkeypatch.setattr(ledger_check, "maybe_kill_zombie_holders", _forbidden)
+    monkeypatch.setattr(ledger_check, "find_sqlite_holders", _forbidden)
+    monkeypatch.setattr(ledger_check, "_cpu_pct", _forbidden)
+    monkeypatch.setattr(ledger_check.os, "kill", _forbidden)
+
+    report = status.snapshot()
+
+    assert report["components"]["ledger"]["ok"] is True
+    assert report["components"]["ledger"]["lock_monitor"]["observation_mode"] == "read_only"
+    assert report["components"]["ledger"]["lock_monitor"]["recovery_performed"] is False
+
+
+def test_one_hundred_concurrent_full_snapshots_are_bounded_and_side_effect_free(
+    _snapshot_paths: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from omo.resident import ledger_check
+
+    _create_test_ledger(status.LEDGER, [(1, "h1", ""), (2, "h2", "h1")])
+    original_connect = sqlite3.connect
+    connect_calls: list[tuple[str, dict[str, object]]] = []
+    connect_lock = threading.Lock()
+    sleep_calls: list[float] = []
+
+    def _tracking_connect(database, **kwargs):
+        with connect_lock:
+            connect_calls.append((str(database), dict(kwargs)))
+        return original_connect(database, **kwargs)
+
+    def _forbidden(*_args, **_kwargs):
+        raise AssertionError("resident status reached a mutation-capable helper")
+
+    monkeypatch.setattr(sqlite3, "connect", _tracking_connect)
+    monkeypatch.setattr(status.time, "sleep", lambda delay: sleep_calls.append(float(delay)))
+    monkeypatch.setattr(ledger_check, "check_and_recover", _forbidden)
+    monkeypatch.setattr(ledger_check, "recover_ledger_with_wal_checkpoint", _forbidden)
+    monkeypatch.setattr(ledger_check, "wal_checkpoint", _forbidden)
+    monkeypatch.setattr(ledger_check, "maybe_kill_zombie_holders", _forbidden)
+    monkeypatch.setattr(ledger_check, "find_sqlite_holders", _forbidden)
+    monkeypatch.setattr(ledger_check, "_cpu_pct", _forbidden)
+    monkeypatch.setattr(ledger_check.os, "kill", _forbidden)
+
+    context = multiprocessing.get_context("fork")
+    result_queue = context.Queue()
+
+    def _run_batch() -> None:
         try:
-            uri = f"file:{ledger}?mode=ro"
-            conn = sqlite3.connect(uri, uri=True, timeout=0.05)
-            rows = list(conn.execute("SELECT sequence, event_hash, previous_hash FROM event_log ORDER BY sequence"))
-            conn.close()
-            results.append({"ok": True, "count": len(rows)})
-        except Exception as exc:
-            errors.append(exc)
+            barrier = threading.Barrier(101)
 
-    threads = [threading.Thread(target=probe) for _ in range(10)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(timeout=5)
+            def _full_snapshot() -> dict:
+                barrier.wait(timeout=5)
+                return status.snapshot()
 
-    assert errors == [], f"Errors during concurrent probes: {errors}"
-    assert len(results) == 10
-    assert all(r["ok"] and r["count"] == 2 for r in results)
+            started = time.monotonic()
+            with ThreadPoolExecutor(max_workers=100) as pool:
+                futures = [pool.submit(_full_snapshot) for _ in range(100)]
+                barrier.wait(timeout=5)
+                done, not_done = wait(futures, timeout=9)
+            reports = [future.result() for future in done]
+            result_queue.put(
+                {
+                    "duration": time.monotonic() - started,
+                    "report_count": len(reports),
+                    "not_done": len(not_done),
+                    "sleep_count": len(sleep_calls),
+                    "connect_count": len(connect_calls),
+                    "connections_read_only": all(
+                        "mode=ro" in database and kwargs.get("uri") is True for database, kwargs in connect_calls
+                    ),
+                    "reports_valid": all(
+                        json.loads(json.dumps(report))["components"]["ledger"]["ok"] is True for report in reports
+                    ),
+                }
+            )
+        except BaseException as exc:  # noqa: BLE001 - transport worker failure to parent assertion.
+            result_queue.put({"error": repr(exc)})
+
+    process = context.Process(target=_run_batch)
+    process.start()
+    process.join(timeout=10)
+    if process.is_alive():
+        process.terminate()
+        process.join(timeout=2)
+        pytest.fail("100 full snapshots exceeded the hard 10s process budget")
+
+    assert process.exitcode == 0
+    result = result_queue.get(timeout=1)
+    assert "error" not in result, result.get("error")
+    assert result["not_done"] == 0
+    assert result["report_count"] == 100
+    assert result["duration"] < 10
+    assert result["sleep_count"] == 0
+    assert result["connect_count"] > 0
+    assert result["connections_read_only"] is True
+    assert result["reports_valid"] is True
