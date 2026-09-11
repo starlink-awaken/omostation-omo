@@ -267,9 +267,9 @@ def _process_task_queue() -> dict[str, Any]:
       2. 对每个 task 路由到 handler (按 URI 分发)
       3. 成功 → complete(); 异常 → fail() (触发重试或终态失败)
     """
-    from omo.resident.task_queue import TaskQueue, TaskStatus  # noqa: PLC0415
+    from omo.resident.task_queue import TaskQueue, TaskStatus, default_db_path  # noqa: PLC0415
 
-    db_path = WORKSPACE / "runtime" / "omo" / "resident-task-queue.sqlite3"
+    db_path = default_db_path()
     if not db_path.exists():
         # 队列尚未创建 (无 task 提交过), 跳过
         return {"picked": 0, "completed": 0, "failed": 0, "skipped": True}

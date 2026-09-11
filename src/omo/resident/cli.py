@@ -23,6 +23,7 @@ SUBCOMMANDS = {
     "decision": "omo.resident.decision",
     "execute": "omo.resident.execute",
     "status": "omo.resident.status",
+    "task": "omo.resident.task_queue",
     "promote": "omo.resident.promote",
     "resources": "omo.resident.resources",
     "roles": "omo.resident.roles",

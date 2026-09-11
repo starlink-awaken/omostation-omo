@@ -262,17 +262,31 @@ def _log(msg: str) -> None:
 
 
 def main(argv=None) -> int:
-    """CLI: consume a JSON event from stdin and write a sediment draft."""
+    """CLI: consume a JSON event from stdin and write a sediment draft.
+
+    `--async` (T10-125 task_gateway): 不直接写沉淀, 改为提交
+    `bos://resident/sediment/trigger` 任务到就绪队列, 由 daemon tick 执行.
+    """
     import argparse
 
     argv = argv if argv is not None else None
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", help="event JSON string")
+    parser.add_argument("--async", dest="enqueue", action="store_true", help="异步入队 (T10-125)")
+    parser.add_argument("--db", default=None, help="队列 sqlite 路径 (仅 --async)")
     args = parser.parse_args(argv)
     if args.json:
         event = json.loads(args.json)
     else:
-        event = json.loads(sys.stdin.read())
+        raw = sys.stdin.read()
+        event = json.loads(raw) if raw.strip() else {}
+    if args.enqueue:
+        from omo.resident.task_queue import TaskQueue, default_db_path  # noqa: PLC0415
+
+        queue = TaskQueue(Path(args.db) if args.db else default_db_path())
+        result = queue.submit("bos://resident/sediment/trigger", event if isinstance(event, dict) else {})
+        print(json.dumps({"queued": result.ok, "task_id": result.task_id, "reason": result.reason}))
+        return 0 if result.ok else 2
     path = consume_event(event)
     print(json.dumps({"written": path is not None, "path": str(path) if path else None}))
     return 0
