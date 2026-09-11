@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 from fastmcp import FastMCP
@@ -732,6 +733,58 @@ async def agent_host_tick(req: AgentHostTickRequest) -> str:
         return json.dumps(result, ensure_ascii=False)
     except Exception as e:
         return f"Error running agent host tick: {e!s}"
+
+
+# ── Scene v3 MCP tools ─────────────────────────────────────────────
+
+
+class SceneExecuteRequest(BaseModel):
+    scene_id: str
+    signal: dict = {}
+    dry_run: bool = False
+
+
+class SceneCalibrateRequest(BaseModel):
+    scene_id: str
+    window_days: int = 30
+
+
+@mcp.tool()
+async def scene_execute(req: SceneExecuteRequest) -> str:
+    """v3: Execute a scene card through BOS/MCP capability resolution.
+
+    Loads the scene card, runs the journey state machine, records outcome.
+    Returns execution result with run_id, status, confidence, and trace.
+    """
+    engine = _V10_WORKSPACE / "bin" / "ssot" / "journey-engine.py"
+    try:
+        cmd = [sys.executable, str(engine), "execute", req.scene_id]
+        if req.signal:
+            cmd.extend(["--signal", json.dumps(req.signal, ensure_ascii=False)])
+        if req.dry_run:
+            cmd.append("--dry-run")
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(_V10_WORKSPACE))
+        return result.stdout or json.dumps({"status": "error", "error": result.stderr})
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
+
+
+@mcp.tool()
+async def scene_calibrate(req: SceneCalibrateRequest) -> str:
+    """v3: Compute calibration score for a scene over a sliding window.
+
+    Returns calibration metrics: score, precision, recall, fp_rate, trend.
+    """
+    engine = _V10_WORKSPACE / "bin" / "ssot" / "calibration-engine.py"
+    try:
+        cmd = [
+            sys.executable, str(engine), "compute",
+            "--scene-id", req.scene_id, "--window", str(req.window_days),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(_V10_WORKSPACE))
+        return result.stdout or json.dumps({"status": "error", "error": result.stderr})
+    except Exception as e:
+        return json.dumps({"status": "error", "error": str(e)})
 
 
 def main():

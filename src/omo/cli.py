@@ -435,6 +435,11 @@ def main(argv: list[str] | None = None) -> int:
 
         return cmd_watch(interval=parsed.interval, max_iterations=parsed.count)
 
+    if args and args[0] == "scene":
+        from omo.omo_scene_cli import main as scene_main
+
+        return scene_main(args[1:])
+
     # 兜底:有参但无匹配子命令 → 报错退出;无参 → 静默退出 0(保持原行为)
     if args:
         print(f"Unknown subcommand: {args[0]}", file=sys.stderr)
