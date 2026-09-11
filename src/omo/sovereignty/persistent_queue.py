@@ -146,9 +146,7 @@ class PersistentQueue:
             event_type = row.get("event_type")
             item_id = payload.get("item_id")
             if not isinstance(item_id, str) or not item_id:
-                raise QueueReplayError(
-                    "MALFORMED_ROW", f"seq={row.get('sequence')} missing item_id"
-                )
+                raise QueueReplayError("MALFORMED_ROW", f"seq={row.get('sequence')} missing item_id")
             if event_type == EVT_ENQUEUED:
                 priority = payload.get("priority")
                 if not isinstance(priority, int):
@@ -156,9 +154,7 @@ class PersistentQueue:
                         "MALFORMED_ROW",
                         f"seq={row.get('sequence')} priority must be an integer",
                     )
-                enqueued[item_id] = QueueItem(
-                    item_id=item_id, item=payload.get("item"), priority=priority
-                )
+                enqueued[item_id] = QueueItem(item_id=item_id, item=payload.get("item"), priority=priority)
                 order.append(item_id)
             elif event_type == EVT_DEQUEUED:
                 dequeued.add(item_id)
@@ -183,7 +179,5 @@ class PersistentQueue:
                 f"seq={row.get('sequence')} payload is not valid JSON",
             ) from exc
         if not isinstance(payload, dict):
-            raise QueueReplayError(
-                "MALFORMED_ROW", f"seq={row.get('sequence')} payload must be a JSON object"
-            )
+            raise QueueReplayError("MALFORMED_ROW", f"seq={row.get('sequence')} payload must be a JSON object")
         return payload
