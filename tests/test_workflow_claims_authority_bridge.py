@@ -68,6 +68,8 @@ def valid_observe_request(*, request_id: str | None = None) -> dict[str, object]
 
 
 def valid_activation_request(store: _AuthorityStore, *, request_id: str | None = None) -> dict[str, object]:
+    if store.authority_id == "omo-claims-authority-r0":
+        return valid_production_activation_request(store, request_id=request_id)
     descriptor: dict[str, object] = {
         "schema": "claims-authority-descriptor/v2",
         "authority_id": store.authority_id,
@@ -79,6 +81,39 @@ def valid_activation_request(store: _AuthorityStore, *, request_id: str | None =
         "critical_dependency_closure_digest": _digest("c"),
         "accepted_clone_identity_schemas": ["agent-clone-identity/v2"],
         "v1_compatibility": "legacy-effective-shadow",
+    }
+    descriptor["digest"] = canonical_digest(descriptor)
+    return {
+        "schema": "claim-mutation-envelope/v2",
+        "operation": "activate-shadow",
+        "request_id": request_id or str(uuid4()),
+        "authority_id": store.authority_id,
+        "expected_authority_epoch": 0,
+        "expected_state": "unactivated",
+        "descriptor": descriptor,
+    }
+
+
+def valid_production_activation_request(
+    store: _AuthorityStore,
+    *,
+    request_id: str | None = None,
+) -> dict[str, object]:
+    from omo.workflow import claims_verifiers
+
+    descriptor: dict[str, object] = {
+        "schema": "claims-authority-descriptor/v2",
+        "authority_id": store.authority_id,
+        "security_level": "cooperative-r0",
+        "operating_mode": "shadow",
+        "repository": "starlink-awaken/omostation",
+        "broker_transport": "stdio",
+        "store_identity": "production-store",
+        "critical_dependency_closure_digest": claims_verifiers.production_verifier_closure_digest(),
+        "accepted_clone_identity_schemas": ["agent-clone-identity/v2"],
+        "v1_compatibility": "legacy-effective-shadow",
+        "operator_authorization_verifier_digest": claims_verifiers.operator_authorization_verifier_digest(),
+        "stopped_process_verifier_digest": claims_verifiers.stopped_process_verifier_digest(),
     }
     descriptor["digest"] = canonical_digest(descriptor)
     return {
@@ -620,6 +655,36 @@ def test_red_production_store_reopens_after_post_activation_receipt(tmp_path: Pa
         assert status["sequence"] == 2
     finally:
         reopened._connection.close()
+
+
+def test_red_production_activation_requires_bound_verifier_digests(tmp_path: Path) -> None:
+    production = _AuthorityStore._connect_new(
+        tmp_path / "authority",
+        "omo-claims-authority-r0",
+        test_only=False,
+    )
+    missing = valid_activation_request(production)
+    descriptor = dict(missing["descriptor"])
+    descriptor.pop("operator_authorization_verifier_digest")
+    descriptor.pop("stopped_process_verifier_digest")
+    descriptor["critical_dependency_closure_digest"] = _digest("c")
+    descriptor["digest"] = canonical_digest(descriptor)
+    missing["descriptor"] = descriptor
+    with pytest.raises(AuthorityError, match="AUTHORITY_DESCRIPTOR_MISMATCH"):
+        production.activate_shadow(missing)
+
+    unbound = valid_production_activation_request(production)
+    unbound_descriptor = dict(unbound["descriptor"])
+    unbound_descriptor["operator_authorization_verifier_digest"] = _digest("e")
+    unbound_descriptor["digest"] = canonical_digest(unbound_descriptor)
+    unbound["descriptor"] = unbound_descriptor
+    with pytest.raises(AuthorityError, match="AUTHORITY_DESCRIPTOR_MISMATCH"):
+        production.activate_shadow(unbound)
+
+    witness = json.loads(production.test_paths.activation_witness.read_text(encoding="utf-8"))
+    assert witness["state"] == "unactivated"
+    assert production.authority_status()["activation_state"] == "unactivated"
+    assert production.authority_status()["sequence"] == 0
 
 
 def test_green_repeated_activation_request_returns_same_receipt(store: _AuthorityStore) -> None:
@@ -1557,14 +1622,19 @@ def _write_operator_resolution_evidence(
     authorization: dict[str, object] = {
         "schema": "claims-operator-authorization/v1",
         "authority_id": store.authority_id,
+        "security_level": "R0_COOPERATIVE",
+        "principal_id": "principal-test",
+        "principal_authority_ref": "decision://accepted/test-principal",
+        "principal_receipt_digest": _digest("a"),
+        "decision_ref": "decision://accepted/test-operator",
         "target_kind": target_kind,
         "target_id": target_id,
         "unknown_receipt_digest": unknown_receipt_digest,
         "resolver_operation": resolver_operation,
         "authorized_outcome": outcome,
-        "decision": "allow",
+        "process_identity_digest": process_identity_digest,
         "issued_at": now.isoformat().replace("+00:00", "Z"),
-        "expires_at": (now + timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+        "expires_at": (now + timedelta(seconds=300)).isoformat().replace("+00:00", "Z"),
     }
     authorization["digest"] = canonical_digest(authorization)
     authorization_digest = str(authorization["digest"])
@@ -1572,6 +1642,9 @@ def _write_operator_resolution_evidence(
     stopped_proof: dict[str, object] = {
         "schema": "claims-stopped-process-proof/v1",
         "authority_id": store.authority_id,
+        "security_level": "R0_COOPERATIVE",
+        "observer_kind": "independent-process-observer",
+        "observer_receipt_digest": _digest("b"),
         "target_kind": target_kind,
         "target_id": target_id,
         "unknown_receipt_digest": unknown_receipt_digest,

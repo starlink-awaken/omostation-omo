@@ -1526,7 +1526,8 @@ class _AuthorityStore:
         if not isinstance(descriptor, Mapping):
             raise AuthorityError("REQUEST_SCHEMA_INVALID", "descriptor")
         descriptor_payload = dict(descriptor)
-        if set(descriptor_payload) != {
+        production_activation = self.authority_id == _PRODUCTION_AUTHORITY_ID
+        base_descriptor_fields = {
             "schema",
             "authority_id",
             "security_level",
@@ -1538,7 +1539,14 @@ class _AuthorityStore:
             "accepted_clone_identity_schemas",
             "v1_compatibility",
             "digest",
-        }:
+        }
+        expected_fields = set(base_descriptor_fields)
+        if production_activation:
+            expected_fields |= {
+                "operator_authorization_verifier_digest",
+                "stopped_process_verifier_digest",
+            }
+        if set(descriptor_payload) != expected_fields:
             raise AuthorityError("AUTHORITY_DESCRIPTOR_MISMATCH", "fields")
         descriptor_digest = descriptor_payload.get("digest")
         if not isinstance(descriptor_digest, str) or descriptor_digest != canonical_digest(descriptor_payload):
@@ -1557,6 +1565,21 @@ class _AuthorityStore:
             or descriptor_payload.get("v1_compatibility") != "legacy-effective-shadow"
         ):
             raise AuthorityError("AUTHORITY_DESCRIPTOR_MISMATCH", "mode")
+        if production_activation:
+            from . import claims_verifiers
+
+            expected_operator = claims_verifiers.operator_authorization_verifier_digest()
+            expected_stopped = claims_verifiers.stopped_process_verifier_digest()
+            expected_closure = claims_verifiers.production_verifier_closure_digest()
+            operator_digest = descriptor_payload.get("operator_authorization_verifier_digest")
+            stopped_digest = descriptor_payload.get("stopped_process_verifier_digest")
+            closure_digest = descriptor_payload.get("critical_dependency_closure_digest")
+            if operator_digest != expected_operator:
+                raise AuthorityError("AUTHORITY_DESCRIPTOR_MISMATCH", "unbound_verifier")
+            if stopped_digest != expected_stopped:
+                raise AuthorityError("AUTHORITY_DESCRIPTOR_MISMATCH", "unbound_verifier")
+            if closure_digest != expected_closure:
+                raise AuthorityError("AUTHORITY_DESCRIPTOR_MISMATCH", "verifier_closure")
         request_digest = canonical_digest(request)
         existing = self._idempotent_response(request_id, request_digest)
         if existing is not None:
@@ -3143,35 +3166,24 @@ def _verify_production_operator_resolution(
         target_id=target_id,
     )
     outcome = str(request.get("outcome") or "")
+    from . import claims_verifiers
+
     authorization = _read_trusted_operator_evidence(
         paths,
         request.get("authorization_digest"),
         directory_name=_OPERATOR_AUTHORIZATION_DIR,
         code="OPERATOR_AUTHORIZATION_REQUIRED",
     )
-    authorization_fields = {
-        "schema",
-        "authority_id",
-        "target_kind",
-        "target_id",
-        "unknown_receipt_digest",
-        "resolver_operation",
-        "authorized_outcome",
-        "decision",
-        "issued_at",
-        "expires_at",
-        "digest",
-    }
-    if set(authorization) != authorization_fields or any(
+    claims_verifiers.verify_operator_authorization(authorization)
+    if any(
         (
-            authorization.get("schema") != "claims-operator-authorization/v1",
             authorization.get("authority_id") != store.authority_id,
             authorization.get("target_kind") != target_kind,
             authorization.get("target_id") != target_id,
             authorization.get("unknown_receipt_digest") != unknown_receipt_digest,
             authorization.get("resolver_operation") != resolver_operation,
             authorization.get("authorized_outcome") != outcome,
-            authorization.get("decision") != "allow",
+            authorization.get("process_identity_digest") != expected_process_digest,
         )
     ):
         raise AuthorityError("OPERATOR_AUTHORIZATION_REQUIRED", "authorization_binding")
@@ -3200,28 +3212,15 @@ def _verify_production_operator_resolution(
         directory_name=_STOPPED_PROCESS_PROOF_DIR,
         code="OPERATOR_STOPPED_PROCESS_PROOF_INVALID",
     )
-    stopped_fields = {
-        "schema",
-        "authority_id",
-        "target_kind",
-        "target_id",
-        "unknown_receipt_digest",
-        "authorization_digest",
-        "process_identity_digest",
-        "status",
-        "observed_at",
-        "digest",
-    }
-    if set(stopped_proof) != stopped_fields or any(
+    claims_verifiers.verify_stopped_process_proof(stopped_proof, authorization=authorization)
+    if any(
         (
-            stopped_proof.get("schema") != "claims-stopped-process-proof/v1",
             stopped_proof.get("authority_id") != store.authority_id,
             stopped_proof.get("target_kind") != target_kind,
             stopped_proof.get("target_id") != target_id,
             stopped_proof.get("unknown_receipt_digest") != unknown_receipt_digest,
             stopped_proof.get("authorization_digest") != request.get("authorization_digest"),
             stopped_proof.get("process_identity_digest") != expected_process_digest,
-            stopped_proof.get("status") != "stopped",
         )
     ):
         raise AuthorityError("OPERATOR_STOPPED_PROCESS_PROOF_INVALID", "stopped_process_binding")
