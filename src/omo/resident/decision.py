@@ -273,7 +273,19 @@ def main(argv=None) -> int:
     p_show = sub.add_parser("show", help="渲染单条提案 JSON 为人读 md")
     p_show.add_argument("file", help="evolution-proposals 下 decision-*.json 文件名")
     parser.add_argument("--json", help="事件 JSON 字符串 (兼容原事件消费模式)")
+    parser.add_argument("--async", dest="enqueue", action="store_true", help="异步入队 (T10-125)")
+    parser.add_argument("--db", default=None, help="队列 sqlite 路径 (仅 --async)")
     args = parser.parse_args(argv)
+
+    if args.enqueue:
+        from omo.resident.task_queue import TaskQueue, default_db_path  # noqa: PLC0415
+
+        raw_event = json.loads(args.json) if args.json else json.loads(sys.stdin.read() or "{}")
+        event = raw_event if isinstance(raw_event, dict) else {}
+        queue = TaskQueue(Path(args.db) if args.db else default_db_path())
+        result = queue.submit("bos://resident/decision/trigger", event)
+        print(json.dumps({"queued": result.ok, "task_id": result.task_id, "reason": result.reason}))
+        return 0 if result.ok else 2
 
     if args.command == "list":
         print(_list_proposals(args.limit))

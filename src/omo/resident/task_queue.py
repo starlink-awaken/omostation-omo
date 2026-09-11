@@ -328,4 +328,103 @@ __all__ = (
     "Task",
     "TaskQueue",
     "TaskStatus",
+    "default_db_path",
 )
+
+
+def default_db_path() -> Path:
+    """默认队列 DB 路径 (与 daemon tick 共用同一文件).
+
+    与 daemon.py `_process_task_queue` 同源, CLI 与守护进程读写同一 SQLite 文件.
+    """
+    from omo.resident import WORKSPACE  # noqa: PLC0415 - 延迟导入, 与 daemon 保持同解析
+
+    return WORKSPACE / "runtime" / "omo" / "resident-task-queue.sqlite3"
+
+
+def _task_to_json(task: Task) -> dict[str, Any]:
+    return {
+        "id": task.id,
+        "uri": task.uri,
+        "payload": task.payload,
+        "status": task.status.value,
+        "attempts": task.attempts,
+        "result": task.result,
+        "error_message": task.error_message,
+        "created_at": task.created_at,
+        "updated_at": task.updated_at,
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI: `omo resident task submit|status` (T10-125 task_gateway 执行面).
+
+    - submit: `task submit --uri <bos-uri> [--json <payload>] [--db <path>]`
+      payload 缺省时读 stdin (空输入视为 {}); 队列满时 exit 2 并输出 reason.
+    - status: `task status --id <task-id> [--db <path>] [--json <{"id":...}>]`
+      输出任务 JSON (含 found 标志); 不存在时 exit 3.
+    """
+    import argparse  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+
+    parser = argparse.ArgumentParser(prog="omo resident task", description=__doc__)
+    parser.add_argument(
+        "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+    p_submit = sub.add_parser("submit", help="提交任务入队")
+    p_submit.add_argument("--uri", required=True, help="目标 BOS URI (由 daemon 按 URI 分发)")
+    p_submit.add_argument("--json", default=None, help="payload JSON 字符串 (缺省读 stdin)")
+    p_submit.add_argument(
+        "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
+    )
+    p_status = sub.add_parser("status", help="查询任务状态")
+    p_status.add_argument("--id", default=None, help="任务 id")
+    p_status.add_argument("--json", default=None, help='请求 JSON 字符串 (如 {"id": "<task-id>"})')
+    p_status.add_argument(
+        "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
+    )
+    args = parser.parse_args(argv)
+
+    # --db 可放顶层 (task --db X submit ...) 或子命令级 (task submit --db X ...), 同 dest
+    db_path = Path(args.db) if args.db else default_db_path()
+    queue = TaskQueue(db_path)
+
+    if args.command == "submit":
+        raw = args.json if args.json is not None else sys.stdin.read()
+        try:
+            payload = json.loads(raw) if raw.strip() else {}
+        except json.JSONDecodeError as exc:
+            print(json.dumps({"ok": False, "reason": f"invalid payload JSON: {exc}"}), flush=True)
+            return 2
+        if not isinstance(payload, dict):
+            print(json.dumps({"ok": False, "reason": "payload must be a JSON object"}), flush=True)
+            return 2
+        result = queue.submit(args.uri, payload)
+        if result.ok:
+            print(json.dumps({"ok": True, "task_id": result.task_id}), flush=True)
+            return 0
+        print(json.dumps({"ok": False, "reason": result.reason}), flush=True)
+        return 2
+
+    task_id = args.id
+    if task_id is None and args.json:
+        try:
+            task_id = json.loads(args.json).get("id")
+        except json.JSONDecodeError:
+            task_id = None
+    if not task_id:
+        print(json.dumps({"found": False, "reason": "missing --id"}), flush=True)
+        return 2
+    task = queue.get(task_id)
+    if task is None:
+        print(json.dumps({"found": False, "id": task_id}), flush=True)
+        return 3
+    print(json.dumps({"found": True, **_task_to_json(task)}, ensure_ascii=False), flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    import sys  # noqa: PLC0415
+
+    sys.exit(main())

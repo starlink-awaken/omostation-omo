@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from pathlib import Path
@@ -251,3 +252,75 @@ class TestStats:
 def test_defaults() -> None:
     assert DEFAULT_MAX_QUEUE == 1000
     assert DEFAULT_MAX_ATTEMPTS == 3
+
+
+# ── 9. task_gateway CLI (T10-125 code batch: `omo resident task ...`) ──
+class TestTaskCLI:
+    def test_submit_status_roundtrip(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "cli-queue.sqlite3")
+        rc = tq.main(["submit", "--uri", "bos://resident/sediment/trigger", "--json", '{"k": 1}', "--db", db])
+        assert rc == 0
+        task_id = json.loads(capsys.readouterr().out)["task_id"]
+        assert task_id
+        rc = tq.main(["status", "--id", task_id, "--db", db])
+        assert rc == 0
+        shown = json.loads(capsys.readouterr().out)
+        assert shown["found"] is True
+        assert shown["status"] == "queued"
+        assert shown["payload"] == {"k": 1}
+
+    def test_status_missing_returns_3(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "cli-missing.sqlite3")
+        rc = tq.main(["status", "--id", "NOPE", "--db", db])
+        assert rc == 3
+        assert json.loads(capsys.readouterr().out)["found"] is False
+
+    def test_submit_rejects_bad_payload(self, tmp_path: Path) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "cli-bad.sqlite3")
+        assert tq.main(["submit", "--uri", "bos://resident/x", "--json", "{bad", "--db", db]) == 2
+
+    def test_submit_stdin_payload(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "cli-stdin.sqlite3")
+        monkeypatch.setattr("sys.stdin", _StdinStub('{"via": "stdin"}'))
+        assert tq.main(["submit", "--uri", "bos://resident/y", "--db", db]) == 0
+        assert json.loads(capsys.readouterr().out)["task_id"]
+
+    def test_sediment_async_enqueues(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import sediment as _sed
+
+        db = str(tmp_path / "cli-sed.sqlite3")
+        rc = _sed.main(["--async", "--json", '{"event_type": "T"}', "--db", db])
+        assert rc == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["queued"] is True and out["task_id"]
+        assert TaskQueue(db).get(out["task_id"]).uri == "bos://resident/sediment/trigger"
+
+    def test_decision_async_enqueues(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import decision as _dec
+
+        db = str(tmp_path / "cli-dec.sqlite3")
+        rc = _dec.main(["--async", "--json", '{"event_type": "T"}', "--db", db])
+        assert rc == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["queued"] is True and out["task_id"]
+        assert TaskQueue(db).get(out["task_id"]).uri == "bos://resident/decision/trigger"
+
+
+class _StdinStub:
+    """最小 stdin 桩 (read() 一次性返回固定文本)."""
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    def read(self) -> str:
+        return self._text
