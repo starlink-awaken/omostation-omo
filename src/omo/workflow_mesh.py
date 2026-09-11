@@ -34,6 +34,7 @@ EVENT_STATE = {
     "WorkflowRequested": "planned",
     "WorkflowAdmitted": "admitted",
     "StepDispatched": "dispatched",
+    "BackendDispatched": "dispatched",
     "StepStarted": "running",
     "StepHeartbeat": "running",
     "StepRetryScheduled": "running",
@@ -65,7 +66,7 @@ TOOL_OUTCOMES = frozenset({"succeeded", "failed", "unavailable"})
 # 仍可能进入验证、关闭或受控恢复。
 TERMINAL_STATES = {"closed"}
 _ALLOWED_TRANSITIONS = {
-    "unknown": {"planned"},
+    "unknown": {"planned", "dispatched"},
     "planned": {
         "admitted",
         "running",
@@ -95,7 +96,7 @@ _ALLOWED_TRANSITIONS = {
     "closed": set(),
 }
 _ALLOWED_EVENTS = {
-    "unknown": {"WorkflowRequested"},
+    "unknown": {"WorkflowRequested", "BackendDispatched"},
     "planned": {
         "WorkflowAdmitted",
         "StepStarted",
@@ -566,6 +567,33 @@ def validate_workflow_event(event: dict[str, Any]) -> dict[str, Any]:
         raise WorkflowMeshEventError("Workflow Mesh event payload must be an object")
     _scene_binding(event["payload"])
     return event
+
+
+def dispatch_backend(
+    store: WorkflowMeshStore,
+    backend_name: str,
+    fn: Callable[[list[str]], int],
+    args: list[str],
+) -> int:
+    """B 槽后端经 Mesh（S 槽收件箱）分发。
+
+    发射 ``BackendDispatched`` 事件，让 Mesh 成为该次分发的观察收件箱（满足
+    八律第 3 条：后端不拥有收件箱），随后原样调用 ``fn(args)`` 并返回其返回值。
+    事件写入永不破坏后端：byte-for-byte 等价于直接调用 ``fn(args)``。
+    """
+    run_id = uuid4().hex
+    try:
+        store.append(
+            new_workflow_event(
+                "BackendDispatched",
+                run_id,
+                producer=f"omo.{backend_name}",
+                payload={"backend": backend_name, "args": args},
+            )
+        )
+    except Exception:  # noqa: BLE001 — 事件是观测性的，绝不能破坏后端
+        pass
+    return fn(args)
 
 
 def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> dict[str, Any]:
