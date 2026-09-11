@@ -249,7 +249,66 @@ def tick_once(
         processed += 1
     broker.checkpoint_set(projector, last_index + len(scanned))
     _save_byte_offset(projector, file_size)
-    return {"start_index": last_index, "processed": processed, "events_in_file": last_index + len(scanned)}
+    # T10-125 task_gateway: 在 tick 中拉取并派发就绪任务
+    task_report = _process_task_queue()
+    return {
+        "start_index": last_index,
+        "processed": processed,
+        "events_in_file": last_index + len(scanned),
+        "task_queue": task_report,
+    }
+
+
+def _process_task_queue() -> dict[str, Any]:
+    """T10-125 task_gateway: 拉取并派发 queued 任务, 落地状态机.
+
+    每个 tick 调用一次. 处理流程:
+      1. poll() 拉取 queued → running (原子)
+      2. 对每个 task 路由到 handler (按 URI 分发)
+      3. 成功 → complete(); 异常 → fail() (触发重试或终态失败)
+    """
+    from omo.resident.task_queue import TaskQueue, TaskStatus  # noqa: PLC0415
+
+    db_path = WORKSPACE / "runtime" / "omo" / "resident-task-queue.sqlite3"
+    if not db_path.exists():
+        # 队列尚未创建 (无 task 提交过), 跳过
+        return {"picked": 0, "completed": 0, "failed": 0, "skipped": True}
+
+    q = TaskQueue(db_path)
+    picked = q.poll(limit=20)
+    completed = 0
+    failed = 0
+    for task in picked:
+        try:
+            handler = _resolve_task_handler(task.uri)
+            if handler is None:
+                q.fail(task.id, f"no handler for {task.uri}")
+                failed += 1
+                _log(f"task_queue no_handler task={task.id} uri={task.uri}")
+                continue
+            result = handler(task.payload)
+            q.complete(task.id, result=result)
+            completed += 1
+            _log(f"task_queue ok task={task.id} uri={task.uri}")
+        except Exception as exc:  # noqa: BLE001
+            q.fail(task.id, f"{type(exc).__name__}: {exc}"[:500])
+            failed += 1
+            _log(f"task_queue fail task={task.id} uri={task.uri} err={exc}")
+    return {"picked": len(picked), "completed": completed, "failed": failed, "skipped": False}
+
+
+def _resolve_task_handler(uri: str) -> "Callable[[dict[str, Any]], Any] | None":
+    """T10-125 task_gateway: URI → handler 分发表.
+
+    返回 None 表示 URI 无 handler (fail() 触发重试上限后转终态 failed).
+    """
+    from omo.resident import sediment as _sediment  # noqa: PLC0415
+
+    registry: dict[str, Callable[[dict[str, Any]], Any]] = {
+        "bos://resident/sediment/trigger": lambda p: _sediment.knowledge_sediment_event(p),
+        "bos://resident/decision/trigger": lambda p: {"triggered": True, "path": p.get("path", "")},
+    }
+    return registry.get(uri)
 
 
 def _events_after(events: list[dict[str, Any]], last_event_id: str) -> list[dict[str, Any]]:
