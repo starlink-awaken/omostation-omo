@@ -11,11 +11,17 @@
 - failed: handler 抛异常或超过 max_attempts
 
 队列容量: 默认 1000, 溢出拒绝并 log warning (不阻塞外部 submit).
+
+改进 (T10-125 wave 2):
+- 优先级队列: submit 时指定 priority (默认 0, 高优先任务先被 poll)
+- 指数退避: fail 重试时根据 attempts 计算 backoff delay, 避免 thundering herd
 """
 
 from __future__ import annotations
 
 import json
+import math
+import random
 import sqlite3
 import time
 import uuid
@@ -49,6 +55,9 @@ _ALLOWED: dict[TaskStatus, set[TaskStatus]] = {
 
 DEFAULT_MAX_QUEUE = 1000
 DEFAULT_MAX_ATTEMPTS = 3
+DEFAULT_BACKOFF_BASE = 1.0
+DEFAULT_BACKOFF_MAX = 60.0
+DEFAULT_BACKOFF_JITTER = 0.25
 
 
 @dataclass
@@ -56,6 +65,8 @@ class Task:
     """任务条目.
 
     payload JSON-serializable. result 与 error_message 在终态填充.
+    priority: 优先级 (默认 0, 高优先任务先被 poll).
+    next_attempt_at: 下次允许尝试的 Unix timestamp (用于指数退避).
     """
 
     id: str
@@ -65,6 +76,8 @@ class Task:
     attempts: int = 0
     result: Any = None
     error_message: str = ""
+    priority: int = 0
+    next_attempt_at: float = 0.0
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
@@ -91,11 +104,17 @@ class TaskQueue:
         *,
         max_queue: int = DEFAULT_MAX_QUEUE,
         max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+        backoff_base: float = DEFAULT_BACKOFF_BASE,
+        backoff_max: float = DEFAULT_BACKOFF_MAX,
+        backoff_jitter: float = DEFAULT_BACKOFF_JITTER,
     ) -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.max_queue = max_queue
         self.max_attempts = max_attempts
+        self.backoff_base = backoff_base
+        self.backoff_max = backoff_max
+        self.backoff_jitter = backoff_jitter
         self._init_schema()
 
     # ── Schema ─────────────────────────────────────
@@ -111,12 +130,15 @@ class TaskQueue:
                     attempts INTEGER NOT NULL DEFAULT 0,
                     result TEXT,
                     error_message TEXT NOT NULL DEFAULT '',
+                    priority INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_at REAL NOT NULL DEFAULT 0,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL
                 )
                 """
             )
-            c.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON resident_tasks(status, created_at)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status_priority ON resident_tasks(status, priority DESC, created_at ASC)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_tasks_next_attempt ON resident_tasks(next_attempt_at) WHERE status = 'queued'")
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
@@ -130,10 +152,11 @@ class TaskQueue:
             conn.close()
 
     # ── Public API ─────────────────────────────────
-    def submit(self, uri: str, payload: dict[str, Any]) -> SubmitResult:
+    def submit(self, uri: str, payload: dict[str, Any], *, priority: int = 0) -> SubmitResult:
         """提交任务到队列. 队列满时拒绝.
 
         返回 SubmitResult: ok=True 时 task_id 非空.
+        priority: 优先级 (默认 0, 高优先任务先被 poll).
         """
         # 容量检查 (placed in事务外避免对 hot row 加锁)
         with self._conn() as c:
@@ -151,13 +174,14 @@ class TaskQueue:
             c.execute("BEGIN IMMEDIATE")
             try:
                 c.execute(
-                    "INSERT INTO resident_tasks (id, uri, payload, status, attempts, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, 0, ?, ?)",
+                    "INSERT INTO resident_tasks (id, uri, payload, status, attempts, priority, next_attempt_at, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, 0, ?, 0, ?, ?)",
                     (
                         task_id,
                         uri,
                         json.dumps(payload, ensure_ascii=False),
                         TaskStatus.QUEUED.value,
+                        priority,
                         now,
                         now,
                     ),
@@ -172,15 +196,19 @@ class TaskQueue:
         """拉取并标记为 running (原子: pick 一个就 lock 住, 防多 daemon 并发).
 
         返回 running 状态任务列表 (待 handler 执行).
+        按 priority DESC, created_at ASC 排序 (高优先任务先执行).
+        跳过处于 backoff 期的任务 (next_attempt_at > now).
         """
         tasks: list[Task] = []
         with self._conn() as c:
             c.execute("BEGIN IMMEDIATE")
             try:
                 rows = c.execute(
-                    "SELECT id, uri, payload, status, attempts, result, error_message, created_at, updated_at "
-                    "FROM resident_tasks WHERE status = ? ORDER BY created_at ASC LIMIT ?",
-                    (TaskStatus.QUEUED.value, limit),
+                    "SELECT id, uri, payload, status, attempts, result, error_message, priority, next_attempt_at, created_at, updated_at "
+                    "FROM resident_tasks "
+                    "WHERE status = ? AND next_attempt_at <= ? "
+                    "ORDER BY priority DESC, created_at ASC LIMIT ?",
+                    (TaskStatus.QUEUED.value, time.time(), limit),
                 ).fetchall()
                 for r in rows:
                     new_attempts = r["attempts"] + 1
@@ -202,7 +230,10 @@ class TaskQueue:
         return self._transition(task_id, TaskStatus.COMPLETED, result=result)
 
     def fail(self, task_id: str, error_message: str) -> bool:
-        """标记任务失败. 若 attempts < max_attempts 则重置为 queued (重试)."""
+        """标记任务失败. 若 attempts < max_attempts 则重置为 queued (重试).
+
+        重试时设置 exponential backoff: delay = min(base * 2^attempts + jitter, max).
+        """
         with self._conn() as c:
             c.execute("BEGIN IMMEDIATE")
             try:
@@ -214,12 +245,15 @@ class TaskQueue:
                     c.execute("ROLLBACK")
                     return False
                 if row["attempts"] < self.max_attempts:
-                    # 重试: 重置为 queued
+                    # 重试: 计算 exponential backoff + jitter
+                    delay = self._backoff_delay(row["attempts"])
+                    next_attempt = time.time() + delay
                     c.execute(
-                        "UPDATE resident_tasks SET status = ?, error_message = ?, updated_at = ? WHERE id = ?",
+                        "UPDATE resident_tasks SET status = ?, error_message = ?, next_attempt_at = ?, updated_at = ? WHERE id = ?",
                         (
                             TaskStatus.QUEUED.value,
                             error_message[:500],
+                            next_attempt,
                             time.time(),
                             task_id,
                         ),
@@ -227,7 +261,7 @@ class TaskQueue:
                 else:
                     # 终态失败
                     c.execute(
-                        "UPDATE resident_tasks SET status = ?, error_message = ?, updated_at = ? WHERE id = ?",
+                        "UPDATE resident_tasks SET status = ?, error_message = ?, next_attempt_at = 0, updated_at = ? WHERE id = ?",
                         (
                             TaskStatus.FAILED.value,
                             error_message[:500],
@@ -241,11 +275,21 @@ class TaskQueue:
                 c.execute("ROLLBACK")
                 raise
 
+    def _backoff_delay(self, attempts: int) -> float:
+        """计算 exponential backoff delay (秒).
+
+        delay = min(base * 2^attempts + uniform_jitter, max).
+        """
+        delay = self.backoff_base * (2 ** attempts)
+        delay = min(delay, self.backoff_max)
+        jitter = random.uniform(0, self.backoff_jitter * delay)  # noqa: S311
+        return delay + jitter
+
     def get(self, task_id: str) -> Task | None:
         """查询任务当前状态."""
         with self._conn() as c:
             row = c.execute(
-                "SELECT id, uri, payload, status, attempts, result, error_message, created_at, updated_at "
+                "SELECT id, uri, payload, status, attempts, result, error_message, priority, next_attempt_at, created_at, updated_at "
                 "FROM resident_tasks WHERE id = ?",
                 (task_id,),
             ).fetchone()
@@ -308,6 +352,8 @@ class TaskQueue:
         attempts = attempts_override if attempts_override is not None else row["attempts"]
         # sqlite3.Row 可能不支持 __contains__, 改用 keys() 检查
         result_raw = row["result"] if "result" in row.keys() else None
+        priority = row["priority"] if "priority" in row.keys() else 0
+        next_attempt_at = row["next_attempt_at"] if "next_attempt_at" in row.keys() else 0.0
         return Task(
             id=row["id"],
             uri=row["uri"],
@@ -316,12 +362,17 @@ class TaskQueue:
             attempts=attempts,
             result=json.loads(result_raw) if result_raw else None,
             error_message=row["error_message"] or "",
+            priority=priority,
+            next_attempt_at=next_attempt_at,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
 
 
 __all__ = (
+    "DEFAULT_BACKOFF_BASE",
+    "DEFAULT_BACKOFF_JITTER",
+    "DEFAULT_BACKOFF_MAX",
     "DEFAULT_MAX_ATTEMPTS",
     "DEFAULT_MAX_QUEUE",
     "SubmitResult",
@@ -351,6 +402,8 @@ def _task_to_json(task: Task) -> dict[str, Any]:
         "attempts": task.attempts,
         "result": task.result,
         "error_message": task.error_message,
+        "priority": task.priority,
+        "next_attempt_at": task.next_attempt_at,
         "created_at": task.created_at,
         "updated_at": task.updated_at,
     }
@@ -375,6 +428,7 @@ def main(argv: list[str] | None = None) -> int:
     p_submit = sub.add_parser("submit", help="提交任务入队")
     p_submit.add_argument("--uri", required=True, help="目标 BOS URI (由 daemon 按 URI 分发)")
     p_submit.add_argument("--json", default=None, help="payload JSON 字符串 (缺省读 stdin)")
+    p_submit.add_argument("--priority", type=int, default=0, help="任务优先级 (默认 0, 高优先先执行)")
     p_submit.add_argument(
         "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
     )
@@ -400,7 +454,7 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(payload, dict):
             print(json.dumps({"ok": False, "reason": "payload must be a JSON object"}), flush=True)
             return 2
-        result = queue.submit(args.uri, payload)
+        result = queue.submit(args.uri, payload, priority=args.priority)
         if result.ok:
             print(json.dumps({"ok": True, "task_id": result.task_id}), flush=True)
             return 0

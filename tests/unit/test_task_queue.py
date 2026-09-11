@@ -19,6 +19,9 @@ from pathlib import Path
 import pytest
 
 from omo.resident.task_queue import (
+    DEFAULT_BACKOFF_BASE,
+    DEFAULT_BACKOFF_MAX,
+    DEFAULT_BACKOFF_JITTER,
     DEFAULT_MAX_ATTEMPTS,
     DEFAULT_MAX_QUEUE,
     SubmitResult,
@@ -71,6 +74,26 @@ class TestStateMachine:
         tasks = q.poll(limit=10)
         assert [t.id for t in tasks] == ids
 
+    def test_poll_returns_higher_priority_first(self, tmp_path: Path) -> None:
+        """高优先级任务应先被 poll."""
+        q = TaskQueue(tmp_path / "prio.sqlite3")
+        # 先提交低优先, 再提交高优先
+        r_low = q.submit("bos://resident/task/submit", {"p": 0}, priority=0)
+        r_high = q.submit("bos://resident/task/submit", {"p": 10}, priority=10)
+        tasks = q.poll(limit=10)
+        assert [t.id for t in tasks] == [r_high.task_id, r_low.task_id]
+
+    def test_poll_same_priority_falls_back_to_creation_order(self, tmp_path: Path) -> None:
+        """同优先级时按 created_at 排序."""
+        q = TaskQueue(tmp_path / "same-prio.sqlite3")
+        ids = []
+        for i in range(3):
+            r = q.submit("bos://resident/task/submit", {"p": 5})
+            ids.append(r.task_id)
+            time.sleep(0.001)
+        tasks = q.poll(limit=10)
+        assert [t.id for t in tasks] == ids
+
 
 # ── 2. 容量保护 ───────────────────────────────────────
 class TestCapacityGuard:
@@ -99,7 +122,7 @@ class TestCapacityGuard:
 # ── 3. 重试机制 ───────────────────────────────────────
 class TestRetry:
     def test_fail_with_low_attempts_resets_to_queued(self, tmp_path: Path) -> None:
-        q = TaskQueue(tmp_path / "retry.sqlite3", max_attempts=3)
+        q = TaskQueue(tmp_path / "retry.sqlite3", max_attempts=3, backoff_base=0)
         r = q.submit("bos://resident/task/submit", {"q": "x"})
         q.poll()
         # attempts=1, 然后 fail → 重置 queued
@@ -110,7 +133,7 @@ class TestRetry:
         assert task.error_message == "transient error"
 
     def test_fail_with_max_attempts_marks_failed(self, tmp_path: Path) -> None:
-        q = TaskQueue(tmp_path / "retry2.sqlite3", max_attempts=2)
+        q = TaskQueue(tmp_path / "retry2.sqlite3", max_attempts=2, backoff_base=0)
         r = q.submit("bos://resident/task/submit", {})
         q.poll()  # attempts=1
         q.fail(r.task_id, "err1")  # 1 < 2 → queued
@@ -129,6 +152,34 @@ class TestRetry:
         task = q.get(r.task_id)
         assert task is not None
         assert len(task.error_message) == 500
+
+    def test_fail_sets_backoff_next_attempt_at(self, tmp_path: Path) -> None:
+        """fail 重试时应设置 next_attempt_at (exponential backoff)."""
+        q = TaskQueue(tmp_path / "backoff.sqlite3", max_attempts=3)
+        r = q.submit("bos://resident/task/submit", {})
+        q.poll()  # attempts=1
+        before = time.time()
+        q.fail(r.task_id, "transient")
+        task = q.get(r.task_id)
+        assert task is not None
+        assert task.status == TaskStatus.QUEUED
+        assert task.next_attempt_at >= before
+        assert task.next_attempt_at <= before + DEFAULT_BACKOFF_MAX
+
+    def test_poll_skips_backoff_tasks(self, tmp_path: Path) -> None:
+        """poll 应跳过处于 backoff 期的任务."""
+        q = TaskQueue(tmp_path / "skip.sqlite3", max_attempts=3)
+        # 提交两个任务
+        r1 = q.submit("bos://resident/task/submit", {"p": 1})
+        r2 = q.submit("bos://resident/task/submit", {"p": 2})
+        # poll 第一个, fail 使其进入 backoff
+        tasks = q.poll(limit=1)
+        assert len(tasks) == 1
+        q.fail(tasks[0].id, "err")
+        # 再次 poll, backoff 中的任务应被跳过
+        tasks = q.poll(limit=10)
+        assert len(tasks) == 1
+        assert tasks[0].id == r2.task_id
 
 
 # ── 4. 非法状态转换 ────────────────────────────────
