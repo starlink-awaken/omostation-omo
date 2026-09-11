@@ -20,8 +20,8 @@ import pytest
 
 from omo.resident.task_queue import (
     DEFAULT_BACKOFF_BASE,
-    DEFAULT_BACKOFF_MAX,
     DEFAULT_BACKOFF_JITTER,
+    DEFAULT_BACKOFF_MAX,
     DEFAULT_MAX_ATTEMPTS,
     DEFAULT_MAX_QUEUE,
     SubmitResult,
