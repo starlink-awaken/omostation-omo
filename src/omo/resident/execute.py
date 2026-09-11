@@ -155,12 +155,47 @@ def _resolve_run_binding(run_id: str) -> dict[str, Any] | None:
     }
 
 
+def _run_cellpool(*, prompt: str, run_id: str, timeout_seconds: int, max_cells: int = 4) -> dict[str, Any]:
+    """Dispatch a prompt through the CellPool elastic scheduling fabric.
+
+    Creates (or reuses) a CellPool, dispatches the prompt as an episode to an
+    isolated Cell, enforces a hard timeout, and automatically fails over if the
+    Cell crashes.  This is the primary integration point for BET-Y1Q4-T6-23
+    (Resident Daemon & AGE-v2 CellPool Integration).
+    """
+    from omo.resident.cell_pool import CellPool  # noqa: PLC0415 — avoid circular import at module level
+
+    pool = CellPool(max_cells=max_cells, auto_scale=False)
+    episode_id = f"ep-{run_id[:24]}"
+
+    try:
+        import asyncio  # noqa: PLC0415
+
+        receipt = asyncio.run(
+            pool.run_prompt(episode_id, prompt, timeout_seconds=timeout_seconds)
+        )
+        receipt["run_id"] = run_id
+        receipt["backend"] = "cellpool"
+        receipt["binding"] = _default_binding({"event_id": run_id}, {}, run_id)
+        if receipt.get("status") == "ok":
+            receipt["status"] = "dispatched"
+        return receipt
+    except Exception as exc:  # noqa: BLE001 — best-effort
+        return {
+            "error": f"cellpool_execution_failed: {type(exc).__name__}: {exc}",
+            "run_id": run_id,
+            "backend": "cellpool",
+            "binding": _default_binding({"event_id": run_id}, {}, run_id),
+        }
+
+
 def _execute(event: dict[str, Any], *, execute: bool) -> dict[str, Any]:
     """Build delivery_binding from event payload and run a worker backend (receipt).
 
-    M3.2 双载体: payload.backend 选择执行后端:
+    M3.2 三载体: payload.backend 选择执行后端:
     - pi (默认): 本地 Pi 推理 (pi-worker-adapter, 需 omlxc/AetherForge 认证)
     - multica: 托管 agent 自动化 (multica autopilot create+trigger)
+    - cellpool: CellPool 弹性调度 (多 Cell 并发 + 超时/显存熔断 + 故障转移)
     """
     payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
     prompt = str(payload.get("prompt") or payload.get("instruction") or "")
@@ -170,7 +205,10 @@ def _execute(event: dict[str, Any], *, execute: bool) -> dict[str, Any]:
     binding = _default_binding(event, payload, run_id)
     timeout = min(int(payload.get("timeout_seconds") or 30), 120)
     backend = str(payload.get("backend") or DEFAULT_BACKEND)
+    max_cells = min(int(payload.get("max_cells") or 4), 16)
     try:
+        if backend == "cellpool":
+            return _run_cellpool(prompt=prompt, run_id=run_id, timeout_seconds=timeout, max_cells=max_cells)
         if backend == "multica":
             return _run_multica(prompt=prompt, run_id=run_id, timeout_seconds=timeout)
         if backend != "pi":
