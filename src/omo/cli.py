@@ -2,8 +2,17 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import warnings
+from pathlib import Path
+
+
+def _omo_dir() -> Path | None:
+    """定位当前 workspace 的 .omo 目录；不存在则返回 None。"""
+    ws = Path(os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace")))
+    omo_dir = ws / ".omo"
+    return omo_dir if omo_dir.is_dir() else None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -57,7 +66,12 @@ def main(argv: list[str] | None = None) -> int:
         return ledger_main(args[1:])
     if args and args[0] == "cell":
         from omo.resident.cell_cli import main as cell_main
+        from omo.workflow_mesh import WorkflowMeshStore, dispatch_backend
 
+        omo_dir = _omo_dir()
+        store = WorkflowMeshStore(omo_dir) if omo_dir is not None else None
+        if store is not None:
+            return dispatch_backend(store, "cell", cell_main, args[1:])
         return cell_main(args[1:])
 
     if args and args[0] == "bridge":
