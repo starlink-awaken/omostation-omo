@@ -116,9 +116,7 @@ class TaskQueue:
                 )
                 """
             )
-            c.execute(
-                "CREATE INDEX IF NOT EXISTS idx_tasks_status ON resident_tasks(status, created_at)"
-            )
+            c.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON resident_tasks(status, created_at)")
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
@@ -187,11 +185,12 @@ class TaskQueue:
                 for r in rows:
                     new_attempts = r["attempts"] + 1
                     c.execute(
-                        "UPDATE resident_tasks SET status = ?, attempts = ?, updated_at = ? "
-                        "WHERE id = ?",
+                        "UPDATE resident_tasks SET status = ?, attempts = ?, updated_at = ? WHERE id = ?",
                         (TaskStatus.RUNNING.value, new_attempts, time.time(), r["id"]),
                     )
-                    tasks.append(self._row_to_task(r, status_override=TaskStatus.RUNNING, attempts_override=new_attempts))
+                    tasks.append(
+                        self._row_to_task(r, status_override=TaskStatus.RUNNING, attempts_override=new_attempts)
+                    )
                 c.execute("COMMIT")
             except Exception:
                 c.execute("ROLLBACK")
@@ -207,9 +206,7 @@ class TaskQueue:
         with self._conn() as c:
             c.execute("BEGIN IMMEDIATE")
             try:
-                row = c.execute(
-                    "SELECT status, attempts FROM resident_tasks WHERE id = ?", (task_id,)
-                ).fetchone()
+                row = c.execute("SELECT status, attempts FROM resident_tasks WHERE id = ?", (task_id,)).fetchone()
                 if row is None:
                     c.execute("ROLLBACK")
                     return False
@@ -219,8 +216,7 @@ class TaskQueue:
                 if row["attempts"] < self.max_attempts:
                     # 重试: 重置为 queued
                     c.execute(
-                        "UPDATE resident_tasks SET status = ?, error_message = ?, updated_at = ? "
-                        "WHERE id = ?",
+                        "UPDATE resident_tasks SET status = ?, error_message = ?, updated_at = ? WHERE id = ?",
                         (
                             TaskStatus.QUEUED.value,
                             error_message[:500],
@@ -231,8 +227,7 @@ class TaskQueue:
                 else:
                     # 终态失败
                     c.execute(
-                        "UPDATE resident_tasks SET status = ?, error_message = ?, updated_at = ? "
-                        "WHERE id = ?",
+                        "UPDATE resident_tasks SET status = ?, error_message = ?, updated_at = ? WHERE id = ?",
                         (
                             TaskStatus.FAILED.value,
                             error_message[:500],
@@ -259,9 +254,7 @@ class TaskQueue:
     def stats(self) -> dict[str, int]:
         """返回队列统计: 各状态任务数."""
         with self._conn() as c:
-            rows = c.execute(
-                "SELECT status, COUNT(*) FROM resident_tasks GROUP BY status"
-            ).fetchall()
+            rows = c.execute("SELECT status, COUNT(*) FROM resident_tasks GROUP BY status").fetchall()
         out = {s.value: 0 for s in TaskStatus}
         for r in rows:
             # SQLite Row index access: r[0] = status, r[1] = count
@@ -283,9 +276,7 @@ class TaskQueue:
         with self._conn() as c:
             c.execute("BEGIN IMMEDIATE")
             try:
-                row = c.execute(
-                    "SELECT status FROM resident_tasks WHERE id = ?", (task_id,)
-                ).fetchone()
+                row = c.execute("SELECT status FROM resident_tasks WHERE id = ?", (task_id,)).fetchone()
                 if row is None:
                     c.execute("ROLLBACK")
                     return False
@@ -295,8 +286,7 @@ class TaskQueue:
                     return False
                 result_json = json.dumps(result, ensure_ascii=False) if result is not None else None
                 c.execute(
-                    "UPDATE resident_tasks SET status = ?, result = COALESCE(?, result), updated_at = ? "
-                    "WHERE id = ?",
+                    "UPDATE resident_tasks SET status = ?, result = COALESCE(?, result), updated_at = ? WHERE id = ?",
                     (target.value, result_json, time.time(), task_id),
                 )
                 c.execute("COMMIT")
