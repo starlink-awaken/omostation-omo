@@ -185,12 +185,13 @@ class TaskQueue:
                     (TaskStatus.QUEUED.value, limit),
                 ).fetchall()
                 for r in rows:
+                    new_attempts = r["attempts"] + 1
                     c.execute(
-                        "UPDATE resident_tasks SET status = ?, attempts = attempts + 1, updated_at = ? "
+                        "UPDATE resident_tasks SET status = ?, attempts = ?, updated_at = ? "
                         "WHERE id = ?",
-                        (TaskStatus.RUNNING.value, time.time(), r["id"]),
+                        (TaskStatus.RUNNING.value, new_attempts, time.time(), r["id"]),
                     )
-                    tasks.append(self._row_to_task(r))
+                    tasks.append(self._row_to_task(r, status_override=TaskStatus.RUNNING, attempts_override=new_attempts))
                 c.execute("COMMIT")
             except Exception:
                 c.execute("ROLLBACK")
@@ -263,7 +264,11 @@ class TaskQueue:
             ).fetchall()
         out = {s.value: 0 for s in TaskStatus}
         for r in rows:
-            out[r["status"]] = r["count"]
+            # SQLite Row index access: r[0] = status, r[1] = count
+            status_str = r[0] if isinstance(r[0], str) else str(r[0])
+            count = r[1]
+            if status_str in out:
+                out[status_str] = count
         return out
 
     # ── Internal ──────────────────────────────────
@@ -300,16 +305,26 @@ class TaskQueue:
                 c.execute("ROLLBACK")
                 raise
 
-    def _row_to_task(self, row: sqlite3.Row | None) -> Task:
+    def _row_to_task(
+        self,
+        row: sqlite3.Row | None,
+        *,
+        status_override: TaskStatus | None = None,
+        attempts_override: int | None = None,
+    ) -> Task:
         if row is None:
             raise ValueError("row is None")
+        status = status_override if status_override is not None else TaskStatus(row["status"])
+        attempts = attempts_override if attempts_override is not None else row["attempts"]
+        # sqlite3.Row 可能不支持 __contains__, 改用 keys() 检查
+        result_raw = row["result"] if "result" in row.keys() else None
         return Task(
             id=row["id"],
             uri=row["uri"],
             payload=json.loads(row["payload"]) if row["payload"] else {},
-            status=TaskStatus(row["status"]),
-            attempts=row["attempts"],
-            result=json.loads(row["result"]) if row["result"] else None,
+            status=status,
+            attempts=attempts,
+            result=json.loads(result_raw) if result_raw else None,
             error_message=row["error_message"] or "",
             created_at=row["created_at"],
             updated_at=row["updated_at"],
