@@ -38,7 +38,7 @@ import json
 import math
 import re
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -52,6 +52,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from omo.event_ledger.broker import DuplicateEventError, LedgerBroker, LedgerError
 from omo.sovereignty.mandates import EVT_MANDATE_GRANT, MANDATE_PRODUCER, MandateManager
+from omo.sovereignty.persistent_queue import PersistentQueue
 
 # ---------------------------------------------------------------------------
 # Identity / event constants
@@ -451,6 +452,28 @@ class PolicyEnforcementService:
                 expires_at=timing[1],
             )
             return DecisionResult(deny, persisted=False)
+
+    def enqueue_allowed_action(self, request: ActionRequest, *, priority: int = 0) -> str:
+        """Persist an admitted action for a later side-effect executor.
+
+        Admission and queueing share the same ledger-backed broker, while the
+        queue remains a separate replayable stream so execution can happen
+        outside the policy decision call.
+        """
+        result = self.decide(request)
+        if result.decision.decision != "allow":
+            raise PolicyEnforcementError(
+                f"cannot queue action {request.action_id}: {result.decision.reason}"
+            )
+
+        queue = PersistentQueue(self._broker, f"policy-actions:{request.principal_id}")
+        return queue.enqueue(
+            {
+                "action_request": asdict(request),
+                "decision_id": result.decision.decision_id,
+            },
+            priority=priority,
+        )
 
     def _verify_principal_authority(
         self,

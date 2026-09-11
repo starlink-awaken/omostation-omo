@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from omo.event_ledger.broker import DuplicateEventError, LedgerBroker
+from omo.sovereignty.enforcement import ActionRequest, DecisionResult, PolicyEnforcementService
 from omo.sovereignty.persistent_queue import (
     EVT_ENQUEUED,
     PRODUCER,
@@ -179,3 +180,45 @@ def test_independent_queue_ids_do_not_leak_items(db_path):
     finally:
         a.close()
         b.close()
+
+
+def test_policy_enforcement_can_queue_an_admitted_action(db_path, monkeypatch):
+    broker = LedgerBroker.connect(db_path)
+    service = PolicyEnforcementService(broker)
+    request = ActionRequest(
+        action_id="action:queued-draft",
+        principal_id="principal:xiamingxing",
+        executor_id="agent:planner",
+        episode_id="episode_queue",
+        mandate_id="mandate:queue",
+        role_context_id="role:family-steward",
+        responsibility_id="responsibility:family-commitments",
+        capability="bos://mail/draft",
+        server_risk="R1",
+        requested_budget=1.0,
+        budget_unit="call",
+        disclosure_policy="disclosure:private",
+    )
+    monkeypatch.setattr(
+        service,
+        "decide",
+        lambda _: DecisionResult(
+            decision=type(
+                "AllowedDecision",
+                (),
+                {"decision": "allow", "decision_id": "decision:queued-draft", "reason": "allowed"},
+            )(),
+            persisted=True,
+        ),
+    )
+
+    try:
+        item_id = service.enqueue_allowed_action(request, priority=4)
+        queue = PersistentQueue(broker, "policy-actions:principal:xiamingxing")
+        queued_id, payload = queue.peek()
+        assert queued_id == item_id
+        assert payload["decision_id"] == "decision:queued-draft"
+        assert payload["action_request"]["action_id"] == request.action_id
+        assert payload["action_request"]["capability"] == request.capability
+    finally:
+        broker.close()
