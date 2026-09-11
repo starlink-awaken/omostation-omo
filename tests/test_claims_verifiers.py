@@ -126,6 +126,4 @@ def test_green_verifier_digests_are_distinct_and_closure_bound() -> None:
     entries = production_verifier_dependency_entries()
     assert [entry["path"] for entry in entries] == sorted(entry["path"] for entry in entries)
     assert {entry["object_oid_or_digest"] for entry in entries} == {operator_digest, stopped_digest}
-    assert production_verifier_closure_digest() == canonical_digest(
-        {"critical_dependency_entries": entries}
-    )
+    assert production_verifier_closure_digest() == canonical_digest({"critical_dependency_entries": entries})

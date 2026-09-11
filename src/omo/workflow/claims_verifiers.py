@@ -224,11 +224,7 @@ def verify_stopped_process_proof(
         )
         issued_at_value = auth_payload.get("issued_at")
         auth_digest = auth_payload.get("digest")
-        if (
-            isinstance(auth_digest, str)
-            and auth_digest
-            and payload.get("authorization_digest") != auth_digest
-        ):
+        if isinstance(auth_digest, str) and auth_digest and payload.get("authorization_digest") != auth_digest:
             raise AuthorityError("OPERATOR_STOPPED_PROCESS_PROOF_INVALID", "stopped_process_authorization_digest")
     if issued_at_value is not None:
         issued_at = _parse_utc(
