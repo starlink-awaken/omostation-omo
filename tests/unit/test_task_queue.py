@@ -285,7 +285,9 @@ class TestTaskCLI:
         db = str(tmp_path / "cli-bad.sqlite3")
         assert tq.main(["submit", "--uri", "bos://resident/x", "--json", "{bad", "--db", db]) == 2
 
-    def test_submit_stdin_payload(self, tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_submit_stdin_payload(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from omo.resident import task_queue as tq
 
         db = str(tmp_path / "cli-stdin.sqlite3")

@@ -368,16 +368,22 @@ def main(argv: list[str] | None = None) -> int:
     import sys  # noqa: PLC0415
 
     parser = argparse.ArgumentParser(prog="omo resident task", description=__doc__)
-    parser.add_argument("--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)")
+    parser.add_argument(
+        "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
+    )
     sub = parser.add_subparsers(dest="command", required=True)
     p_submit = sub.add_parser("submit", help="提交任务入队")
     p_submit.add_argument("--uri", required=True, help="目标 BOS URI (由 daemon 按 URI 分发)")
     p_submit.add_argument("--json", default=None, help="payload JSON 字符串 (缺省读 stdin)")
-    p_submit.add_argument("--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)")
+    p_submit.add_argument(
+        "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
+    )
     p_status = sub.add_parser("status", help="查询任务状态")
     p_status.add_argument("--id", default=None, help="任务 id")
     p_status.add_argument("--json", default=None, help='请求 JSON 字符串 (如 {"id": "<task-id>"})')
-    p_status.add_argument("--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)")
+    p_status.add_argument(
+        "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
+    )
     args = parser.parse_args(argv)
 
     # --db 可放顶层 (task --db X submit ...) 或子命令级 (task submit --db X ...), 同 dest
