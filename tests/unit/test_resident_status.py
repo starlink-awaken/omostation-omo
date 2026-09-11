@@ -175,7 +175,6 @@ def test_ledger_probe_readonly_ok(_snapshot_paths: Path) -> None:
     assert "read-only probe" in result["detail"]
 
 
-
 def test_ledger_probe_readonly_null_genesis(_snapshot_paths: Path) -> None:
     """Production writers store genesis previous_hash as SQL NULL."""
     from omo.resident import status as st
