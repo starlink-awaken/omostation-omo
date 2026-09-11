@@ -46,7 +46,7 @@ def _create_test_ledger(path: Path, rows: list[tuple[int, str, str]] | None = No
         "CREATE TABLE IF NOT EXISTS event_log ("
         " sequence INTEGER PRIMARY KEY,"
         " event_hash TEXT NOT NULL,"
-        " previous_hash TEXT NOT NULL"
+        " previous_hash TEXT"
         ")"
     )
     if rows:
@@ -173,6 +173,39 @@ def test_ledger_probe_readonly_ok(_snapshot_paths: Path) -> None:
     assert result["ok"] is True
     assert result["sequence"] == 3
     assert "read-only probe" in result["detail"]
+
+
+def test_ledger_probe_readonly_null_genesis(_snapshot_paths: Path) -> None:
+    """Production writers store genesis previous_hash as SQL NULL."""
+    from omo.resident import status as st
+
+    _create_test_ledger(
+        st.LEDGER,
+        rows=[
+            (1, "h1", None),  # type: ignore[list-item]
+            (2, "h2", "h1"),
+        ],
+    )
+    # _create_test_ledger may reject None — open and rewrite if needed
+    import sqlite3
+
+    conn = sqlite3.connect(st.LEDGER)
+    try:
+        conn.execute("DELETE FROM event_log")
+        conn.execute(
+            "INSERT INTO event_log (sequence, event_hash, previous_hash) VALUES (?, ?, ?)",
+            (1, "h1", None),
+        )
+        conn.execute(
+            "INSERT INTO event_log (sequence, event_hash, previous_hash) VALUES (?, ?, ?)",
+            (2, "h2", "h1"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    report = st.snapshot()
+    assert report["components"]["ledger"]["ok"] is True
+    assert report["components"]["ledger"]["recovery_performed"] is False
 
 
 def test_ledger_probe_readonly_broken_chain(_snapshot_paths: Path) -> None:

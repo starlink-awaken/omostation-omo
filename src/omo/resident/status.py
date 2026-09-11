@@ -135,11 +135,17 @@ def _probe_ledger_once() -> dict[str, Any]:
         rows = list(conn.execute("SELECT sequence, event_hash, previous_hash FROM event_log ORDER BY sequence"))
         if not rows:
             return {"ok": True, "detail": "ledger empty (cold start)", "sequence": 0}
-        prev_hash = ""
+        # Genesis previous_hash is SQL NULL in production writers
+        # (LedgerBroker.append / verify_chain). Empty-string is only a
+        # synthetic unit-fixture convenience — accept either at seq start.
+        prev_hash: str | None = None
         broken = False
-        for row in rows:
+        for index, row in enumerate(rows):
             expected_prev = prev_hash
-            if row["previous_hash"] != expected_prev:
+            actual_prev = row["previous_hash"]
+            if index == 0 and actual_prev in (None, ""):
+                actual_prev = None
+            if actual_prev != expected_prev:
                 broken = True
                 break
             prev_hash = row["event_hash"]
