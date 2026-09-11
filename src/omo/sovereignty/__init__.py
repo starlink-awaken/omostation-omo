@@ -77,6 +77,16 @@ from omo.sovereignty.mandates import (
     MandateState,
     StaleMandateVersionError,
 )
+from omo.sovereignty.persistent_queue import (
+    EVT_DEQUEUED,
+    EVT_ENQUEUED,
+    PersistentQueue,
+    QueueError,
+    QueueItem,
+    QueueReplayError,
+)
+from omo.sovereignty.persistent_queue import PRODUCER as QUEUE_PRODUCER
+from omo.sovereignty.persistent_queue import SPACE_ID as QUEUE_SPACE_ID
 from omo.sovereignty.principal_authority import (
     REASON_AUTHORITY_CREDENTIAL_MISMATCH,
     REASON_AUTHORITY_DIGEST_UNVERIFIED,
@@ -120,6 +130,8 @@ __all__ = [
     "EVT_ACTION_STARTED",
     "EVT_ACTION_SUCCEEDED",
     "EVT_ASSIGN",
+    "EVT_DEQUEUED",
+    "EVT_ENQUEUED",
     "EVT_MANDATE_GRANT",
     "EVT_MANDATE_REVOKE",
     "EVT_POLICY_DECISION",
@@ -192,6 +204,12 @@ __all__ = [
     "PolicyEnforcementError",
     "PolicyEnforcementService",
     "Principal",
+    "PersistentQueue",
+    "QueueError",
+    "QueueItem",
+    "QueueReplayError",
+    "QUEUE_PRODUCER",
+    "QUEUE_SPACE_ID",
     "Responsibility",
     "Role",
     "RoleAssignment",
