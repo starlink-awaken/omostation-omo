@@ -265,13 +265,12 @@ def _process_task_queue() -> dict[str, Any]:
     每个 tick 调用一次. 处理流程:
       1. poll() 拉取 queued → running (原子)
       2. 对每个 task 路由到 handler (按 URI 分发)
-      3. 成功 → complete(); 异常 → fail() (触发重试或终态失败)
+      3. 成功 → complete(result=handler_result); 异常 → fail() (触发重试或终态失败)
     """
     from omo.resident.task_queue import TaskQueue, TaskStatus, default_db_path  # noqa: PLC0415
 
     db_path = default_db_path()
     if not db_path.exists():
-        # 队列尚未创建 (无 task 提交过), 跳过
         return {"picked": 0, "completed": 0, "failed": 0, "skipped": True}
 
     q = TaskQueue(db_path)
@@ -286,10 +285,10 @@ def _process_task_queue() -> dict[str, Any]:
                 failed += 1
                 _log(f"task_queue no_handler task={task.id} uri={task.uri}")
                 continue
-            result = handler(task.payload)
-            q.complete(task.id, result=result)
+            handler_result = handler(task.payload)
+            q.complete(task.id, result=handler_result)
             completed += 1
-            _log(f"task_queue ok task={task.id} uri={task.uri}")
+            _log(f"task_queue ok task={task.id} uri={task.uri} result={handler_result!r}")
         except Exception as exc:  # noqa: BLE001
             q.fail(task.id, f"{type(exc).__name__}: {exc}"[:500])
             failed += 1
@@ -301,12 +300,24 @@ def _resolve_task_handler(uri: str) -> "Callable[[dict[str, Any]], Any] | None":
     """T10-125 task_gateway: URI → handler 分发表.
 
     返回 None 表示 URI 无 handler (fail() 触发重试上限后转终态 failed).
+    Handler 必须返回可 JSON 序列化的结构化结果, 否则 complete(result=...) 会降级为 None.
     """
     from omo.resident import sediment as _sediment  # noqa: PLC0415
+    from omo.resident import decision as _decision  # noqa: PLC0415
+
+    def _sediment_handler(payload: dict[str, Any]) -> dict[str, Any]:
+        event = payload if isinstance(payload, dict) else {}
+        _sediment._sediment_dispatch(event)
+        return {"kind": "sediment", "status": "ok", "event_type": _sediment._event_type(event)}
+
+    def _decision_handler(payload: dict[str, Any]) -> dict[str, Any]:
+        event = payload if isinstance(payload, dict) else {}
+        path = _decision._decide(event)
+        return {"kind": "decision", "status": "ok", "path": path or "", "triggered": path is not None}
 
     registry: dict[str, Callable[[dict[str, Any]], Any]] = {
-        "bos://resident/sediment/trigger": lambda p: _sediment.knowledge_sediment_event(p),
-        "bos://resident/decision/trigger": lambda p: {"triggered": True, "path": p.get("path", "")},
+        "bos://resident/sediment/trigger": _sediment_handler,
+        "bos://resident/decision/trigger": _decision_handler,
     }
     return registry.get(uri)
 
