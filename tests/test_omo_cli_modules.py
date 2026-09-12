@@ -19,8 +19,8 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import yaml
 import pytest
+import yaml
 
 # Ensure omo src is importable
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
