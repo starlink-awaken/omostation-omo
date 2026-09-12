@@ -303,5 +303,159 @@ def main(argv=None) -> int:
     return 0
 
 
+# --- BET-Y1Q4-T8-21: 状态标记与归档逻辑 ---
+
+VALID_TRIAGE_STATUSES = ("reviewed", "promoted", "dismissed")
+
+
+def _parse_frontmatter(content: str) -> dict[str, str]:
+    """简单 YAML frontmatter 解析."""
+    meta: dict[str, str] = {}
+    if not content.startswith("---"):
+        return meta
+    end = content.find("---", 3)
+    if end == -1:
+        return meta
+    for line in content[3:end].strip().splitlines():
+        if ":" in line:
+            key, _, value = line.partition(":")
+            meta[key.strip()] = value.strip()
+    return meta
+
+
+def _update_frontmatter(content: str, updates: dict[str, str]) -> str:
+    """更新 frontmatter 中的指定字段."""
+    if not content.startswith("---"):
+        return content
+    end = content.find("---", 3)
+    if end == -1:
+        return content
+
+    fm_lines = content[3:end].strip().splitlines()
+    updated: dict[str, str] = {}
+    new_lines: list[str] = []
+    for line in fm_lines:
+        if ":" in line:
+            key, _, value = line.partition(":")
+            k = key.strip()
+            if k in updates:
+                new_lines.append(f"{k}: {updates[k]}")
+                updated[k] = updates[k]
+            else:
+                new_lines.append(line)
+        else:
+            new_lines.append(line)
+
+    # 添加新字段
+    for k, v in updates.items():
+        if k not in updated:
+            new_lines.append(f"{k}: {v}")
+
+    return "---\n" + "\n".join(new_lines) + "\n---" + content[end + 3 :]
+
+
+def mark_proposal_status(file_path: str | Path, status: str) -> bool:
+    """标记单个提案的状态.
+
+    Args:
+        file_path: 提案文件路径 (md 或 json)
+        status: reviewed / promoted / dismissed
+
+    Returns:
+        是否成功标记
+    """
+    if status not in VALID_TRIAGE_STATUSES:
+        return False
+
+    path = Path(file_path)
+    if not path.exists():
+        return False
+
+    content = path.read_text(encoding="utf-8", errors="replace")
+
+    if path.suffix == ".json":
+        try:
+            data = json.loads(content)
+            data["triage_status"] = status
+            data["triage_updated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+            path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            return True
+        except (json.JSONDecodeError, OSError):
+            return False
+    else:
+        # markdown 文件
+        new_content = _update_frontmatter(
+            content,
+            {
+                "triage_status": status,
+                "triage_updated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            },
+        )
+        path.write_text(new_content, encoding="utf-8")
+        return True
+
+
+def batch_archive_status(status: str = "reviewed", dry_run: bool = False) -> dict[str, Any]:
+    """批量标记所有未归档提案.
+
+    Args:
+        status: 目标状态 (默认 reviewed)
+        dry_run: 仅统计不写入
+
+    Returns:
+        统计结果 {"total": N, "marked": N, "skipped": N}
+    """
+    if status not in VALID_TRIAGE_STATUSES:
+        return {"total": 0, "marked": 0, "skipped": 0, "error": "invalid_status"}
+
+    inbox_dir = WORKSPACE / ".omo" / "_knowledge" / "decision-proposals"
+    if not inbox_dir.exists():
+        return {"total": 0, "marked": 0, "skipped": 0}
+
+    total = 0
+    marked = 0
+    skipped = 0
+
+    for md_file in sorted(inbox_dir.glob("decision-*.md")):
+        total += 1
+        content = md_file.read_text(encoding="utf-8", errors="replace")
+        meta = _parse_frontmatter(content)
+        current = meta.get("triage_status")
+
+        if current in VALID_TRIAGE_STATUSES:
+            skipped += 1
+            continue
+
+        if not dry_run:
+            mark_proposal_status(md_file, status)
+        marked += 1
+
+    return {"total": total, "marked": marked, "skipped": skipped}
+
+
+def get_archive_progress() -> dict[str, Any]:
+    """获取归档进度统计."""
+    inbox_dir = WORKSPACE / ".omo" / "_knowledge" / "decision-proposals"
+    if not inbox_dir.exists():
+        return {"total": 0, "reviewed": 0, "promoted": 0, "dismissed": 0, "unreviewed": 0}
+
+    total = 0
+    by_status: dict[str, int] = {}
+
+    for md_file in sorted(inbox_dir.glob("decision-*.md")):
+        total += 1
+        content = md_file.read_text(encoding="utf-8", errors="replace")
+        meta = _parse_frontmatter(content)
+        s = meta.get("triage_status") or "unreviewed"
+        by_status[s] = by_status.get(s, 0) + 1
+
+    by_status["total"] = total
+    by_status.setdefault("reviewed", 0)
+    by_status.setdefault("promoted", 0)
+    by_status.setdefault("dismissed", 0)
+    by_status.setdefault("unreviewed", 0)
+    return by_status
+
+
 if __name__ == "__main__":
     sys.exit(main())
