@@ -554,6 +554,13 @@ def main(argv: list[str] | None = None) -> int:
     p_metrics.add_argument(
         "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
     )
+    p_search = sub.add_parser("search", help="搜索任务 (按 payload/result/error_message 内容)")
+    p_search.add_argument("--query", required=True, help="搜索关键词 (大小写不敏感)")
+    p_search.add_argument("--field", default="all", help="搜索字段: payload/result/error/all (默认 all)")
+    p_search.add_argument("--limit", type=int, default=50, help="最多返回条数 (默认 50)")
+    p_search.add_argument(
+        "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
+    )
     args = parser.parse_args(argv)
 
     # --db 可放顶层 (task --db X submit ...) 或子命令级 (task submit --db X ...), 同 dest
@@ -626,6 +633,33 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "metrics":
         m = queue.metrics()
         print(json.dumps(m, ensure_ascii=False), flush=True)
+        return 0
+
+    if args.command == "search":
+        query = args.query.strip().lower()
+        field = args.field.lower()
+        if not query:
+            print(json.dumps({"tasks": [], "count": 0, "query": query}), flush=True)
+            return 0
+        with queue._conn() as c:
+            rows = c.execute(
+                "SELECT id, uri, payload, status, attempts, result, error_message, priority, next_attempt_at, expires_at, labels, created_at, updated_at FROM resident_tasks"
+            ).fetchall()
+        matched: list[Task] = []
+        for r in rows:
+            task = queue._row_to_task(r)
+            haystack = ""
+            if field in ("payload", "all"):
+                haystack += json.dumps(task.payload, ensure_ascii=False).lower()
+            if field in ("result", "all"):
+                haystack += json.dumps(task.result, ensure_ascii=False).lower()
+            if field in ("error", "error_message", "all"):
+                haystack += task.error_message.lower()
+            if query in haystack:
+                matched.append(task)
+            if len(matched) >= args.limit:
+                break
+        print(json.dumps({"tasks": [_task_to_json(t) for t in matched], "count": len(matched), "query": query}, ensure_ascii=False), flush=True)
         return 0
 
     task_id = args.id

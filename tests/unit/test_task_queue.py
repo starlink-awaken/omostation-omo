@@ -490,6 +490,44 @@ class TestListAndMetrics:
         assert m["retried"] == 0
         assert m["success_rate"] == 0.5
 
+    def test_search_by_payload(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "search-payload.sqlite3")
+        q = TaskQueue(db)
+        r1 = q.submit("bos://resident/a", {"action": "deploy"})
+        r2 = q.submit("bos://resident/b", {"action": "build"})
+        assert tq.main(["search", "--query", "deploy", "--field", "payload", "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["count"] == 1
+        assert out["tasks"][0]["id"] == r1.task_id
+
+    def test_search_by_result(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "search-result.sqlite3")
+        q = TaskQueue(db)
+        r1 = q.submit("bos://resident/a", {})
+        q.poll()
+        q.complete(r1.task_id, result={"status": "success"})
+        assert tq.main(["search", "--query", "success", "--field", "result", "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["count"] == 1
+        assert out["tasks"][0]["id"] == r1.task_id
+
+    def test_search_by_error(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "search-error.sqlite3")
+        q = TaskQueue(db)
+        r1 = q.submit("bos://resident/a", {})
+        q.poll()
+        q.fail(r1.task_id, "timeout exceeded")
+        assert tq.main(["search", "--query", "timeout", "--field", "error", "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["count"] == 1
+        assert out["tasks"][0]["id"] == r1.task_id
+
 
 class _StdinStub:
     """最小 stdin 桩 (read() 一次性返回固定文本)."""
