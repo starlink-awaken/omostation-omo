@@ -70,9 +70,7 @@ class SceneLifecycleCruiser:
         if not scene_id:
             raise CruiserError("empty-scene-id", "scene_id 不能为空")
         if lifecycle not in ALLOWED_LIFECYCLES:
-            raise CruiserError(
-                "unknown-lifecycle", f"未知 lifecycle: {lifecycle}"
-            )
+            raise CruiserError("unknown-lifecycle", f"未知 lifecycle: {lifecycle}")
         if n_samples < 0:
             raise CruiserError("bad-samples", f"n_samples 非法: {n_samples}")
 
@@ -146,9 +144,7 @@ class SceneLifecycleCruiser:
             detail=f"{nxt} 门未达: 需 {min_samples} 样本 + 校准 ≥ {min_calib}",
         )
 
-    def cruise_all(
-        self, observations: list[dict[str, Any]]
-    ) -> list[CruiseDecision]:
+    def cruise_all(self, observations: list[dict[str, Any]]) -> list[CruiseDecision]:
         """批量巡航; 单条非法观测跳过并记 hold/invalid, 不阻断整体."""
         out: list[CruiseDecision] = []
         for ob in observations:

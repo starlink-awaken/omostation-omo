@@ -47,9 +47,7 @@ class GoldenSample:
     created_at: str = field(default_factory=_utcnow)
 
     def digest(self) -> str:
-        return hashlib.sha256(
-            _canonical_json(asdict(self)).encode("utf-8")
-        ).hexdigest()
+        return hashlib.sha256(_canonical_json(asdict(self)).encode("utf-8")).hexdigest()
 
 
 class GoldenSampleStore:
@@ -72,12 +70,8 @@ class GoldenSampleStore:
         if not scene_id:
             raise GoldenSampleError("empty-scene-id", "scene_id 不能为空")
         if not (0.0 <= calibration <= 1.0):
-            raise GoldenSampleError(
-                "bad-calibration", f"calibration 必须在 [0,1]: {calibration}"
-            )
-        input_digest = hashlib.sha256(
-            _canonical_json(inputs).encode("utf-8")
-        ).hexdigest()
+            raise GoldenSampleError("bad-calibration", f"calibration 必须在 [0,1]: {calibration}")
+        input_digest = hashlib.sha256(_canonical_json(inputs).encode("utf-8")).hexdigest()
         sample = GoldenSample(
             scene_id=scene_id,
             input_digest=input_digest,
@@ -101,11 +95,7 @@ class GoldenSampleStore:
         if target is None:
             raise GoldenSampleError("no-path", "未指定持久化路径")
         target.parent.mkdir(parents=True, exist_ok=True)
-        lines = [
-            _canonical_json(asdict(s))
-            for bucket in self._samples.values()
-            for s in bucket.values()
-        ]
+        lines = [_canonical_json(asdict(s)) for bucket in self._samples.values() for s in bucket.values()]
         target.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
         self._path = target
         return target
