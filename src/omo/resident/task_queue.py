@@ -585,12 +585,14 @@ def main(argv: list[str] | None = None) -> int:
         "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
     )
     p_cancel = sub.add_parser("cancel", help="取消 queued 任务")
-    p_cancel.add_argument("--id", required=True, help="任务 id")
+    p_cancel.add_argument("--id", default=None, help="任务 id (与 --file 二选一)")
+    p_cancel.add_argument("--file", default=None, help="任务 id 列表文件 (每行一个 id)")
     p_cancel.add_argument(
         "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
     )
     p_retry = sub.add_parser("retry", help="重试 failed 任务 (重新入队)")
-    p_retry.add_argument("--id", required=True, help="任务 id")
+    p_retry.add_argument("--id", default=None, help="任务 id (与 --file 二选一)")
+    p_retry.add_argument("--file", default=None, help="任务 id 列表文件 (每行一个 id)")
     p_retry.add_argument(
         "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
     )
@@ -720,20 +722,52 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "cancel":
-        ok = queue.cancel(args.id)
-        if ok:
-            print(json.dumps({"ok": True, "task_id": args.id, "status": "canceled"}), flush=True)
-            return 0
-        print(json.dumps({"ok": False, "reason": "task not found or not queued", "task_id": args.id}), flush=True)
-        return 2
+        task_ids: list[str] = []
+        if args.file:
+            try:
+                text = Path(args.file).read_text(encoding="utf-8")
+                task_ids = [line.strip() for line in text.splitlines() if line.strip()]
+            except OSError as exc:
+                print(json.dumps({"ok": False, "reason": f"cannot read file: {exc}"}), flush=True)
+                return 2
+        elif args.id:
+            task_ids = [args.id]
+        else:
+            print(json.dumps({"ok": False, "reason": "missing --id or --file"}), flush=True)
+            return 2
+        results = {"ok": True, "canceled": [], "failed": []}
+        for task_id in task_ids:
+            if queue.cancel(task_id):
+                results["canceled"].append(task_id)
+            else:
+                results["failed"].append(task_id)
+                results["ok"] = False
+        print(json.dumps(results, ensure_ascii=False), flush=True)
+        return 0 if results["ok"] else 2
 
     if args.command == "retry":
-        ok = queue.retry(args.id)
-        if ok:
-            print(json.dumps({"ok": True, "task_id": args.id, "status": "queued"}), flush=True)
-            return 0
-        print(json.dumps({"ok": False, "reason": "task not found or not failed", "task_id": args.id}), flush=True)
-        return 2
+        task_ids = []
+        if args.file:
+            try:
+                text = Path(args.file).read_text(encoding="utf-8")
+                task_ids = [line.strip() for line in text.splitlines() if line.strip()]
+            except OSError as exc:
+                print(json.dumps({"ok": False, "reason": f"cannot read file: {exc}"}), flush=True)
+                return 2
+        elif args.id:
+            task_ids = [args.id]
+        else:
+            print(json.dumps({"ok": False, "reason": "missing --id or --file"}), flush=True)
+            return 2
+        results = {"ok": True, "retried": [], "failed": []}
+        for task_id in task_ids:
+            if queue.retry(task_id):
+                results["retried"].append(task_id)
+            else:
+                results["failed"].append(task_id)
+                results["ok"] = False
+        print(json.dumps(results, ensure_ascii=False), flush=True)
+        return 0 if results["ok"] else 2
 
     if args.command == "purge-expired":
         count = queue.purge_expired(args.older_than)

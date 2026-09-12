@@ -617,7 +617,7 @@ class TestListAndMetrics:
         assert tq.main(["cancel", "--id", r1.task_id, "--db", db]) == 0
         out = json.loads(capsys.readouterr().out)
         assert out["ok"] is True
-        assert out["status"] == "canceled"
+        assert out["canceled"] == [r1.task_id]
         task = q.get(r1.task_id)
         assert task is not None and task.status == TaskStatus.CANCELED
 
@@ -633,6 +633,22 @@ class TestListAndMetrics:
         out = json.loads(capsys.readouterr().out)
         assert out["ok"] is False
 
+    def test_cancel_bulk_by_file(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "cancel-bulk.sqlite3")
+        q = TaskQueue(db)
+        r1 = q.submit("bos://resident/a", {})
+        r2 = q.submit("bos://resident/b", {})
+        id_file = tmp_path / "cancel-ids.txt"
+        id_file.write_text(r1.task_id + "\n" + r2.task_id, encoding="utf-8")
+        assert tq.main(["cancel", "--file", str(id_file), "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["ok"] is True
+        assert out["canceled"] == [r1.task_id, r2.task_id]
+        assert q.get(r1.task_id).status == TaskStatus.CANCELED
+        assert q.get(r2.task_id).status == TaskStatus.CANCELED
+
     def test_retry_failed(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
         from omo.resident import task_queue as tq
 
@@ -644,9 +660,28 @@ class TestListAndMetrics:
         assert tq.main(["retry", "--id", r1.task_id, "--db", db]) == 0
         out = json.loads(capsys.readouterr().out)
         assert out["ok"] is True
-        assert out["status"] == "queued"
+        assert out["retried"] == [r1.task_id]
         task = q.get(r1.task_id)
         assert task is not None and task.status == TaskStatus.QUEUED
+
+    def test_retry_bulk_by_file(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "retry-bulk.sqlite3")
+        q = TaskQueue(db, max_attempts=1)
+        r1 = q.submit("bos://resident/a", {})
+        r2 = q.submit("bos://resident/b", {})
+        q.poll()
+        q.fail(r1.task_id, "boom")
+        q.fail(r2.task_id, "boom")
+        id_file = tmp_path / "retry-ids.txt"
+        id_file.write_text(r1.task_id + "\n" + r2.task_id, encoding="utf-8")
+        assert tq.main(["retry", "--file", str(id_file), "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["ok"] is True
+        assert out["retried"] == [r1.task_id, r2.task_id]
+        assert q.get(r1.task_id).status == TaskStatus.QUEUED
+        assert q.get(r2.task_id).status == TaskStatus.QUEUED
 
     def test_retry_not_failed(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
         from omo.resident import task_queue as tq
