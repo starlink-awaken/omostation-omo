@@ -721,6 +721,44 @@ class TestListAndMetrics:
         task = q.get(r1.task_id)
         assert task is not None and task.status == TaskStatus.EXPIRED
 
+    def test_extend_queued_with_ttl(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "extend-ttl.sqlite3")
+        q = TaskQueue(db)
+        r1 = q.submit("bos://resident/a", {}, ttl=1.0)
+        original_expires = q.get(r1.task_id).expires_at
+        time.sleep(0.1)
+        assert tq.main(["extend", "--id", r1.task_id, "--ttl", "10", "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["ok"] is True
+        assert out["ttl"] == 10.0
+        task = q.get(r1.task_id)
+        assert task.expires_at >= original_expires + 9.9
+
+    def test_extend_queued_without_ttl(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "extend-no-ttl.sqlite3")
+        q = TaskQueue(db)
+        r1 = q.submit("bos://resident/a", {})
+        assert q.get(r1.task_id).expires_at == 0.0
+        assert tq.main(["extend", "--id", r1.task_id, "--ttl", "5", "--db", db]) == 0
+        task = q.get(r1.task_id)
+        assert task.expires_at > time.time()
+
+    def test_extend_not_queued_fails(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "extend-not-queued.sqlite3")
+        q = TaskQueue(db)
+        r1 = q.submit("bos://resident/a", {})
+        q.poll()
+        q.complete(r1.task_id, result={"ok": True})
+        assert tq.main(["extend", "--id", r1.task_id, "--ttl", "5", "--db", db]) == 2
+        out = json.loads(capsys.readouterr().out)
+        assert out["ok"] is False
+
 
 class _StdinStub:
     """最小 stdin 桩 (read() 一次性返回固定文本)."""
