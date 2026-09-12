@@ -351,7 +351,7 @@ def _update_frontmatter(content: str, updates: dict[str, str]) -> str:
         if k not in updated:
             new_lines.append(f"{k}: {v}")
 
-    return "---\n" + "\n".join(new_lines) + "\n---" + content[end + 3:]
+    return "---\n" + "\n".join(new_lines) + "\n---" + content[end + 3 :]
 
 
 def mark_proposal_status(file_path: str | Path, status: str) -> bool:
@@ -384,10 +384,13 @@ def mark_proposal_status(file_path: str | Path, status: str) -> bool:
             return False
     else:
         # markdown 文件
-        new_content = _update_frontmatter(content, {
-            "triage_status": status,
-            "triage_updated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        })
+        new_content = _update_frontmatter(
+            content,
+            {
+                "triage_status": status,
+                "triage_updated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            },
+        )
         path.write_text(new_content, encoding="utf-8")
         return True
 
