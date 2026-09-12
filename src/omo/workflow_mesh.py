@@ -35,6 +35,7 @@ EVENT_STATE = {
     "WorkflowAdmitted": "admitted",
     "StepDispatched": "dispatched",
     "BackendDispatched": "dispatched",
+    "HandoffRecorded": "running",
     "StepStarted": "running",
     "StepHeartbeat": "running",
     "StepRetryScheduled": "running",
@@ -66,7 +67,7 @@ TOOL_OUTCOMES = frozenset({"succeeded", "failed", "unavailable"})
 # 仍可能进入验证、关闭或受控恢复。
 TERMINAL_STATES = {"closed"}
 _ALLOWED_TRANSITIONS = {
-    "unknown": {"planned", "dispatched"},
+    "unknown": {"planned", "dispatched", "running"},
     "planned": {
         "admitted",
         "running",
@@ -96,7 +97,7 @@ _ALLOWED_TRANSITIONS = {
     "closed": set(),
 }
 _ALLOWED_EVENTS = {
-    "unknown": {"WorkflowRequested", "BackendDispatched"},
+    "unknown": {"WorkflowRequested", "BackendDispatched", "HandoffRecorded"},
     "planned": {
         "WorkflowAdmitted",
         "StepStarted",
@@ -594,6 +595,34 @@ def dispatch_backend(
     except Exception:  # noqa: BLE001 — 事件是观测性的，绝不能破坏后端
         pass
     return fn(args)
+
+
+def record_handoff(
+    store: WorkflowMeshStore,
+    from_role: str,
+    to_role: str,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """记录 Cell/Role 间交接事件（八律第3条纪律：交接入 Mesh 证据平面）。
+
+    观测性事件：byte-for-byte 不改变交接双方行为；写入失败静默降级。
+    """
+    run_id = uuid4().hex
+    body = {"from_role": from_role, "to_role": to_role}
+    if payload:
+        body["handoff"] = dict(payload)
+    try:
+        store.append(
+            new_workflow_event(
+                "HandoffRecorded",
+                run_id,
+                producer="omo.handoff",
+                payload=body,
+            )
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    return {"handoff_id": run_id, "from_role": from_role, "to_role": to_role}
 
 
 def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> dict[str, Any]:
