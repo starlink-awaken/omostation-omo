@@ -54,10 +54,10 @@ class TaskStatus(str, Enum):
 _ALLOWED: dict[TaskStatus, set[TaskStatus]] = {
     TaskStatus.QUEUED: {TaskStatus.RUNNING, TaskStatus.FAILED, TaskStatus.EXPIRED, TaskStatus.CANCELED},
     TaskStatus.RUNNING: {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.QUEUED},
-    TaskStatus.COMPLETED: set(),
-    TaskStatus.FAILED: {TaskStatus.QUEUED},  # 失败可重试 (重新入队)
-    TaskStatus.EXPIRED: set(),
-    TaskStatus.CANCELED: set(),
+    TaskStatus.COMPLETED: {TaskStatus.QUEUED},
+    TaskStatus.FAILED: {TaskStatus.QUEUED},
+    TaskStatus.EXPIRED: {TaskStatus.QUEUED},
+    TaskStatus.CANCELED: {TaskStatus.QUEUED},
 }
 
 
@@ -409,6 +409,32 @@ class TaskQueue:
                 c.execute("ROLLBACK")
                 raise
 
+    def requeue(self, task_id: str) -> bool:
+        """将终态任务 (completed/failed/expired/canceled) 重新入队. 返回是否成功."""
+        terminal_statuses = {
+            TaskStatus.COMPLETED.value,
+            TaskStatus.FAILED.value,
+            TaskStatus.EXPIRED.value,
+            TaskStatus.CANCELED.value,
+        }
+        with self._conn() as c:
+            c.execute("BEGIN IMMEDIATE")
+            try:
+                row = c.execute("SELECT status FROM resident_tasks WHERE id = ?", (task_id,)).fetchone()
+                if row is None or row["status"] not in terminal_statuses:
+                    c.execute("ROLLBACK")
+                    return False
+                now = time.time()
+                c.execute(
+                    "UPDATE resident_tasks SET status = ?, attempts = 0, next_attempt_at = 0, updated_at = ? WHERE id = ?",
+                    (TaskStatus.QUEUED.value, now, task_id),
+                )
+                c.execute("COMMIT")
+                return True
+            except Exception:
+                c.execute("ROLLBACK")
+                raise
+
     def extend(self, task_id: str, ttl: float) -> bool:
         """延长 queued 任务的 TTL. 返回是否成功."""
         with self._conn() as c:
@@ -751,6 +777,11 @@ def main(argv: list[str] | None = None) -> int:
     p_history.add_argument(
         "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
     )
+    p_requeue = sub.add_parser("requeue", help="将终态任务重新入队 (completed/failed/expired/canceled)")
+    p_requeue.add_argument("--id", required=True, help="任务 id")
+    p_requeue.add_argument(
+        "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
+    )
     args = parser.parse_args(argv)
 
     # --db 可放顶层 (task --db X submit ...) 或子命令级 (task submit --db X ...), 同 dest
@@ -919,6 +950,14 @@ def main(argv: list[str] | None = None) -> int:
                 results["ok"] = False
         print(json.dumps(results, ensure_ascii=False), flush=True)
         return 0 if results["ok"] else 2
+
+    if args.command == "requeue":
+        ok = queue.requeue(args.id)
+        if ok:
+            print(json.dumps({"ok": True, "task_id": args.id, "status": "queued"}), flush=True)
+            return 0
+        print(json.dumps({"ok": False, "reason": "task not found or not in terminal state", "task_id": args.id}), flush=True)
+        return 2
 
     if args.command == "purge-expired":
         count = queue.purge_expired(args.older_than)
