@@ -551,6 +551,18 @@ class TestListAndMetrics:
         ids = [t["id"] for t in out["tasks"]]
         assert ids == [r2.task_id, r1.task_id]
 
+    def test_list_count_only(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "list-count-only.sqlite3")
+        q = TaskQueue(db)
+        q.submit("bos://resident/a", {})
+        q.submit("bos://resident/b", {})
+        assert tq.main(["list", "--count-only", "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out == {"count": 2}
+        assert "tasks" not in out
+
     def test_metrics_counts(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
         from omo.resident import task_queue as tq
 

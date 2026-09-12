@@ -570,6 +570,7 @@ def main(argv: list[str] | None = None) -> int:
     p_list.add_argument("--limit", type=int, default=50, help="最多返回条数 (默认 50)")
     p_list.add_argument("--watch", action="store_true", help="实时监控模式 (每 2 秒刷新)")
     p_list.add_argument("--sort", default="created_at", help="排序字段 (created_at/priority/status/attempts/updated_at)")
+    p_list.add_argument("--count-only", action="store_true", help="仅返回计数, 不返回任务列表")
     p_list.add_argument(
         "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
     )
@@ -686,7 +687,10 @@ def main(argv: list[str] | None = None) -> int:
             except KeyboardInterrupt:
                 return 0
         tasks = _fetch_tasks()
-        print(json.dumps({"tasks": [_task_to_json(t) for t in tasks], "count": len(tasks)}, ensure_ascii=False), flush=True)
+        if getattr(args, "count_only", False):
+            print(json.dumps({"count": len(tasks)}, ensure_ascii=False), flush=True)
+        else:
+            print(json.dumps({"tasks": [_task_to_json(t) for t in tasks], "count": len(tasks)}, ensure_ascii=False), flush=True)
         return 0
 
     if args.command == "metrics":
