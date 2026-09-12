@@ -546,6 +546,7 @@ def main(argv: list[str] | None = None) -> int:
     p_list.add_argument("--uri", default=None, help="按 URI 前缀过滤")
     p_list.add_argument("--label", action="append", default=[], help="按标签过滤 (可多次指定, 任务需包含所有指定标签)")
     p_list.add_argument("--limit", type=int, default=50, help="最多返回条数 (默认 50)")
+    p_list.add_argument("--watch", action="store_true", help="实时监控模式 (每 2 秒刷新)")
     p_list.add_argument(
         "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
     )
@@ -580,24 +581,45 @@ def main(argv: list[str] | None = None) -> int:
         status_filter = args.status
         uri_prefix = args.uri
         label_filters = args.label or []
-        with queue._conn() as c:
-            query = "SELECT id, uri, payload, status, attempts, result, error_message, priority, next_attempt_at, expires_at, labels, created_at, updated_at FROM resident_tasks"
-            params: list[Any] = []
-            where: list[str] = []
-            if status_filter:
-                where.append("status = ?")
-                params.append(status_filter)
-            if uri_prefix:
-                where.append("uri LIKE ?")
-                params.append(f"{uri_prefix}%")
-            if where:
-                query += " WHERE " + " AND ".join(where)
-            query += " ORDER BY created_at DESC LIMIT ?"
-            params.append(args.limit)
-            rows = c.execute(query, params).fetchall()
-        tasks = [queue._row_to_task(r) for r in rows]
-        if label_filters:
-            tasks = [t for t in tasks if all(label in t.labels for label in label_filters)]
+        watch = args.watch
+
+        def _fetch_tasks() -> list[Task]:
+            with queue._conn() as c:
+                query = "SELECT id, uri, payload, status, attempts, result, error_message, priority, next_attempt_at, expires_at, labels, created_at, updated_at FROM resident_tasks"
+                params: list[Any] = []
+                where: list[str] = []
+                if status_filter:
+                    where.append("status = ?")
+                    params.append(status_filter)
+                if uri_prefix:
+                    where.append("uri LIKE ?")
+                    params.append(f"{uri_prefix}%")
+                if where:
+                    query += " WHERE " + " AND ".join(where)
+                query += " ORDER BY created_at DESC LIMIT ?"
+                params.append(args.limit)
+                rows = c.execute(query, params).fetchall()
+            tasks = [queue._row_to_task(r) for r in rows]
+            if label_filters:
+                tasks = [t for t in tasks if all(label in t.labels for label in label_filters)]
+            return tasks
+
+        if watch:
+            try:
+                import time as _time
+                import sys as _sys
+
+                last_count = -1
+                while True:
+                    tasks = _fetch_tasks()
+                    count = len(tasks)
+                    if count != last_count:
+                        print(json.dumps({"tasks": [_task_to_json(t) for t in tasks], "count": count}, ensure_ascii=False), flush=True)
+                        last_count = count
+                    _time.sleep(2)
+            except KeyboardInterrupt:
+                return 0
+        tasks = _fetch_tasks()
         print(json.dumps({"tasks": [_task_to_json(t) for t in tasks], "count": len(tasks)}, ensure_ascii=False), flush=True)
         return 0
 
