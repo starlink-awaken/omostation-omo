@@ -368,12 +368,32 @@ class TaskQueue:
             rows = c.execute("SELECT status, COUNT(*) FROM resident_tasks GROUP BY status").fetchall()
         out = {s.value: 0 for s in TaskStatus}
         for r in rows:
-            # SQLite Row index access: r[0] = status, r[1] = count
             status_str = r[0] if isinstance(r[0], str) else str(r[0])
             count = r[1]
             if status_str in out:
                 out[status_str] = count
         return out
+
+    def metrics(self) -> dict[str, Any]:
+        """返回队列指标: 吞吐量、延迟分布、重试率."""
+        with self._conn() as c:
+            total = c.execute("SELECT COUNT(*) FROM resident_tasks").fetchone()[0]
+            completed = c.execute("SELECT COUNT(*) FROM resident_tasks WHERE status = ?", (TaskStatus.COMPLETED.value,)).fetchone()[0]
+            failed = c.execute("SELECT COUNT(*) FROM resident_tasks WHERE status = ?", (TaskStatus.FAILED.value,)).fetchone()[0]
+            retried = c.execute("SELECT COUNT(*) FROM resident_tasks WHERE attempts > 1").fetchone()[0]
+            avg_duration = c.execute(
+                "SELECT AVG(updated_at - created_at) FROM resident_tasks WHERE status IN (?, ?)",
+                (TaskStatus.COMPLETED.value, TaskStatus.FAILED.value),
+            ).fetchone()[0]
+        return {
+            "total": total,
+            "completed": completed,
+            "failed": failed,
+            "retried": retried,
+            "retry_rate": retried / total if total else 0.0,
+            "success_rate": completed / total if total else 0.0,
+            "avg_duration_s": avg_duration or 0.0,
+        }
 
     # ── Internal ──────────────────────────────────
     def _transition(
@@ -509,6 +529,17 @@ def main(argv: list[str] | None = None) -> int:
     p_status.add_argument(
         "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
     )
+    p_list = sub.add_parser("list", help="列出队列任务 (支持 --status/--uri 过滤)")
+    p_list.add_argument("--status", default=None, help="按状态过滤 (queued/running/completed/failed/expired/canceled)")
+    p_list.add_argument("--uri", default=None, help="按 URI 前缀过滤")
+    p_list.add_argument("--limit", type=int, default=50, help="最多返回条数 (默认 50)")
+    p_list.add_argument(
+        "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
+    )
+    p_metrics = sub.add_parser("metrics", help="队列指标 (吞吐量/成功率/重试率/平均耗时)")
+    p_metrics.add_argument(
+        "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
+    )
     args = parser.parse_args(argv)
 
     # --db 可放顶层 (task --db X submit ...) 或子命令级 (task submit --db X ...), 同 dest
@@ -531,6 +562,33 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         print(json.dumps({"ok": False, "reason": result.reason}), flush=True)
         return 2
+
+    if args.command == "list":
+        status_filter = args.status
+        uri_prefix = args.uri
+        with queue._conn() as c:
+            query = "SELECT id, uri, payload, status, attempts, result, error_message, priority, next_attempt_at, expires_at, created_at, updated_at FROM resident_tasks"
+            params: list[Any] = []
+            where: list[str] = []
+            if status_filter:
+                where.append("status = ?")
+                params.append(status_filter)
+            if uri_prefix:
+                where.append("uri LIKE ?")
+                params.append(f"{uri_prefix}%")
+            if where:
+                query += " WHERE " + " AND ".join(where)
+            query += " ORDER BY created_at DESC LIMIT ?"
+            params.append(args.limit)
+            rows = c.execute(query, params).fetchall()
+        tasks = [queue._row_to_task(r) for r in rows]
+        print(json.dumps({"tasks": [_task_to_json(t) for t in tasks], "count": len(tasks)}, ensure_ascii=False), flush=True)
+        return 0
+
+    if args.command == "metrics":
+        m = queue.metrics()
+        print(json.dumps(m, ensure_ascii=False), flush=True)
+        return 0
 
     task_id = args.id
     if task_id is None and args.json:

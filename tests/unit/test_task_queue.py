@@ -389,7 +389,6 @@ class TestTTL:
 
     def test_poll_skips_expired_tasks(self, tmp_path: Path) -> None:
         q = TaskQueue(tmp_path / "skip-expired.sqlite3")
-        # 提交一个即将过期的任务和一个正常的任务
         r_expired = q.submit("bos://resident/x", {"k": 1}, ttl=-1)  # 已过期
         r_ok = q.submit("bos://resident/y", {"k": 2})
         tasks = q.poll(limit=10)
@@ -398,8 +397,8 @@ class TestTTL:
 
     def test_purge_expired_marks_expired(self, tmp_path: Path) -> None:
         q = TaskQueue(tmp_path / "purge.sqlite3")
-        r1 = q.submit("bos://resident/x", {"k": 1}, ttl=-1)  # 已过期
-        r2 = q.submit("bos://resident/y", {"k": 2}, ttl=-1)  # 已过期
+        r1 = q.submit("bos://resident/x", {"k": 1}, ttl=-1)
+        r2 = q.submit("bos://resident/y", {"k": 2}, ttl=-1)
         count = q.purge_expired()
         assert count == 2
         assert q.get(r1.task_id).status == TaskStatus.EXPIRED
@@ -423,6 +422,55 @@ class TestCancel:
     def test_cancel_unknown_task_fails(self, tmp_path: Path) -> None:
         q = TaskQueue(tmp_path / "cancel-unk.sqlite3")
         assert q.cancel("nonexistent") is False
+
+
+# ── 12. list / metrics CLI ───────────────────────────
+class TestListAndMetrics:
+    def test_list_empty(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "list-empty.sqlite3")
+        assert tq.main(["list", "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["count"] == 0
+        assert out["tasks"] == []
+
+    def test_list_filters_by_status(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "list-filter.sqlite3")
+        q = TaskQueue(db)
+        r1 = q.submit("bos://resident/a", {})
+        q.poll()
+        q.complete(r1.task_id, result={"ok": True})
+        r2 = q.submit("bos://resident/b", {})
+        assert tq.main(["list", "--status", "completed", "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["count"] == 1
+        assert out["tasks"][0]["id"] == r1.task_id
+        assert tq.main(["list", "--status", "queued", "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["count"] == 1
+        assert out["tasks"][0]["id"] == r2.task_id
+
+    def test_metrics_counts(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "metrics.sqlite3")
+        q = TaskQueue(db, max_attempts=1)
+        r1 = q.submit("bos://resident/a", {})
+        q.poll()
+        q.complete(r1.task_id, result={"ok": True})
+        r2 = q.submit("bos://resident/b", {})
+        q.poll()
+        q.fail(r2.task_id, "err")
+        assert tq.main(["metrics", "--db", db]) == 0
+        m = json.loads(capsys.readouterr().out)
+        assert m["total"] == 2
+        assert m["completed"] == 1
+        assert m["failed"] == 1
+        assert m["retried"] == 0
+        assert m["success_rate"] == 0.5
 
 
 class _StdinStub:
