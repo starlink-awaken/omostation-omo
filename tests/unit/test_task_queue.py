@@ -580,6 +580,20 @@ class TestListAndMetrics:
         out = json.loads(capsys.readouterr().out)
         assert out["ok"] is False
 
+    def test_purge_expired(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "purge-expired.sqlite3")
+        q = TaskQueue(db)
+        r1 = q.submit("bos://resident/a", {}, ttl=0.1)
+        time.sleep(0.2)
+        assert tq.main(["purge-expired", "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["ok"] is True
+        assert out["purged"] == 1
+        task = q.get(r1.task_id)
+        assert task is not None and task.status == TaskStatus.EXPIRED
+
 
 class _StdinStub:
     """最小 stdin 桩 (read() 一次性返回固定文本)."""
