@@ -359,6 +359,28 @@ class TaskQueue:
                 c.execute("ROLLBACK")
                 raise
 
+    def extend(self, task_id: str, ttl: float) -> bool:
+        """延长 queued 任务的 TTL. 返回是否成功."""
+        with self._conn() as c:
+            c.execute("BEGIN IMMEDIATE")
+            try:
+                row = c.execute("SELECT status, expires_at FROM resident_tasks WHERE id = ?", (task_id,)).fetchone()
+                if row is None or row["status"] != TaskStatus.QUEUED.value:
+                    c.execute("ROLLBACK")
+                    return False
+                now = time.time()
+                current = row["expires_at"] or 0.0
+                new_expires = max(current, now) + ttl if ttl > 0 else 0.0
+                c.execute(
+                    "UPDATE resident_tasks SET expires_at = ?, updated_at = ? WHERE id = ?",
+                    (new_expires, now, task_id),
+                )
+                c.execute("COMMIT")
+                return True
+            except Exception:
+                c.execute("ROLLBACK")
+                raise
+
     def purge_expired(self, older_than: float = 0.0) -> int:
         """将超时未处理的 queued 任务标记为 expired.
         
@@ -604,6 +626,12 @@ def main(argv: list[str] | None = None) -> int:
     p_purge.add_argument(
         "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
     )
+    p_extend = sub.add_parser("extend", help="延长 queued 任务的 TTL")
+    p_extend.add_argument("--id", required=True, help="任务 id")
+    p_extend.add_argument("--ttl", type=float, required=True, help="延长秒数")
+    p_extend.add_argument(
+        "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
+    )
     args = parser.parse_args(argv)
 
     # --db 可放顶层 (task --db X submit ...) 或子命令级 (task submit --db X ...), 同 dest
@@ -777,6 +805,14 @@ def main(argv: list[str] | None = None) -> int:
         count = queue.purge_expired(args.older_than)
         print(json.dumps({"ok": True, "purged": count}), flush=True)
         return 0
+
+    if args.command == "extend":
+        ok = queue.extend(args.id, args.ttl)
+        if ok:
+            print(json.dumps({"ok": True, "task_id": args.id, "ttl": args.ttl}), flush=True)
+            return 0
+        print(json.dumps({"ok": False, "reason": "task not found or not queued", "task_id": args.id}), flush=True)
+        return 2
 
     task_id = args.id
     if task_id is None and args.json:
