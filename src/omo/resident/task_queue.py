@@ -4,17 +4,21 @@
 常驻 daemon 在每次 tick 中扫描 queued 任务、派发到 handler、持久化状态机。
 不引入 Redis 或外部 MQ — 依托 SQLite 单一文件 + 原子事务实现。
 
-状态机: queued → running → completed | failed
+状态机: queued → running → completed | failed | expired | canceled
 - queued: 入队等待 daemon 拉取
 - running: daemon 已 pick 但尚未完成（防重复派发）
 - completed: handler 成功执行完毕
 - failed: handler 抛异常或超过 max_attempts
+- expired: 超过 TTL 未处理
+- canceled: 用户主动取消
 
 队列容量: 默认 1000, 溢出拒绝并 log warning (不阻塞外部 submit).
 
 改进 (T10-125 wave 2):
 - 优先级队列: submit 时指定 priority (默认 0, 高优先任务先被 poll)
 - 指数退避: fail 重试时根据 attempts 计算 backoff delay, 避免 thundering herd
+- 任务过期: submit 时可指定 ttl 秒数, 超时未处理自动 expired
+- 主动取消: cancel() 允许取消 queued 任务
 """
 
 from __future__ import annotations
@@ -35,21 +39,25 @@ from typing import Any, Iterator
 class TaskStatus(str, Enum):
     """任务状态机 enum.
 
-    严格单向: queued → running → completed | failed
+    严格单向: queued → running → completed | failed | expired | canceled
     """
 
     QUEUED = "queued"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    EXPIRED = "expired"
+    CANCELED = "canceled"
 
 
 # 状态转换合法性表 (T10-125: 禁止反向与跳跃)
 _ALLOWED: dict[TaskStatus, set[TaskStatus]] = {
-    TaskStatus.QUEUED: {TaskStatus.RUNNING, TaskStatus.FAILED},
+    TaskStatus.QUEUED: {TaskStatus.RUNNING, TaskStatus.FAILED, TaskStatus.EXPIRED, TaskStatus.CANCELED},
     TaskStatus.RUNNING: {TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.QUEUED},
     TaskStatus.COMPLETED: set(),
     TaskStatus.FAILED: {TaskStatus.QUEUED},  # 失败可重试 (重新入队)
+    TaskStatus.EXPIRED: set(),
+    TaskStatus.CANCELED: set(),
 }
 
 
@@ -67,6 +75,7 @@ class Task:
     payload JSON-serializable. result 与 error_message 在终态填充.
     priority: 优先级 (默认 0, 高优先任务先被 poll).
     next_attempt_at: 下次允许尝试的 Unix timestamp (用于指数退避).
+    expires_at: 过期时间戳 (0 表示永不过期).
     """
 
     id: str
@@ -78,6 +87,7 @@ class Task:
     error_message: str = ""
     priority: int = 0
     next_attempt_at: float = 0.0
+    expires_at: float = 0.0
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
@@ -107,6 +117,7 @@ class TaskQueue:
         backoff_base: float = DEFAULT_BACKOFF_BASE,
         backoff_max: float = DEFAULT_BACKOFF_MAX,
         backoff_jitter: float = DEFAULT_BACKOFF_JITTER,
+        default_ttl: float = 0.0,
     ) -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -115,6 +126,7 @@ class TaskQueue:
         self.backoff_base = backoff_base
         self.backoff_max = backoff_max
         self.backoff_jitter = backoff_jitter
+        self.default_ttl = default_ttl
         self._init_schema()
 
     # ── Schema ─────────────────────────────────────
@@ -132,6 +144,7 @@ class TaskQueue:
                     error_message TEXT NOT NULL DEFAULT '',
                     priority INTEGER NOT NULL DEFAULT 0,
                     next_attempt_at REAL NOT NULL DEFAULT 0,
+                    expires_at REAL NOT NULL DEFAULT 0,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL
                 )
@@ -139,6 +152,7 @@ class TaskQueue:
             )
             c.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status_priority ON resident_tasks(status, priority DESC, created_at ASC)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_tasks_next_attempt ON resident_tasks(next_attempt_at) WHERE status = 'queued'")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_tasks_expires_at ON resident_tasks(expires_at) WHERE status = 'queued' AND expires_at > 0")
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
@@ -152,11 +166,12 @@ class TaskQueue:
             conn.close()
 
     # ── Public API ─────────────────────────────────
-    def submit(self, uri: str, payload: dict[str, Any], *, priority: int = 0) -> SubmitResult:
+    def submit(self, uri: str, payload: dict[str, Any], *, priority: int = 0, ttl: float = 0.0) -> SubmitResult:
         """提交任务到队列. 队列满时拒绝.
 
         返回 SubmitResult: ok=True 时 task_id 非空.
         priority: 优先级 (默认 0, 高优先任务先被 poll).
+        ttl: 任务存活时间(秒), 0 表示永不过期.
         """
         # 容量检查 (placed in事务外避免对 hot row 加锁)
         with self._conn() as c:
@@ -170,18 +185,20 @@ class TaskQueue:
 
         task_id = uuid.uuid4().hex
         now = time.time()
+        expires_at = now + ttl if ttl != 0 else 0.0
         with self._conn() as c:
             c.execute("BEGIN IMMEDIATE")
             try:
                 c.execute(
-                    "INSERT INTO resident_tasks (id, uri, payload, status, attempts, priority, next_attempt_at, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, 0, ?, 0, ?, ?)",
+                    "INSERT INTO resident_tasks (id, uri, payload, status, attempts, priority, next_attempt_at, expires_at, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, 0, ?, 0, ?, ?, ?)",
                     (
                         task_id,
                         uri,
                         json.dumps(payload, ensure_ascii=False),
                         TaskStatus.QUEUED.value,
                         priority,
+                        expires_at,
                         now,
                         now,
                     ),
@@ -197,18 +214,18 @@ class TaskQueue:
 
         返回 running 状态任务列表 (待 handler 执行).
         按 priority DESC, created_at ASC 排序 (高优先任务先执行).
-        跳过处于 backoff 期的任务 (next_attempt_at > now).
+        跳过处于 backoff 期或已过期的任务.
         """
         tasks: list[Task] = []
         with self._conn() as c:
             c.execute("BEGIN IMMEDIATE")
             try:
                 rows = c.execute(
-                    "SELECT id, uri, payload, status, attempts, result, error_message, priority, next_attempt_at, created_at, updated_at "
+                    "SELECT id, uri, payload, status, attempts, result, error_message, priority, next_attempt_at, expires_at, created_at, updated_at "
                     "FROM resident_tasks "
-                    "WHERE status = ? AND next_attempt_at <= ? "
+                    "WHERE status = ? AND next_attempt_at <= ? AND (expires_at = 0 OR expires_at > ?) "
                     "ORDER BY priority DESC, created_at ASC LIMIT ?",
-                    (TaskStatus.QUEUED.value, time.time(), limit),
+                    (TaskStatus.QUEUED.value, time.time(), time.time(), limit),
                 ).fetchall()
                 for r in rows:
                     new_attempts = r["attempts"] + 1
@@ -289,11 +306,61 @@ class TaskQueue:
         """查询任务当前状态."""
         with self._conn() as c:
             row = c.execute(
-                "SELECT id, uri, payload, status, attempts, result, error_message, priority, next_attempt_at, created_at, updated_at "
+                "SELECT id, uri, payload, status, attempts, result, error_message, priority, next_attempt_at, expires_at, created_at, updated_at "
                 "FROM resident_tasks WHERE id = ?",
                 (task_id,),
             ).fetchone()
         return self._row_to_task(row) if row else None
+
+    def cancel(self, task_id: str) -> bool:
+        """取消 queued 任务. 返回是否成功."""
+        with self._conn() as c:
+            c.execute("BEGIN IMMEDIATE")
+            try:
+                row = c.execute("SELECT status FROM resident_tasks WHERE id = ?", (task_id,)).fetchone()
+                if row is None or row["status"] != TaskStatus.QUEUED.value:
+                    c.execute("ROLLBACK")
+                    return False
+                c.execute(
+                    "UPDATE resident_tasks SET status = ?, updated_at = ? WHERE id = ?",
+                    (TaskStatus.CANCELED.value, time.time(), task_id),
+                )
+                c.execute("COMMIT")
+                return True
+            except Exception:
+                c.execute("ROLLBACK")
+                raise
+
+    def purge_expired(self, older_than: float = 0.0) -> int:
+        """将超时未处理的 queued 任务标记为 expired.
+        
+        older_than: 仅处理 expires_at <= older_than 的任务 (默认 0 = 所有超时任务).
+        返回被标记为 expired 的任务数.
+        """
+        now = time.time()
+        with self._conn() as c:
+            c.execute("BEGIN IMMEDIATE")
+            try:
+                if older_than > 0:
+                    rows = c.execute(
+                        "SELECT id FROM resident_tasks WHERE status = ? AND expires_at > 0 AND expires_at <= ?",
+                        (TaskStatus.QUEUED.value, older_than),
+                    ).fetchall()
+                else:
+                    rows = c.execute(
+                        "SELECT id FROM resident_tasks WHERE status = ? AND expires_at > 0 AND expires_at <= ?",
+                        (TaskStatus.QUEUED.value, now),
+                    ).fetchall()
+                for r in rows:
+                    c.execute(
+                        "UPDATE resident_tasks SET status = ?, updated_at = ? WHERE id = ?",
+                        (TaskStatus.EXPIRED.value, now, r["id"]),
+                    )
+                c.execute("COMMIT")
+                return len(rows)
+            except Exception:
+                c.execute("ROLLBACK")
+                raise
 
     def stats(self) -> dict[str, int]:
         """返回队列统计: 各状态任务数."""
@@ -354,6 +421,7 @@ class TaskQueue:
         result_raw = row["result"] if "result" in row.keys() else None
         priority = row["priority"] if "priority" in row.keys() else 0
         next_attempt_at = row["next_attempt_at"] if "next_attempt_at" in row.keys() else 0.0
+        expires_at = row["expires_at"] if "expires_at" in row.keys() else 0.0
         return Task(
             id=row["id"],
             uri=row["uri"],
@@ -364,6 +432,7 @@ class TaskQueue:
             error_message=row["error_message"] or "",
             priority=priority,
             next_attempt_at=next_attempt_at,
+            expires_at=expires_at,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -404,6 +473,7 @@ def _task_to_json(task: Task) -> dict[str, Any]:
         "error_message": task.error_message,
         "priority": task.priority,
         "next_attempt_at": task.next_attempt_at,
+        "expires_at": task.expires_at,
         "created_at": task.created_at,
         "updated_at": task.updated_at,
     }
@@ -429,6 +499,7 @@ def main(argv: list[str] | None = None) -> int:
     p_submit.add_argument("--uri", required=True, help="目标 BOS URI (由 daemon 按 URI 分发)")
     p_submit.add_argument("--json", default=None, help="payload JSON 字符串 (缺省读 stdin)")
     p_submit.add_argument("--priority", type=int, default=0, help="任务优先级 (默认 0, 高优先先执行)")
+    p_submit.add_argument("--ttl", type=float, default=0, help="任务 TTL(秒), 0=永不过期")
     p_submit.add_argument(
         "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
     )
@@ -454,7 +525,7 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(payload, dict):
             print(json.dumps({"ok": False, "reason": "payload must be a JSON object"}), flush=True)
             return 2
-        result = queue.submit(args.uri, payload, priority=args.priority)
+        result = queue.submit(args.uri, payload, priority=args.priority, ttl=args.ttl)
         if result.ok:
             print(json.dumps({"ok": True, "task_id": result.task_id}), flush=True)
             return 0

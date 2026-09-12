@@ -282,7 +282,7 @@ class TestConcurrency:
 # ── 7. stats ───────────────────────────────────────────
 class TestStats:
     def test_initial_empty(self, q: TaskQueue) -> None:
-        assert q.stats() == {"queued": 0, "running": 0, "completed": 0, "failed": 0}
+        assert q.stats() == {"queued": 0, "running": 0, "completed": 0, "failed": 0, "expired": 0, "canceled": 0}
 
     def test_mixed_states(self, q: TaskQueue) -> None:
         q.submit("bos://resident/a", {})
@@ -365,6 +365,64 @@ class TestTaskCLI:
         out = json.loads(capsys.readouterr().out)
         assert out["queued"] is True and out["task_id"]
         assert TaskQueue(db).get(out["task_id"]).uri == "bos://resident/decision/trigger"
+
+
+# ── 10. TTL 与过期 ─────────────────────────────────────
+class TestTTL:
+    def test_submit_with_ttl_sets_expires_at(self, tmp_path: Path) -> None:
+        q = TaskQueue(tmp_path / "ttl.sqlite3")
+        before = time.time()
+        r = q.submit("bos://resident/x", {}, ttl=60)
+        assert r.ok
+        task = q.get(r.task_id)
+        assert task is not None
+        assert task.expires_at >= before + 60
+        assert task.expires_at <= before + 61
+
+    def test_submit_without_ttl_never_expires(self, tmp_path: Path) -> None:
+        q = TaskQueue(tmp_path / "no-ttl.sqlite3")
+        r = q.submit("bos://resident/x", {})
+        assert r.ok
+        task = q.get(r.task_id)
+        assert task is not None
+        assert task.expires_at == 0.0
+
+    def test_poll_skips_expired_tasks(self, tmp_path: Path) -> None:
+        q = TaskQueue(tmp_path / "skip-expired.sqlite3")
+        # 提交一个即将过期的任务和一个正常的任务
+        r_expired = q.submit("bos://resident/x", {"k": 1}, ttl=-1)  # 已过期
+        r_ok = q.submit("bos://resident/y", {"k": 2})
+        tasks = q.poll(limit=10)
+        assert len(tasks) == 1
+        assert tasks[0].id == r_ok.task_id
+
+    def test_purge_expired_marks_expired(self, tmp_path: Path) -> None:
+        q = TaskQueue(tmp_path / "purge.sqlite3")
+        r1 = q.submit("bos://resident/x", {"k": 1}, ttl=-1)  # 已过期
+        r2 = q.submit("bos://resident/y", {"k": 2}, ttl=-1)  # 已过期
+        count = q.purge_expired()
+        assert count == 2
+        assert q.get(r1.task_id).status == TaskStatus.EXPIRED
+        assert q.get(r2.task_id).status == TaskStatus.EXPIRED
+
+
+# ── 11. 取消任务 ─────────────────────────────────────
+class TestCancel:
+    def test_cancel_queued_task(self, tmp_path: Path) -> None:
+        q = TaskQueue(tmp_path / "cancel.sqlite3")
+        r = q.submit("bos://resident/x", {})
+        assert q.cancel(r.task_id) is True
+        assert q.get(r.task_id).status == TaskStatus.CANCELED
+
+    def test_cancel_running_task_fails(self, tmp_path: Path) -> None:
+        q = TaskQueue(tmp_path / "cancel-run.sqlite3")
+        r = q.submit("bos://resident/x", {})
+        q.poll()
+        assert q.cancel(r.task_id) is False
+
+    def test_cancel_unknown_task_fails(self, tmp_path: Path) -> None:
+        q = TaskQueue(tmp_path / "cancel-unk.sqlite3")
+        assert q.cancel("nonexistent") is False
 
 
 class _StdinStub:
