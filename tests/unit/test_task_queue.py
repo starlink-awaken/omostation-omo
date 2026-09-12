@@ -759,6 +759,49 @@ class TestListAndMetrics:
         out = json.loads(capsys.readouterr().out)
         assert out["ok"] is False
 
+    def test_archive_completed(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "archive-completed.sqlite3")
+        q = TaskQueue(db, max_attempts=1)
+        r1 = q.submit("bos://resident/a", {})
+        q.poll()
+        q.complete(r1.task_id, result={"ok": True})
+        assert tq.main(["archive", "--status", "completed", "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["ok"] is True
+        assert out["archived"] == 1
+        assert q.get(r1.task_id) is None
+
+    def test_archive_with_older_than(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "archive-older.sqlite3")
+        q = TaskQueue(db, max_attempts=1)
+        r1 = q.submit("bos://resident/a", {})
+        q.poll()
+        q.complete(r1.task_id, result={"ok": True})
+        time.sleep(0.1)
+        assert tq.main(["archive", "--older-than", "0", "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["archived"] == 1
+
+    def test_history_records_transitions(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "history.sqlite3")
+        q = TaskQueue(db, max_attempts=1)
+        r1 = q.submit("bos://resident/a", {})
+        q.poll()
+        q.complete(r1.task_id, result={"ok": True})
+        assert tq.main(["history", "--id", r1.task_id, "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert len(out["history"]) == 2
+        assert out["history"][0]["from_status"] == "queued"
+        assert out["history"][0]["to_status"] == "running"
+        assert out["history"][1]["from_status"] == "running"
+        assert out["history"][1]["to_status"] == "completed"
+
 
 class _StdinStub:
     """最小 stdin 桩 (read() 一次性返回固定文本)."""

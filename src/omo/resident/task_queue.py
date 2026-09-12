@@ -156,6 +156,40 @@ class TaskQueue:
             c.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status_priority ON resident_tasks(status, priority DESC, created_at ASC)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_tasks_next_attempt ON resident_tasks(next_attempt_at) WHERE status = 'queued'")
             c.execute("CREATE INDEX IF NOT EXISTS idx_tasks_expires_at ON resident_tasks(expires_at) WHERE status = 'queued' AND expires_at > 0")
+            c.execute(
+                """
+                CREATE TABLE IF NOT EXISTS resident_tasks_archive (
+                    id TEXT PRIMARY KEY,
+                    uri TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    result TEXT,
+                    error_message TEXT NOT NULL DEFAULT '',
+                    priority INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_at REAL NOT NULL DEFAULT 0,
+                    expires_at REAL NOT NULL DEFAULT 0,
+                    labels TEXT NOT NULL DEFAULT '[]',
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    archived_at REAL NOT NULL
+                )
+                """
+            )
+            c.execute("CREATE INDEX IF NOT EXISTS idx_archive_status ON resident_tasks_archive(status)")
+            c.execute(
+                """
+                CREATE TABLE IF NOT EXISTS resident_tasks_history (
+                    id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL,
+                    from_status TEXT NOT NULL,
+                    to_status TEXT NOT NULL,
+                    changed_at REAL NOT NULL,
+                    FOREIGN KEY (task_id) REFERENCES resident_tasks(id)
+                )
+                """
+            )
+            c.execute("CREATE INDEX IF NOT EXISTS idx_history_task ON resident_tasks_history(task_id)")
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
@@ -239,6 +273,10 @@ class TaskQueue:
                         "UPDATE resident_tasks SET status = ?, attempts = ?, updated_at = ? WHERE id = ?",
                         (TaskStatus.RUNNING.value, new_attempts, time.time(), r["id"]),
                     )
+                    c.execute(
+                        "INSERT INTO resident_tasks_history (id, task_id, from_status, to_status, changed_at) VALUES (?, ?, ?, ?, ?)",
+                        (uuid.uuid4().hex, r["id"], TaskStatus.QUEUED.value, TaskStatus.RUNNING.value, time.time()),
+                    )
                     tasks.append(
                         self._row_to_task(r, status_override=TaskStatus.RUNNING, attempts_override=new_attempts)
                     )
@@ -281,6 +319,10 @@ class TaskQueue:
                             task_id,
                         ),
                     )
+                    c.execute(
+                        "INSERT INTO resident_tasks_history (id, task_id, from_status, to_status, changed_at) VALUES (?, ?, ?, ?, ?)",
+                        (uuid.uuid4().hex, task_id, TaskStatus.RUNNING.value, TaskStatus.QUEUED.value, time.time()),
+                    )
                 else:
                     # 终态失败
                     c.execute(
@@ -291,6 +333,10 @@ class TaskQueue:
                             time.time(),
                             task_id,
                         ),
+                    )
+                    c.execute(
+                        "INSERT INTO resident_tasks_history (id, task_id, from_status, to_status, changed_at) VALUES (?, ?, ?, ?, ?)",
+                        (uuid.uuid4().hex, task_id, TaskStatus.RUNNING.value, TaskStatus.FAILED.value, time.time()),
                     )
                 c.execute("COMMIT")
                 return True
@@ -330,6 +376,10 @@ class TaskQueue:
                 c.execute(
                     "UPDATE resident_tasks SET status = ?, updated_at = ? WHERE id = ?",
                     (TaskStatus.CANCELED.value, time.time(), task_id),
+                )
+                c.execute(
+                    "INSERT INTO resident_tasks_history (id, task_id, from_status, to_status, changed_at) VALUES (?, ?, ?, ?, ?)",
+                    (uuid.uuid4().hex, task_id, TaskStatus.QUEUED.value, TaskStatus.CANCELED.value, time.time()),
                 )
                 c.execute("COMMIT")
                 return True
@@ -406,8 +456,52 @@ class TaskQueue:
                         "UPDATE resident_tasks SET status = ?, updated_at = ? WHERE id = ?",
                         (TaskStatus.EXPIRED.value, now, r["id"]),
                     )
+                    c.execute(
+                        "INSERT INTO resident_tasks_history (id, task_id, from_status, to_status, changed_at) VALUES (?, ?, ?, ?, ?)",
+                        (uuid.uuid4().hex, r["id"], TaskStatus.QUEUED.value, TaskStatus.EXPIRED.value, now),
+                    )
                 c.execute("COMMIT")
                 return len(rows)
+            except Exception:
+                c.execute("ROLLBACK")
+                raise
+
+    def archive(self, *, status: str | None = None, older_than: float = 0.0, limit: int = 100) -> int:
+        """将任务从 resident_tasks 移动到 resident_tasks_archive.
+        
+        status: 指定状态过滤 (None = 所有终态).
+        older_than: 仅处理 updated_at <= older_than 的任务 (默认 0 = 所有).
+        limit: 最多归档条数 (默认 100).
+        返回实际归档条数.
+        """
+        now = time.time()
+        with self._conn() as c:
+            c.execute("BEGIN IMMEDIATE")
+            try:
+                query = "SELECT * FROM resident_tasks WHERE 1=1"
+                params: list[Any] = []
+                if status:
+                    query += " AND status = ?"
+                    params.append(status)
+                if older_than > 0:
+                    query += " AND updated_at <= ?"
+                    params.append(older_than)
+                query += " ORDER BY updated_at ASC LIMIT ?"
+                params.append(limit)
+                rows = c.execute(query, params).fetchall()
+                count = 0
+                for r in rows:
+                    c.execute(
+                        "INSERT INTO resident_tasks_archive (id, uri, payload, status, attempts, result, error_message, priority, next_attempt_at, expires_at, labels, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            r["id"], r["uri"], r["payload"], r["status"], r["attempts"], r["result"], r["error_message"],
+                            r["priority"], r["next_attempt_at"], r["expires_at"], r["labels"], r["created_at"], r["updated_at"], now,
+                        ),
+                    )
+                    c.execute("DELETE FROM resident_tasks WHERE id = ?", (r["id"],))
+                    count += 1
+                c.execute("COMMIT")
+                return count
             except Exception:
                 c.execute("ROLLBACK")
                 raise
@@ -445,6 +539,15 @@ class TaskQueue:
             "avg_duration_s": avg_duration or 0.0,
         }
 
+    def history(self, task_id: str) -> list[dict[str, Any]]:
+        """返回任务状态变更历史."""
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT from_status, to_status, changed_at FROM resident_tasks_history WHERE task_id = ? ORDER BY changed_at ASC",
+                (task_id,),
+            ).fetchall()
+        return [{"from_status": r["from_status"], "to_status": r["to_status"], "changed_at": r["changed_at"]} for r in rows]
+
     # ── Internal ──────────────────────────────────
     def _transition(
         self,
@@ -469,6 +572,10 @@ class TaskQueue:
                 c.execute(
                     "UPDATE resident_tasks SET status = ?, result = COALESCE(?, result), updated_at = ? WHERE id = ?",
                     (target.value, result_json, time.time(), task_id),
+                )
+                c.execute(
+                    "INSERT INTO resident_tasks_history (id, task_id, from_status, to_status, changed_at) VALUES (?, ?, ?, ?, ?)",
+                    (uuid.uuid4().hex, task_id, current.value, target.value, time.time()),
                 )
                 c.execute("COMMIT")
                 return True
@@ -630,6 +737,18 @@ def main(argv: list[str] | None = None) -> int:
     p_extend.add_argument("--id", required=True, help="任务 id")
     p_extend.add_argument("--ttl", type=float, required=True, help="延长秒数")
     p_extend.add_argument(
+        "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
+    )
+    p_archive = sub.add_parser("archive", help="将旧任务归档到 archive 表")
+    p_archive.add_argument("--status", default=None, help="按状态过滤 (None=所有终态)")
+    p_archive.add_argument("--older-than", type=float, default=0.0, help="仅归档指定秒数前更新的任务 (默认 0 = 所有)")
+    p_archive.add_argument("--limit", type=int, default=100, help="最多归档条数 (默认 100)")
+    p_archive.add_argument(
+        "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
+    )
+    p_history = sub.add_parser("history", help="查看任务状态变更历史")
+    p_history.add_argument("--id", required=True, help="任务 id")
+    p_history.add_argument(
         "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
     )
     args = parser.parse_args(argv)
@@ -813,6 +932,21 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         print(json.dumps({"ok": False, "reason": "task not found or not queued", "task_id": args.id}), flush=True)
         return 2
+
+    if args.command == "archive":
+        older_than = args.older_than if args.older_than > 0 else 0.0
+        count = queue.archive(status=args.status, older_than=older_than, limit=args.limit)
+        print(json.dumps({"ok": True, "archived": count}), flush=True)
+        return 0
+
+    if args.command == "history":
+        task_id = args.id
+        if not task_id:
+            print(json.dumps({"ok": False, "reason": "missing --id"}), flush=True)
+            return 2
+        entries = queue.history(task_id)
+        print(json.dumps({"task_id": task_id, "history": entries}, ensure_ascii=False), flush=True)
+        return 0
 
     task_id = args.id
     if task_id is None and args.json:
