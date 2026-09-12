@@ -20,12 +20,13 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import yaml
+import pytest
 
 # Ensure omo src is importable
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from omo.omo_debt_cli import cmd_debt_close, cmd_debt_desc, cmd_debt_list
-from omo.omo_delivery import cmd_delivery_archive, cmd_delivery_list
+from omo.omo_delivery import cmd_delivery_archive, cmd_delivery_list, write_delivery_template
 from omo.omo_evidence import cmd_evidence_list
 from omo.omo_goal import (
     cmd_goal_create,
@@ -855,6 +856,17 @@ class TestOmoDelivery:
         archive_dir = omo_dir / "_archive" / "delivery" / "phase27"
         assert (archive_dir / "phase27-a.md").exists()
         assert (archive_dir / "phase27-b.md").exists()
+
+    def test_write_delivery_template(self, tmp_path: Path) -> None:
+        out = write_delivery_template(tmp_path, "bet-test.yaml", "title: t\n")
+        assert out == tmp_path / ".omo" / "_delivery" / "templates" / "bet-test.yaml"
+        assert out.read_text(encoding="utf-8") == "title: t\n"
+
+    def test_write_delivery_template_rejects_traversal(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError):
+            write_delivery_template(tmp_path, "../escape.yaml", "x")
+        with pytest.raises(ValueError):
+            write_delivery_template(tmp_path, ".hidden.yaml", "x")
 
 
 # -- omo_standard --
