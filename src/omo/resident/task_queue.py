@@ -569,6 +569,8 @@ def main(argv: list[str] | None = None) -> int:
     p_list.add_argument("--label", action="append", default=[], help="按标签过滤 (可多次指定, 任务需包含所有指定标签)")
     p_list.add_argument("--limit", type=int, default=50, help="最多返回条数 (默认 50)")
     p_list.add_argument("--watch", action="store_true", help="实时监控模式 (每 2 秒刷新)")
+    p_list.add_argument("--sort", default="created_at", help="排序字段 (created_at/priority/status/attempts/updated_at)")
+    p_list.add_argument("--count-only", action="store_true", help="仅返回计数, 不返回任务列表")
     p_list.add_argument(
         "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
     )
@@ -584,12 +586,14 @@ def main(argv: list[str] | None = None) -> int:
         "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
     )
     p_cancel = sub.add_parser("cancel", help="取消 queued 任务")
-    p_cancel.add_argument("--id", required=True, help="任务 id")
+    p_cancel.add_argument("--id", default=None, help="任务 id (与 --file 二选一)")
+    p_cancel.add_argument("--file", default=None, help="任务 id 列表文件 (每行一个 id)")
     p_cancel.add_argument(
         "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
     )
     p_retry = sub.add_parser("retry", help="重试 failed 任务 (重新入队)")
-    p_retry.add_argument("--id", required=True, help="任务 id")
+    p_retry.add_argument("--id", default=None, help="任务 id (与 --file 二选一)")
+    p_retry.add_argument("--file", default=None, help="任务 id 列表文件 (每行一个 id)")
     p_retry.add_argument(
         "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
     )
@@ -628,6 +632,9 @@ def main(argv: list[str] | None = None) -> int:
         uri_prefix = args.uri
         label_filters = args.label or []
         watch = args.watch
+        sort_field = args.sort
+
+        _VALID_SORT_FIELDS = {"created_at", "priority", "status", "attempts", "updated_at"}
 
         def _fetch_tasks() -> list[Task]:
             with queue._conn() as c:
@@ -642,12 +649,26 @@ def main(argv: list[str] | None = None) -> int:
                     params.append(f"{uri_prefix}%")
                 if where:
                     query += " WHERE " + " AND ".join(where)
-                query += " ORDER BY created_at DESC LIMIT ?"
+                order_field = sort_field if sort_field in _VALID_SORT_FIELDS else "created_at"
+                if order_field == "status":
+                    query += " ORDER BY status DESC LIMIT ?"
+                else:
+                    query += f" ORDER BY {order_field} DESC LIMIT ?"
                 params.append(args.limit)
                 rows = c.execute(query, params).fetchall()
             tasks = [queue._row_to_task(r) for r in rows]
             if label_filters:
                 tasks = [t for t in tasks if all(label in t.labels for label in label_filters)]
+            if sort_field == "status":
+                _STATUS_ORDER = {
+                    TaskStatus.QUEUED.value: 0,
+                    TaskStatus.RUNNING.value: 1,
+                    TaskStatus.EXPIRED.value: 2,
+                    TaskStatus.FAILED.value: 3,
+                    TaskStatus.CANCELED.value: 4,
+                    TaskStatus.COMPLETED.value: 5,
+                }
+                tasks.sort(key=lambda t: _STATUS_ORDER.get(t.status.value, 99))
             return tasks
 
         if watch:
@@ -666,7 +687,10 @@ def main(argv: list[str] | None = None) -> int:
             except KeyboardInterrupt:
                 return 0
         tasks = _fetch_tasks()
-        print(json.dumps({"tasks": [_task_to_json(t) for t in tasks], "count": len(tasks)}, ensure_ascii=False), flush=True)
+        if getattr(args, "count_only", False):
+            print(json.dumps({"count": len(tasks)}, ensure_ascii=False), flush=True)
+        else:
+            print(json.dumps({"tasks": [_task_to_json(t) for t in tasks], "count": len(tasks)}, ensure_ascii=False), flush=True)
         return 0
 
     if args.command == "metrics":
@@ -702,20 +726,52 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "cancel":
-        ok = queue.cancel(args.id)
-        if ok:
-            print(json.dumps({"ok": True, "task_id": args.id, "status": "canceled"}), flush=True)
-            return 0
-        print(json.dumps({"ok": False, "reason": "task not found or not queued", "task_id": args.id}), flush=True)
-        return 2
+        task_ids: list[str] = []
+        if args.file:
+            try:
+                text = Path(args.file).read_text(encoding="utf-8")
+                task_ids = [line.strip() for line in text.splitlines() if line.strip()]
+            except OSError as exc:
+                print(json.dumps({"ok": False, "reason": f"cannot read file: {exc}"}), flush=True)
+                return 2
+        elif args.id:
+            task_ids = [args.id]
+        else:
+            print(json.dumps({"ok": False, "reason": "missing --id or --file"}), flush=True)
+            return 2
+        results = {"ok": True, "canceled": [], "failed": []}
+        for task_id in task_ids:
+            if queue.cancel(task_id):
+                results["canceled"].append(task_id)
+            else:
+                results["failed"].append(task_id)
+                results["ok"] = False
+        print(json.dumps(results, ensure_ascii=False), flush=True)
+        return 0 if results["ok"] else 2
 
     if args.command == "retry":
-        ok = queue.retry(args.id)
-        if ok:
-            print(json.dumps({"ok": True, "task_id": args.id, "status": "queued"}), flush=True)
-            return 0
-        print(json.dumps({"ok": False, "reason": "task not found or not failed", "task_id": args.id}), flush=True)
-        return 2
+        task_ids = []
+        if args.file:
+            try:
+                text = Path(args.file).read_text(encoding="utf-8")
+                task_ids = [line.strip() for line in text.splitlines() if line.strip()]
+            except OSError as exc:
+                print(json.dumps({"ok": False, "reason": f"cannot read file: {exc}"}), flush=True)
+                return 2
+        elif args.id:
+            task_ids = [args.id]
+        else:
+            print(json.dumps({"ok": False, "reason": "missing --id or --file"}), flush=True)
+            return 2
+        results = {"ok": True, "retried": [], "failed": []}
+        for task_id in task_ids:
+            if queue.retry(task_id):
+                results["retried"].append(task_id)
+            else:
+                results["failed"].append(task_id)
+                results["ok"] = False
+        print(json.dumps(results, ensure_ascii=False), flush=True)
+        return 0 if results["ok"] else 2
 
     if args.command == "purge-expired":
         count = queue.purge_expired(args.older_than)

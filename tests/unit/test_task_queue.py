@@ -471,6 +471,98 @@ class TestListAndMetrics:
         assert out["count"] == 1
         assert out["tasks"][0]["id"] == r1.task_id
 
+    def test_list_sorts_by_priority(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "list-sort.sqlite3")
+        q = TaskQueue(db)
+        q.submit("bos://resident/a", {}, priority=0)
+        q.submit("bos://resident/b", {}, priority=10)
+        q.submit("bos://resident/c", {}, priority=-5)
+        assert tq.main(["list", "--sort", "priority", "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert [t["priority"] for t in out["tasks"]] == [10, 0, -5]
+
+    def test_list_sorts_by_status(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "list-sort-status.sqlite3")
+        q = TaskQueue(db, max_attempts=1)
+        r1 = q.submit("bos://resident/a", {})
+        r2 = q.submit("bos://resident/b", {})
+        q.poll()
+        q.complete(r1.task_id, result={"ok": True})
+        q.fail(r2.task_id, "err")
+        assert tq.main(["list", "--sort", "status", "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        statuses = [t["status"] for t in out["tasks"]]
+        assert statuses == ["failed", "completed"]
+
+    def test_list_sorts_by_created_at(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "list-sort-created.sqlite3")
+        q = TaskQueue(db)
+        r1 = q.submit("bos://resident/a", {})
+        r2 = q.submit("bos://resident/b", {})
+        assert tq.main(["list", "--sort", "created_at", "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        ids = [t["id"] for t in out["tasks"]]
+        assert ids == [r2.task_id, r1.task_id]
+
+    def test_list_sort_invalid_field_falls_back_to_created_at(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "list-sort-invalid.sqlite3")
+        q = TaskQueue(db)
+        r1 = q.submit("bos://resident/a", {})
+        r2 = q.submit("bos://resident/b", {})
+        assert tq.main(["list", "--sort", "unknown", "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        ids = [t["id"] for t in out["tasks"]]
+        assert ids == [r2.task_id, r1.task_id]
+
+    def test_list_sorts_by_attempts(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "list-sort-attempts.sqlite3")
+        q = TaskQueue(db)
+        r1 = q.submit("bos://resident/a", {})
+        r2 = q.submit("bos://resident/b", {})
+        q.poll()
+        q.fail(r1.task_id, "err")
+        q.fail(r2.task_id, "err")
+        assert tq.main(["list", "--sort", "attempts", "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert [t["attempts"] for t in out["tasks"]] == [1, 1]
+
+    def test_list_sorts_by_updated_at(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "list-sort-updated.sqlite3")
+        q = TaskQueue(db)
+        r1 = q.submit("bos://resident/a", {})
+        r2 = q.submit("bos://resident/b", {})
+        time.sleep(0.05)
+        q.poll()
+        q.fail(r2.task_id, "err")
+        assert tq.main(["list", "--sort", "updated_at", "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        ids = [t["id"] for t in out["tasks"]]
+        assert ids == [r2.task_id, r1.task_id]
+
+    def test_list_count_only(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "list-count-only.sqlite3")
+        q = TaskQueue(db)
+        q.submit("bos://resident/a", {})
+        q.submit("bos://resident/b", {})
+        assert tq.main(["list", "--count-only", "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out == {"count": 2}
+        assert "tasks" not in out
+
     def test_metrics_counts(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
         from omo.resident import task_queue as tq
 
@@ -537,7 +629,7 @@ class TestListAndMetrics:
         assert tq.main(["cancel", "--id", r1.task_id, "--db", db]) == 0
         out = json.loads(capsys.readouterr().out)
         assert out["ok"] is True
-        assert out["status"] == "canceled"
+        assert out["canceled"] == [r1.task_id]
         task = q.get(r1.task_id)
         assert task is not None and task.status == TaskStatus.CANCELED
 
@@ -553,6 +645,22 @@ class TestListAndMetrics:
         out = json.loads(capsys.readouterr().out)
         assert out["ok"] is False
 
+    def test_cancel_bulk_by_file(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "cancel-bulk.sqlite3")
+        q = TaskQueue(db)
+        r1 = q.submit("bos://resident/a", {})
+        r2 = q.submit("bos://resident/b", {})
+        id_file = tmp_path / "cancel-ids.txt"
+        id_file.write_text(r1.task_id + "\n" + r2.task_id, encoding="utf-8")
+        assert tq.main(["cancel", "--file", str(id_file), "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["ok"] is True
+        assert out["canceled"] == [r1.task_id, r2.task_id]
+        assert q.get(r1.task_id).status == TaskStatus.CANCELED
+        assert q.get(r2.task_id).status == TaskStatus.CANCELED
+
     def test_retry_failed(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
         from omo.resident import task_queue as tq
 
@@ -564,9 +672,28 @@ class TestListAndMetrics:
         assert tq.main(["retry", "--id", r1.task_id, "--db", db]) == 0
         out = json.loads(capsys.readouterr().out)
         assert out["ok"] is True
-        assert out["status"] == "queued"
+        assert out["retried"] == [r1.task_id]
         task = q.get(r1.task_id)
         assert task is not None and task.status == TaskStatus.QUEUED
+
+    def test_retry_bulk_by_file(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "retry-bulk.sqlite3")
+        q = TaskQueue(db, max_attempts=1)
+        r1 = q.submit("bos://resident/a", {})
+        r2 = q.submit("bos://resident/b", {})
+        q.poll()
+        q.fail(r1.task_id, "boom")
+        q.fail(r2.task_id, "boom")
+        id_file = tmp_path / "retry-ids.txt"
+        id_file.write_text(r1.task_id + "\n" + r2.task_id, encoding="utf-8")
+        assert tq.main(["retry", "--file", str(id_file), "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["ok"] is True
+        assert out["retried"] == [r1.task_id, r2.task_id]
+        assert q.get(r1.task_id).status == TaskStatus.QUEUED
+        assert q.get(r2.task_id).status == TaskStatus.QUEUED
 
     def test_retry_not_failed(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
         from omo.resident import task_queue as tq
