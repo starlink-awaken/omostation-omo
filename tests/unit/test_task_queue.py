@@ -852,6 +852,44 @@ class TestListAndMetrics:
         assert out["history"][1]["from_status"] == "running"
         assert out["history"][1]["to_status"] == "completed"
 
+    def test_add_tag(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "add-tag.sqlite3")
+        q = TaskQueue(db)
+        r1 = q.submit("bos://resident/a", {})
+        assert tq.main(["add-tag", "--id", r1.task_id, "--tag", "urgent", "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["ok"] is True
+        task = q.get(r1.task_id)
+        assert "urgent" in task.labels
+
+    def test_remove_tag(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "remove-tag.sqlite3")
+        q = TaskQueue(db)
+        r1 = q.submit("bos://resident/a", {}, labels=["urgent", "vip"])
+        assert tq.main(["remove-tag", "--id", r1.task_id, "--tag", "urgent", "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["ok"] is True
+        task = q.get(r1.task_id)
+        assert "urgent" not in task.labels
+        assert "vip" in task.labels
+
+    def test_replace_tags(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "replace-tags.sqlite3")
+        q = TaskQueue(db)
+        r1 = q.submit("bos://resident/a", {}, labels=["old"])
+        assert tq.main(["replace-tags", "--id", r1.task_id, "--tags", "a,b,c", "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["ok"] is True
+        assert out["tags"] == ["a", "b", "c"]
+        task = q.get(r1.task_id)
+        assert task.labels == ["a", "b", "c"]
+
 
 class _StdinStub:
     """最小 stdin 桩 (read() 一次性返回固定文本)."""

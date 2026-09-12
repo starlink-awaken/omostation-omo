@@ -435,6 +435,69 @@ class TaskQueue:
                 c.execute("ROLLBACK")
                 raise
 
+    def add_tag(self, task_id: str, tag: str) -> bool:
+        """给任务添加标签. 返回是否成功."""
+        with self._conn() as c:
+            c.execute("BEGIN IMMEDIATE")
+            try:
+                row = c.execute("SELECT labels FROM resident_tasks WHERE id = ?", (task_id,)).fetchone()
+                if row is None:
+                    c.execute("ROLLBACK")
+                    return False
+                labels = json.loads(row["labels"]) if row["labels"] else []
+                if tag not in labels:
+                    labels.append(tag)
+                    c.execute(
+                        "UPDATE resident_tasks SET labels = ?, updated_at = ? WHERE id = ?",
+                        (json.dumps(labels, ensure_ascii=False), time.time(), task_id),
+                    )
+                c.execute("COMMIT")
+                return True
+            except Exception:
+                c.execute("ROLLBACK")
+                raise
+
+    def remove_tag(self, task_id: str, tag: str) -> bool:
+        """移除任务标签. 返回是否成功."""
+        with self._conn() as c:
+            c.execute("BEGIN IMMEDIATE")
+            try:
+                row = c.execute("SELECT labels FROM resident_tasks WHERE id = ?", (task_id,)).fetchone()
+                if row is None:
+                    c.execute("ROLLBACK")
+                    return False
+                labels = json.loads(row["labels"]) if row["labels"] else []
+                if tag in labels:
+                    labels.remove(tag)
+                    c.execute(
+                        "UPDATE resident_tasks SET labels = ?, updated_at = ? WHERE id = ?",
+                        (json.dumps(labels, ensure_ascii=False), time.time(), task_id),
+                    )
+                c.execute("COMMIT")
+                return True
+            except Exception:
+                c.execute("ROLLBACK")
+                raise
+
+    def replace_tags(self, task_id: str, tags: list[str]) -> bool:
+        """替换任务标签. 返回是否成功."""
+        with self._conn() as c:
+            c.execute("BEGIN IMMEDIATE")
+            try:
+                row = c.execute("SELECT id FROM resident_tasks WHERE id = ?", (task_id,)).fetchone()
+                if row is None:
+                    c.execute("ROLLBACK")
+                    return False
+                c.execute(
+                    "UPDATE resident_tasks SET labels = ?, updated_at = ? WHERE id = ?",
+                    (json.dumps(tags, ensure_ascii=False), time.time(), task_id),
+                )
+                c.execute("COMMIT")
+                return True
+            except Exception:
+                c.execute("ROLLBACK")
+                raise
+
     def extend(self, task_id: str, ttl: float) -> bool:
         """延长 queued 任务的 TTL. 返回是否成功."""
         with self._conn() as c:
@@ -782,6 +845,24 @@ def main(argv: list[str] | None = None) -> int:
     p_requeue.add_argument(
         "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
     )
+    p_add_tag = sub.add_parser("add-tag", help="给任务添加标签")
+    p_add_tag.add_argument("--id", required=True, help="任务 id")
+    p_add_tag.add_argument("--tag", required=True, help="标签名")
+    p_add_tag.add_argument(
+        "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
+    )
+    p_remove_tag = sub.add_parser("remove-tag", help="移除任务标签")
+    p_remove_tag.add_argument("--id", required=True, help="任务 id")
+    p_remove_tag.add_argument("--tag", required=True, help="标签名")
+    p_remove_tag.add_argument(
+        "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
+    )
+    p_replace_tags = sub.add_parser("replace-tags", help="替换任务标签")
+    p_replace_tags.add_argument("--id", required=True, help="任务 id")
+    p_replace_tags.add_argument("--tags", required=True, help="标签列表, 逗号分隔")
+    p_replace_tags.add_argument(
+        "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
+    )
     args = parser.parse_args(argv)
 
     # --db 可放顶层 (task --db X submit ...) 或子命令级 (task submit --db X ...), 同 dest
@@ -957,6 +1038,31 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"ok": True, "task_id": args.id, "status": "queued"}), flush=True)
             return 0
         print(json.dumps({"ok": False, "reason": "task not found or not in terminal state", "task_id": args.id}), flush=True)
+        return 2
+
+    if args.command == "add-tag":
+        ok = queue.add_tag(args.id, args.tag)
+        if ok:
+            print(json.dumps({"ok": True, "task_id": args.id, "tag": args.tag}), flush=True)
+            return 0
+        print(json.dumps({"ok": False, "reason": "task not found", "task_id": args.id}), flush=True)
+        return 2
+
+    if args.command == "remove-tag":
+        ok = queue.remove_tag(args.id, args.tag)
+        if ok:
+            print(json.dumps({"ok": True, "task_id": args.id, "tag": args.tag}), flush=True)
+            return 0
+        print(json.dumps({"ok": False, "reason": "task not found", "task_id": args.id}), flush=True)
+        return 2
+
+    if args.command == "replace-tags":
+        tags = [t.strip() for t in args.tags.split(",") if t.strip()]
+        ok = queue.replace_tags(args.id, tags)
+        if ok:
+            print(json.dumps({"ok": True, "task_id": args.id, "tags": tags}), flush=True)
+            return 0
+        print(json.dumps({"ok": False, "reason": "task not found", "task_id": args.id}), flush=True)
         return 2
 
     if args.command == "purge-expired":
