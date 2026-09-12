@@ -528,6 +528,58 @@ class TestListAndMetrics:
         assert out["count"] == 1
         assert out["tasks"][0]["id"] == r1.task_id
 
+    def test_cancel_queued(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "cancel-queued.sqlite3")
+        q = TaskQueue(db)
+        r1 = q.submit("bos://resident/a", {})
+        assert tq.main(["cancel", "--id", r1.task_id, "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["ok"] is True
+        assert out["status"] == "canceled"
+        task = q.get(r1.task_id)
+        assert task is not None and task.status == TaskStatus.CANCELED
+
+    def test_cancel_not_queued(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "cancel-not-queued.sqlite3")
+        q = TaskQueue(db)
+        r1 = q.submit("bos://resident/a", {})
+        q.poll()
+        q.complete(r1.task_id, result={"ok": True})
+        assert tq.main(["cancel", "--id", r1.task_id, "--db", db]) == 2
+        out = json.loads(capsys.readouterr().out)
+        assert out["ok"] is False
+
+    def test_retry_failed(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "retry-failed.sqlite3")
+        q = TaskQueue(db, max_attempts=1)
+        r1 = q.submit("bos://resident/a", {})
+        q.poll()
+        q.fail(r1.task_id, "boom")
+        assert tq.main(["retry", "--id", r1.task_id, "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["ok"] is True
+        assert out["status"] == "queued"
+        task = q.get(r1.task_id)
+        assert task is not None and task.status == TaskStatus.QUEUED
+
+    def test_retry_not_failed(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "retry-not-failed.sqlite3")
+        q = TaskQueue(db)
+        r1 = q.submit("bos://resident/a", {})
+        q.poll()
+        q.complete(r1.task_id, result={"ok": True})
+        assert tq.main(["retry", "--id", r1.task_id, "--db", db]) == 2
+        out = json.loads(capsys.readouterr().out)
+        assert out["ok"] is False
+
 
 class _StdinStub:
     """最小 stdin 桩 (read() 一次性返回固定文本)."""

@@ -337,6 +337,28 @@ class TaskQueue:
                 c.execute("ROLLBACK")
                 raise
 
+    def retry(self, task_id: str) -> bool:
+        """将 failed 任务重新入队. 返回是否成功."""
+        with self._conn() as c:
+            c.execute("BEGIN IMMEDIATE")
+            try:
+                row = c.execute(
+                    "SELECT status, attempts FROM resident_tasks WHERE id = ?", (task_id,)
+                ).fetchone()
+                if row is None or row["status"] != TaskStatus.FAILED.value:
+                    c.execute("ROLLBACK")
+                    return False
+                now = time.time()
+                c.execute(
+                    "UPDATE resident_tasks SET status = ?, next_attempt_at = ?, updated_at = ? WHERE id = ?",
+                    (TaskStatus.QUEUED.value, 0.0, now, task_id),
+                )
+                c.execute("COMMIT")
+                return True
+            except Exception:
+                c.execute("ROLLBACK")
+                raise
+
     def purge_expired(self, older_than: float = 0.0) -> int:
         """将超时未处理的 queued 任务标记为 expired.
         
@@ -561,6 +583,16 @@ def main(argv: list[str] | None = None) -> int:
     p_search.add_argument(
         "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
     )
+    p_cancel = sub.add_parser("cancel", help="取消 queued 任务")
+    p_cancel.add_argument("--id", required=True, help="任务 id")
+    p_cancel.add_argument(
+        "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
+    )
+    p_retry = sub.add_parser("retry", help="重试 failed 任务 (重新入队)")
+    p_retry.add_argument("--id", required=True, help="任务 id")
+    p_retry.add_argument(
+        "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
+    )
     args = parser.parse_args(argv)
 
     # --db 可放顶层 (task --db X submit ...) 或子命令级 (task submit --db X ...), 同 dest
@@ -661,6 +693,22 @@ def main(argv: list[str] | None = None) -> int:
                 break
         print(json.dumps({"tasks": [_task_to_json(t) for t in matched], "count": len(matched), "query": query}, ensure_ascii=False), flush=True)
         return 0
+
+    if args.command == "cancel":
+        ok = queue.cancel(args.id)
+        if ok:
+            print(json.dumps({"ok": True, "task_id": args.id, "status": "canceled"}), flush=True)
+            return 0
+        print(json.dumps({"ok": False, "reason": "task not found or not queued", "task_id": args.id}), flush=True)
+        return 2
+
+    if args.command == "retry":
+        ok = queue.retry(args.id)
+        if ok:
+            print(json.dumps({"ok": True, "task_id": args.id, "status": "queued"}), flush=True)
+            return 0
+        print(json.dumps({"ok": False, "reason": "task not found or not failed", "task_id": args.id}), flush=True)
+        return 2
 
     task_id = args.id
     if task_id is None and args.json:
