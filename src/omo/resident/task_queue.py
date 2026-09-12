@@ -76,6 +76,7 @@ class Task:
     priority: 优先级 (默认 0, 高优先任务先被 poll).
     next_attempt_at: 下次允许尝试的 Unix timestamp (用于指数退避).
     expires_at: 过期时间戳 (0 表示永不过期).
+    labels: 任务标签列表 (用于过滤和组织).
     """
 
     id: str
@@ -88,6 +89,7 @@ class Task:
     priority: int = 0
     next_attempt_at: float = 0.0
     expires_at: float = 0.0
+    labels: list[str] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
@@ -145,6 +147,7 @@ class TaskQueue:
                     priority INTEGER NOT NULL DEFAULT 0,
                     next_attempt_at REAL NOT NULL DEFAULT 0,
                     expires_at REAL NOT NULL DEFAULT 0,
+                    labels TEXT NOT NULL DEFAULT '[]',
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL
                 )
@@ -166,12 +169,13 @@ class TaskQueue:
             conn.close()
 
     # ── Public API ─────────────────────────────────
-    def submit(self, uri: str, payload: dict[str, Any], *, priority: int = 0, ttl: float = 0.0) -> SubmitResult:
+    def submit(self, uri: str, payload: dict[str, Any], *, priority: int = 0, ttl: float = 0.0, labels: list[str] | None = None) -> SubmitResult:
         """提交任务到队列. 队列满时拒绝.
 
         返回 SubmitResult: ok=True 时 task_id 非空.
         priority: 优先级 (默认 0, 高优先任务先被 poll).
         ttl: 任务存活时间(秒), 0 表示永不过期.
+        labels: 任务标签列表 (用于过滤和组织).
         """
         # 容量检查 (placed in事务外避免对 hot row 加锁)
         with self._conn() as c:
@@ -186,12 +190,13 @@ class TaskQueue:
         task_id = uuid.uuid4().hex
         now = time.time()
         expires_at = now + ttl if ttl != 0 else 0.0
+        labels_json = json.dumps(labels or [], ensure_ascii=False)
         with self._conn() as c:
             c.execute("BEGIN IMMEDIATE")
             try:
                 c.execute(
-                    "INSERT INTO resident_tasks (id, uri, payload, status, attempts, priority, next_attempt_at, expires_at, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, 0, ?, 0, ?, ?, ?)",
+                    "INSERT INTO resident_tasks (id, uri, payload, status, attempts, priority, next_attempt_at, expires_at, labels, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, 0, ?, 0, ?, ?, ?, ?)",
                     (
                         task_id,
                         uri,
@@ -199,6 +204,7 @@ class TaskQueue:
                         TaskStatus.QUEUED.value,
                         priority,
                         expires_at,
+                        labels_json,
                         now,
                         now,
                     ),
@@ -306,7 +312,7 @@ class TaskQueue:
         """查询任务当前状态."""
         with self._conn() as c:
             row = c.execute(
-                "SELECT id, uri, payload, status, attempts, result, error_message, priority, next_attempt_at, expires_at, created_at, updated_at "
+                "SELECT id, uri, payload, status, attempts, result, error_message, priority, next_attempt_at, expires_at, labels, created_at, updated_at "
                 "FROM resident_tasks WHERE id = ?",
                 (task_id,),
             ).fetchone()
@@ -437,11 +443,14 @@ class TaskQueue:
             raise ValueError("row is None")
         status = status_override if status_override is not None else TaskStatus(row["status"])
         attempts = attempts_override if attempts_override is not None else row["attempts"]
-        # sqlite3.Row 可能不支持 __contains__, 改用 keys() 检查
         result_raw = row["result"] if "result" in row.keys() else None
         priority = row["priority"] if "priority" in row.keys() else 0
         next_attempt_at = row["next_attempt_at"] if "next_attempt_at" in row.keys() else 0.0
         expires_at = row["expires_at"] if "expires_at" in row.keys() else 0.0
+        labels_raw = row["labels"] if "labels" in row.keys() else "[]"
+        labels = json.loads(labels_raw) if labels_raw else []
+        if not isinstance(labels, list):
+            labels = []
         return Task(
             id=row["id"],
             uri=row["uri"],
@@ -453,6 +462,7 @@ class TaskQueue:
             priority=priority,
             next_attempt_at=next_attempt_at,
             expires_at=expires_at,
+            labels=labels,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -494,6 +504,7 @@ def _task_to_json(task: Task) -> dict[str, Any]:
         "priority": task.priority,
         "next_attempt_at": task.next_attempt_at,
         "expires_at": task.expires_at,
+        "labels": task.labels,
         "created_at": task.created_at,
         "updated_at": task.updated_at,
     }
@@ -520,6 +531,7 @@ def main(argv: list[str] | None = None) -> int:
     p_submit.add_argument("--json", default=None, help="payload JSON 字符串 (缺省读 stdin)")
     p_submit.add_argument("--priority", type=int, default=0, help="任务优先级 (默认 0, 高优先先执行)")
     p_submit.add_argument("--ttl", type=float, default=0, help="任务 TTL(秒), 0=永不过期")
+    p_submit.add_argument("--label", action="append", default=[], help="任务标签 (可多次指定)")
     p_submit.add_argument(
         "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
     )
@@ -529,9 +541,10 @@ def main(argv: list[str] | None = None) -> int:
     p_status.add_argument(
         "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
     )
-    p_list = sub.add_parser("list", help="列出队列任务 (支持 --status/--uri 过滤)")
+    p_list = sub.add_parser("list", help="列出队列任务 (支持 --status/--uri/--label 过滤)")
     p_list.add_argument("--status", default=None, help="按状态过滤 (queued/running/completed/failed/expired/canceled)")
     p_list.add_argument("--uri", default=None, help="按 URI 前缀过滤")
+    p_list.add_argument("--label", action="append", default=[], help="按标签过滤 (可多次指定, 任务需包含所有指定标签)")
     p_list.add_argument("--limit", type=int, default=50, help="最多返回条数 (默认 50)")
     p_list.add_argument(
         "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
@@ -556,7 +569,7 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(payload, dict):
             print(json.dumps({"ok": False, "reason": "payload must be a JSON object"}), flush=True)
             return 2
-        result = queue.submit(args.uri, payload, priority=args.priority, ttl=args.ttl)
+        result = queue.submit(args.uri, payload, priority=args.priority, ttl=args.ttl, labels=args.label)
         if result.ok:
             print(json.dumps({"ok": True, "task_id": result.task_id}), flush=True)
             return 0
@@ -566,8 +579,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "list":
         status_filter = args.status
         uri_prefix = args.uri
+        label_filters = args.label or []
         with queue._conn() as c:
-            query = "SELECT id, uri, payload, status, attempts, result, error_message, priority, next_attempt_at, expires_at, created_at, updated_at FROM resident_tasks"
+            query = "SELECT id, uri, payload, status, attempts, result, error_message, priority, next_attempt_at, expires_at, labels, created_at, updated_at FROM resident_tasks"
             params: list[Any] = []
             where: list[str] = []
             if status_filter:
@@ -582,6 +596,8 @@ def main(argv: list[str] | None = None) -> int:
             params.append(args.limit)
             rows = c.execute(query, params).fetchall()
         tasks = [queue._row_to_task(r) for r in rows]
+        if label_filters:
+            tasks = [t for t in tasks if all(label in t.labels for label in label_filters)]
         print(json.dumps({"tasks": [_task_to_json(t) for t in tasks], "count": len(tasks)}, ensure_ascii=False), flush=True)
         return 0
 

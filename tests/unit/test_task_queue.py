@@ -453,6 +453,24 @@ class TestListAndMetrics:
         assert out["count"] == 1
         assert out["tasks"][0]["id"] == r2.task_id
 
+    def test_list_filters_by_labels(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        from omo.resident import task_queue as tq
+
+        db = str(tmp_path / "list-labels.sqlite3")
+        q = TaskQueue(db)
+        r1 = q.submit("bos://resident/a", {}, labels=["urgent", "vip"])
+        r2 = q.submit("bos://resident/b", {}, labels=["normal"])
+        r3 = q.submit("bos://resident/c", {}, labels=["urgent"])
+        assert tq.main(["list", "--label", "urgent", "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["count"] == 2
+        ids = {t["id"] for t in out["tasks"]}
+        assert ids == {r1.task_id, r3.task_id}
+        assert tq.main(["list", "--label", "urgent", "--label", "vip", "--db", db]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["count"] == 1
+        assert out["tasks"][0]["id"] == r1.task_id
+
     def test_metrics_counts(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
         from omo.resident import task_queue as tq
 
