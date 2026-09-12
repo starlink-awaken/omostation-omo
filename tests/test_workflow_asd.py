@@ -5,9 +5,9 @@ from datetime import UTC, datetime
 import pytest
 
 from omo.workflow.asd import (
+    SCHEMA,
     Panel,
     PanelProvenance,
-    SCHEMA,
     attach_panel,
     new_snapshot,
     validate,
@@ -68,15 +68,35 @@ class TestValidate:
         """gap 存在但 degraded=false 应被校验捕获（防线：绝不 green-wash）。"""
         snap = new_snapshot()
         snap["panels"] = {
-            "overview": {"data": {}, "provenance": {"source": "t", "freshness_seconds": 300},
-                         "gaps": ["x"], "degraded": False},
-            "spine": {"data": {}, "provenance": {"source": "t", "freshness_seconds": 300},
-                      "gaps": [], "degraded": False},
-            "agents": {"data": {}, "provenance": {"source": "t", "freshness_seconds": 300},
-                       "gaps": [], "degraded": False},
-            "milestones": {"data": {}, "provenance": {"source": "t", "freshness_seconds": 300},
-                           "gaps": [], "degraded": False},
-            "degradation": {"data": {}, "provenance": {"source": "t", "freshness_seconds": 300},
-                            "gaps": [], "degraded": False},
+            "overview": {
+                "data": {},
+                "provenance": {"source": "t", "freshness_seconds": 300},
+                "gaps": ["x"],
+                "degraded": False,
+            },
+            "spine": {
+                "data": {},
+                "provenance": {"source": "t", "freshness_seconds": 300},
+                "gaps": [],
+                "degraded": False,
+            },
+            "agents": {
+                "data": {},
+                "provenance": {"source": "t", "freshness_seconds": 300},
+                "gaps": [],
+                "degraded": False,
+            },
+            "milestones": {
+                "data": {},
+                "provenance": {"source": "t", "freshness_seconds": 300},
+                "gaps": [],
+                "degraded": False,
+            },
+            "degradation": {
+                "data": {},
+                "provenance": {"source": "t", "freshness_seconds": 300},
+                "gaps": [],
+                "degraded": False,
+            },
         }
         assert any("degraded flag inconsistent" in p for p in validate(snap))

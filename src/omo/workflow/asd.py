@@ -20,9 +20,9 @@ PANELS = ("overview", "spine", "agents", "milestones", "degradation")
 
 @dataclass
 class PanelProvenance:
-    source: str                       # 数据源标识（如 ssot://bet-ledger）
-    freshness_seconds: int | None     # None = 未知新鲜度 → 强制 degraded
-    digest: str | None = None         # 内容摘要（可复算）
+    source: str  # 数据源标识（如 ssot://bet-ledger）
+    freshness_seconds: int | None  # None = 未知新鲜度 → 强制 degraded
+    digest: str | None = None  # 内容摘要（可复算）
 
     def to_dict(self) -> dict[str, Any]:
         return {

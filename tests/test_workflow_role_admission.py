@@ -7,9 +7,9 @@ import pytest
 import yaml
 
 from omo.workflow.role_admission import (
+    VALID_STATES,
     AdmissionError,
     RoleAdmission,
-    VALID_STATES,
     can_act,
     check_transition,
     load_registry,
@@ -21,12 +21,9 @@ from omo.workflow.role_admission import (
 def reg_file(tmp_path: Path) -> Path:
     data = {
         "roles": [
-            {"role_id": "role:planner", "state": "admitted", "adapter": "direct-local",
-             "evidence_ref": "sha256:abc"},
-            {"role_id": "role:orca-agent", "state": "r0_canary", "adapter": "orca",
-             "evidence_ref": ""},
-            {"role_id": "role:multica-agent", "state": "observer", "adapter": "multica",
-             "evidence_ref": ""},
+            {"role_id": "role:planner", "state": "admitted", "adapter": "direct-local", "evidence_ref": "sha256:abc"},
+            {"role_id": "role:orca-agent", "state": "r0_canary", "adapter": "orca", "evidence_ref": ""},
+            {"role_id": "role:multica-agent", "state": "observer", "adapter": "multica", "evidence_ref": ""},
         ]
     }
     p = tmp_path / "role-admission.yaml"
@@ -45,8 +42,7 @@ class TestLoad:
 
     def test_illegal_state(self, tmp_path: Path) -> None:
         p = tmp_path / "bad.yaml"
-        p.write_text(yaml.safe_dump({"roles": [{"role_id": "x", "state": "galaxy"}]}),
-                     encoding="utf-8")
+        p.write_text(yaml.safe_dump({"roles": [{"role_id": "x", "state": "galaxy"}]}), encoding="utf-8")
         with pytest.raises(AdmissionError):
             load_registry(p)
 
