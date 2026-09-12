@@ -13,6 +13,22 @@ def _find_omo_dir() -> Path:
     return find_omo_dir()
 
 
+def write_delivery_template(workspace_root: Path, output_name: str, content: str) -> Path:
+    """Broker: 落盘生成的模板到 .omo/_delivery/templates/.
+
+    contract_gatekeeper 禁止非 broker 直写 .omo/ — 上游 (如 cockpit resident
+    decision approve) 必须经此 broker, 而非 Path.write_text 直写.
+    src/omo/ 是 gatekeeper 豁免 broker 路径.
+    """
+    if not output_name or "/" in output_name or "\\" in output_name or output_name.startswith("."):
+        raise ValueError(f"illegal template name: {output_name!r}")
+    target_dir = Path(workspace_root) / ".omo" / "_delivery" / "templates"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    output_path = target_dir / output_name
+    output_path.write_text(content, encoding="utf-8")
+    return output_path
+
+
 def cmd_delivery_list(omo_dir: Path, phase: str | None) -> int:
     """List delivery artifacts, optionally filtered by phase prefix."""
     base = omo_dir / "_delivery"
