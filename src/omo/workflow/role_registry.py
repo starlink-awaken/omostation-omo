@@ -55,8 +55,7 @@ class RoleRegistryError(Exception):
 
 def admission_digest(record: dict[str, Any]) -> str:
     """规范 JSON → sha256 digest (防篡改)."""
-    canonical = json.dumps(record, sort_keys=True, separators=(",", ":"),
-                            ensure_ascii=False)
+    canonical = json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -87,8 +86,9 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _seal(role_id: str, capabilities: frozenset[str],
-          state: AdmissionState, version: int, updated_at: str) -> RoleRecord:
+def _seal(
+    role_id: str, capabilities: frozenset[str], state: AdmissionState, version: int, updated_at: str
+) -> RoleRecord:
     body = {
         "schema": _SCHEMA,
         "role_id": role_id,
@@ -130,67 +130,53 @@ class RoleRegistry:
     def can_admit(self, role_id: str, capability: str) -> bool:
         """Role 级 verifier 雏形: 已准入 + 具备该 capability."""
         record = self._records.get(role_id)
-        return (
-            record is not None
-            and record.admission_state == "admitted"
-            and capability in record.capabilities
-        )
+        return record is not None and record.admission_state == "admitted" and capability in record.capabilities
 
     # -- 变更 ----------------------------------------------------------
 
-    def register(self, role_id: str,
-                 capabilities: set[str] | frozenset[str] | list[str]) -> RoleRecord:
+    def register(self, role_id: str, capabilities: set[str] | frozenset[str] | list[str]) -> RoleRecord:
         if not _ROLE_ID_RE.match(role_id):
             raise RoleRegistryError(
                 "invalid-role-id",
-                f"role_id 必须匹配 { _ROLE_ID_RE.pattern }: {role_id!r}",
+                f"role_id 必须匹配 {_ROLE_ID_RE.pattern}: {role_id!r}",
             )
         caps = frozenset(capabilities)
         if not caps:
-            raise RoleRegistryError(
-                "empty-capabilities", f"{role_id!r} capabilities 不得为空")
+            raise RoleRegistryError("empty-capabilities", f"{role_id!r} capabilities 不得为空")
         if role_id in self._records:
-            raise RoleRegistryError(
-                "duplicate-role", f"{role_id!r} 已注册")
+            raise RoleRegistryError("duplicate-role", f"{role_id!r} 已注册")
         record = _seal(role_id, caps, "pending", 1, _now())
         self._records[role_id] = record
         self._persist()
         return record
 
-    def transition(self, role_id: str, to_state: AdmissionState,
-                   *, expected_version: int) -> RoleRecord:
+    def transition(self, role_id: str, to_state: AdmissionState, *, expected_version: int) -> RoleRecord:
         current = self._records.get(role_id)
         if current is None:
-            raise RoleRegistryError(
-                "unknown-role", f"{role_id!r} 未注册")
+            raise RoleRegistryError("unknown-role", f"{role_id!r} 未注册")
         if expected_version != current.version:
             raise RoleRegistryError(
                 "stale-version",
-                f"{role_id!r} 期望 version={expected_version}, "
-                f"实际 version={current.version}",
+                f"{role_id!r} 期望 version={expected_version}, 实际 version={current.version}",
             )
         if to_state not in _ALLOWED[current.admission_state]:
             raise RoleRegistryError(
                 "illegal-transition",
                 f"{role_id!r} 不允许 {current.admission_state} → {to_state}",
             )
-        record = _seal(role_id, current.capabilities, to_state,
-                        current.version + 1, _now())
+        record = _seal(role_id, current.capabilities, to_state, current.version + 1, _now())
         self._records[role_id] = record
         self._persist()
         return record
 
     def admit(self, role_id: str, *, expected_version: int) -> RoleRecord:
-        return self.transition(role_id, "admitted",
-                               expected_version=expected_version)
+        return self.transition(role_id, "admitted", expected_version=expected_version)
 
     def suspend(self, role_id: str, *, expected_version: int) -> RoleRecord:
-        return self.transition(role_id, "suspended",
-                               expected_version=expected_version)
+        return self.transition(role_id, "suspended", expected_version=expected_version)
 
     def revoke(self, role_id: str, *, expected_version: int) -> RoleRecord:
-        return self.transition(role_id, "revoked",
-                               expected_version=expected_version)
+        return self.transition(role_id, "revoked", expected_version=expected_version)
 
     # -- 持久化 --------------------------------------------------------
 
@@ -200,8 +186,7 @@ class RoleRegistry:
         self._store.parent.mkdir(parents=True, exist_ok=True)
         with self._store.open("w", encoding="utf-8") as fh:
             for record in self.list():
-                fh.write(json.dumps(record.to_dict(), ensure_ascii=False)
-                         + "\n")
+                fh.write(json.dumps(record.to_dict(), ensure_ascii=False) + "\n")
 
     def _load(self) -> None:
         assert self._store is not None

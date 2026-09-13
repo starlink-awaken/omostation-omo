@@ -125,7 +125,5 @@ def test_jsonl_roundtrip(tmp_path) -> None:
 
 def test_list_filter(admitted: RoleRegistry) -> None:
     admitted.register("role:cell-beta", {"observe"})
-    assert [r.role_id for r in admitted.list(state="admitted")] == [
-        "role:cell-alpha"]
-    assert [r.role_id for r in admitted.list(state="pending")] == [
-        "role:cell-beta"]
+    assert [r.role_id for r in admitted.list(state="admitted")] == ["role:cell-alpha"]
+    assert [r.role_id for r in admitted.list(state="pending")] == ["role:cell-beta"]
