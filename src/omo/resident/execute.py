@@ -171,9 +171,7 @@ def _run_cellpool(*, prompt: str, run_id: str, timeout_seconds: int, max_cells: 
     try:
         import asyncio  # noqa: PLC0415
 
-        receipt = asyncio.run(
-            pool.run_prompt(episode_id, prompt, timeout_seconds=timeout_seconds)
-        )
+        receipt = asyncio.run(pool.run_prompt(episode_id, prompt, timeout_seconds=timeout_seconds))
         receipt["run_id"] = run_id
         receipt["backend"] = "cellpool"
         receipt["binding"] = _default_binding({"event_id": run_id}, {}, run_id)

@@ -10,8 +10,8 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
@@ -110,7 +110,7 @@ class DecisionGraph:
             kind="patrol",
             actor=actor,
             action=action,
-            ts=datetime.now(timezone.utc).isoformat(),
+            ts=datetime.now(UTC).isoformat(),
             context=context or {},
         )
         self._nodes[node.node_id] = node
@@ -130,7 +130,7 @@ class DecisionGraph:
             kind="healing",
             actor=actor,
             action=action,
-            ts=datetime.now(timezone.utc).isoformat(),
+            ts=datetime.now(UTC).isoformat(),
             context=context or {},
         )
         self._nodes[node.node_id] = node
@@ -152,7 +152,7 @@ class DecisionGraph:
             kind="decision",
             actor=actor,
             action=action,
-            ts=datetime.now(timezone.utc).isoformat(),
+            ts=datetime.now(UTC).isoformat(),
             context=context or {},
         )
         self._nodes[node.node_id] = node
@@ -216,8 +216,7 @@ class DecisionGraph:
             "nodes": len(self._nodes),
             "edges": len(self._edges),
             "by_kind": {
-                k: sum(1 for n in self._nodes.values() if n.kind == k)
-                for k in ("patrol", "healing", "decision")
+                k: sum(1 for n in self._nodes.values() if n.kind == k) for k in ("patrol", "healing", "decision")
             },
         }
 
@@ -252,9 +251,9 @@ class DecisionGraph:
             uri = f":{node.node_id}"
             lines.append(f"{uri} a prov:Activity ;")
             if node.kind == "decision":
-                lines.append(f'    prov:wasAssociatedWith :actor_{node.actor} ;')
+                lines.append(f"    prov:wasAssociatedWith :actor_{node.actor} ;")
             else:
-                lines.append(f'    prov:wasAssociatedWith :actor_{node.actor} ;')
+                lines.append(f"    prov:wasAssociatedWith :actor_{node.actor} ;")
             lines.append(f'    rdfs:label "{node.action}" ;')
             lines.append(f'    prov:atTime "{node.ts}"^^xsd:dateTime .')
             lines.append("")
@@ -283,13 +282,17 @@ class DecisionGraph:
             doc["@graph"].append(entry)
         for edge in self._edges:
             if edge.relation == "CAUSED":
-                doc["@graph"].append({
-                    "@id": f"urn:decision:{edge.dst}",
-                    "prov:wasGeneratedBy": {"@id": f"urn:decision:{edge.src}"},
-                })
+                doc["@graph"].append(
+                    {
+                        "@id": f"urn:decision:{edge.dst}",
+                        "prov:wasGeneratedBy": {"@id": f"urn:decision:{edge.src}"},
+                    }
+                )
             else:
-                doc["@graph"].append({
-                    "@id": f"urn:decision:{edge.dst}",
-                    "prov:wasInfluencedBy": {"@id": f"urn:decision:{edge.src}"},
-                })
+                doc["@graph"].append(
+                    {
+                        "@id": f"urn:decision:{edge.dst}",
+                        "prov:wasInfluencedBy": {"@id": f"urn:decision:{edge.src}"},
+                    }
+                )
         return json.dumps(doc, indent=2, ensure_ascii=False)

@@ -123,9 +123,7 @@ class DataScopeGuard:
         raw = target if target.is_absolute() else (self._ws_root / target)
         lexical = Path(os.path.normpath(raw))
         allowed = [self._resolve_root(r) for r in roots]
-        inside = any(
-            real == r or real.is_relative_to(r) for r in allowed
-        )
+        inside = any(real == r or real.is_relative_to(r) for r in allowed)
         if not inside:
             # lexical 在沙盒内但 realpath 逃逸 → symlink 逃逸
             if any(lexical == r or lexical.is_relative_to(r) for r in allowed):
@@ -167,14 +165,8 @@ class DriftRadar:
         cap_hits = sum(1 for e in recent if e.get("capability_violation"))
         scope_hits = sum(1 for e in recent if e.get("scope_violation"))
         scene_domain = str(token.get("domain") or "")
-        domain_shifts = sum(
-            1 for e in recent if e.get("domain") and str(e["domain"]) != scene_domain
-        )
-        score = (
-            self.w_capability * cap_hits
-            + self.w_scope * scope_hits
-            + self.w_domain * domain_shifts
-        )
+        domain_shifts = sum(1 for e in recent if e.get("domain") and str(e["domain"]) != scene_domain)
+        score = self.w_capability * cap_hits + self.w_scope * scope_hits + self.w_domain * domain_shifts
         score = round(score, 3)
         if score >= self.threshold:
             decision = DECISION_INTERCEPT

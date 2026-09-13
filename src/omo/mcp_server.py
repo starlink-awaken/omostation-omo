@@ -778,8 +778,13 @@ async def scene_calibrate(req: SceneCalibrateRequest) -> str:
     engine = _V10_WORKSPACE / "bin" / "ssot" / "calibration-engine.py"
     try:
         cmd = [
-            sys.executable, str(engine), "compute",
-            "--scene-id", req.scene_id, "--window", str(req.window_days),
+            sys.executable,
+            str(engine),
+            "compute",
+            "--scene-id",
+            req.scene_id,
+            "--window",
+            str(req.window_days),
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, cwd=str(_V10_WORKSPACE))
         return result.stdout or json.dumps({"status": "error", "error": result.stderr})

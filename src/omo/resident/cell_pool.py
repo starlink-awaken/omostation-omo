@@ -292,7 +292,7 @@ class CellPool:
                 self._cell_run(cell, episode_id, prompt, backend=backend),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # Timeout: mark Cell failed, remove it, and fail over
             cell.fail(f"timeout_exceeded: {timeout}s")
             self.remove_cell(cell.cell_id)

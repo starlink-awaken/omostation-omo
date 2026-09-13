@@ -462,9 +462,7 @@ class PolicyEnforcementService:
         """
         result = self.decide(request)
         if result.decision.decision != "allow":
-            raise PolicyEnforcementError(
-                f"cannot queue action {request.action_id}: {result.decision.reason}"
-            )
+            raise PolicyEnforcementError(f"cannot queue action {request.action_id}: {result.decision.reason}")
 
         queue = PersistentQueue(self._broker, f"policy-actions:{request.principal_id}")
         return queue.enqueue(

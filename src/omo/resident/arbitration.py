@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +31,7 @@ class Precedent:
     resolution: str
     confidence: float
     outcome: str
-    ts: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    ts: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -134,10 +134,13 @@ class PrecedentArbiter:
         for p, s in top:
             by_resolution.setdefault(p.resolution, []).append((p, s))
 
-        best_res = max(by_resolution, key=lambda r: (
-            len(by_resolution[r]),
-            sum(p.confidence * s for p, s in by_resolution[r]),
-        ))
+        best_res = max(
+            by_resolution,
+            key=lambda r: (
+                len(by_resolution[r]),
+                sum(p.confidence * s for p, s in by_resolution[r]),
+            ),
+        )
         group = by_resolution[best_res]
         # 相似度加权置信度
         total_weight = sum(s for _, s in group)
@@ -164,5 +167,5 @@ class PrecedentArbiter:
             "confidence": result.confidence,
             "threshold": CONFIDENCE_THRESHOLD,
             "basis": result.basis,
-            "ts": datetime.now(timezone.utc).isoformat(),
+            "ts": datetime.now(UTC).isoformat(),
         }

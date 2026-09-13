@@ -296,14 +296,14 @@ def _process_task_queue() -> dict[str, Any]:
     return {"picked": len(picked), "completed": completed, "failed": failed, "skipped": False}
 
 
-def _resolve_task_handler(uri: str) -> "Callable[[dict[str, Any]], Any] | None":
+def _resolve_task_handler(uri: str) -> Callable[[dict[str, Any]], Any] | None:
     """T10-125 task_gateway: URI → handler 分发表.
 
     返回 None 表示 URI 无 handler (fail() 触发重试上限后转终态 failed).
     Handler 必须返回可 JSON 序列化的结构化结果, 否则 complete(result=...) 会降级为 None.
     """
-    from omo.resident import sediment as _sediment  # noqa: PLC0415
     from omo.resident import decision as _decision  # noqa: PLC0415
+    from omo.resident import sediment as _sediment  # noqa: PLC0415
 
     def _sediment_handler(payload: dict[str, Any]) -> dict[str, Any]:
         event = payload if isinstance(payload, dict) else {}

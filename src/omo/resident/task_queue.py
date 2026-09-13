@@ -153,9 +153,15 @@ class TaskQueue:
                 )
                 """
             )
-            c.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status_priority ON resident_tasks(status, priority DESC, created_at ASC)")
-            c.execute("CREATE INDEX IF NOT EXISTS idx_tasks_next_attempt ON resident_tasks(next_attempt_at) WHERE status = 'queued'")
-            c.execute("CREATE INDEX IF NOT EXISTS idx_tasks_expires_at ON resident_tasks(expires_at) WHERE status = 'queued' AND expires_at > 0")
+            c.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tasks_status_priority ON resident_tasks(status, priority DESC, created_at ASC)"
+            )
+            c.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tasks_next_attempt ON resident_tasks(next_attempt_at) WHERE status = 'queued'"
+            )
+            c.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tasks_expires_at ON resident_tasks(expires_at) WHERE status = 'queued' AND expires_at > 0"
+            )
             c.execute(
                 """
                 CREATE TABLE IF NOT EXISTS resident_tasks_archive (
@@ -203,7 +209,9 @@ class TaskQueue:
             conn.close()
 
     # ── Public API ─────────────────────────────────
-    def submit(self, uri: str, payload: dict[str, Any], *, priority: int = 0, ttl: float = 0.0, labels: list[str] | None = None) -> SubmitResult:
+    def submit(
+        self, uri: str, payload: dict[str, Any], *, priority: int = 0, ttl: float = 0.0, labels: list[str] | None = None
+    ) -> SubmitResult:
         """提交任务到队列. 队列满时拒绝.
 
         返回 SubmitResult: ok=True 时 task_id 非空.
@@ -349,7 +357,7 @@ class TaskQueue:
 
         delay = min(base * 2^attempts + uniform_jitter, max).
         """
-        delay = self.backoff_base * (2 ** attempts)
+        delay = self.backoff_base * (2**attempts)
         delay = min(delay, self.backoff_max)
         jitter = random.uniform(0, self.backoff_jitter * delay)  # noqa: S311
         return delay + jitter
@@ -392,9 +400,7 @@ class TaskQueue:
         with self._conn() as c:
             c.execute("BEGIN IMMEDIATE")
             try:
-                row = c.execute(
-                    "SELECT status, attempts FROM resident_tasks WHERE id = ?", (task_id,)
-                ).fetchone()
+                row = c.execute("SELECT status, attempts FROM resident_tasks WHERE id = ?", (task_id,)).fetchone()
                 if row is None or row["status"] != TaskStatus.FAILED.value:
                     c.execute("ROLLBACK")
                     return False
@@ -522,7 +528,7 @@ class TaskQueue:
 
     def purge_expired(self, older_than: float = 0.0) -> int:
         """将超时未处理的 queued 任务标记为 expired.
-        
+
         older_than: 仅处理 expires_at <= older_than 的任务 (默认 0 = 所有超时任务).
         返回被标记为 expired 的任务数.
         """
@@ -557,7 +563,7 @@ class TaskQueue:
 
     def archive(self, *, status: str | None = None, older_than: float = 0.0, limit: int = 100) -> int:
         """将任务从 resident_tasks 移动到 resident_tasks_archive.
-        
+
         status: 指定状态过滤 (None = 所有终态).
         older_than: 仅处理 updated_at <= older_than 的任务 (默认 0 = 所有).
         limit: 最多归档条数 (默认 100).
@@ -583,8 +589,20 @@ class TaskQueue:
                     c.execute(
                         "INSERT INTO resident_tasks_archive (id, uri, payload, status, attempts, result, error_message, priority, next_attempt_at, expires_at, labels, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
-                            r["id"], r["uri"], r["payload"], r["status"], r["attempts"], r["result"], r["error_message"],
-                            r["priority"], r["next_attempt_at"], r["expires_at"], r["labels"], r["created_at"], r["updated_at"], now,
+                            r["id"],
+                            r["uri"],
+                            r["payload"],
+                            r["status"],
+                            r["attempts"],
+                            r["result"],
+                            r["error_message"],
+                            r["priority"],
+                            r["next_attempt_at"],
+                            r["expires_at"],
+                            r["labels"],
+                            r["created_at"],
+                            r["updated_at"],
+                            now,
                         ),
                     )
                     c.execute("DELETE FROM resident_tasks WHERE id = ?", (r["id"],))
@@ -611,8 +629,12 @@ class TaskQueue:
         """返回队列指标: 吞吐量、延迟分布、重试率."""
         with self._conn() as c:
             total = c.execute("SELECT COUNT(*) FROM resident_tasks").fetchone()[0]
-            completed = c.execute("SELECT COUNT(*) FROM resident_tasks WHERE status = ?", (TaskStatus.COMPLETED.value,)).fetchone()[0]
-            failed = c.execute("SELECT COUNT(*) FROM resident_tasks WHERE status = ?", (TaskStatus.FAILED.value,)).fetchone()[0]
+            completed = c.execute(
+                "SELECT COUNT(*) FROM resident_tasks WHERE status = ?", (TaskStatus.COMPLETED.value,)
+            ).fetchone()[0]
+            failed = c.execute(
+                "SELECT COUNT(*) FROM resident_tasks WHERE status = ?", (TaskStatus.FAILED.value,)
+            ).fetchone()[0]
             retried = c.execute("SELECT COUNT(*) FROM resident_tasks WHERE attempts > 1").fetchone()[0]
             avg_duration = c.execute(
                 "SELECT AVG(updated_at - created_at) FROM resident_tasks WHERE status IN (?, ?)",
@@ -635,7 +657,9 @@ class TaskQueue:
                 "SELECT from_status, to_status, changed_at FROM resident_tasks_history WHERE task_id = ? ORDER BY changed_at ASC",
                 (task_id,),
             ).fetchall()
-        return [{"from_status": r["from_status"], "to_status": r["to_status"], "changed_at": r["changed_at"]} for r in rows]
+        return [
+            {"from_status": r["from_status"], "to_status": r["to_status"], "changed_at": r["changed_at"]} for r in rows
+        ]
 
     # ── Internal ──────────────────────────────────
     def _transition(
@@ -787,7 +811,9 @@ def main(argv: list[str] | None = None) -> int:
     p_list.add_argument("--label", action="append", default=[], help="按标签过滤 (可多次指定, 任务需包含所有指定标签)")
     p_list.add_argument("--limit", type=int, default=50, help="最多返回条数 (默认 50)")
     p_list.add_argument("--watch", action="store_true", help="实时监控模式 (每 2 秒刷新)")
-    p_list.add_argument("--sort", default="created_at", help="排序字段 (created_at/priority/status/attempts/updated_at)")
+    p_list.add_argument(
+        "--sort", default="created_at", help="排序字段 (created_at/priority/status/attempts/updated_at)"
+    )
     p_list.add_argument("--count-only", action="store_true", help="仅返回计数, 不返回任务列表")
     p_list.add_argument(
         "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
@@ -932,15 +958,20 @@ def main(argv: list[str] | None = None) -> int:
 
         if watch:
             try:
-                import time as _time
                 import sys as _sys
+                import time as _time
 
                 last_count = -1
                 while True:
                     tasks = _fetch_tasks()
                     count = len(tasks)
                     if count != last_count:
-                        print(json.dumps({"tasks": [_task_to_json(t) for t in tasks], "count": count}, ensure_ascii=False), flush=True)
+                        print(
+                            json.dumps(
+                                {"tasks": [_task_to_json(t) for t in tasks], "count": count}, ensure_ascii=False
+                            ),
+                            flush=True,
+                        )
                         last_count = count
                     _time.sleep(2)
             except KeyboardInterrupt:
@@ -949,7 +980,10 @@ def main(argv: list[str] | None = None) -> int:
         if getattr(args, "count_only", False):
             print(json.dumps({"count": len(tasks)}, ensure_ascii=False), flush=True)
         else:
-            print(json.dumps({"tasks": [_task_to_json(t) for t in tasks], "count": len(tasks)}, ensure_ascii=False), flush=True)
+            print(
+                json.dumps({"tasks": [_task_to_json(t) for t in tasks], "count": len(tasks)}, ensure_ascii=False),
+                flush=True,
+            )
         return 0
 
     if args.command == "metrics":
@@ -981,7 +1015,13 @@ def main(argv: list[str] | None = None) -> int:
                 matched.append(task)
             if len(matched) >= args.limit:
                 break
-        print(json.dumps({"tasks": [_task_to_json(t) for t in matched], "count": len(matched), "query": query}, ensure_ascii=False), flush=True)
+        print(
+            json.dumps(
+                {"tasks": [_task_to_json(t) for t in matched], "count": len(matched), "query": query},
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
         return 0
 
     if args.command == "cancel":
@@ -1037,7 +1077,10 @@ def main(argv: list[str] | None = None) -> int:
         if ok:
             print(json.dumps({"ok": True, "task_id": args.id, "status": "queued"}), flush=True)
             return 0
-        print(json.dumps({"ok": False, "reason": "task not found or not in terminal state", "task_id": args.id}), flush=True)
+        print(
+            json.dumps({"ok": False, "reason": "task not found or not in terminal state", "task_id": args.id}),
+            flush=True,
+        )
         return 2
 
     if args.command == "add-tag":
