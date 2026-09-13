@@ -65,6 +65,7 @@ def test_poll_appends_personal_signal_event_to_events_jsonl(
 ) -> None:
     """个人信号发布后追加到统一事件流 (PersonalSignal 事件)."""
     import json as _json
+    from datetime import datetime as _datetime
 
     (signals_dir / "idea.md").write_text("# idea", encoding="utf-8")
     monkeypatch.setattr(signals, "_publish", lambda topic, payload, trace_id: True)
@@ -78,6 +79,9 @@ def test_poll_appends_personal_signal_event_to_events_jsonl(
     assert event["producer"] == "personal-signals"
     assert event["payload"]["file"] == "idea.md"
     assert event["idempotency_key"] == "personal-signal:idea:PersonalSignal"
+    # occurred_at 必须是可解析的 ISO8601 (time.strftime %f 为字面量, 回归 guard)
+    _datetime.fromisoformat(event["occurred_at"].replace("Z", "+00:00"))
+    assert "%f" not in event["occurred_at"]
 
 
 def test_poll_idempotent_second_run(signals_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
