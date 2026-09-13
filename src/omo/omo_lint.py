@@ -94,6 +94,9 @@ GOD_MODULE_ALLOWLIST: set[str] = {
     "projects/cockpit/src/cockpit/adapters/governance_context.py",  # 1754L
     "projects/omlxc/src/omlxc/daemon/composition.py",  # 1514L
     "projects/omlxc/src/omlxc/cli.py",  # 1559L (omlxc v3.1.0 升级带入, 2026-08-16 登记)
+    "projects/omo/src/omo/workflow/claims_authority.py",  # 3456L: BET-Y1Q4-T8-23 暂豁 (高风险核心)
+    "projects/omo/src/omo/workflow/lifecycle.py",  # 1820L: BET-Y1Q4-T8-23 暂豁 (高风险核心)
+    "projects/cockpit/src/cockpit/observatory/topology_engine.py",  # 1887L: BET-Y1Q4-T8-24 暂豁 (observatory 核心)
 }
 EXCLUDE_DIR_PARTS: tuple[str, ...] = (
     "tests",
