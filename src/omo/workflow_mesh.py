@@ -17,6 +17,7 @@ from typing import Any
 from uuid import uuid4
 
 from omo.omo_io import AppendOnlyLog, fcntl_lock
+from omo.workflow.capsule import CapsuleRecord, verify_capsule
 
 WORKFLOW_MESH_LOG = Path("_knowledge/workflow-mesh/events.jsonl")
 REQUIRED_EVENT_FIELDS = {
@@ -623,6 +624,28 @@ def record_handoff(
     except Exception:  # noqa: BLE001
         pass
     return {"handoff_id": run_id, "from_role": from_role, "to_role": to_role}
+
+
+def record_capsule_handoff(store: WorkflowMeshStore, capsule: CapsuleRecord) -> dict[str, Any]:
+    """Verify a Capsule, then record its role handoff in Workflow Mesh.
+
+    Capsule verification is fail-closed and happens before any Mesh mutation.
+    Mesh persistence remains observational: a store failure cannot corrupt the
+    backend handoff, but an invalid Capsule is never presented as a handoff.
+    """
+    verified = verify_capsule(capsule.to_dict())
+    result = record_handoff(
+        store,
+        verified.producer_role,
+        verified.consumer_role,
+        payload={"capsule": verified.to_dict()},
+    )
+    return {
+        **result,
+        "capsule_id": verified.capsule_id,
+        "capsule_digest": verified.digest,
+        "receipt_digest": verified.receipt_digest,
+    }
 
 
 def project_workflow_run(events: list[dict[str, Any]], workflow_run_id: str) -> dict[str, Any]:

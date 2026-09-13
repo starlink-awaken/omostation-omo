@@ -15,18 +15,23 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 __all__ = (
     "AdmissionState",
+    "RoleVerifier",
+    "RoleVerification",
     "RoleRecord",
     "RoleRegistry",
     "RoleRegistryError",
+    "default_role_verifier",
+    "role_verifier_binding",
     "admission_digest",
 )
 
@@ -51,6 +56,13 @@ class RoleRegistryError(Exception):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+class RoleVerifier(Protocol):
+    """Role-level verifier contract for dispatch admission."""
+
+    def __call__(self, record: RoleRecord, capability: str) -> bool:
+        """Return whether an intact Role satisfies the verifier."""
 
 
 def admission_digest(record: dict[str, Any]) -> str:
@@ -82,6 +94,19 @@ class RoleRecord:
         }
 
 
+@dataclass(frozen=True)
+class RoleVerification:
+    """Machine-readable result of a bound Role-level verifier."""
+
+    role_id: str
+    capability: str
+    allowed: bool
+    verifier_id: str
+    verifier_digest: str
+    role_version: int
+    role_digest: str
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -107,6 +132,31 @@ def _seal(
     )
 
 
+def _record_body(record: RoleRecord) -> dict[str, Any]:
+    return {key: value for key, value in record.to_dict().items() if key != "digest"}
+
+
+def _record_intact(record: RoleRecord) -> bool:
+    return record.digest == admission_digest(_record_body(record))
+
+
+def default_role_verifier(record: RoleRecord, capability: str) -> bool:
+    """Require admitted state and the requested capability."""
+    return record.admission_state == "admitted" and capability in record.capabilities
+
+
+def role_verifier_binding(verifier: RoleVerifier) -> dict[str, str]:
+    """Return a stable module/symbol/source binding for audit records."""
+    module = getattr(verifier, "__module__", "dynamic")
+    name = getattr(verifier, "__name__", "<anonymous>")
+    try:
+        source = inspect.getsource(verifier)
+    except (OSError, TypeError):
+        source = ""
+    digest = admission_digest({"module": module, "name": name, "source": source})
+    return {"verifier_id": f"{module}:{name}", "verifier_digest": digest}
+
+
 class RoleRegistry:
     """持久 Role 注册表 (内存 + JSONL 落盘, 线程不安全, 单写者)."""
 
@@ -128,9 +178,43 @@ class RoleRegistry:
         return sorted(records, key=lambda r: r.role_id)
 
     def can_admit(self, role_id: str, capability: str) -> bool:
-        """Role 级 verifier 雏形: 已准入 + 具备该 capability."""
+        """Compatibility helper backed by the default Role verifier."""
+        return self.verify_role(role_id, capability).allowed
+
+    def verify_role(
+        self,
+        role_id: str,
+        capability: str,
+        *,
+        verifier: RoleVerifier | None = None,
+    ) -> RoleVerification:
+        """Run an optional bound verifier after integrity/base admission checks.
+
+        The default verifier is always evaluated. A caller may add an additional
+        verifier, but it cannot weaken the admitted/capability requirement.
+        Unknown or tampered Roles always return ``allowed=False``.
+        """
+        selected = verifier or default_role_verifier
+        binding = role_verifier_binding(selected)
         record = self._records.get(role_id)
-        return record is not None and record.admission_state == "admitted" and capability in record.capabilities
+        if record is None or not _record_intact(record):
+            return RoleVerification(
+                role_id=role_id,
+                capability=capability,
+                allowed=False,
+                role_version=record.version if record is not None else 0,
+                role_digest=record.digest if record is not None else "",
+                **binding,
+            )
+        allowed = default_role_verifier(record, capability) and selected(record, capability)
+        return RoleVerification(
+            role_id=role_id,
+            capability=capability,
+            allowed=allowed,
+            role_version=record.version,
+            role_digest=record.digest,
+            **binding,
+        )
 
     # -- 变更 ----------------------------------------------------------
 
@@ -196,6 +280,8 @@ class RoleRegistry:
                 if not line:
                     continue
                 data = json.loads(line)
+                if data.get("schema") != _SCHEMA:
+                    raise RoleRegistryError("schema-mismatch", f"{data.get('schema')!r} 不是 {_SCHEMA}")
                 record = RoleRecord(
                     role_id=data["role_id"],
                     capabilities=frozenset(data.get("capabilities", [])),
@@ -204,4 +290,6 @@ class RoleRegistry:
                     updated_at=data.get("updated_at", ""),
                     digest=data.get("digest", ""),
                 )
+                if not _record_intact(record):
+                    raise RoleRegistryError("digest-mismatch", f"{record.role_id!r} record digest 不匹配")
                 self._records[record.role_id] = record
