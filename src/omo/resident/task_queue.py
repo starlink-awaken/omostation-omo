@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import math
 import random
+import re
 import sqlite3
 import time
 import uuid
@@ -66,6 +67,7 @@ DEFAULT_MAX_ATTEMPTS = 3
 DEFAULT_BACKOFF_BASE = 1.0
 DEFAULT_BACKOFF_MAX = 60.0
 DEFAULT_BACKOFF_JITTER = 0.25
+_SHA256_REF_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 @dataclass
@@ -90,6 +92,8 @@ class Task:
     next_attempt_at: float = 0.0
     expires_at: float = 0.0
     labels: list[str] = field(default_factory=list)
+    work_packet_digest: str = ""
+    claim_receipt_digest: str = ""
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
@@ -101,6 +105,10 @@ class SubmitResult:
     ok: bool
     task_id: str = ""
     reason: str = ""
+
+
+def valid_claim_digest(value: object) -> bool:
+    return isinstance(value, str) and bool(_SHA256_REF_RE.fullmatch(value))
 
 
 class TaskQueue:
@@ -148,6 +156,8 @@ class TaskQueue:
                     next_attempt_at REAL NOT NULL DEFAULT 0,
                     expires_at REAL NOT NULL DEFAULT 0,
                     labels TEXT NOT NULL DEFAULT '[]',
+                    work_packet_digest TEXT NOT NULL DEFAULT '',
+                    claim_receipt_digest TEXT NOT NULL DEFAULT '',
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL
                 )
@@ -162,6 +172,8 @@ class TaskQueue:
             c.execute(
                 "CREATE INDEX IF NOT EXISTS idx_tasks_expires_at ON resident_tasks(expires_at) WHERE status = 'queued' AND expires_at > 0"
             )
+            self._ensure_column(c, "resident_tasks", "work_packet_digest")
+            self._ensure_column(c, "resident_tasks", "claim_receipt_digest")
             c.execute(
                 """
                 CREATE TABLE IF NOT EXISTS resident_tasks_archive (
@@ -176,12 +188,16 @@ class TaskQueue:
                     next_attempt_at REAL NOT NULL DEFAULT 0,
                     expires_at REAL NOT NULL DEFAULT 0,
                     labels TEXT NOT NULL DEFAULT '[]',
+                    work_packet_digest TEXT NOT NULL DEFAULT '',
+                    claim_receipt_digest TEXT NOT NULL DEFAULT '',
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL,
                     archived_at REAL NOT NULL
                 )
                 """
             )
+            self._ensure_column(c, "resident_tasks_archive", "work_packet_digest")
+            self._ensure_column(c, "resident_tasks_archive", "claim_receipt_digest")
             c.execute("CREATE INDEX IF NOT EXISTS idx_archive_status ON resident_tasks_archive(status)")
             c.execute(
                 """
@@ -196,6 +212,13 @@ class TaskQueue:
                 """
             )
             c.execute("CREATE INDEX IF NOT EXISTS idx_history_task ON resident_tasks_history(task_id)")
+
+    @staticmethod
+    def _ensure_column(c: sqlite3.Connection, table: str, column: str) -> None:
+        """Add a backward-compatible claim binding column to an existing DB."""
+        columns = {row[1] for row in c.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in columns:
+            c.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
@@ -219,6 +242,53 @@ class TaskQueue:
         ttl: 任务存活时间(秒), 0 表示永不过期.
         labels: 任务标签列表 (用于过滤和组织).
         """
+        return self._submit(uri, payload, priority=priority, ttl=ttl, labels=labels)
+
+    def submit_claim_bound(
+        self,
+        uri: str,
+        payload: dict[str, Any],
+        *,
+        work_packet_digest: str,
+        claim_receipt_digest: str,
+        priority: int = 0,
+        ttl: float = 0.0,
+        labels: list[str] | None = None,
+    ) -> SubmitResult:
+        """Bind a task to a WorkPacket digest and claims-authority receipt.
+
+        This is the task_gateway execution binding for Claims Authority R0.
+        Both digests must use the canonical ``sha256:<64 hex>`` shape; a missing
+        or malformed binding is rejected before the queue row is created.
+        """
+        if not valid_claim_digest(work_packet_digest):
+            return SubmitResult(ok=False, reason="invalid work_packet_digest")
+        if not valid_claim_digest(claim_receipt_digest):
+            return SubmitResult(ok=False, reason="invalid claim_receipt_digest")
+        bound_labels = list(labels or [])
+        if "claim-bound" not in bound_labels:
+            bound_labels.append("claim-bound")
+        return self._submit(
+            uri,
+            payload,
+            priority=priority,
+            ttl=ttl,
+            labels=bound_labels,
+            work_packet_digest=work_packet_digest,
+            claim_receipt_digest=claim_receipt_digest,
+        )
+
+    def _submit(
+        self,
+        uri: str,
+        payload: dict[str, Any],
+        *,
+        priority: int,
+        ttl: float,
+        labels: list[str] | None,
+        work_packet_digest: str = "",
+        claim_receipt_digest: str = "",
+    ) -> SubmitResult:
         # 容量检查 (placed in事务外避免对 hot row 加锁)
         with self._conn() as c:
             cur = c.execute(
@@ -237,8 +307,8 @@ class TaskQueue:
             c.execute("BEGIN IMMEDIATE")
             try:
                 c.execute(
-                    "INSERT INTO resident_tasks (id, uri, payload, status, attempts, priority, next_attempt_at, expires_at, labels, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, 0, ?, 0, ?, ?, ?, ?)",
+                    "INSERT INTO resident_tasks (id, uri, payload, status, attempts, priority, next_attempt_at, expires_at, labels, work_packet_digest, claim_receipt_digest, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, 0, ?, 0, ?, ?, ?, ?, ?, ?)",
                     (
                         task_id,
                         uri,
@@ -247,6 +317,8 @@ class TaskQueue:
                         priority,
                         expires_at,
                         labels_json,
+                        work_packet_digest,
+                        claim_receipt_digest,
                         now,
                         now,
                     ),
@@ -269,7 +341,7 @@ class TaskQueue:
             c.execute("BEGIN IMMEDIATE")
             try:
                 rows = c.execute(
-                    "SELECT id, uri, payload, status, attempts, result, error_message, priority, next_attempt_at, expires_at, created_at, updated_at "
+                    "SELECT * "
                     "FROM resident_tasks "
                     "WHERE status = ? AND next_attempt_at <= ? AND (expires_at = 0 OR expires_at > ?) "
                     "ORDER BY priority DESC, created_at ASC LIMIT ?",
@@ -366,8 +438,7 @@ class TaskQueue:
         """查询任务当前状态."""
         with self._conn() as c:
             row = c.execute(
-                "SELECT id, uri, payload, status, attempts, result, error_message, priority, next_attempt_at, expires_at, labels, created_at, updated_at "
-                "FROM resident_tasks WHERE id = ?",
+                "SELECT * FROM resident_tasks WHERE id = ?",
                 (task_id,),
             ).fetchone()
         return self._row_to_task(row) if row else None
@@ -587,7 +658,7 @@ class TaskQueue:
                 count = 0
                 for r in rows:
                     c.execute(
-                        "INSERT INTO resident_tasks_archive (id, uri, payload, status, attempts, result, error_message, priority, next_attempt_at, expires_at, labels, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO resident_tasks_archive (id, uri, payload, status, attempts, result, error_message, priority, next_attempt_at, expires_at, labels, work_packet_digest, claim_receipt_digest, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             r["id"],
                             r["uri"],
@@ -600,6 +671,8 @@ class TaskQueue:
                             r["next_attempt_at"],
                             r["expires_at"],
                             r["labels"],
+                            r["work_packet_digest"],
+                            r["claim_receipt_digest"],
                             r["created_at"],
                             r["updated_at"],
                             now,
@@ -712,6 +785,8 @@ class TaskQueue:
         next_attempt_at = row["next_attempt_at"] if "next_attempt_at" in row.keys() else 0.0
         expires_at = row["expires_at"] if "expires_at" in row.keys() else 0.0
         labels_raw = row["labels"] if "labels" in row.keys() else "[]"
+        work_packet_digest = row["work_packet_digest"] if "work_packet_digest" in row.keys() else ""
+        claim_receipt_digest = row["claim_receipt_digest"] if "claim_receipt_digest" in row.keys() else ""
         labels = json.loads(labels_raw) if labels_raw else []
         if not isinstance(labels, list):
             labels = []
@@ -727,6 +802,8 @@ class TaskQueue:
             next_attempt_at=next_attempt_at,
             expires_at=expires_at,
             labels=labels,
+            work_packet_digest=work_packet_digest,
+            claim_receipt_digest=claim_receipt_digest,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -743,6 +820,7 @@ __all__ = (
     "TaskQueue",
     "TaskStatus",
     "default_db_path",
+    "valid_claim_digest",
 )
 
 
@@ -769,6 +847,8 @@ def _task_to_json(task: Task) -> dict[str, Any]:
         "next_attempt_at": task.next_attempt_at,
         "expires_at": task.expires_at,
         "labels": task.labels,
+        "work_packet_digest": task.work_packet_digest,
+        "claim_receipt_digest": task.claim_receipt_digest,
         "created_at": task.created_at,
         "updated_at": task.updated_at,
     }
@@ -796,6 +876,8 @@ def main(argv: list[str] | None = None) -> int:
     p_submit.add_argument("--priority", type=int, default=0, help="任务优先级 (默认 0, 高优先先执行)")
     p_submit.add_argument("--ttl", type=float, default=0, help="任务 TTL(秒), 0=永不过期")
     p_submit.add_argument("--label", action="append", default=[], help="任务标签 (可多次指定)")
+    p_submit.add_argument("--work-packet-digest", default=None, help="绑定 WorkPacket sha256:<64hex>")
+    p_submit.add_argument("--claim-receipt-digest", default=None, help="绑定 claims authority receipt sha256:<64hex>")
     p_submit.add_argument(
         "--db", default=None, help="队列 sqlite 路径 (默认Workspace runtime/omo/resident-task-queue.sqlite3)"
     )
@@ -905,7 +987,22 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(payload, dict):
             print(json.dumps({"ok": False, "reason": "payload must be a JSON object"}), flush=True)
             return 2
-        result = queue.submit(args.uri, payload, priority=args.priority, ttl=args.ttl, labels=args.label)
+        claim_args = (args.work_packet_digest, args.claim_receipt_digest)
+        if any(claim_args) and not all(claim_args):
+            print(json.dumps({"ok": False, "reason": "claim binding requires both digests"}), flush=True)
+            return 2
+        if all(claim_args):
+            result = queue.submit_claim_bound(
+                args.uri,
+                payload,
+                work_packet_digest=args.work_packet_digest,
+                claim_receipt_digest=args.claim_receipt_digest,
+                priority=args.priority,
+                ttl=args.ttl,
+                labels=args.label,
+            )
+        else:
+            result = queue.submit(args.uri, payload, priority=args.priority, ttl=args.ttl, labels=args.label)
         if result.ok:
             print(json.dumps({"ok": True, "task_id": result.task_id}), flush=True)
             return 0
@@ -923,7 +1020,7 @@ def main(argv: list[str] | None = None) -> int:
 
         def _fetch_tasks() -> list[Task]:
             with queue._conn() as c:
-                query = "SELECT id, uri, payload, status, attempts, result, error_message, priority, next_attempt_at, expires_at, labels, created_at, updated_at FROM resident_tasks"
+                query = "SELECT * FROM resident_tasks"
                 params: list[Any] = []
                 where: list[str] = []
                 if status_filter:
@@ -998,9 +1095,7 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"tasks": [], "count": 0, "query": query}), flush=True)
             return 0
         with queue._conn() as c:
-            rows = c.execute(
-                "SELECT id, uri, payload, status, attempts, result, error_message, priority, next_attempt_at, expires_at, labels, created_at, updated_at FROM resident_tasks"
-            ).fetchall()
+            rows = c.execute("SELECT * FROM resident_tasks").fetchall()
         matched: list[Task] = []
         for r in rows:
             task = queue._row_to_task(r)

@@ -8,6 +8,8 @@ digest 稳定性、can_admit verifier 雏形、JSONL 落盘 round-trip。
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from omo.workflow.role_registry import (
@@ -15,6 +17,7 @@ from omo.workflow.role_registry import (
     RoleRegistry,
     RoleRegistryError,
     admission_digest,
+    role_verifier_binding,
 )
 
 
@@ -110,6 +113,24 @@ def test_can_admit_verifier(admitted: RoleRegistry) -> None:
     assert admitted.can_admit("role:cell-alpha", "dispatch") is False
 
 
+def test_role_verifier_binding_and_custom_verifier(admitted: RoleRegistry) -> None:
+    def require_dispatch(record: RoleRecord, capability: str) -> bool:
+        return capability == "dispatch" and record.version >= 2
+
+    verification = admitted.verify_role("role:cell-alpha", "dispatch", verifier=require_dispatch)
+    assert verification.allowed is True
+    assert verification.role_version == 2
+    assert verification.role_digest == admitted.get("role:cell-alpha").digest
+    binding = role_verifier_binding(require_dispatch)
+    assert verification.verifier_id == binding["verifier_id"]
+    assert verification.verifier_digest == binding["verifier_digest"]
+
+    # 自定义 verifier 只能加严，不能绕过 admitted/capability 基线。
+    assert admitted.verify_role("role:cell-alpha", "unknown").allowed is False
+    admitted.suspend("role:cell-alpha", expected_version=2)
+    assert admitted.verify_role("role:cell-alpha", "dispatch", verifier=require_dispatch).allowed is False
+
+
 def test_jsonl_roundtrip(tmp_path) -> None:
     store = tmp_path / "roles.jsonl"
     reg = RoleRegistry(store)
@@ -121,6 +142,19 @@ def test_jsonl_roundtrip(tmp_path) -> None:
     assert (r.admission_state, r.version) == ("admitted", 2)
     assert r.capabilities == frozenset({"dispatch", "observe"})
     assert r.digest.startswith("sha256:")
+
+
+def test_tampered_role_record_rejected_on_load(tmp_path) -> None:
+    store = tmp_path / "roles.jsonl"
+    registry = RoleRegistry(store)
+    registry.register("role:cell-alpha", {"dispatch"})
+    data = json.loads(store.read_text(encoding="utf-8"))
+    data["capabilities"] = ["dispatch", "extra"]
+    store.write_text(json.dumps(data, ensure_ascii=False) + "\n", encoding="utf-8")
+
+    with pytest.raises(RoleRegistryError) as exc:
+        RoleRegistry(store)
+    assert exc.value.code == "digest-mismatch"
 
 
 def test_list_filter(admitted: RoleRegistry) -> None:
