@@ -84,10 +84,15 @@ def cmd_promote(args: argparse.Namespace) -> int:
         print(f"ERROR: scene not found: {args.scene_id}", file=sys.stderr)
         return 2
     cmd = [
-        sys.executable, str(SCENE_CARD_LIFECYCLE), "transition",
-        "--scene-card", str(_card_path(args.scene_id)),
-        "--tier", args.to_level,
-        "--actor", args.actor,
+        sys.executable,
+        str(SCENE_CARD_LIFECYCLE),
+        "transition",
+        "--scene-card",
+        str(_card_path(args.scene_id)),
+        "--tier",
+        args.to_level,
+        "--actor",
+        args.actor,
     ]
     return subprocess.run(cmd, capture_output=False, cwd=str(WORKSPACE_ROOT)).returncode
 

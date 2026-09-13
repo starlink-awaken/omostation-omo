@@ -184,8 +184,6 @@ class ContractNetManager:
         *,
         elapsed_s: float | None = None,
     ) -> Award:
-        award = evaluate_with_fallback(
-            announcement, bids, elapsed_s=elapsed_s, fallback_agent=self.fallback_agent
-        )
+        award = evaluate_with_fallback(announcement, bids, elapsed_s=elapsed_s, fallback_agent=self.fallback_agent)
         self.awards[announcement.task_id] = award
         return award

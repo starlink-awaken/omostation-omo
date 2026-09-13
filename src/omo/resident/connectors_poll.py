@@ -9,20 +9,21 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
 
 import yaml
 
-
 # ---------------------------------------------------------------------------
 # State management
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class Watermark:
     """Tracks the last-synced watermark for a single connector."""
+
     connector_id: str
     value: str = ""
     last_sync_ts: float = 0.0
@@ -44,15 +45,14 @@ class Watermark:
 @dataclass
 class PollerState:
     """Persisted state for the connector poller."""
+
     watermarks: dict[str, Watermark] = field(default_factory=dict)
     last_poll_ts: float = 0.0
 
     def to_dict(self) -> dict:
         return {
             "last_poll_ts": self.last_poll_ts,
-            "watermarks": {
-                k: v.to_dict() for k, v in self.watermarks.items()
-            },
+            "watermarks": {k: v.to_dict() for k, v in self.watermarks.items()},
         }
 
     @classmethod
@@ -93,30 +93,28 @@ def _save_state(ws: Path, state: PollerState) -> None:
 # Manifest loading
 # ---------------------------------------------------------------------------
 
+
 def _load_manifest(ws: Path) -> list[dict]:
     """Load the connector manifest and return only incremental connectors."""
-    manifest_path = (
-        ws / ".omo" / "_truth" / "registry" / "connector-manifest.yaml"
-    )
+    manifest_path = ws / ".omo" / "_truth" / "registry" / "connector-manifest.yaml"
     if not manifest_path.is_file():
         return []
     try:
         data = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
     except Exception:
         return []
-    return [
-        c for c in data.get("connectors", [])
-        if c.get("incremental") and c.get("status") == "active"
-    ]
+    return [c for c in data.get("connectors", []) if c.get("incremental") and c.get("status") == "active"]
 
 
 # ---------------------------------------------------------------------------
 # Poller
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class SyncResult:
     """Result of a single connector sync attempt."""
+
     connector_id: str
     ok: bool
     new_watermark: str

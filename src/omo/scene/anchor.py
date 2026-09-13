@@ -28,9 +28,7 @@ SCHEMA = "omo.scene.anchor.v1"
 # 与 .omo/standards/scene-card-lifecycle.yaml 的五档生命周期对齐
 ALLOWED_LIFECYCLES = frozenset({"draft", "shadow", "assisted", "supervised", "routine"})
 
-_DEFAULT_CANDIDATES = (
-    Path(".omo/_truth/registry/scene-cards-v3.yaml"),
-)
+_DEFAULT_CANDIDATES = (Path(".omo/_truth/registry/scene-cards-v3.yaml"),)
 
 # 推荐评分权重: name 命中最强, scene_id 次之, domain/capability 佐证
 _W_NAME = 3.0
@@ -102,7 +100,7 @@ class SceneAnchorRegistry:
     cards: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @classmethod
-    def load(cls, path: Path | None = None) -> "SceneAnchorRegistry":
+    def load(cls, path: Path | None = None) -> SceneAnchorRegistry:
         """从 scene-cards-v3.yaml 加载; path 缺省时向上查找."""
         import yaml
 
