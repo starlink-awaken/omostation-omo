@@ -114,7 +114,11 @@ class BosRegistration:
         return asdict(self)
 
 
+import logging
+
 from .omo_bos_seeds import SEED_REGISTRATIONS
+
+logger = logging.getLogger(__name__)
 
 # ── 验证 + 解析 ────────────────────────────────────────────
 

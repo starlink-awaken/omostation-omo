@@ -8,17 +8,17 @@ Verifies:
 - cli.py cell branch routes through Mesh dispatch_backend
 """
 
+import contextlib
 import io
 import sys
 import tempfile
-import contextlib
 import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-from omo.workflow_mesh import dispatch_backend, WorkflowMeshStore
+from omo.workflow_mesh import WorkflowMeshStore, dispatch_backend
 
 
 def _fake_backend(argv):
