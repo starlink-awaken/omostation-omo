@@ -428,11 +428,23 @@ def register_uri(
     else:
         regs.append(new_entry)
 
+    # 双写一致性修复：先写本地 JSON，再写 KOS
+    # 如果 KOS 写入失败，回滚本地 JSON（补偿事务）
+    backup = list(regs)  # 备份当前状态用于回滚
     save_registry(regs, path)
 
     kos_result: dict[str, Any] = {"skipped": "dual_write_disabled"}
     if dual_write:
-        kos_result = save_to_kos(new_entry, zone=kos_zone)
+        try:
+            kos_result = save_to_kos(new_entry, zone=kos_zone)
+            # 检查 KOS 是否成功
+            if kos_result.get("error"):
+                raise RuntimeError(kos_result["error"])
+        except Exception as e:
+            # KOS 写入失败：回滚本地 JSON
+            save_registry(backup, path)
+            kos_result = {"error": str(e), "rolled_back": True}
+            logger.warning("KOS write failed, rolled back local JSON: %s", e)
 
     return {
         "uri": uri,
