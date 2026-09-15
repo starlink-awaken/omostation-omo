@@ -60,13 +60,21 @@ def _publish(topic: str, payload: dict[str, Any], trace_id: str) -> bool:
         return False
 
 
+def _utc_now() -> str:
+    """UTC 毫秒级 ISO 时间戳 (time.strftime 的 %f 为字面量, 不能用于微秒)."""
+    from datetime import datetime, timezone
+
+    # noqa: UP017 -- cron 环境 python3=3.9 无 datetime.UTC, 须保持 timezone.utc 兼容
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"  # noqa: UP017
+
+
 def _append_to_events_jsonl(payload: dict[str, Any], trace_id: str) -> None:
     """将个人信号事件追加到 daemon 统一事件流 (workflow-mesh/events.jsonl)."""
     event = {
         "event_id": uuid.uuid4().hex,
         "event_type": PERSONAL_SIGNAL_TYPE,
         "idempotency_key": f"{trace_id}:PersonalSignal",
-        "occurred_at": time.strftime("%Y-%m-%dT%H:%M:%S.%fZ", time.gmtime()),
+        "occurred_at": _utc_now(),
         "payload": payload,
         "producer": "personal-signals",
         "schema_version": "workflow-mesh/v1",
