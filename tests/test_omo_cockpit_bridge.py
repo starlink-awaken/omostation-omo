@@ -10,6 +10,7 @@ from omo.omo_cockpit_bridge import (
     list_hitl_proposals,
     record_hitl_proposal,
     reject_hitl_proposal,
+    write_console_run_record,
 )
 from omo.omo_governance_surfaces_snapshots import _mutation_surface_registry_snapshot
 from omo.omo_shared import load_yaml
@@ -199,3 +200,18 @@ def test_family_dashboard_hitl_writer_is_a_canonical_mutation_surface() -> None:
     )
     assert surface["broker_ref"] == "projects/omo/src/omo/omo_cockpit_bridge.py"
     assert "family-hub CAS owner" in surface["mutation_target"]
+
+
+def test_console_run_record_is_brokered_and_identity_bound(tmp_path: Path) -> None:
+    record = {"run_id": "cr-20260916-0001", "status": "running", "objective": "run governance check"}
+    target = write_console_run_record(tmp_path, "cr-20260916-0001", record)
+
+    assert target.relative_to(tmp_path).as_posix() == ".omo/_delivery/console/runs/cr-20260916-0001.json"
+    assert json.loads(target.read_text(encoding="utf-8")) == record
+
+
+def test_console_run_record_rejects_traversal_and_identity_mismatch(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="console run id invalid"):
+        write_console_run_record(tmp_path, "../escape", {"run_id": "../escape"})
+    with pytest.raises(ValueError, match="console run id mismatch"):
+        write_console_run_record(tmp_path, "cr-safe", {"run_id": "cr-other"})

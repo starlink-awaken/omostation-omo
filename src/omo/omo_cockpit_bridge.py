@@ -63,6 +63,24 @@ def _valid_proposal_id(proposal_id: str) -> bool:
     return PROPOSAL_ID_PATTERN.fullmatch(proposal_id) is not None
 
 
+def write_console_run_record(workspace_root: Path, run_id: str, record: dict[str, Any]) -> Path:
+    """Atomically persist one Cockpit Console run projection through OMO.
+
+    Cockpit is an L3 caller and must not construct or mutate ``.omo`` paths. The
+    run id and envelope identity are checked here so a caller cannot turn a run
+    record into an arbitrary file write.
+    """
+    if not _valid_proposal_id(run_id):
+        raise ValueError("console run id invalid")
+    if record.get("run_id") != run_id:
+        raise ValueError("console run id mismatch")
+    if _contains_secret_like_value(record):
+        raise ValueError("console run record contains secret-like raw values")
+    target = Path(workspace_root) / ".omo" / "_delivery" / "console" / "runs" / f"{run_id}.json"
+    write_text_atomic(target, json.dumps(record, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    return target
+
+
 def _valid_runtime_receipt(ref: object, digest: object) -> bool:
     if not isinstance(ref, str) or not isinstance(digest, str):
         return False
