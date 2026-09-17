@@ -279,7 +279,7 @@ def main(argv: list[str] | None = None) -> int:
         item_ref = f".omo/debt/items/{args.id}.yaml"
         item_path = omo_dir / "debt" / "items" / f"{args.id}.yaml"
         _write_yaml(item_path, payload)
-        append_registry_ref(omo_dir, item_ref)  # type: ignore[reportCallIssue]
+        append_registry_ref(omo_dir, item_ref, _load_yaml, _write_yaml)
         print(f"registered {args.id}")
         return 0
 
