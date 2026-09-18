@@ -1,13 +1,13 @@
 ---
 type: ssot
 last_updated: 2026-09-04
-last_updated: 2026-08-26
 owner: governance-team
+last-reviewed: 2026-09-18
 ---
 
 # OMO Architecture
 
-> Architecture overview for **OMO**. For the full workspace architecture, see [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md).
+> Architecture overview for **OMO**. For the full workspace architecture, see [`../../../ARCHITECTURE.md`](../../../ARCHITECTURE.md).
 
 ## Responsibilities
 

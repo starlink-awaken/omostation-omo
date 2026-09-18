@@ -1,8 +1,8 @@
 ---
 type: ssot
 last_updated: 2026-09-04
-last_updated: 2026-08-26
 owner: governance-team
+last-reviewed: 2026-09-18
 ---
 
 # OMO-Debt 收敛设计 — X1/X2/X3 全量收敛范围
