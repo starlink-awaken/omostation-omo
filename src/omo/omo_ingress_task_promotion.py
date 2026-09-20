@@ -58,6 +58,18 @@ from omo.omo_promotion_request import (
 from omo.omo_task_schema import validate_task_data
 
 
+def _record_trail(*args: Any, **kwargs: Any) -> Any:
+    from omo.omo_ingress import _record_trail as _fn
+
+    return _fn(*args, **kwargs)
+
+
+def _record_mutation(*args: Any, **kwargs: Any) -> Any:
+    from omo.omo_ingress import _record_mutation as _fn
+
+    return _fn(*args, **kwargs)
+
+
 def promote_task_to_active(
     omo_dir: Path,
     *,
