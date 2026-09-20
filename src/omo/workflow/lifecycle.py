@@ -266,7 +266,27 @@ def _authority_witness_state() -> dict[str, Any]:
     raise WorkflowError("AUTHORITY_ACTIVATION_WITNESS_INVALID")
 
 
+def _authority_has_clone_identity(workspace: Path) -> bool:
+    target = workspace / ".git/agent-clone-identity.json"
+    if target.is_file():
+        return True
+    git_entry = workspace / ".git"
+    if git_entry.is_file():
+        try:
+            line = git_entry.read_text(encoding="utf-8").strip()
+            if line.startswith("gitdir:"):
+                git_dir = Path(line.split(":", 1)[1].strip())
+                if not git_dir.is_absolute():
+                    git_dir = (workspace / git_dir).resolve()
+                return (git_dir / "agent-clone-identity.json").is_file()
+        except OSError:
+            return False
+    return False
+
+
 def _authority_run_is_eligible(payload: Mapping[str, Any]) -> bool:
+    if not _authority_has_clone_identity(WORKSPACE):
+        return False
     return (
         bool(payload.get("run_id"))
         and bool(payload.get("actor"))
@@ -485,9 +505,20 @@ def _authority_envelope_identity(
 ) -> dict[str, Any]:
     payload = snapshot["payload"]
     workspace = registry_workspace_root(registry)
-    identity = _authority_read_json(workspace / ".git/agent-clone-identity.json", code="IDENTITY_MISMATCH")
-    readiness = _authority_read_json(workspace / ".git/agent-clone-readiness.json", code="IDENTITY_MISMATCH")
-    provenance = _authority_read_json(workspace / ".git/agent-clone-provenance.json", code="IDENTITY_MISMATCH")
+    git_dir = workspace / ".git"
+    if git_dir.is_file():
+        try:
+            line = git_dir.read_text(encoding="utf-8").strip()
+            if line.startswith("gitdir:"):
+                gd = Path(line.split(":", 1)[1].strip())
+                if not gd.is_absolute():
+                    gd = (workspace / gd).resolve()
+                git_dir = gd
+        except OSError:
+            pass
+    identity = _authority_read_json(git_dir / "agent-clone-identity.json", code="IDENTITY_MISMATCH")
+    readiness = _authority_read_json(git_dir / "agent-clone-readiness.json", code="IDENTITY_MISMATCH")
+    provenance = _authority_read_json(git_dir / "agent-clone-provenance.json", code="IDENTITY_MISMATCH")
     if Path(str(identity.get("canonical_root") or "")).resolve() != workspace.resolve():
         raise WorkflowError("IDENTITY_MISMATCH")
     repository = str(provenance.get("repository", {}).get("canonical_repository") or "")
