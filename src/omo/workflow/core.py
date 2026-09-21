@@ -272,11 +272,13 @@ def load_external_write_roots(registry_path: Path | None = None) -> list[dict[st
         resolved = absolute.resolve()
         if resolved == WORKSPACE.resolve() or resolved.is_relative_to(WORKSPACE.resolve()):
             raise WorkflowError(f"external write root must stay outside Workspace: {root_id}")
+        # A missing or non-git root is simply not admitted. Malformed registry
+        # entries remain hard errors above so configuration drift stays visible.
         if absolute.is_symlink() or resolved.is_symlink() or not resolved.is_dir():
-            raise WorkflowError(f"external write root must be a real directory: {root_id}")
+            continue
         git_entry = resolved / ".git"
         if not (git_entry.is_dir() or git_entry.is_file()):
-            raise WorkflowError(f"external write root must be a local git repository: {root_id}")
+            continue
         roots.append(
             {
                 "id": root_id,

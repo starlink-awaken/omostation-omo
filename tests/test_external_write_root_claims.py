@@ -65,12 +65,8 @@ def test_external_path_mapping_rejects_disallowed_patterns_and_non_git_roots(tmp
     monkeypatch.setattr(core_mod, "WORKSPACE", workspace)
     monkeypatch.setattr(core_mod, "EXTERNAL_ROOT_REGISTRY_PATH", registry_path)
 
-    try:
-        core_mod.external_synthetic_path(root / "app.js")
-    except core_mod.WorkflowError as exc:
-        assert "local git repository" in str(exc)
-    else:
-        raise AssertionError("non-git external root was admitted")
+    assert core_mod.external_synthetic_path(root / "app.js") is None
+    assert core_mod.load_external_write_roots(registry_path) == []
 
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     (root / "notes.txt").write_text("", encoding="utf-8")
@@ -89,9 +85,5 @@ def test_external_symlink_root_is_rejected(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(core_mod, "WORKSPACE", workspace)
     monkeypatch.setattr(core_mod, "EXTERNAL_ROOT_REGISTRY_PATH", registry_path)
 
-    try:
-        core_mod.load_external_write_roots(registry_path)
-    except core_mod.WorkflowError as exc:
-        assert "real directory" in str(exc)
-    else:
-        raise AssertionError("symlinked external root was admitted")
+    assert core_mod.load_external_write_roots(registry_path) == []
+    assert core_mod.external_synthetic_path(link / "app.js") is None
