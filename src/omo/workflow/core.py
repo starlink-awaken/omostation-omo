@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import re
 import shlex
 import shutil
 import subprocess
@@ -40,6 +41,7 @@ INTEGRATION_AUTHORITIES = {
 }
 CLAIM_POLICY_MODES = {"off", "advisory", "required"}
 RUN_UPDATE_LOCK_TIMEOUT_SECONDS = 30.0
+EXTERNAL_ROOT_REGISTRY_PATH = WORKSPACE / ".omo/_truth/registry/external-write-roots.yaml"
 
 
 class WorkflowError(RuntimeError):
@@ -226,6 +228,105 @@ def command_display(command: list[str]) -> str:
     return " ".join(shlex.quote(part) for part in command)
 
 
+def load_external_write_roots(registry_path: Path | None = None) -> list[dict[str, Any]]:
+    """Load explicit, fail-closed local-git roots that agents may write."""
+    path = Path(registry_path or EXTERNAL_ROOT_REGISTRY_PATH).expanduser()
+    if not path.is_file():
+        return []
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise WorkflowError("external write-root registry is unreadable") from exc
+    if not isinstance(payload, dict) or payload.get("schema") != "external-write-root-registry/v1":
+        raise WorkflowError("external write-root registry schema is invalid")
+    raw_roots = payload.get("roots")
+    if not isinstance(raw_roots, list):
+        raise WorkflowError("external write-root registry roots must be a list")
+
+    roots: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for raw in raw_roots:
+        if not isinstance(raw, dict):
+            raise WorkflowError("external write root must be a mapping")
+        root_id = raw.get("id")
+        source_path = raw.get("path")
+        kind = raw.get("kind")
+        status = raw.get("status")
+        patterns = raw.get("patterns")
+        if (
+            not isinstance(root_id, str)
+            or not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,62}", root_id)
+            or root_id in seen_ids
+            or not isinstance(source_path, str)
+            or kind != "local_git"
+            or status != "admitted"
+            or not isinstance(patterns, list)
+            or not patterns
+            or not all(isinstance(item, str) and item and "\\" not in item for item in patterns)
+        ):
+            raise WorkflowError("external write root entry is invalid")
+        seen_ids.add(root_id)
+        absolute = Path(source_path).expanduser()
+        if not absolute.is_absolute():
+            raise WorkflowError(f"external write root must be absolute after expansion: {root_id}")
+        resolved = absolute.resolve()
+        if resolved == WORKSPACE.resolve() or resolved.is_relative_to(WORKSPACE.resolve()):
+            raise WorkflowError(f"external write root must stay outside Workspace: {root_id}")
+        if absolute.is_symlink() or resolved.is_symlink() or not resolved.is_dir():
+            raise WorkflowError(f"external write root must be a real directory: {root_id}")
+        git_entry = resolved / ".git"
+        if not (git_entry.is_dir() or git_entry.is_file()):
+            raise WorkflowError(f"external write root must be a local git repository: {root_id}")
+        roots.append(
+            {
+                "id": root_id,
+                "absolute": absolute,
+                "resolved": resolved,
+                "patterns": tuple(patterns),
+            }
+        )
+    return sorted(roots, key=lambda item: item["id"])
+
+
+def external_write_root_for_path(path: str | Path, registry_path: Path | None = None) -> dict[str, Any] | None:
+    """Return the admitted root containing path, or None for another path."""
+    candidate = Path(path).expanduser()
+    try:
+        resolved = candidate.resolve()
+    except OSError as exc:
+        raise WorkflowError(f"external write path is unreadable: {path}") from exc
+    for root in load_external_write_roots(registry_path):
+        if not resolved.is_relative_to(root["resolved"]):
+            continue
+        relative = resolved.relative_to(root["resolved"]).as_posix()
+        if relative and any(fnmatch.fnmatchcase(relative, pattern) for pattern in root["patterns"]):
+            return {**root, "relative": relative}
+        return None
+    return None
+
+
+def external_synthetic_path(path: str | Path, registry_path: Path | None = None) -> str | None:
+    matched = external_write_root_for_path(path, registry_path)
+    if matched is None:
+        return None
+    return f"external/{matched['id']}/{matched['relative']}"
+
+
+def normalize_external_surface(surface: str, registry_path: Path | None = None) -> str | None:
+    """Map an admitted external surface to its canonical synthetic prefix."""
+    raw = str(surface).strip()
+    expanded = Path(raw).expanduser().resolve(strict=False)
+    for root in load_external_write_roots(registry_path):
+        root_text = root["resolved"].as_posix().rstrip("/")
+        expanded_text = expanded.as_posix().rstrip("/")
+        if expanded_text == root_text:
+            return f"external/{root['id']}"
+        if expanded_text.startswith(root_text + "/"):
+            suffix = expanded_text[len(root_text) + 1 :]
+            return f"external/{root['id']}/{suffix}"
+    return None
+
+
 def normalize_repo_path(raw_path: str) -> str:
     if not raw_path:
         raise WorkflowError("path cannot be empty")
@@ -234,6 +335,9 @@ def normalize_repo_path(raw_path: str) -> str:
         try:
             path = path.resolve().relative_to(WORKSPACE)
         except ValueError as exc:
+            synthetic = external_synthetic_path(raw_path)
+            if synthetic is not None:
+                return synthetic
             raise WorkflowError(f"path is outside workspace: {raw_path}") from exc
     normalized = path.as_posix().strip("/")
     if normalized in {"", "."}:
@@ -258,6 +362,30 @@ def changed_files_from_git(include_untracked: bool) -> list[str]:
         for line in completed.stdout.splitlines():
             if line.strip():
                 changed.add(normalize_repo_path(line.strip()))
+
+    status_command = ["git", "status", "--porcelain", "-z", "--", "."]
+    for root in load_external_write_roots():
+        completed = subprocess.run(status_command, cwd=root["resolved"], capture_output=True, text=True, check=False)
+        if completed.returncode != 0:
+            continue
+        entries = completed.stdout.split("\0")
+        index = 0
+        while index < len(entries):
+            entry = entries[index]
+            if not entry:
+                index += 1
+                continue
+            status = entry[:2]
+            path = entry[3:]
+            index += 1
+            if "R" in status and index < len(entries):
+                path = entries[index]
+                index += 1
+            if not path:
+                continue
+            matched = external_write_root_for_path(root["resolved"] / path)
+            if matched is not None:
+                changed.add(f"external/{matched['id']}/{matched['relative']}")
     return sorted(changed)
 
 
