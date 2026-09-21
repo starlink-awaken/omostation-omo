@@ -1802,9 +1802,8 @@ class _AuthorityStore:
             ).fetchone()
             if activation_row is not None:
                 activation_receipt = json.loads(activation_row["receipt_json"])
-                if (
-                    activation_receipt.get("operation") == "activate-shadow"
-                    and isinstance(activation_receipt.get("descriptor_digest"), str)
+                if activation_receipt.get("operation") == "activate-shadow" and isinstance(
+                    activation_receipt.get("descriptor_digest"), str
                 ):
                     descriptor_digest = str(activation_receipt["descriptor_digest"])
         manifest: dict[str, Any] = {
