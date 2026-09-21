@@ -1594,7 +1594,6 @@ class _AuthorityStore:
         ):
             raise AuthorityError("AUTHORITY_DESCRIPTOR_MISMATCH", "activation_cas")
         self.verify_high_water()
-        self._ensure_daily_backup()
         sequence, previous_digest = self._database_tip()
         next_sequence = sequence + 1
         prepared = _witness_payload(
@@ -1697,6 +1696,7 @@ class _AuthorityStore:
         )
         _atomic_write_json(self.test_paths.activation_witness, active)
         _activation_checkpoint("active")
+        self._ensure_daily_backup()
         return receipt
 
     def reconcile_activation_witness(self) -> dict[str, Any]:
@@ -1784,6 +1784,29 @@ class _AuthorityStore:
         os.chmod(database_path, 0o600)
         sequence, receipt_digest = self._database_tip()
         _, _, descriptor_digest = self._activation_meta()
+        if descriptor_digest is None and self.test_paths.activation_witness.is_file():
+            witness = _read_json_mapping(
+                self.test_paths.activation_witness,
+                code="AUTHORITY_STORE_CORRUPT",
+            )
+            if witness.get("state") == "shadow-active":
+                descriptor_digest = str(witness["descriptor_digest"])
+        if descriptor_digest is None:
+            activation_row = self._connection.execute(
+                """
+                SELECT receipt_json FROM receipts
+                WHERE authority_id=? AND sequence=1
+                ORDER BY sequence DESC LIMIT 1
+                """,
+                (self.authority_id,),
+            ).fetchone()
+            if activation_row is not None:
+                activation_receipt = json.loads(activation_row["receipt_json"])
+                if (
+                    activation_receipt.get("operation") == "activate-shadow"
+                    and isinstance(activation_receipt.get("descriptor_digest"), str)
+                ):
+                    descriptor_digest = str(activation_receipt["descriptor_digest"])
         manifest: dict[str, Any] = {
             "schema": "claims-authority-backup-manifest/v1",
             "authority_id": self.authority_id,
