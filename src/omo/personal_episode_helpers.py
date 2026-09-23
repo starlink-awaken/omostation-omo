@@ -191,7 +191,11 @@ def _build_observation(
     principal_id: str,
     observations: list[dict[str, Any]],
 ) -> Any:
-    from omo.personal_episode import PrincipalObservation, WeeklySample
+    from omo.personal_episode import (
+        QUALIFYING_EPISODE_TARGET,
+        PrincipalObservation,
+        WeeklySample,
+    )
 
     total_episodes = len(observations)
 
@@ -312,13 +316,22 @@ def _build_observation(
             )
         )
 
-    # Gate evaluation: 4 consecutive qualifying weeks.
-    readiness, gaps = _evaluate_readiness_gate(weekly_samples)
+    qualifying_episodes = sum(sample.qualifying_episodes for sample in weekly_samples)
+
+    # Gate evaluation: 30 qualifying episodes and 4 consecutive qualifying weeks.
+    readiness, gaps = _evaluate_readiness_gate(
+        weekly_samples,
+        qualifying_episodes=qualifying_episodes,
+        target=QUALIFYING_EPISODE_TARGET,
+    )
 
     return PrincipalObservation(
         principal_id=principal_id,
         readiness=readiness,
         total_episodes=total_episodes,
+        qualifying_episodes=qualifying_episodes,
+        qualifying_target=QUALIFYING_EPISODE_TARGET,
+        remaining_to_target=max(0, QUALIFYING_EPISODE_TARGET - qualifying_episodes),
         verdict_distribution=verdict_dist,
         system_evidence_count=system_ev,
         user_evidence_count=user_ev,
@@ -331,25 +344,35 @@ def _build_observation(
 
 def _evaluate_readiness_gate(
     weekly_samples: list[Any],
+    *,
+    qualifying_episodes: int,
+    target: int,
 ) -> tuple[str, list[str]]:
     if not weekly_samples:
         return "not_ready", ["no weekly samples"]
 
     qualifying = [s for s in weekly_samples if s.gate_met]
+    consecutive_window_found = False
 
     if len(qualifying) >= 4:
         for i in range(len(qualifying) - 3):
             window = qualifying[i : i + 4]
             if _are_consecutive_weeks(window):
-                return "passed", []
+                consecutive_window_found = True
+                break
+
+    if qualifying_episodes >= target and consecutive_window_found:
+        return "passed", []
 
     gaps: list[str] = []
+    if qualifying_episodes < target:
+        gaps.append(f"only {qualifying_episodes} qualifying episode(s), need {target}")
     met_weeks = [s for s in weekly_samples if s.gate_met]
     if not met_weeks:
         gaps.append(
             "no qualifying weeks yet (need >=3 system-accept episodes with complete burden and review<saved per week)"
         )
-    else:
+    elif not consecutive_window_found:
         gaps.append(f"only {len(met_weeks)} qualifying week(s), need 4 consecutive")
         for i in range(len(met_weeks) - 1):
             wk_a = met_weeks[i]
