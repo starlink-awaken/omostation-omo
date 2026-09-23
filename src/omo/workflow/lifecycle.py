@@ -1106,6 +1106,7 @@ def start_run(
         "updated_at": utc_now(),
         "context": context,
         "locks": [],
+        "claims": [],
         "plan": plan,
         "evidence": [],
     }
