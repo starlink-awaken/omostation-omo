@@ -12,7 +12,7 @@ import hashlib
 import json
 import math
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -26,6 +26,7 @@ from omo.event_ledger.broker import LedgerBroker
 from omo.personal_episode_helpers import (
     _are_consecutive_weeks,
     _build_observation,
+    _canonical_chain_observation,
     _deterministic,
     _evaluate_readiness_gate,
     _feedback_ref,
@@ -45,7 +46,13 @@ from omo.personal_episode_helpers import (
     _week_monday,
 )
 from omo.sovereignty.enforcement import EVT_ACTION_SUCCEEDED, PDP_PRODUCER
-from omo.sovereignty.mandates import STATUS_ACTIVE, MandateError, MandateManager
+from omo.sovereignty.mandates import (
+    EVT_MANDATE_GRANT,
+    MANDATE_PRODUCER,
+    STATUS_ACTIVE,
+    MandateError,
+    MandateManager,
+)
 from omo.sovereignty.roles import SovereigntyError, SovereigntyService
 
 PERSONAL_EPISODE_PRODUCER = "omo-personal-episode"
@@ -58,6 +65,19 @@ EVT_EPISODE_DECISION = "Episode.Decision.v1"
 EVT_SIGNAL_OBSERVED = "SignalObserved.v1"
 EVT_EVIDENCE_LOCAL_DRAFT = "Evidence.LocalDraft.v1"
 EVT_OUTCOME_HUMAN = "Outcome.Human.v1"
+
+CHAIN_SCHEMA_VERSION = "personal-episode-chain/v1"
+EVT_ROLE_CONTEXT_ASSIGNED = "RoleContextAssigned.v1"
+EVT_RESPONSIBILITY_LINKED = "ResponsibilityLinked.v1"
+EVT_DECISION_PROPOSED = "DecisionProposed.v1"
+EVT_HUMAN_ADJUDICATION = "HumanAdjudication.v1"
+EVT_MANDATE_GRANTED_CANONICAL = "MandateGranted.v1"
+EVT_ACTION_SUCCEEDED_CANONICAL = "ActionSucceeded.v1"
+EVT_EVIDENCE_RECORDED = "EvidenceRecorded.v1"
+EVT_OUTCOME_OBSERVED = "OutcomeObserved.v1"
+EVT_ADJUDICATION_RECORDED = "AdjudicationRecorded.v1"
+EVT_MEMORY_CANDIDATE_PROPOSED = "MemoryCandidateProposed.v1"
+EVT_EPISODE_CLOSED = "EpisodeClosed.v1"
 
 PERSONAL_SIGNAL_SCENE_ID = "personal-followup-dogfood"
 PERSONAL_SIGNAL_JOURNEY_ID = "manual-signal-to-adopted-local-draft"
@@ -292,6 +312,9 @@ class PrincipalObservation:
     signal_to_verdict_latency_seconds: float | None
     weekly_samples: list[WeeklySample]
     gate_gaps: list[str]
+    chain_schema_version: str = CHAIN_SCHEMA_VERSION
+    qualifying_episode_ids: list[str] = field(default_factory=list)
+    episode_gaps: dict[str, list[str]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -308,6 +331,9 @@ class PrincipalObservation:
             "signal_to_verdict_latency_seconds": self.signal_to_verdict_latency_seconds,
             "weekly_samples": [s.to_dict() for s in self.weekly_samples],
             "gate_gaps": list(self.gate_gaps),
+            "chain_schema_version": self.chain_schema_version,
+            "qualifying_episode_ids": list(self.qualifying_episode_ids),
+            "episode_gaps": {key: list(value) for key, value in self.episode_gaps.items()},
         }
 
 
@@ -369,7 +395,7 @@ class PersonalEpisodeService:
                 reused=True,
             )
 
-        self._active_assignment(principal_id, role_id, responsibility_id)
+        assignment = self._active_assignment(principal_id, role_id, responsibility_id)
         episode_id = _deterministic("episode_", principal_id, role_id, responsibility_id, request_id)
         payload = {
             "episode_id": episode_id,
@@ -384,6 +410,15 @@ class PersonalEpisodeService:
             "role_id": role_id,
             "responsibility_id": responsibility_id,
         }
+        decision_event_id = self._ensure_context_and_decision_chain(
+            episode_id=episode_id,
+            principal_id=principal_id,
+            role_id=role_id,
+            responsibility_id=responsibility_id,
+            assignment=assignment,
+            decision_payload=payload,
+            causation_id=None,
+        )
         self._broker.append(
             EVT_EPISODE_DECISION,
             producer=PERSONAL_EPISODE_PRODUCER,
@@ -394,6 +429,7 @@ class PersonalEpisodeService:
             episode_id=episode_id,
             role_context_id=role_id,
             responsibility_id=responsibility_id,
+            causation_id=decision_event_id,
             payload=payload,
             occurred_at=self._clock_ts(),
         )
@@ -418,27 +454,6 @@ class PersonalEpisodeService:
         )
         event_id = _deterministic("evt_", "local-signal", source_key)
         signal_id = _deterministic("signal_", "local-signal", source_key)
-
-        existing = self._find_local_signal(signal.principal_id, source_key)
-        if existing is not None:
-            existing_payload = _payload(existing)
-            existing_episode = self._episode_for_signal(str(existing["event_id"]), signal.principal_id)
-            episode_payload = _payload(existing_episode)
-            return PersonalSignalIngestResult(
-                signal_event_id=str(existing["event_id"]),
-                signal_id=str(existing_payload["signal_id"]),
-                episode=PersonalEpisodeCard(
-                    episode_id=str(existing_episode["episode_id"]),
-                    request_id=str(episode_payload["request_id"]),
-                    summary=str(episode_payload["summary"]),
-                    reused=True,
-                ),
-                reused=True,
-            )
-
-        # Validate authority only for a new mutation.  A durably completed
-        # item remains replayable even if the role later changes.
-        self._active_assignment(signal.principal_id, signal.role_id, signal.responsibility_id)
         episode_id = _deterministic(
             "episode_",
             "local-signal",
@@ -448,49 +463,106 @@ class PersonalEpisodeService:
             source_key,
         )
         request_id = f"local-signal:{source_key}"
-        envelope = EventEnvelope(
-            event_id=event_id,
-            schema_version="event-envelope/v1",
-            source_ref=signal.source_uri,
-            emitted_at=occurred_at,
-            payload={
-                "source_id": signal.source_id,
-                "item_id": signal.item_id,
-                "title": signal.title,
-                "content_sha256": signal.content_sha256,
-                "source_uri": signal.source_uri,
-            },
-            trace_id=_deterministic("trace_", "local-signal", source_key),
-        )
-        generated_signal = Signal(
-            signal_id=signal_id,
-            schema_version="signal/v1",
-            source_event_ref=envelope,
-            detected_at=occurred_at,
-            pattern="local_markdown_observed",
-            confidence=1.0,
-        )
-        self._broker.append(
-            EVT_SIGNAL_OBSERVED,
-            producer=PERSONAL_EPISODE_PRODUCER,
+
+        existing = self._find_local_signal(signal.principal_id, source_key)
+        if existing is not None:
+            existing_payload = _payload(existing)
+            try:
+                existing_episode = self._episode_for_signal(str(existing["event_id"]), signal.principal_id)
+            except PersonalEpisodeError as exc:
+                if exc.reason != "malformed_signal":
+                    raise
+            else:
+                episode_payload = _payload(existing_episode)
+                return PersonalSignalIngestResult(
+                    signal_event_id=str(existing["event_id"]),
+                    signal_id=str(existing_payload["signal_id"]),
+                    episode=PersonalEpisodeCard(
+                        episode_id=str(existing_episode["episode_id"]),
+                        request_id=str(episode_payload["request_id"]),
+                        summary=str(episode_payload["summary"]),
+                        reused=True,
+                    ),
+                    reused=True,
+                )
+
+        # Validate authority only when a mutation is still required.  A durably
+        # completed item remains replayable even if the role later changes;
+        # an interrupted chain resumes only while the assignment is still valid.
+        assignment = self._active_assignment(signal.principal_id, signal.role_id, signal.responsibility_id)
+        if existing is None:
+            envelope = EventEnvelope(
+                event_id=event_id,
+                schema_version="event-envelope/v1",
+                source_ref=signal.source_uri,
+                emitted_at=occurred_at,
+                payload={
+                    "source_id": signal.source_id,
+                    "item_id": signal.item_id,
+                    "title": signal.title,
+                    "content_sha256": signal.content_sha256,
+                    "source_uri": signal.source_uri,
+                },
+                trace_id=_deterministic("trace_", "local-signal", source_key),
+            )
+            generated_signal = Signal(
+                signal_id=signal_id,
+                schema_version="signal/v1",
+                source_event_ref=envelope,
+                detected_at=occurred_at,
+                pattern="local_markdown_observed",
+                confidence=1.0,
+            )
+            self._broker.append(
+                EVT_SIGNAL_OBSERVED,
+                producer=PERSONAL_EPISODE_PRODUCER,
+                principal_id=signal.principal_id,
+                space_id=PERSONAL_EPISODE_SPACE_ID,
+                correlation_id=f"personal-signal|{event_id}",
+                idempotency_key=f"local-signal|{source_key}",
+                event_id=event_id,
+                episode_id=episode_id,
+                role_context_id=signal.role_id,
+                responsibility_id=signal.responsibility_id,
+                privacy_class="private",
+                payload={
+                    "source_key": source_key,
+                    "source_id": signal.source_id,
+                    "item_id": signal.item_id,
+                    "title": signal.title,
+                    "content_sha256": signal.content_sha256,
+                    "source_uri": signal.source_uri,
+                    "signal_id": signal_id,
+                    "event_envelope": envelope.model_dump(mode="json"),
+                    "signal": generated_signal.model_dump(mode="json"),
+                },
+                occurred_at=occurred_at,
+            )
+        decision_payload = {
+            "episode_id": episode_id,
+            "request_id": request_id,
+            "summary": signal.title,
+            "why_now": "A private local item was observed",
+            "deadline": None,
+            "risk": RISK,
+            "authority": "human_confirmation_required",
+            "status": "pending_confirmation",
+            "executor_id": signal.executor_id,
+            "role_id": signal.role_id,
+            "responsibility_id": signal.responsibility_id,
+            "source_signal_ref": event_id,
+            "scene_id": PERSONAL_SIGNAL_SCENE_ID,
+            "journey_id": PERSONAL_SIGNAL_JOURNEY_ID,
+            "outcome_metric": PERSONAL_SIGNAL_OUTCOME_METRIC,
+        }
+        decision_event_id = self._ensure_context_and_decision_chain(
+            episode_id=episode_id,
             principal_id=signal.principal_id,
-            space_id=PERSONAL_EPISODE_SPACE_ID,
-            correlation_id=f"personal-signal|{event_id}",
-            idempotency_key=f"local-signal|{source_key}",
-            event_id=event_id,
-            privacy_class="private",
-            payload={
-                "source_key": source_key,
-                "source_id": signal.source_id,
-                "item_id": signal.item_id,
-                "title": signal.title,
-                "content_sha256": signal.content_sha256,
-                "source_uri": signal.source_uri,
-                "signal_id": signal_id,
-                "event_envelope": envelope.model_dump(mode="json"),
-                "signal": generated_signal.model_dump(mode="json"),
-            },
-            occurred_at=occurred_at,
+            role_id=signal.role_id,
+            responsibility_id=signal.responsibility_id,
+            assignment=assignment,
+            decision_payload=decision_payload,
+            causation_id=event_id,
         )
         self._broker.append(
             EVT_EPISODE_DECISION,
@@ -502,25 +574,9 @@ class PersonalEpisodeService:
             episode_id=episode_id,
             role_context_id=signal.role_id,
             responsibility_id=signal.responsibility_id,
-            causation_id=event_id,
+            causation_id=decision_event_id,
             privacy_class="private",
-            payload={
-                "episode_id": episode_id,
-                "request_id": request_id,
-                "summary": signal.title,
-                "why_now": "A private local item was observed",
-                "deadline": None,
-                "risk": RISK,
-                "authority": "human_confirmation_required",
-                "status": "pending_confirmation",
-                "executor_id": signal.executor_id,
-                "role_id": signal.role_id,
-                "responsibility_id": signal.responsibility_id,
-                "source_signal_ref": event_id,
-                "scene_id": PERSONAL_SIGNAL_SCENE_ID,
-                "journey_id": PERSONAL_SIGNAL_JOURNEY_ID,
-                "outcome_metric": PERSONAL_SIGNAL_OUTCOME_METRIC,
-            },
+            payload=decision_payload,
             occurred_at=occurred_at,
         )
         return PersonalSignalIngestResult(
@@ -530,7 +586,9 @@ class PersonalEpisodeService:
                 episode_id=episode_id,
                 request_id=request_id,
                 summary=signal.title,
+                reused=existing is not None,
             ),
+            reused=existing is not None,
         )
 
     def confirm(
@@ -554,9 +612,36 @@ class PersonalEpisodeService:
         mandate_id = _deterministic("mandate:personal-", episode_id)
         manager = MandateManager(self._broker, clock=self._clock)
         current = manager.get(mandate_id, principal_id)
+        if current is not None and current.status != STATUS_ACTIVE:
+            raise PersonalEpisodeError("mandate_not_active", "episode mandate is revoked")
+
+        decision_row = self._canonical_event(episode_id, EVT_DECISION_PROPOSED)
+        human_row: Mapping[str, Any] | None = None
+        if decision_row is not None:
+            human_row = self._append_chain_event(
+                event_type=EVT_HUMAN_ADJUDICATION,
+                episode_id=episode_id,
+                principal_id=principal_id,
+                role_id=role_id,
+                responsibility_id=responsibility_id,
+                mandate_id=mandate_id,
+                causation_id=str(decision_row["event_id"]),
+                payload={
+                    "decision_event_id": str(decision_row["event_id"]),
+                    "verdict": "authorize",
+                    "executor_id": executor_id,
+                },
+            )
+
         if current is not None:
-            if current.status != STATUS_ACTIVE:
-                raise PersonalEpisodeError("mandate_not_active", "episode mandate is revoked")
+            self._ensure_canonical_mandate(
+                episode_id=episode_id,
+                principal_id=principal_id,
+                role_id=role_id,
+                responsibility_id=responsibility_id,
+                mandate_id=mandate_id,
+                human_row=human_row,
+            )
             return PersonalEpisodeConfirmation(episode_id, mandate_id, reused=True)
 
         responsibility = next(item for item in assignment.responsibilities if item.resp_id == responsibility_id)
@@ -591,6 +676,14 @@ class PersonalEpisodeService:
             manager.grant(mandate)
         except MandateError as exc:
             raise PersonalEpisodeError("mandate_grant_failed", str(exc)) from exc
+        self._ensure_canonical_mandate(
+            episode_id=episode_id,
+            principal_id=principal_id,
+            role_id=role_id,
+            responsibility_id=responsibility_id,
+            mandate_id=mandate_id,
+            human_row=human_row,
+        )
         return PersonalEpisodeConfirmation(episode_id, mandate_id)
 
     def reload_execution_context(self, episode_id: str, principal_id: str) -> PersonalExecutionContext:
@@ -675,27 +768,64 @@ class PersonalEpisodeService:
                 "output_origin must be system/user_provided/unknown",
             )
         existing = self._find_event(context.episode_id, EVT_EVIDENCE_LOCAL_DRAFT, "evidence_uri", evidence_uri)
-        if existing is not None:
-            return int(existing["sequence"])
-        return self._broker.append(
-            EVT_EVIDENCE_LOCAL_DRAFT,
-            producer=PERSONAL_EPISODE_PRODUCER,
-            principal_id=context.principal_id,
-            space_id=PERSONAL_EPISODE_SPACE_ID,
-            correlation_id=f"personal-episode|{context.episode_id}",
-            idempotency_key=f"evidence|{context.episode_id}|{_short_hash(evidence_uri)}",
+        if existing is None:
+            sequence = self._broker.append(
+                EVT_EVIDENCE_LOCAL_DRAFT,
+                producer=PERSONAL_EPISODE_PRODUCER,
+                principal_id=context.principal_id,
+                space_id=PERSONAL_EPISODE_SPACE_ID,
+                correlation_id=f"personal-episode|{context.episode_id}",
+                idempotency_key=f"evidence|{context.episode_id}|{_short_hash(evidence_uri)}",
+                episode_id=context.episode_id,
+                role_context_id=context.role_context_id,
+                responsibility_id=context.responsibility_id,
+                mandate_id=context.mandate_id,
+                payload={
+                    "evidence_uri": evidence_uri,
+                    "action_id": context.action_id,
+                    "output_origin": output_origin,
+                },
+                evidence_uri=evidence_uri,
+                occurred_at=self._clock_ts(),
+            )
+            existing = self._row_at(sequence)
+        sequence = int(existing["sequence"])
+
+        mandate_row = self._canonical_event(context.episode_id, EVT_MANDATE_GRANTED_CANONICAL)
+        action_authority = self._action_succeeded_authority(context)
+        if mandate_row is None or action_authority is None:
+            return sequence
+        action_row = self._append_chain_event(
+            event_type=EVT_ACTION_SUCCEEDED_CANONICAL,
             episode_id=context.episode_id,
-            role_context_id=context.role_context_id,
+            principal_id=context.principal_id,
+            role_id=context.role_context_id,
             responsibility_id=context.responsibility_id,
             mandate_id=context.mandate_id,
+            causation_id=str(mandate_row["event_id"]),
+            payload={
+                "action_id": context.action_id,
+                "authority_event_id": str(action_authority["event_id"]),
+            },
+        )
+        self._append_chain_event(
+            event_type=EVT_EVIDENCE_RECORDED,
+            episode_id=context.episode_id,
+            principal_id=context.principal_id,
+            role_id=context.role_context_id,
+            responsibility_id=context.responsibility_id,
+            mandate_id=context.mandate_id,
+            causation_id=str(action_row["event_id"]),
+            identity=_short_hash(evidence_uri),
             payload={
                 "evidence_uri": evidence_uri,
                 "action_id": context.action_id,
                 "output_origin": output_origin,
+                "legacy_evidence_event_id": str(existing["event_id"]),
             },
             evidence_uri=evidence_uri,
-            occurred_at=self._clock_ts(),
         )
+        return sequence
 
     def record_outcome(
         self,
@@ -800,21 +930,91 @@ class PersonalEpisodeService:
                     "feedback_replay_conflict",
                     "feedback replay does not match the recorded outcome",
                 )
-            return int(existing["sequence"])
-        return self._broker.append(
-            EVT_OUTCOME_HUMAN,
-            producer=PERSONAL_EPISODE_PRODUCER,
-            principal_id=context.principal_id,
-            space_id=PERSONAL_EPISODE_SPACE_ID,
-            correlation_id=f"personal-episode|{context.episode_id}",
-            idempotency_key=f"outcome|{context.episode_id}|{identity_key}",
+            sequence = int(existing["sequence"])
+        else:
+            sequence = self._broker.append(
+                EVT_OUTCOME_HUMAN,
+                producer=PERSONAL_EPISODE_PRODUCER,
+                principal_id=context.principal_id,
+                space_id=PERSONAL_EPISODE_SPACE_ID,
+                correlation_id=f"personal-episode|{context.episode_id}",
+                idempotency_key=f"outcome|{context.episode_id}|{identity_key}",
+                episode_id=context.episode_id,
+                role_context_id=context.role_context_id,
+                responsibility_id=context.responsibility_id,
+                mandate_id=context.mandate_id,
+                payload=outcome_payload,
+                occurred_at=self._clock_ts(),
+            )
+            existing = self._row_at(sequence)
+
+        evidence_row = self._latest_canonical_evidence(context.episode_id)
+        mandate_row = self._canonical_event(context.episode_id, EVT_MANDATE_GRANTED_CANONICAL)
+        if evidence_row is None or mandate_row is None:
+            return sequence
+
+        chain_identity = _short_hash(identity_key)
+        outcome_row = self._append_chain_event(
+            event_type=EVT_OUTCOME_OBSERVED,
             episode_id=context.episode_id,
-            role_context_id=context.role_context_id,
+            principal_id=context.principal_id,
+            role_id=context.role_context_id,
             responsibility_id=context.responsibility_id,
             mandate_id=context.mandate_id,
-            payload=outcome_payload,
-            occurred_at=self._clock_ts(),
+            causation_id=str(evidence_row["event_id"]),
+            identity=chain_identity,
+            payload={**outcome_payload, "legacy_outcome_event_id": str(existing["event_id"])},
         )
+        adjudication_row = self._append_chain_event(
+            event_type=EVT_ADJUDICATION_RECORDED,
+            episode_id=context.episode_id,
+            principal_id=context.principal_id,
+            role_id=context.role_context_id,
+            responsibility_id=context.responsibility_id,
+            mandate_id=context.mandate_id,
+            causation_id=str(outcome_row["event_id"]),
+            identity=chain_identity,
+            payload={
+                "outcome_event_id": str(outcome_row["event_id"]),
+                "verdict": verdict,
+                "feedback_id": persisted_feedback_id,
+            },
+        )
+        memory_row = self._append_chain_event(
+            event_type=EVT_MEMORY_CANDIDATE_PROPOSED,
+            episode_id=context.episode_id,
+            principal_id=context.principal_id,
+            role_id=context.role_context_id,
+            responsibility_id=context.responsibility_id,
+            mandate_id=context.mandate_id,
+            causation_id=str(adjudication_row["event_id"]),
+            identity=chain_identity,
+            payload={
+                "adjudication_event_id": str(adjudication_row["event_id"]),
+                "candidate_kind": "human_revision_learning",
+                "verdict": verdict,
+            },
+        )
+        self._append_chain_event(
+            event_type=EVT_EPISODE_CLOSED,
+            episode_id=context.episode_id,
+            principal_id=context.principal_id,
+            role_id=context.role_context_id,
+            responsibility_id=context.responsibility_id,
+            mandate_id=context.mandate_id,
+            causation_id=str(memory_row["event_id"]),
+            identity=chain_identity,
+            payload={
+                "chain_schema_version": CHAIN_SCHEMA_VERSION,
+                "terminal_verdict": verdict,
+                "mandate_event_id": str(mandate_row["event_id"]),
+                "evidence_event_id": str(evidence_row["event_id"]),
+                "outcome_event_id": str(outcome_row["event_id"]),
+                "adjudication_event_id": str(adjudication_row["event_id"]),
+                "memory_candidate_event_id": str(memory_row["event_id"]),
+            },
+        )
+        return sequence
 
     def _latest_evidence_ref(self, context: PersonalExecutionContext) -> str:
         evidence_rows = [
@@ -830,6 +1030,184 @@ class PersonalEpisodeService:
         evidence_rows.sort(key=lambda row: int(row.get("sequence", 0)))
         return _required_payload(_payload(evidence_rows[-1]), "evidence_uri")
 
+    def _ensure_context_and_decision_chain(
+        self,
+        *,
+        episode_id: str,
+        principal_id: str,
+        role_id: str,
+        responsibility_id: str,
+        assignment: Any,
+        decision_payload: Mapping[str, Any],
+        causation_id: str | None,
+    ) -> str:
+        role_row = self._append_chain_event(
+            event_type=EVT_ROLE_CONTEXT_ASSIGNED,
+            episode_id=episode_id,
+            principal_id=principal_id,
+            role_id=role_id,
+            responsibility_id=responsibility_id,
+            causation_id=causation_id,
+            payload={
+                "role_id": role_id,
+                "role_assignment_id": assignment.assignment_id,
+                "role_assignment_version": assignment.version,
+            },
+        )
+        responsibility = next(item for item in assignment.responsibilities if item.resp_id == responsibility_id)
+        responsibility_row = self._append_chain_event(
+            event_type=EVT_RESPONSIBILITY_LINKED,
+            episode_id=episode_id,
+            principal_id=principal_id,
+            role_id=role_id,
+            responsibility_id=responsibility_id,
+            causation_id=str(role_row["event_id"]),
+            payload={
+                "responsibility_id": responsibility_id,
+                "responsibility_version": responsibility.version,
+                "role_event_id": str(role_row["event_id"]),
+            },
+        )
+        decision_row = self._append_chain_event(
+            event_type=EVT_DECISION_PROPOSED,
+            episode_id=episode_id,
+            principal_id=principal_id,
+            role_id=role_id,
+            responsibility_id=responsibility_id,
+            causation_id=str(responsibility_row["event_id"]),
+            payload={**dict(decision_payload), "responsibility_event_id": str(responsibility_row["event_id"])},
+        )
+        return str(decision_row["event_id"])
+
+    def _ensure_canonical_mandate(
+        self,
+        *,
+        episode_id: str,
+        principal_id: str,
+        role_id: str,
+        responsibility_id: str,
+        mandate_id: str,
+        human_row: Mapping[str, Any] | None,
+    ) -> None:
+        if human_row is None:
+            return
+        authority_rows = [
+            row
+            for row in self._broker.read(episode_id=episode_id, producer=MANDATE_PRODUCER)
+            if row.get("event_type") == EVT_MANDATE_GRANT
+            and row.get("principal_id") == principal_id
+            and row.get("mandate_id") == mandate_id
+        ]
+        if not authority_rows:
+            return
+        authority_row = min(authority_rows, key=lambda row: int(row.get("sequence", 0)))
+        if int(authority_row["sequence"]) <= int(human_row["sequence"]):
+            return
+        self._append_chain_event(
+            event_type=EVT_MANDATE_GRANTED_CANONICAL,
+            episode_id=episode_id,
+            principal_id=principal_id,
+            role_id=role_id,
+            responsibility_id=responsibility_id,
+            mandate_id=mandate_id,
+            causation_id=str(human_row["event_id"]),
+            payload={
+                "mandate_id": mandate_id,
+                "authority_event_id": str(authority_row["event_id"]),
+                "revocable": True,
+            },
+        )
+
+    def _action_succeeded_authority(self, context: PersonalExecutionContext) -> Mapping[str, Any] | None:
+        rows = [
+            row
+            for row in self._broker.read(episode_id=context.episode_id, producer=PDP_PRODUCER)
+            if row.get("event_type") == EVT_ACTION_SUCCEEDED
+            and row.get("principal_id") == context.principal_id
+            and row.get("mandate_id") == context.mandate_id
+            and _payload(row).get("action_id") == context.action_id
+        ]
+        if not rows:
+            return None
+        return min(rows, key=lambda row: int(row.get("sequence", 0)))
+
+    def _latest_canonical_evidence(self, episode_id: str) -> Mapping[str, Any] | None:
+        rows = [
+            row
+            for row in self._broker.read(episode_id=episode_id, producer=PERSONAL_EPISODE_PRODUCER)
+            if row.get("event_type") == EVT_EVIDENCE_RECORDED
+        ]
+        if not rows:
+            return None
+        return max(rows, key=lambda row: int(row.get("sequence", 0)))
+
+    def _canonical_event(self, episode_id: str, event_type: str) -> Mapping[str, Any] | None:
+        rows = [
+            row
+            for row in self._broker.read(episode_id=episode_id, producer=PERSONAL_EPISODE_PRODUCER)
+            if row.get("event_type") == event_type
+        ]
+        if not rows:
+            return None
+        return min(rows, key=lambda row: int(row.get("sequence", 0)))
+
+    def _append_chain_event(
+        self,
+        *,
+        event_type: str,
+        episode_id: str,
+        principal_id: str,
+        role_id: str,
+        responsibility_id: str,
+        causation_id: str | None,
+        payload: Mapping[str, Any],
+        mandate_id: str | None = None,
+        identity: str = "primary",
+        evidence_uri: str | None = None,
+    ) -> Mapping[str, Any]:
+        event_id = _deterministic("evt_", CHAIN_SCHEMA_VERSION, episode_id, event_type, identity)
+        existing = next(
+            (row for row in self._broker.read(episode_id=episode_id) if row.get("event_id") == event_id), None
+        )
+        expected_payload = dict(payload)
+        if existing is not None:
+            if (
+                existing.get("event_type") != event_type
+                or existing.get("principal_id") != principal_id
+                or existing.get("causation_id") != causation_id
+                or _payload(existing) != expected_payload
+            ):
+                raise PersonalEpisodeError(
+                    "chain_replay_conflict",
+                    f"canonical event replay conflict for {event_type}",
+                )
+            return existing
+        sequence = self._broker.append(
+            event_type,
+            producer=PERSONAL_EPISODE_PRODUCER,
+            principal_id=principal_id,
+            space_id=PERSONAL_EPISODE_SPACE_ID,
+            correlation_id=f"personal-episode|{episode_id}|{CHAIN_SCHEMA_VERSION}",
+            idempotency_key=f"chain|{CHAIN_SCHEMA_VERSION}|{episode_id}|{event_type}|{identity}",
+            event_id=event_id,
+            episode_id=episode_id,
+            role_context_id=role_id,
+            responsibility_id=responsibility_id,
+            mandate_id=mandate_id,
+            causation_id=causation_id,
+            privacy_class="private",
+            payload=expected_payload,
+            evidence_uri=evidence_uri,
+            occurred_at=self._clock_ts(),
+        )
+        return self._row_at(sequence)
+
+    def _row_at(self, sequence: int) -> Mapping[str, Any]:
+        rows = self._broker.read(from_sequence=sequence, to_sequence=sequence)
+        if len(rows) != 1:
+            raise PersonalEpisodeError("ledger_readback_failed", "appended event could not be read back")
+        return rows[0]
+
     def observe_principal(self, principal_id: str) -> PrincipalObservation:
         """Deterministic, read-only per-principal observation over the same Ledger.
 
@@ -842,12 +1220,14 @@ class PersonalEpisodeService:
         """
         self._required("principal_id", principal_id)
 
+        all_rows = self._broker.read()
         rows = [
             row
-            for row in self._broker.read(producer=PERSONAL_EPISODE_PRODUCER)
-            if row.get("principal_id") == principal_id
+            for row in all_rows
+            if row.get("producer") == PERSONAL_EPISODE_PRODUCER and row.get("principal_id") == principal_id
         ]
-        if not rows:
+        decision_rows = [row for row in rows if row.get("event_type") == EVT_EPISODE_DECISION]
+        if not decision_rows:
             return PrincipalObservation(
                 principal_id=principal_id,
                 readiness="not_ready",
@@ -862,93 +1242,21 @@ class PersonalEpisodeService:
                 signal_to_verdict_latency_seconds=None,
                 weekly_samples=[],
                 gate_gaps=["no episodes observed"],
+                chain_schema_version=CHAIN_SCHEMA_VERSION,
+                qualifying_episode_ids=[],
+                episode_gaps={},
             )
 
-        # Read Action.Succeeded events from PDP producer (Blocker 1).
-        succeeded_keys: set[tuple[str, str]] = set()
-        for prow in self._broker.read(producer=PDP_PRODUCER):
-            if prow.get("event_type") != EVT_ACTION_SUCCEEDED:
-                continue
-            if prow.get("principal_id") != principal_id:
-                continue
-            pp = _payload(prow)
-            succeeded_keys.add((str(prow.get("episode_id", "")), str(pp.get("action_id", ""))))
-
-        # Index signal events by event_id for latency/source lookup.
-        signal_lookup: dict[str, Mapping[str, Any]] = {}
-        for row in rows:
-            eid = row.get("event_id")
-            if eid and row.get("event_type") == EVT_SIGNAL_OBSERVED:
-                signal_lookup[eid] = row
-
-        # Group episode-scoped events by episode_id.
-        ep_rows: dict[str, list[Mapping[str, Any]]] = {}
-        for row in rows:
-            ep_id = row.get("episode_id")
-            if ep_id:
-                ep_rows.setdefault(ep_id, []).append(row)
-
-        observations: list[dict[str, Any]] = []
-        for ep_id, ep_events in ep_rows.items():
-            decision_row: Mapping[str, Any] | None = None
-            evidence_payloads: list[Mapping[str, Any]] = []
-            outcome_rows: list[tuple[int, Mapping[str, Any], datetime | None]] = []
-            for er in ep_events:
-                et = er.get("event_type")
-                if et == EVT_EPISODE_DECISION:
-                    decision_row = er
-                elif et == EVT_EVIDENCE_LOCAL_DRAFT:
-                    evidence_payloads.append(_payload(er))
-                elif et == EVT_OUTCOME_HUMAN:
-                    outcome_rows.append(
-                        (
-                            int(er.get("sequence", 0)),
-                            _payload(er),
-                            _parse_ts(er.get("occurred_at")),
-                        )
-                    )
-            if decision_row is None:
-                continue
-            dp = _payload(decision_row)
-            decision_dt = _parse_ts(decision_row.get("occurred_at"))
-            # Signal source: only signal-ingested episodes are gate-eligible (Blocker 2).
-            signal_dt = decision_dt
-            has_signal_source = False
-            sig_ref = dp.get("source_signal_ref") or decision_row.get("causation_id")
-            if sig_ref and sig_ref in signal_lookup:
-                has_signal_source = True
-                sig_dt = _parse_ts(signal_lookup[sig_ref].get("occurred_at"))
-                if sig_dt is not None:
-                    signal_dt = sig_dt
-            # Effective outcome: last by ledger sequence (Blocker 4).
-            outcome_rows.sort(key=lambda t: t[0])
-            effective_outcome: Mapping[str, Any] | None = None
-            effective_outcome_dt: datetime | None = None
-            if outcome_rows:
-                _, effective_outcome, effective_outcome_dt = outcome_rows[-1]
-            # Action.Succeeded matching for same episode/action_id (Blocker 1).
-            action_id = _deterministic("action:personal-", ep_id)
-            has_action_succeeded = (ep_id, action_id) in succeeded_keys
-            has_revision_receipt = _has_valid_revision_receipt(
-                effective_outcome,
-                evidence_payloads,
+        chain_integrity_ok = bool(self._broker.verify_chain().get("ok"))
+        observations = [
+            _canonical_chain_observation(
+                episode_id=str(row["episode_id"]),
+                principal_id=principal_id,
+                all_rows=all_rows,
+                chain_integrity_ok=chain_integrity_ok,
             )
-            observations.append(
-                {
-                    "episode_id": ep_id,
-                    "signal_dt": signal_dt,
-                    "decision_dt": decision_dt,
-                    "has_signal_source": has_signal_source,
-                    "has_action_succeeded": has_action_succeeded,
-                    "evidence_origins": [ep.get("output_origin", "unknown") for ep in evidence_payloads],
-                    "effective_outcome": effective_outcome,
-                    "effective_outcome_dt": effective_outcome_dt,
-                    "has_revision_receipt": has_revision_receipt,
-                    "receipt_candidate_origin": (
-                        evidence_payloads[-1].get("output_origin", "unknown") if has_revision_receipt else None
-                    ),
-                }
-            )
+            for row in decision_rows
+        ]
 
         return _build_observation(principal_id, observations)
 
@@ -1073,10 +1381,22 @@ class PersonalEpisodeService:
 
 __all__ = [
     "CAPABILITY",
+    "CHAIN_SCHEMA_VERSION",
     "DISCLOSURE_POLICY",
+    "EVT_ACTION_SUCCEEDED_CANONICAL",
+    "EVT_ADJUDICATION_RECORDED",
+    "EVT_DECISION_PROPOSED",
     "EVT_EPISODE_DECISION",
+    "EVT_EPISODE_CLOSED",
     "EVT_EVIDENCE_LOCAL_DRAFT",
+    "EVT_EVIDENCE_RECORDED",
+    "EVT_HUMAN_ADJUDICATION",
+    "EVT_MANDATE_GRANTED_CANONICAL",
+    "EVT_MEMORY_CANDIDATE_PROPOSED",
     "EVT_OUTCOME_HUMAN",
+    "EVT_OUTCOME_OBSERVED",
+    "EVT_RESPONSIBILITY_LINKED",
+    "EVT_ROLE_CONTEXT_ASSIGNED",
     "EVT_SIGNAL_OBSERVED",
     "PERSONAL_EPISODE_PRODUCER",
     "PERSONAL_SIGNAL_JOURNEY_ID",

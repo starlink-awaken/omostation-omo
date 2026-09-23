@@ -140,7 +140,261 @@ def _has_valid_revision_receipt(
     latest_ref = evidence_payloads[-1].get("evidence_uri")
     if receipt.get("candidate_ref") != latest_ref or not isinstance(latest_ref, str):
         return False
-    return True
+    try:
+        candidate_digest = _personal_draft_digest(latest_ref)
+        revision_digest = _sha256_digest(str(receipt.get("revision_digest", "")))
+    except ValueError:
+        return False
+    changed_fields = receipt.get("changed_fields")
+    if not isinstance(changed_fields, list) or any(
+        not isinstance(value, str) or value not in {"title", "context", "deadline", "next_action"}
+        for value in changed_fields
+    ):
+        return False
+    if outcome.get("verdict") == "edit":
+        return bool(changed_fields) and revision_digest != candidate_digest
+    return not changed_fields and revision_digest == candidate_digest
+
+
+def _canonical_chain_observation(
+    *,
+    episode_id: str,
+    principal_id: str,
+    all_rows: list[Mapping[str, Any]],
+    chain_integrity_ok: bool = True,
+) -> dict[str, Any]:
+    from omo.personal_episode import (
+        EVT_ACTION_SUCCEEDED_CANONICAL,
+        EVT_ADJUDICATION_RECORDED,
+        EVT_DECISION_PROPOSED,
+        EVT_EPISODE_CLOSED,
+        EVT_EPISODE_DECISION,
+        EVT_EVIDENCE_LOCAL_DRAFT,
+        EVT_EVIDENCE_RECORDED,
+        EVT_HUMAN_ADJUDICATION,
+        EVT_MANDATE_GRANTED_CANONICAL,
+        EVT_MEMORY_CANDIDATE_PROPOSED,
+        EVT_OUTCOME_HUMAN,
+        EVT_OUTCOME_OBSERVED,
+        EVT_RESPONSIBILITY_LINKED,
+        EVT_ROLE_CONTEXT_ASSIGNED,
+        EVT_SIGNAL_OBSERVED,
+        PERSONAL_EPISODE_PRODUCER,
+    )
+    from omo.sovereignty.enforcement import EVT_ACTION_SUCCEEDED, PDP_PRODUCER
+    from omo.sovereignty.mandates import EVT_MANDATE_GRANT, EVT_MANDATE_REVOKE, MANDATE_PRODUCER
+
+    rows = [row for row in all_rows if str(row.get("episode_id") or "") == episode_id]
+    rows.sort(key=lambda row: int(row.get("sequence", 0)))
+    by_id = {str(row.get("event_id")): row for row in rows if row.get("event_id")}
+    personal_rows = [row for row in rows if row.get("producer") == PERSONAL_EPISODE_PRODUCER]
+    decision = next((row for row in personal_rows if row.get("event_type") == EVT_EPISODE_DECISION), None)
+    decision_dt = _parse_ts(decision.get("occurred_at")) if decision else None
+
+    legacy_evidence = [row for row in personal_rows if row.get("event_type") == EVT_EVIDENCE_LOCAL_DRAFT]
+    legacy_outcomes = [row for row in personal_rows if row.get("event_type") == EVT_OUTCOME_HUMAN]
+    fallback_outcome = _payload(legacy_outcomes[-1]) if legacy_outcomes else None
+    fallback_outcome_dt = _parse_ts(legacy_outcomes[-1].get("occurred_at")) if legacy_outcomes else None
+
+    leg_types = [
+        EVT_SIGNAL_OBSERVED,
+        EVT_ROLE_CONTEXT_ASSIGNED,
+        EVT_RESPONSIBILITY_LINKED,
+        EVT_DECISION_PROPOSED,
+        EVT_HUMAN_ADJUDICATION,
+        EVT_MANDATE_GRANTED_CANONICAL,
+        EVT_ACTION_SUCCEEDED_CANONICAL,
+        EVT_EVIDENCE_RECORDED,
+        EVT_OUTCOME_OBSERVED,
+        EVT_ADJUDICATION_RECORDED,
+        EVT_MEMORY_CANDIDATE_PROPOSED,
+        EVT_EPISODE_CLOSED,
+    ]
+    gap_names = {
+        EVT_SIGNAL_OBSERVED: "missing_signal_observed",
+        EVT_ROLE_CONTEXT_ASSIGNED: "missing_role_context_assigned",
+        EVT_RESPONSIBILITY_LINKED: "missing_responsibility_linked",
+        EVT_DECISION_PROPOSED: "missing_decision_proposed",
+        EVT_HUMAN_ADJUDICATION: "missing_human_adjudication",
+        EVT_MANDATE_GRANTED_CANONICAL: "missing_mandate_granted",
+        EVT_ACTION_SUCCEEDED_CANONICAL: "missing_action_succeeded",
+        EVT_EVIDENCE_RECORDED: "missing_evidence_recorded",
+        EVT_OUTCOME_OBSERVED: "missing_outcome_observed",
+        EVT_ADJUDICATION_RECORDED: "missing_adjudication_recorded",
+        EVT_MEMORY_CANDIDATE_PROPOSED: "missing_memory_candidate_proposed",
+        EVT_EPISODE_CLOSED: "missing_episode_closed",
+    }
+    gaps: list[str] = []
+    if not chain_integrity_ok:
+        gaps.append("ledger_hash_chain_invalid")
+
+    closures = [row for row in personal_rows if row.get("event_type") == EVT_EPISODE_CLOSED]
+    chain: dict[str, Mapping[str, Any]] = {}
+    if closures:
+        current = closures[-1]
+        for expected in reversed(leg_types):
+            if current.get("event_type") != expected:
+                gaps.append(gap_names[expected])
+                break
+            chain[expected] = current
+            if expected == EVT_SIGNAL_OBSERVED:
+                break
+            cause = current.get("causation_id")
+            current = by_id.get(str(cause))
+            if current is None:
+                gaps.append("causation_link_missing")
+                break
+
+    for event_type in leg_types:
+        if event_type not in chain:
+            code = gap_names[event_type]
+            if code not in gaps:
+                gaps.append(code)
+
+    ordered = [chain[event_type] for event_type in leg_types if event_type in chain]
+    if len(ordered) == len(leg_types):
+        sequences = [int(row.get("sequence", 0)) for row in ordered]
+        if sequences != sorted(sequences) or len(set(sequences)) != len(sequences):
+            gaps.append("chain_order_invalid")
+        for row in ordered:
+            if row.get("principal_id") != principal_id:
+                gaps.append("cross_principal_chain")
+                break
+            if row.get("episode_id") != episode_id:
+                gaps.append("cross_episode_chain")
+                break
+            if row.get("producer") != PERSONAL_EPISODE_PRODUCER:
+                gaps.append("producer_mismatch")
+                break
+        if ordered:
+            expected_role = ordered[0].get("role_context_id")
+            expected_responsibility = ordered[0].get("responsibility_id")
+            if any(
+                row.get("role_context_id") != expected_role or row.get("responsibility_id") != expected_responsibility
+                for row in ordered
+            ):
+                gaps.append("role_responsibility_identity_mismatch")
+
+    mandate_row = chain.get(EVT_MANDATE_GRANTED_CANONICAL)
+    action_row = chain.get(EVT_ACTION_SUCCEEDED_CANONICAL)
+    evidence_row = chain.get(EVT_EVIDENCE_RECORDED)
+    outcome_row = chain.get(EVT_OUTCOME_OBSERVED)
+    adjudication_row = chain.get(EVT_ADJUDICATION_RECORDED)
+    memory_row = chain.get(EVT_MEMORY_CANDIDATE_PROPOSED)
+    closure_row = chain.get(EVT_EPISODE_CLOSED)
+
+    authority_mandate = None
+    if mandate_row is not None:
+        authority_id = _payload(mandate_row).get("authority_event_id")
+        authority_mandate = by_id.get(str(authority_id))
+        if (
+            authority_mandate is None
+            or authority_mandate.get("producer") != MANDATE_PRODUCER
+            or authority_mandate.get("event_type") != EVT_MANDATE_GRANT
+            or authority_mandate.get("principal_id") != principal_id
+            or authority_mandate.get("episode_id") != episode_id
+            or authority_mandate.get("mandate_id") != mandate_row.get("mandate_id")
+        ):
+            gaps.append("mandate_authority_invalid")
+
+    authority_action = None
+    if action_row is not None:
+        authority_id = _payload(action_row).get("authority_event_id")
+        authority_action = by_id.get(str(authority_id))
+        if (
+            authority_action is None
+            or authority_action.get("producer") != PDP_PRODUCER
+            or authority_action.get("event_type") != EVT_ACTION_SUCCEEDED
+            or authority_action.get("principal_id") != principal_id
+            or authority_action.get("episode_id") != episode_id
+            or authority_action.get("mandate_id") != action_row.get("mandate_id")
+        ):
+            gaps.append("action_authority_invalid")
+
+    if authority_mandate is not None and authority_action is not None:
+        grant_seq = int(authority_mandate.get("sequence", 0))
+        action_seq = int(authority_action.get("sequence", 0))
+        if grant_seq >= action_seq:
+            gaps.append("mandate_after_action")
+        mandate_id = authority_mandate.get("mandate_id")
+        if any(
+            row.get("producer") == MANDATE_PRODUCER
+            and row.get("event_type") == EVT_MANDATE_REVOKE
+            and row.get("mandate_id") == mandate_id
+            and int(row.get("sequence", 0)) <= action_seq
+            for row in rows
+        ):
+            gaps.append("mandate_revoked_before_action")
+        action_payload = _payload(authority_action)
+        authority_ref = action_payload.get("principal_authority_ref")
+        receipt_digest = action_payload.get("principal_receipt_digest")
+        if not isinstance(authority_ref, str) or not authority_ref.startswith("authority:"):
+            gaps.append("principal_authority_unbound")
+        digest_hex = receipt_digest.removeprefix("sha256:") if isinstance(receipt_digest, str) else ""
+        if (
+            not isinstance(receipt_digest, str)
+            or not receipt_digest.startswith("sha256:")
+            or len(digest_hex) != 64
+            or any(char not in "0123456789abcdef" for char in digest_hex)
+        ):
+            gaps.append("principal_authority_unbound")
+
+    effective_outcome = _payload(outcome_row) if outcome_row is not None else fallback_outcome
+    effective_outcome_dt = _parse_ts(outcome_row.get("occurred_at")) if outcome_row is not None else fallback_outcome_dt
+    evidence_payloads = (
+        [_payload(evidence_row)] if evidence_row is not None else [_payload(row) for row in legacy_evidence]
+    )
+    has_revision_receipt = _has_valid_revision_receipt(effective_outcome, evidence_payloads)
+    if outcome_row is not None and not has_revision_receipt:
+        gaps.append("revision_receipt_invalid")
+
+    if closure_row is not None and all(
+        row is not None for row in (mandate_row, evidence_row, outcome_row, adjudication_row, memory_row)
+    ):
+        closure = _payload(closure_row)
+        if closure.get("chain_schema_version") != "personal-episode-chain/v1":
+            gaps.append("closure_schema_invalid")
+        expected_bindings = {
+            "mandate_event_id": mandate_row["event_id"],
+            "evidence_event_id": evidence_row["event_id"],
+            "outcome_event_id": outcome_row["event_id"],
+            "adjudication_event_id": adjudication_row["event_id"],
+            "memory_candidate_event_id": memory_row["event_id"],
+        }
+        if any(closure.get(key) != value for key, value in expected_bindings.items()):
+            gaps.append("closure_binding_invalid")
+        outcome = _payload(outcome_row)
+        adjudication = _payload(adjudication_row)
+        memory = _payload(memory_row)
+        if not (
+            closure.get("terminal_verdict")
+            == outcome.get("verdict")
+            == adjudication.get("verdict")
+            == memory.get("verdict")
+        ):
+            gaps.append("terminal_verdict_mismatch")
+
+    signal_row = chain.get(EVT_SIGNAL_OBSERVED)
+    signal_dt = _parse_ts(signal_row.get("occurred_at")) if signal_row is not None else decision_dt
+    unique_gaps = list(dict.fromkeys(gaps))
+    return {
+        "episode_id": episode_id,
+        "signal_dt": signal_dt,
+        "decision_dt": decision_dt,
+        "has_signal_source": signal_row is not None,
+        "has_action_succeeded": authority_action is not None,
+        "evidence_origins": [payload.get("output_origin", "unknown") for payload in evidence_payloads],
+        "effective_outcome": effective_outcome,
+        "effective_outcome_dt": effective_outcome_dt,
+        "has_revision_receipt": has_revision_receipt,
+        "receipt_candidate_origin": (
+            evidence_payloads[-1].get("output_origin", "unknown")
+            if has_revision_receipt and evidence_payloads
+            else None
+        ),
+        "has_complete_chain": not unique_gaps,
+        "chain_gaps": unique_gaps,
+    }
 
 
 def _iso_week_key(dt: datetime) -> str:
@@ -291,6 +545,7 @@ def _build_observation(
                 and has_system
                 and complete
                 and review_lt
+                and ep.get("has_complete_chain", False)
                 and ep.get("has_signal_source", False)
                 and ep.get("has_action_succeeded", False)
                 and ep.get("has_revision_receipt", False)
@@ -317,6 +572,21 @@ def _build_observation(
         )
 
     qualifying_episodes = sum(sample.qualifying_episodes for sample in weekly_samples)
+    qualifying_episode_ids = [
+        str(ep["episode_id"])
+        for ep in observations
+        if ep.get("has_complete_chain", False)
+        and ep.get("effective_outcome") is not None
+        and ep["effective_outcome"].get("verdict") == "accept"
+        and ep.get("receipt_candidate_origin") == "system"
+        and ep["effective_outcome"].get("review_duration_seconds") is not None
+        and ep["effective_outcome"].get("estimated_time_saved_seconds") is not None
+        and float(ep["effective_outcome"]["review_duration_seconds"])
+        < float(ep["effective_outcome"]["estimated_time_saved_seconds"])
+        and ep.get("has_signal_source", False)
+        and ep.get("has_action_succeeded", False)
+        and ep.get("has_revision_receipt", False)
+    ]
 
     # Gate evaluation: 30 qualifying episodes and 4 consecutive qualifying weeks.
     readiness, gaps = _evaluate_readiness_gate(
@@ -339,6 +609,9 @@ def _build_observation(
         signal_to_verdict_latency_seconds=median_latency,
         weekly_samples=weekly_samples,
         gate_gaps=gaps,
+        chain_schema_version="personal-episode-chain/v1",
+        qualifying_episode_ids=qualifying_episode_ids,
+        episode_gaps={str(ep["episode_id"]): list(ep.get("chain_gaps", [])) for ep in observations},
     )
 
 

@@ -13,10 +13,23 @@ from ecos.ssot.mof.generated.control.mof_control_models import EventEnvelope, Si
 from omo.episode_projection import build_episode_projection_snapshot
 from omo.event_ledger import LedgerBroker
 from omo.personal_episode import (
+    CHAIN_SCHEMA_VERSION,
+    EVT_ACTION_SUCCEEDED_CANONICAL,
+    EVT_ADJUDICATION_RECORDED,
+    EVT_DECISION_PROPOSED,
+    EVT_EPISODE_CLOSED,
     EVT_EPISODE_DECISION,
     EVT_EVIDENCE_LOCAL_DRAFT,
+    EVT_EVIDENCE_RECORDED,
+    EVT_HUMAN_ADJUDICATION,
+    EVT_MANDATE_GRANTED_CANONICAL,
+    EVT_MEMORY_CANDIDATE_PROPOSED,
     EVT_OUTCOME_HUMAN,
+    EVT_OUTCOME_OBSERVED,
+    EVT_RESPONSIBILITY_LINKED,
+    EVT_ROLE_CONTEXT_ASSIGNED,
     EVT_SIGNAL_OBSERVED,
+    PERSONAL_EPISODE_PRODUCER,
     PERSONAL_SIGNAL_JOURNEY_ID,
     PERSONAL_SIGNAL_OUTCOME_METRIC,
     PERSONAL_SIGNAL_SCENE_ID,
@@ -123,8 +136,13 @@ def test_start_is_ledger_backed_idempotent_and_creates_decision_card(broker, ser
     assert first.reused is False
     assert second.reused is True
     rows = broker.read(episode_id=first.episode_id)
-    assert [row["event_type"] for row in rows] == ["Episode.Decision.v1"]
-    assert rows[0]["payload_json"].find("request-001") >= 0
+    assert [row["event_type"] for row in rows] == [
+        EVT_ROLE_CONTEXT_ASSIGNED,
+        EVT_RESPONSIBILITY_LINKED,
+        EVT_DECISION_PROPOSED,
+        EVT_EPISODE_DECISION,
+    ]
+    assert rows[-1]["payload_json"].find("request-001") >= 0
 
 
 def test_confirm_requires_human_confirmation(broker, service):
@@ -290,11 +308,15 @@ def test_ingest_local_signal_is_causal_private_and_mof_validated(broker, service
     episode_payload = json.loads(episode_row["payload_json"])
 
     assert result.reused is False
-    assert signal_row["episode_id"] is None
+    assert signal_row["episode_id"] == result.episode.episode_id
     assert signal_row["privacy_class"] == "private"
     assert episode_row["privacy_class"] == "private"
     assert signal_row["event_id"] == result.signal_event_id
-    assert episode_row["causation_id"] == result.signal_event_id
+    decision_row = next(row for row in rows if row["event_type"] == EVT_DECISION_PROPOSED)
+    assert decision_row["causation_id"] != result.signal_event_id
+    role_row = next(row for row in rows if row["event_type"] == EVT_ROLE_CONTEXT_ASSIGNED)
+    assert role_row["causation_id"] == result.signal_event_id
+    assert episode_row["causation_id"] == decision_row["event_id"]
     assert episode_payload["source_signal_ref"] == result.signal_event_id
     assert episode_payload["scene_id"] == PERSONAL_SIGNAL_SCENE_ID
     assert episode_payload["journey_id"] == PERSONAL_SIGNAL_JOURNEY_ID
@@ -318,7 +340,35 @@ def test_ingest_local_signal_exact_replay_returns_same_pair(broker, service):
     assert second.signal_event_id == first.signal_event_id
     assert second.signal_id == first.signal_id
     assert second.episode.episode_id == first.episode.episode_id
-    assert broker.count() == 3  # role assignment + signal + episode decision
+    assert broker.count() == 6  # role assignment + complete ingress chain + legacy decision projection
+
+
+def test_ingest_local_signal_resumes_after_interruption_without_duplicate_signal(broker, service, monkeypatch):
+    _assign(broker)
+    original_append = broker.append
+
+    def interrupt_after_signal(event_type, *args, **kwargs):
+        if event_type == EVT_ROLE_CONTEXT_ASSIGNED:
+            raise RuntimeError("simulated process interruption")
+        return original_append(event_type, *args, **kwargs)
+
+    monkeypatch.setattr(broker, "append", interrupt_after_signal)
+    with pytest.raises(RuntimeError, match="simulated process interruption"):
+        service.ingest_local_signal(_local_signal())
+    monkeypatch.setattr(broker, "append", original_append)
+
+    recovered = PersonalEpisodeService(broker, clock=lambda: NOW).ingest_local_signal(_local_signal())
+    rows = broker.read(episode_id=recovered.episode.episode_id)
+    assert recovered.reused is True
+    assert sum(row["event_type"] == EVT_SIGNAL_OBSERVED for row in rows) == 1
+    assert [row["event_type"] for row in rows] == [
+        EVT_SIGNAL_OBSERVED,
+        EVT_ROLE_CONTEXT_ASSIGNED,
+        EVT_RESPONSIBILITY_LINKED,
+        EVT_DECISION_PROPOSED,
+        EVT_EPISODE_DECISION,
+    ]
+    assert broker.verify_chain()["ok"] is True
 
 
 def test_ingest_local_signal_replays_original_pair_after_role_changes(broker, service):
@@ -433,7 +483,7 @@ def test_ingest_local_signal_replays_after_process_restart(tmp_path):
         assert replay.reused is True
         assert replay.signal_event_id == first.signal_event_id
         assert replay.episode.episode_id == first.episode.episode_id
-        assert restarted_broker.count() == 3
+        assert restarted_broker.count() == 6
         assert restarted_broker.verify_chain()["ok"] is True
     finally:
         restarted_broker.close()
@@ -1001,6 +1051,7 @@ def _make_full_episode(
     principal: str = "principal:alice",
     signal_sourced: bool = True,
     action_succeeded: bool = True,
+    authority_bound: bool = True,
 ):
     """Create a confirmed episode with evidence and outcome.
 
@@ -1043,15 +1094,20 @@ def _make_full_episode(
         human_confirmed=True,
     )
     ctx = svc.reload_execution_context(episode_id, principal)
-    svc.record_evidence(ctx, _evidence_ref(request_id), output_origin=output_origin)
-    svc.record_outcome(
-        ctx,
-        verdict,
-        review_duration_seconds=review_seconds,
-        estimated_time_saved_seconds=saved_seconds,
-    )
-
     if action_succeeded:
+        action_payload = {
+            "action_id": ctx.action_id,
+            "episode_id": episode_id,
+            "principal_id": principal,
+            "status": "succeeded",
+        }
+        if authority_bound:
+            action_payload.update(
+                {
+                    "principal_authority_ref": "authority:principal:xiamingxing",
+                    "principal_receipt_digest": "sha256:" + "a" * 64,
+                }
+            )
         broker.append(
             EVT_ACTION_SUCCEEDED,
             producer=PDP_PRODUCER,
@@ -1060,20 +1116,228 @@ def _make_full_episode(
             correlation_id=f"action|{ctx.action_id}|succeeded",
             idempotency_key=f"{ctx.action_id}|succeeded",
             episode_id=episode_id,
-            payload={
-                "action_id": ctx.action_id,
-                "episode_id": episode_id,
-                "principal_id": principal,
-                "status": "succeeded",
-            },
+            role_context_id=ctx.role_context_id,
+            responsibility_id=ctx.responsibility_id,
+            mandate_id=ctx.mandate_id,
+            payload=action_payload,
             occurred_at=clock_ts,
         )
+
+    svc.record_evidence(ctx, _evidence_ref(request_id), output_origin=output_origin)
+    svc.record_outcome(
+        ctx,
+        verdict,
+        review_duration_seconds=review_seconds,
+        estimated_time_saved_seconds=saved_seconds,
+    )
 
     return PersonalEpisodeCard(
         episode_id=episode_id,
         request_id=request_id,
         summary=f"Episode {request_id}",
     )
+
+
+def test_complete_episode_writes_causally_bound_canonical_chain(broker):
+    _assign(broker)
+    svc = PersonalEpisodeService(broker, clock=lambda: _W1)
+    result = svc.ingest_local_signal(_local_signal())
+    svc.confirm(
+        episode_id=result.episode.episode_id,
+        principal_id="principal:alice",
+        executor_id="agent:personal-steward",
+        human_confirmed=True,
+    )
+    context = svc.reload_execution_context(result.episode.episode_id, "principal:alice")
+    broker.append(
+        EVT_ACTION_SUCCEEDED,
+        producer=PDP_PRODUCER,
+        principal_id="principal:alice",
+        space_id="sovereignty",
+        correlation_id=f"action|{context.action_id}|succeeded",
+        idempotency_key=f"{context.action_id}|succeeded",
+        episode_id=context.episode_id,
+        role_context_id=context.role_context_id,
+        responsibility_id=context.responsibility_id,
+        mandate_id=context.mandate_id,
+        payload={
+            "action_id": context.action_id,
+            "episode_id": context.episode_id,
+            "mandate_id": context.mandate_id,
+            "status": "succeeded",
+            "principal_authority_ref": "authority:principal:xiamingxing",
+            "principal_receipt_digest": "sha256:" + "a" * 64,
+        },
+        occurred_at=_W1,
+    )
+    evidence_uri = _evidence_ref("canonical-chain")
+    svc.record_evidence(context, evidence_uri, output_origin="system")
+    svc.record_outcome(
+        context,
+        "accept",
+        feedback_id="feedback:canonical-chain",
+        review_duration_seconds=5,
+        estimated_time_saved_seconds=50,
+    )
+
+    rows = broker.read(episode_id=context.episode_id)
+    canonical_types = [
+        EVT_SIGNAL_OBSERVED,
+        EVT_ROLE_CONTEXT_ASSIGNED,
+        EVT_RESPONSIBILITY_LINKED,
+        EVT_DECISION_PROPOSED,
+        EVT_HUMAN_ADJUDICATION,
+        EVT_MANDATE_GRANTED_CANONICAL,
+        EVT_ACTION_SUCCEEDED_CANONICAL,
+        EVT_EVIDENCE_RECORDED,
+        EVT_OUTCOME_OBSERVED,
+        EVT_ADJUDICATION_RECORDED,
+        EVT_MEMORY_CANDIDATE_PROPOSED,
+        EVT_EPISODE_CLOSED,
+    ]
+    chain = [row for row in rows if row["event_type"] in canonical_types]
+    assert [row["event_type"] for row in chain] == canonical_types
+    for previous, current in zip(chain, chain[1:]):
+        assert current["causation_id"] == previous["event_id"]
+        assert current["principal_id"] == "principal:alice"
+        assert current["episode_id"] == context.episode_id
+
+    closed = json.loads(chain[-1]["payload_json"])
+    assert closed["chain_schema_version"] == CHAIN_SCHEMA_VERSION
+    assert closed["outcome_event_id"] == chain[-4]["event_id"]
+    assert closed["adjudication_event_id"] == chain[-3]["event_id"]
+    assert closed["memory_candidate_event_id"] == chain[-2]["event_id"]
+    assert closed["evidence_event_id"] == chain[-5]["event_id"]
+    assert closed["mandate_event_id"] == chain[-7]["event_id"]
+
+    observation = svc.observe_principal("principal:alice")
+    assert observation.chain_schema_version == CHAIN_SCHEMA_VERSION
+    assert observation.qualifying_episode_ids == [context.episode_id]
+    assert observation.episode_gaps[context.episode_id] == []
+
+
+def test_legacy_partial_episode_reports_typed_chain_gaps(broker):
+    _assign(broker)
+    svc = PersonalEpisodeService(broker, clock=lambda: _W1)
+    episode = svc.start(
+        principal_id="principal:alice",
+        role_id="role:personal-steward",
+        responsibility_id="responsibility:follow-up",
+        executor_id="agent:personal-steward",
+        request_id="legacy-partial",
+        summary="Legacy partial episode",
+    )
+    svc.confirm(
+        episode_id=episode.episode_id,
+        principal_id="principal:alice",
+        executor_id="agent:personal-steward",
+        human_confirmed=True,
+    )
+    context = svc.reload_execution_context(episode.episode_id, "principal:alice")
+    svc.record_evidence(context, _evidence_ref("legacy-partial"), output_origin="system")
+    svc.record_outcome(
+        context,
+        "accept",
+        review_duration_seconds=5,
+        estimated_time_saved_seconds=50,
+    )
+
+    observation = svc.observe_principal("principal:alice")
+    gaps = observation.episode_gaps[episode.episode_id]
+    assert observation.qualifying_episodes == 0
+    assert "missing_signal_observed" in gaps
+    assert "missing_episode_closed" in gaps
+
+
+def test_closure_with_mismatched_bindings_never_qualifies(broker):
+    _assign(broker)
+    episode = _make_full_episode(broker, clock_ts=_W1, request_id="bad-closure")
+    rows = broker.read(episode_id=episode.episode_id)
+    memory_row = next(row for row in rows if row["event_type"] == EVT_MEMORY_CANDIDATE_PROPOSED)
+    context = PersonalEpisodeService(broker, clock=lambda: _W1).reload_execution_context(
+        episode.episode_id, "principal:alice"
+    )
+    broker.append(
+        EVT_EPISODE_CLOSED,
+        producer=PERSONAL_EPISODE_PRODUCER,
+        principal_id="principal:alice",
+        space_id="personal",
+        correlation_id=f"personal-episode|{episode.episode_id}|bad-closure",
+        idempotency_key=f"bad-closure|{episode.episode_id}",
+        event_id=f"evt_bad_closure_{episode.episode_id}",
+        episode_id=episode.episode_id,
+        role_context_id=context.role_context_id,
+        responsibility_id=context.responsibility_id,
+        mandate_id=context.mandate_id,
+        causation_id=memory_row["event_id"],
+        payload={
+            "chain_schema_version": CHAIN_SCHEMA_VERSION,
+            "terminal_verdict": "accept",
+            "mandate_event_id": "evt_wrong",
+            "evidence_event_id": "evt_wrong",
+            "outcome_event_id": "evt_wrong",
+            "adjudication_event_id": "evt_wrong",
+            "memory_candidate_event_id": memory_row["event_id"],
+        },
+        occurred_at=_W1,
+    )
+
+    observation = PersonalEpisodeService(broker, clock=lambda: _W1).observe_principal("principal:alice")
+    assert observation.qualifying_episodes == 0
+    assert "closure_binding_invalid" in observation.episode_gaps[episode.episode_id]
+
+
+def test_unbound_principal_authority_never_qualifies(broker):
+    _assign(broker)
+    episode = _make_full_episode(
+        broker,
+        clock_ts=_W1,
+        request_id="unbound-authority",
+        authority_bound=False,
+    )
+
+    observation = PersonalEpisodeService(broker, clock=lambda: _W1).observe_principal("principal:alice")
+    assert observation.qualifying_episodes == 0
+    assert "principal_authority_unbound" in observation.episode_gaps[episode.episode_id]
+
+
+def test_thirty_old_shape_partial_chains_remain_not_ready(broker):
+    _assign(broker)
+    for index in range(30):
+        episode = _make_full_episode(
+            broker,
+            clock_ts=[_W1, _W2, _W3, _W4][index % 4],
+            request_id=f"old-shape-{index}",
+            action_succeeded=False,
+        )
+        context = PersonalEpisodeService(broker, clock=lambda: _W1).reload_execution_context(
+            episode.episode_id, "principal:alice"
+        )
+        broker.append(
+            EVT_ACTION_SUCCEEDED,
+            producer=PDP_PRODUCER,
+            principal_id="principal:alice",
+            space_id="sovereignty",
+            correlation_id=f"late-action|{context.action_id}",
+            idempotency_key=f"late-action|{context.action_id}",
+            episode_id=episode.episode_id,
+            role_context_id=context.role_context_id,
+            responsibility_id=context.responsibility_id,
+            mandate_id=context.mandate_id,
+            payload={
+                "action_id": context.action_id,
+                "episode_id": episode.episode_id,
+                "mandate_id": context.mandate_id,
+                "status": "succeeded",
+            },
+            occurred_at=_W4,
+        )
+
+    observation = PersonalEpisodeService(broker, clock=lambda: _W4).observe_principal("principal:alice")
+    assert observation.readiness == "collecting"
+    assert observation.total_episodes == 30
+    assert observation.qualifying_episodes == 0
+    assert all("missing_episode_closed" in gaps for gaps in observation.episode_gaps.values())
 
 
 _W1 = "2026-08-03T12:00:00+00:00"  # ISO week 32 Monday
@@ -1367,6 +1631,9 @@ def test_observe_principal_to_dict_round_trips(broker, service):
         "signal_to_verdict_latency_seconds",
         "weekly_samples",
         "gate_gaps",
+        "chain_schema_version",
+        "qualifying_episode_ids",
+        "episode_gaps",
     }
     assert isinstance(data["weekly_samples"], list)
     if data["weekly_samples"]:
@@ -1679,7 +1946,7 @@ def _wp5_adjudication(**overrides):
     return HumanAdjudication(**base)
 
 
-def test_wp5_qualifying_happy_path():
+def test_wp5_legacy_shape_cannot_qualify_without_closed_ledger_episode():
     from omo.omo_adjudication import is_qualifying_outcome
 
     ok, reason = is_qualifying_outcome(
@@ -1688,7 +1955,8 @@ def test_wp5_qualifying_happy_path():
         scene_id="engineering-delivery",
         episode_id="ep-001",
     )
-    assert ok, reason
+    assert not ok
+    assert "Event Ledger" in reason
 
 
 def test_wp5_non_real_human_not_qualifying():
@@ -1741,7 +2009,7 @@ def test_wp5_missing_lineage_not_qualifying():
 
 
 # ---------------------------------------------------------------------------
-# WP5 Phase 1b — record_wp5_outcome truth-writer (事务边界/幂等/拒绝)
+# WP5 Phase 1b — legacy projection cannot act as a value truth-writer
 # ---------------------------------------------------------------------------
 
 
@@ -1752,7 +2020,7 @@ def _wp5_store(tmp_path):
     return AdjudicationStore(log=AppendOnlyLog(tmp_path / "adj.jsonl"))
 
 
-def test_wp5_truth_writer_happy_path(tmp_path):
+def test_wp5_projection_rejects_new_truth_write(tmp_path):
     store = _wp5_store(tmp_path)
     result = store.record_wp5_outcome(
         _wp5_adjudication(),
@@ -1760,30 +2028,30 @@ def test_wp5_truth_writer_happy_path(tmp_path):
         episode_id="ep-001",
         burden_minutes=12.0,
     )
-    assert result["qualifying"] is True
-    assert result["replayed"] is False
-    assert result["qualifying_count"] == 1
+    assert result["qualifying"] is False
+    assert "Event Ledger" in result["reason"]
+    assert result["qualifying_count"] == 0
+    assert result["legacy_record_count"] == 0
 
 
-def test_wp5_truth_writer_idempotent_replay(tmp_path):
-    """spec: 相同裁决重放不增加计数, 复用已有记录。"""
+def test_wp5_projection_repeated_call_stays_zero_write(tmp_path):
     store = _wp5_store(tmp_path)
     adj = _wp5_adjudication()
     r1 = store.record_wp5_outcome(adj, scene_id="s", episode_id="e")
     r2 = store.record_wp5_outcome(adj, scene_id="s", episode_id="e")
-    assert r1["qualifying"] and r2["qualifying"]
-    assert r2["replayed"] is True
-    assert r2["qualifying_count"] == 1  # 不增
+    assert not r1["qualifying"] and not r2["qualifying"]
+    assert r2["qualifying_count"] == 0
+    assert store.query() == []
 
 
-def test_wp5_truth_writer_replay_conflict(tmp_path):
-    """同 id 不同 authority digest → replay conflict 拒绝。"""
+def test_wp5_projection_cannot_be_flipped_by_different_authority_digest(tmp_path):
     store = _wp5_store(tmp_path)
     store.record_wp5_outcome(_wp5_adjudication(), scene_id="s", episode_id="e")
     forged = _wp5_adjudication(authority_receipt_digest="sha256:" + "b" * 64)
     result = store.record_wp5_outcome(forged, scene_id="s", episode_id="e")
     assert result["qualifying"] is False
-    assert "replay_conflict" in result["reason"]
+    assert "Event Ledger" in result["reason"]
+    assert store.query() == []
 
 
 def test_wp5_truth_writer_non_qualifying_no_write(tmp_path):
