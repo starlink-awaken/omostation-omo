@@ -1105,9 +1105,7 @@ def test_observe_principal_collecting_with_partial_data(broker, service):
     assert "below threshold" in obs.gate_gaps[0] or "qualifying" in obs.gate_gaps[0]
 
 
-def test_observe_principal_four_consecutive_weeks_still_collecting_below_thirty(
-    broker, service
-):
+def test_observe_principal_four_consecutive_weeks_still_collecting_below_thirty(broker, service):
     _assign(broker)
     for wi, wk in enumerate([_W1, _W2, _W3, _W4]):
         for ei in range(3):
@@ -1129,9 +1127,7 @@ def test_observe_principal_four_consecutive_weeks_still_collecting_below_thirty(
     assert all(s.qualifying_episodes >= 3 for s in obs.weekly_samples)
 
 
-def test_observe_principal_passed_thirty_across_four_consecutive_weeks(
-    broker, service
-):
+def test_observe_principal_passed_thirty_across_four_consecutive_weeks(broker, service):
     _assign(broker)
     for wi, (wk, count) in enumerate(zip([_W1, _W2, _W3, _W4], [8, 8, 7, 7])):
         for ei in range(count):

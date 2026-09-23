@@ -366,9 +366,7 @@ def _evaluate_readiness_gate(
 
     gaps: list[str] = []
     if qualifying_episodes < target:
-        gaps.append(
-            f"only {qualifying_episodes} qualifying episode(s), need {target}"
-        )
+        gaps.append(f"only {qualifying_episodes} qualifying episode(s), need {target}")
     met_weeks = [s for s in weekly_samples if s.gate_met]
     if not met_weeks:
         gaps.append(
