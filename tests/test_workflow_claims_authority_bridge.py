@@ -150,6 +150,57 @@ def test_ac01_canonical_json_and_digest_are_stable() -> None:
     assert lifecycle._authority_digest(left) == canonical_digest(left)
 
 
+def test_new_run_is_claims_eligible_before_its_first_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = {
+        "runner": {},
+        "agent_profiles": {
+            "governance-agent": {
+                "id": "governance-agent",
+                "actor": "agent-a",
+                "allowed_workflows": ["project-code-change"],
+            }
+        },
+    }
+    workflow = {
+        "id": "project-code-change",
+        "title": "Project code change",
+        "purpose": "test",
+        "agents": {},
+        "allowed_lanes": ["governance_code"],
+        "lock_scopes": [],
+        "phases": {},
+    }
+    record = lifecycle.start_run(
+        registry,
+        workflow,
+        {
+            "actor": "agent-a",
+            "profile": "governance-agent",
+            "project": "",
+            "format": "openspec",
+            "source_file": "",
+            "run_id": "",
+        },
+        "test initial Claims eligibility",
+        True,
+        False,
+    )
+
+    assert record["claims"] == []
+    record.update(
+        {
+            "bet_id": "BET-Y2Q2-T4-01",
+            "spec_binding": {"spec_ref": "repo://spec.md"},
+            "work_packet": {"packet_id": "WP-BET-Y2Q2-T4-01"},
+            "work_packet_hash": _digest("1"),
+        }
+    )
+    monkeypatch.setattr(lifecycle, "_authority_has_clone_identity", lambda _workspace: True)
+    assert lifecycle._authority_run_is_eligible(record) is True
+
+
 def test_red_frozen_child_public_api_is_complete_and_explicit() -> None:
     assert claims_authority.__all__ == (
         "AuthorityError",
