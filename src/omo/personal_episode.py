@@ -62,6 +62,7 @@ EVT_OUTCOME_HUMAN = "Outcome.Human.v1"
 PERSONAL_SIGNAL_SCENE_ID = "personal-followup-dogfood"
 PERSONAL_SIGNAL_JOURNEY_ID = "manual-signal-to-adopted-local-draft"
 PERSONAL_SIGNAL_OUTCOME_METRIC = "adopted_real_personal_outcome_count"
+QUALIFYING_EPISODE_TARGET = 30
 
 _OUTCOMES = frozenset({"accept", "edit", "reject", "defer", "ignore"})
 VALID_OUTPUT_ORIGINS = frozenset({"system", "user_provided", "unknown"})
@@ -281,6 +282,9 @@ class PrincipalObservation:
     principal_id: str
     readiness: str
     total_episodes: int
+    qualifying_episodes: int
+    qualifying_target: int
+    remaining_to_target: int
     verdict_distribution: dict[str, int]
     system_evidence_count: int
     user_evidence_count: int
@@ -294,6 +298,9 @@ class PrincipalObservation:
             "principal_id": self.principal_id,
             "readiness": self.readiness,
             "total_episodes": self.total_episodes,
+            "qualifying_episodes": self.qualifying_episodes,
+            "qualifying_target": self.qualifying_target,
+            "remaining_to_target": self.remaining_to_target,
             "verdict_distribution": dict(self.verdict_distribution),
             "system_evidence_count": self.system_evidence_count,
             "user_evidence_count": self.user_evidence_count,
@@ -827,10 +834,11 @@ class PersonalEpisodeService:
         """Deterministic, read-only per-principal observation over the same Ledger.
 
         Computes verdict distribution, evidence origin counts, signal-to-
-        verdict latency, natural-week samples, and a strict four-consecutive-
-        week readiness gate.  Never exposes raw body, path, source_uri, or
-        digest.  Leaves count and hash chain unchanged — only calls
-        ``broker.read()``.
+        verdict latency, natural-week samples, and a strict readiness gate:
+        at least 30 qualifying episodes plus four consecutive weeks with at
+        least three qualifying episodes each.  Never exposes raw body, path,
+        source_uri, or digest.  Leaves count and hash chain unchanged — only
+        calls ``broker.read()``.
         """
         self._required("principal_id", principal_id)
 
@@ -844,6 +852,9 @@ class PersonalEpisodeService:
                 principal_id=principal_id,
                 readiness="not_ready",
                 total_episodes=0,
+                qualifying_episodes=0,
+                qualifying_target=QUALIFYING_EPISODE_TARGET,
+                remaining_to_target=QUALIFYING_EPISODE_TARGET,
                 verdict_distribution={},
                 system_evidence_count=0,
                 user_evidence_count=0,

@@ -1105,7 +1105,9 @@ def test_observe_principal_collecting_with_partial_data(broker, service):
     assert "below threshold" in obs.gate_gaps[0] or "qualifying" in obs.gate_gaps[0]
 
 
-def test_observe_principal_passed_four_consecutive_weeks(broker, service):
+def test_observe_principal_four_consecutive_weeks_still_collecting_below_thirty(
+    broker, service
+):
     _assign(broker)
     for wi, wk in enumerate([_W1, _W2, _W3, _W4]):
         for ei in range(3):
@@ -1117,23 +1119,51 @@ def test_observe_principal_passed_four_consecutive_weeks(broker, service):
 
     obs = service.observe_principal("principal:alice")
 
-    assert obs.readiness == "passed"
-    assert obs.gate_gaps == []
+    assert obs.readiness == "collecting"
+    assert obs.qualifying_episodes == 12
+    assert obs.qualifying_target == 30
+    assert obs.remaining_to_target == 18
+    assert any("need 30" in gap for gap in obs.gate_gaps)
     assert len(obs.weekly_samples) == 4
     assert all(s.gate_met for s in obs.weekly_samples)
     assert all(s.qualifying_episodes >= 3 for s in obs.weekly_samples)
 
 
+def test_observe_principal_passed_thirty_across_four_consecutive_weeks(
+    broker, service
+):
+    _assign(broker)
+    for wi, (wk, count) in enumerate(zip([_W1, _W2, _W3, _W4], [8, 8, 7, 7])):
+        for ei in range(count):
+            _make_full_episode(
+                broker,
+                clock_ts=wk,
+                request_id=f"w{wi}-ep{ei}",
+            )
+
+    obs = service.observe_principal("principal:alice")
+
+    assert obs.readiness == "passed"
+    assert obs.qualifying_episodes == 30
+    assert obs.qualifying_target == 30
+    assert obs.remaining_to_target == 0
+    assert obs.gate_gaps == []
+    assert len(obs.weekly_samples) == 4
+    assert all(s.gate_met for s in obs.weekly_samples)
+
+
 def test_observe_principal_not_candidate_non_consecutive_weeks(broker, service):
     _assign(broker)
-    # Weeks 1 and 3 only — gap in week 2
-    for ei in range(3):
+    # Thirty qualifying episodes are still insufficient when week 2 is absent.
+    for ei in range(15):
         _make_full_episode(broker, clock_ts=_W1, request_id=f"w1-{ei}")
         _make_full_episode(broker, clock_ts=_W3, request_id=f"w3-{ei}")
 
     obs = service.observe_principal("principal:alice")
 
     assert obs.readiness == "collecting"
+    assert obs.qualifying_episodes == 30
+    assert obs.remaining_to_target == 0
     assert any("consecutive" in g or "gap" in g for g in obs.gate_gaps)
 
 
@@ -1331,6 +1361,9 @@ def test_observe_principal_to_dict_round_trips(broker, service):
         "principal_id",
         "readiness",
         "total_episodes",
+        "qualifying_episodes",
+        "qualifying_target",
+        "remaining_to_target",
         "verdict_distribution",
         "system_evidence_count",
         "user_evidence_count",
@@ -1620,8 +1653,8 @@ def test_effective_verdict_accept_then_reject(broker, service):
 def test_gate_passed_then_rename_from_candidate(broker, service):
     """Blocker 5: four-week success returns 'passed', not 'candidate'."""
     _assign(broker)
-    for wi, wk in enumerate([_W1, _W2, _W3, _W4]):
-        for ei in range(3):
+    for wi, (wk, count) in enumerate(zip([_W1, _W2, _W3, _W4], [8, 8, 7, 7])):
+        for ei in range(count):
             _make_full_episode(broker, clock_ts=wk, request_id=f"rn-{wi}-{ei}")
 
     obs = service.observe_principal("principal:alice")
