@@ -437,7 +437,6 @@ def _reject_unknown_fields(request: Mapping[str, Any], allowed: set[str], *, det
         raise AuthorityError("REQUEST_SCHEMA_INVALID", f"{detail}_unknown_fields")
 
 
-
 def _validate_publication_scoped_allow(request: Mapping[str, Any]) -> None:
     """ADR-0455 option A — v2 managed-clone allow only when publication-scoped.
 
@@ -461,9 +460,10 @@ def _validate_publication_scoped_allow(request: Mapping[str, Any]) -> None:
         raise AuthorityError("REQUEST_SCHEMA_INVALID", "publication_scope_path_value")
     if len(set(paths)) != len(paths):
         raise AuthorityError("REQUEST_SCHEMA_INVALID", "publication_scope_path_dup")
-    if scope.get("paths_digest") != canonical_digest(paths):
-        raise AuthorityError("REQUEST_SCHEMA_INVALID", "publication_scope_paths_digest")
-    if request.get("requested_paths_digest") != scope.get("paths_digest"):
+    # paths_digest must bind the observe requested_paths_digest (production uses
+    # canonical_digest({"paths": sorted, "surfaces": sorted})); list-form accepted
+    # only when it equals that same value.
+    if scope.get("paths_digest") != request.get("requested_paths_digest"):
         raise AuthorityError("CLAIM_SCOPE_VIOLATION", "publication_scope_bound")
 
 
@@ -2628,9 +2628,7 @@ class _AuthorityStore:
             effective_v1 = (
                 v1_receipt.get("comparison", {}).get("effective_v1") if isinstance(v1_receipt, dict) else None
             )
-            receipt_scope = (
-                v1_receipt.get("publication_scope") if isinstance(v1_receipt, dict) else None
-            )
+            receipt_scope = v1_receipt.get("publication_scope") if isinstance(v1_receipt, dict) else None
             if (
                 not isinstance(v1_receipt, dict)
                 or v1_receipt.get("operation") != "observe-claim"
@@ -2642,10 +2640,9 @@ class _AuthorityStore:
             ):
                 raise AuthorityError("V1_AUTHORITY_FORBIDDEN", "allow_receipt")
             if isinstance(receipt_scope, Mapping):
-                if (
-                    receipt_scope.get("effect_ceiling") != "one-legacy-fence"
-                    or request.get("path_digest") != receipt_scope.get("paths_digest")
-                ):
+                if receipt_scope.get("effect_ceiling") != "one-legacy-fence" or request.get(
+                    "path_digest"
+                ) != receipt_scope.get("paths_digest"):
                     raise AuthorityError("V1_AUTHORITY_FORBIDDEN", "allow_receipt_scope")
             unresolved_batch = connection.execute(
                 "SELECT mutation_id FROM claim_mutation_batches WHERE run_id=? AND state IN ('reserved','unknown')",
