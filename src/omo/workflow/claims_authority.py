@@ -437,6 +437,36 @@ def _reject_unknown_fields(request: Mapping[str, Any], allowed: set[str], *, det
         raise AuthorityError("REQUEST_SCHEMA_INVALID", f"{detail}_unknown_fields")
 
 
+
+def _validate_publication_scoped_allow(request: Mapping[str, Any]) -> None:
+    """ADR-0455 option A — v2 managed-clone allow only when publication-scoped.
+
+    General allow remains forbidden. Scope must bind exact changed_paths and a
+    one-shot legacy fence effect ceiling; paths digest must match the observe
+    request's requested_paths_digest.
+    """
+    scope = request.get("publication_scope")
+    if not isinstance(scope, Mapping):
+        raise AuthorityError("V1_AUTHORITY_FORBIDDEN", "managed_clone")
+    if scope.get("schema") != "claims-publication-scope/v1":
+        raise AuthorityError("REQUEST_SCHEMA_INVALID", "publication_scope_schema")
+    if scope.get("kind") != "legacy-publication":
+        raise AuthorityError("REQUEST_SCHEMA_INVALID", "publication_scope_kind")
+    if scope.get("effect_ceiling") != "one-legacy-fence":
+        raise AuthorityError("V1_AUTHORITY_FORBIDDEN", "publication_scope_ceiling")
+    paths = scope.get("changed_paths")
+    if not isinstance(paths, list) or not paths:
+        raise AuthorityError("V1_AUTHORITY_FORBIDDEN", "publication_scope_paths")
+    if not all(isinstance(p, str) and p and not p.startswith("/") for p in paths):
+        raise AuthorityError("REQUEST_SCHEMA_INVALID", "publication_scope_path_value")
+    if len(set(paths)) != len(paths):
+        raise AuthorityError("REQUEST_SCHEMA_INVALID", "publication_scope_path_dup")
+    if scope.get("paths_digest") != canonical_digest(paths):
+        raise AuthorityError("REQUEST_SCHEMA_INVALID", "publication_scope_paths_digest")
+    if request.get("requested_paths_digest") != scope.get("paths_digest"):
+        raise AuthorityError("CLAIM_SCOPE_VIOLATION", "publication_scope_bound")
+
+
 def _validate_observe_request(request: Mapping[str, Any]) -> None:
     _reject_unknown_fields(
         request,
@@ -471,6 +501,7 @@ def _validate_observe_request(request: Mapping[str, Any]) -> None:
             "v1_decision",
             "authority_mode",
             "clone_identity_schema",
+            "publication_scope",
         },
         detail="observe_claim",
     )
@@ -532,7 +563,8 @@ def _validate_observe_request(request: Mapping[str, Any]) -> None:
     if request.get("authority_mode") == "cutover" and v1_decision.get("decision") == "allow":
         raise AuthorityError("V1_AUTHORITY_FORBIDDEN", "post_cutover")
     if request.get("clone_identity_schema") == "agent-clone-identity/v2" and v1_decision.get("decision") == "allow":
-        raise AuthorityError("V1_AUTHORITY_FORBIDDEN", "managed_clone")
+        # ADR-0455 方案 A: 仅允许绑定 exact changed_paths + 单次 fence 效果上限的 allow
+        _validate_publication_scoped_allow(request)
 
 
 def _read_head_oid(clone_root: Path, identity: Mapping[str, Any]) -> str:
@@ -1995,6 +2027,11 @@ class _AuthorityStore:
                     "work_packet_digest": str(request.get("work_packet_digest") or ""),
                     "affected_graph_digest": str(request.get("affected_graph_digest") or ""),
                     "requested_paths_digest": str(request.get("requested_paths_digest") or ""),
+                    "publication_scope": (
+                        dict(request["publication_scope"])
+                        if isinstance(request.get("publication_scope"), Mapping)
+                        else None
+                    ),
                     "v1_claim_digest": claim_digest,
                     "v1_run_digest": run_snapshot_digest,
                     "v1_lock_set_digest": str(request.get("v1_lock_set_digest") or ""),
@@ -2591,6 +2628,9 @@ class _AuthorityStore:
             effective_v1 = (
                 v1_receipt.get("comparison", {}).get("effective_v1") if isinstance(v1_receipt, dict) else None
             )
+            receipt_scope = (
+                v1_receipt.get("publication_scope") if isinstance(v1_receipt, dict) else None
+            )
             if (
                 not isinstance(v1_receipt, dict)
                 or v1_receipt.get("operation") != "observe-claim"
@@ -2601,6 +2641,12 @@ class _AuthorityStore:
                 or v1_receipt.get("v1_run_digest") != claim["v1_snapshot_digest"]
             ):
                 raise AuthorityError("V1_AUTHORITY_FORBIDDEN", "allow_receipt")
+            if isinstance(receipt_scope, Mapping):
+                if (
+                    receipt_scope.get("effect_ceiling") != "one-legacy-fence"
+                    or request.get("path_digest") != receipt_scope.get("paths_digest")
+                ):
+                    raise AuthorityError("V1_AUTHORITY_FORBIDDEN", "allow_receipt_scope")
             unresolved_batch = connection.execute(
                 "SELECT mutation_id FROM claim_mutation_batches WHERE run_id=? AND state IN ('reserved','unknown')",
                 (claim["run_id"],),

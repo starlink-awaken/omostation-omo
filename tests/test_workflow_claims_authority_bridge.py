@@ -1174,6 +1174,79 @@ def test_red_v1_managed_clone_allow_is_forbidden(store: _AuthorityStore) -> None
         store.observe_claim(request)
 
 
+def _publication_scope(paths: list[str]) -> dict[str, object]:
+    return {
+        "schema": "claims-publication-scope/v1",
+        "kind": "legacy-publication",
+        "effect_ceiling": "one-legacy-fence",
+        "changed_paths": paths,
+        "paths_digest": canonical_digest(paths),
+    }
+
+
+def test_red_v2_general_allow_still_forbidden_without_scope(store: _AuthorityStore) -> None:
+    request = valid_observe_request()
+    request["clone_identity_schema"] = "agent-clone-identity/v2"
+    request["v1_decision"] = {"decision": "allow", "code": "legacy_allow"}
+
+    with pytest.raises(AuthorityError, match="V1_AUTHORITY_FORBIDDEN"):
+        store.observe_claim(request)
+
+
+def test_red_v2_publication_scope_wrong_ceiling_rejected(store: _AuthorityStore) -> None:
+    request = valid_observe_request()
+    request["clone_identity_schema"] = "agent-clone-identity/v2"
+    request["v1_decision"] = {"decision": "allow", "code": "legacy_allow"}
+    scope = _publication_scope(["docs/reports/example.md"])
+    scope["effect_ceiling"] = "unlimited"
+    request["publication_scope"] = scope
+    request["requested_paths_digest"] = scope["paths_digest"]
+
+    with pytest.raises(AuthorityError, match="V1_AUTHORITY_FORBIDDEN"):
+        store.observe_claim(request)
+
+
+def test_red_v2_publication_scope_unbound_paths_rejected(store: _AuthorityStore) -> None:
+    request = valid_observe_request()
+    request["clone_identity_schema"] = "agent-clone-identity/v2"
+    request["v1_decision"] = {"decision": "allow", "code": "legacy_allow"}
+    scope = _publication_scope(["docs/reports/example.md"])
+    request["publication_scope"] = scope
+    request["requested_paths_digest"] = _digest("other")
+
+    with pytest.raises(AuthorityError, match="CLAIM_SCOPE_VIOLATION"):
+        store.observe_claim(request)
+
+
+def test_green_v2_publication_scoped_allow_observe_and_fence(store: _AuthorityStore) -> None:
+    activation = store.activate_shadow(valid_activation_request(store))
+    descriptor_digest = str(activation["descriptor_digest"])
+
+    paths = ["docs/reports/2026-09-20-claims-authority-lifecycle-regression-runbook.md"]
+    scope = _publication_scope(paths)
+    request = valid_observe_request()
+    request.update(
+        {
+            "request_id": str(uuid4()),
+            "run_id": "run-pub-scope",
+            "claim_ordinal": 0,
+            "clone_identity_schema": "agent-clone-identity/v2",
+            "v1_claim_digest": canonical_digest({"run_id": "run-pub-scope", "ordinal": 0}),
+            "v1_decision": {"decision": "allow", "code": "legacy_allow"},
+            "publication_scope": scope,
+            "requested_paths_digest": scope["paths_digest"],
+        }
+    )
+    receipt = store.observe_claim(request)
+    assert receipt["comparison"]["effective_v1"]["decision"] == "allow"
+    assert receipt["publication_scope"]["effect_ceiling"] == "one-legacy-fence"
+
+    fence_req = _issue_fence_request(store, receipt, descriptor_digest)
+    fence_req["path_digest"] = scope["paths_digest"]
+    fence = store.issue_legacy_fence(fence_req)
+    assert fence["operation"] == "issue-legacy-fence"
+
+
 def test_red_future_cutover_rejects_v1_publication_fixture(store: _AuthorityStore) -> None:
     request = valid_observe_request()
     request["authority_mode"] = "cutover"
