@@ -258,7 +258,11 @@ def _evidence_handler(event: dict[str, Any]) -> None:
 
 
 def _log(msg: str) -> None:
-    print(f"[knowledge-sediment] {msg}", file=sys.stderr)
+    try:
+        print(f"[knowledge-sediment] {msg}", file=sys.stderr)
+    except (BrokenPipeError, OSError):
+        # daemon stderr 管道可能已关闭 (launchd/子进程退出); 日志不应阻塞核心沉淀
+        pass
 
 
 def main(argv=None) -> int:
