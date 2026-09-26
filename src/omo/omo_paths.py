@@ -8,11 +8,18 @@
     parents[3] = projects
     parents[4] = Workspace   (WORKSPACE_ROOT)
     parents[5] = $HOME
+
+ADR-0456 code/state 两根: WORKSPACE_ROOT 跟随当前检出(读侧, 治理 SSOT 从这里取),
+STATE_ROOT 由 $OMOSTATION_STATE_ROOT 声明(写侧, 运行态与生成态从这里落位)。
+未声明 profile 时 STATE_ROOT == WORKSPACE_ROOT, 逐字节复现历史路径。
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+STATE_ROOT_ENV = "OMOSTATION_STATE_ROOT"
 
 _MODULE_DIR = Path(__file__).resolve().parent
 OMO_SRC_PARENT = _MODULE_DIR.parents[1]  # /Users/xiamingxing/Workspace/projects/omo
@@ -20,13 +27,18 @@ PROJECTS_DIR = _MODULE_DIR.parents[2]  # /Users/xiamingxing/Workspace/projects
 WORKSPACE_ROOT = _MODULE_DIR.parents[3]  # /Users/xiamingxing/Workspace
 HOME_DIR = _MODULE_DIR.parents[4]  # /Users/xiamingxing
 
+# 运行态写入根; 与 bin/lib/repo_root.py:state_root() 同契约 (此处不跨仓边界导入)。
+STATE_ROOT = (
+    Path(os.environ[STATE_ROOT_ENV]).expanduser().absolute() if os.environ.get(STATE_ROOT_ENV) else WORKSPACE_ROOT
+)
+
 # 关键路径
 OMO_ROOT = WORKSPACE_ROOT / ".omo"
 KAIRON_DIR = PROJECTS_DIR / "knowledge" / "kairon"  # T6-01 内包后路径
 KAIRON_PACKAGES = KAIRON_DIR / "packages"
 
 # 运行时镜像根 (高 churn 的 self-healing/ingress/evolution 产物写这里, 不入仓)
-RUNTIME_OMO_ROOT = WORKSPACE_ROOT / "runtime" / "omo"
+RUNTIME_OMO_ROOT = STATE_ROOT / "runtime" / "omo"
 
 # 治理子路径 (稳定 SSOT, 入仓)
 TRUTH_DIR = OMO_ROOT / "_truth"
@@ -49,12 +61,12 @@ TASKS_DIR = OMO_ROOT / "tasks"
 TASKS_PLANNED_DIR = OMO_ROOT / "tasks" / "planned"
 TASKS_ACTIVE_DIR = OMO_ROOT / "tasks" / "active"
 TASKS_DONE_DIR = OMO_ROOT / "tasks" / "done"
-STATE_DIR = OMO_ROOT / "state"
+STATE_DIR = STATE_ROOT / ".omo" / "state"
 WORKERS_DIR = OMO_ROOT / "workers"
 DEBT_DIR = OMO_ROOT / "debt"
 DECISIONS_DIR = KNOWLEDGE_DIR / "decisions"
 DEBT_ITEMS_DIR = OMO_ROOT / "debt" / "items"
-STATE_SYSTEM_YAML = OMO_ROOT / "state" / "system.yaml"
+STATE_SYSTEM_YAML = STATE_DIR / "system.yaml"
 PROJECTS_REGISTRY_YAML = OMO_ROOT / "PROJECTS.yaml"
 ROOT_INDEX_MD = OMO_ROOT / "INDEX.md"
 OMO_GOVERNANCE_SURFACES_STANDARD = STANDARDS_DIR / "omo-governance-surfaces.md"
@@ -98,16 +110,22 @@ def projection_path(name: str, *, prefer_canonical: bool = True) -> Path:
     By default returns the canonical path if it exists, otherwise falls back
     to the legacy path. During ADR-0129 migration this lets readers find
     projections regardless of which phase the workspace is in.
+
+    Canonical lands on STATE_ROOT (written state); legacy stays on
+    WORKSPACE_ROOT so a dev profile can still read the committed file.
     """
     import yaml
 
     canonical: Path | None = None
     legacy: Path | None = None
     if RUNTIME_PROJECTIONS_REGISTRY.is_file():
-        data = yaml.safe_load(RUNTIME_PROJECTIONS_REGISTRY.read_text(encoding="utf-8")) or {}
+        # The registry carries YAML frontmatter, so it is a multi-document stream;
+        # the last document is the registry itself.
+        docs = yaml.safe_load_all(RUNTIME_PROJECTIONS_REGISTRY.read_text(encoding="utf-8"))
+        data = [d for d in docs if isinstance(d, dict)][-1]
         entry = (data.get("projections") or {}).get(name)
         if entry:
-            canonical = WORKSPACE_ROOT / entry["canonical"]
+            canonical = STATE_ROOT / entry["canonical"]
             legacy = WORKSPACE_ROOT / entry["legacy"]
 
     # Fallbacks keep existing tests and consumers working if registry is missing
@@ -205,6 +223,8 @@ __all__ = (
     "RUNTIME_TRUTH_DIR",
     "STANDARDS_DIR",
     "STATE_DIR",
+    "STATE_ROOT",
+    "STATE_ROOT_ENV",
     "STATE_SYSTEM_YAML",
     "TASKS_DIR",
     "TASKS_PLANNED_DIR",
