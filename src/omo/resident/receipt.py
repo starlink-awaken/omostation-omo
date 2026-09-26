@@ -11,6 +11,7 @@ status 枚举:
   error     — handler 抛异常
   skipped   — 条件不满足 (_condition_holds=false)
 """
+
 from __future__ import annotations
 
 import json
@@ -106,5 +107,12 @@ def stats() -> dict[str, Any]:
                 last_ts = e.get("ts")
         except OSError:
             pass
-    return {"total": total, "ok": ok, "blocked": blocked,
-            "error": error, "skipped": skipped, "attempted": attempted, "last_ts": last_ts}
+    return {
+        "total": total,
+        "ok": ok,
+        "blocked": blocked,
+        "error": error,
+        "skipped": skipped,
+        "attempted": attempted,
+        "last_ts": last_ts,
+    }

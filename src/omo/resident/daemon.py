@@ -157,8 +157,15 @@ def _route(event: dict[str, Any]) -> None:
     if rule is not None:
         condition = rule.get("condition")
         if condition and not _condition_holds(str(condition), event):
-            _receipt(event_type, rule.get("action") or "", "skipped", "skipped",
-                     workflow_run_id=run_id, event_id=event_id, safe=True)
+            _receipt(
+                event_type,
+                rule.get("action") or "",
+                "skipped",
+                "skipped",
+                workflow_run_id=run_id,
+                event_id=event_id,
+                safe=True,
+            )
             return  # condition not met → skip
         action = str(rule.get("action") or "")
         handler = _EVENT_HANDLERS.get(action, _handler_placeholder)
@@ -168,19 +175,48 @@ def _route(event: dict[str, Any]) -> None:
         handler = _handler_placeholder
         safe = True
     if _APPROVAL_REQUIRED and not safe:
-        _receipt(event_type, action or handler.__name__, handler.__name__, "blocked",
-                 workflow_run_id=run_id, event_id=event_id, safe=False)
+        _receipt(
+            event_type,
+            action or handler.__name__,
+            handler.__name__,
+            "blocked",
+            workflow_run_id=run_id,
+            event_id=event_id,
+            safe=False,
+        )
         _log(f"handler_blocked_awaiting_approval event_type={event_type} handler={handler.__name__}")
         return
     try:
-        _receipt(event_type, action or handler.__name__, handler.__name__, "attempted",
-                 workflow_run_id=run_id, event_id=event_id, safe=safe)
+        _receipt(
+            event_type,
+            action or handler.__name__,
+            handler.__name__,
+            "attempted",
+            workflow_run_id=run_id,
+            event_id=event_id,
+            safe=safe,
+        )
         handler(event)
-        _receipt(event_type, action or handler.__name__, handler.__name__, "ok",
-                 workflow_run_id=run_id, event_id=event_id, safe=safe)
+        _receipt(
+            event_type,
+            action or handler.__name__,
+            handler.__name__,
+            "ok",
+            workflow_run_id=run_id,
+            event_id=event_id,
+            safe=safe,
+        )
     except Exception as exc:  # noqa: BLE001 - handler isolation
-        _receipt(event_type, action or handler.__name__, handler.__name__, "error",
-                 workflow_run_id=run_id, event_id=event_id, err=type(exc).__name__, safe=safe)
+        _receipt(
+            event_type,
+            action or handler.__name__,
+            handler.__name__,
+            "error",
+            workflow_run_id=run_id,
+            event_id=event_id,
+            err=type(exc).__name__,
+            safe=safe,
+        )
         _log(f"handler_error event_type={event_type} err={type(exc).__name__}: {exc}")
 
 
