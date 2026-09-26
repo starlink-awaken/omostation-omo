@@ -7,7 +7,7 @@ import httpx
 import yaml
 
 # LLM Gateway endpoint — 可配置，默认 localhost:9290
-_LLM_GATEWAY_URL = os.environ.get("C2G_LLM_URL", "http://localhost:9290/v1/generate")
+_LLM_GATEWAY_URL = os.environ.get("C2G_LLM_URL", "http://127.0.0.1:4000/v1/chat/completions")
 
 
 def _find_cognitive_framework_dir() -> Path | None:
