@@ -29,9 +29,7 @@ HOME_DIR = _MODULE_DIR.parents[4]  # /Users/xiamingxing
 
 # 运行态写入根; 与 bin/lib/repo_root.py:state_root() 同契约 (此处不跨仓边界导入)。
 STATE_ROOT = (
-    Path(os.environ[STATE_ROOT_ENV]).expanduser().absolute()
-    if os.environ.get(STATE_ROOT_ENV)
-    else WORKSPACE_ROOT
+    Path(os.environ[STATE_ROOT_ENV]).expanduser().absolute() if os.environ.get(STATE_ROOT_ENV) else WORKSPACE_ROOT
 )
 
 # 关键路径
