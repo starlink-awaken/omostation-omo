@@ -408,6 +408,61 @@ class MOSBeliefManager:
         )
         return cc_id
 
+    def record_tick_outcomes(
+        self,
+        calibrations: list[dict[str, Any]],
+        experiences: list[dict[str, str]] | None = None,
+    ) -> list[str]:
+        """批量记录一次 tick 的校准 + 经验: 只 load/写 状态文件各一次。
+
+        逐条调 record_capability_calibration / record_experience 时每条都全量解析+重写
+        index.yaml (数 MB), agent-tick 每轮 6~9 次 → 单轮 ~2 分钟 CPU (2026-09-28 实测)。
+        记录内容与逐条调用一致 (id 连续编号, 审计日志逐条)。
+        """
+        state = self._load_state()
+        ids: list[str] = []
+        audit: list[tuple[str, str]] = []
+        for cal in calibrations:
+            cc_id = f"cc-{len(state['capability_calibrations']) + 1:04d}"
+            entry = CapabilityCalibration(
+                id=cc_id,
+                capability_ref=str(cal["capability_ref"]),
+                success_rate=float(cal["success_rate"]),
+                avg_latency_ms=float(cal.get("avg_latency_ms", 0.0)),
+                sample_size=int(cal.get("sample_size", 1)),
+                last_run_id=cal.get("last_run_id"),
+            )
+            state["capability_calibrations"].append(asdict(entry))
+            ids.append(cc_id)
+            audit.append(
+                (
+                    "RECORD_CAPABILITY_CALIBRATION",
+                    f"id={cc_id} ref={entry.capability_ref} rate={entry.success_rate}",
+                )
+            )
+        for exp in experiences or []:
+            ex_id = f"exp-{len(state['agent_experiences']) + 1:04d}"
+            state["agent_experiences"].append(
+                {
+                    "id": ex_id,
+                    "agent_id": exp["agent_id"],
+                    "experience": exp["experience"][:500],
+                    "outcome": exp["outcome"],
+                    "context": exp.get("context", "")[:200],
+                    "recorded_at": _utc_now(),
+                }
+            )
+            ids.append(ex_id)
+            audit.append(("RECORD_EXPERIENCE", f"id={ex_id} agent={exp['agent_id']} outcome={exp['outcome']}"))
+        if not ids:
+            return ids
+        write_yaml_atomic(self.state_file, state)
+        if calibrations:
+            self._update_registry_summary(len(state["beliefs"]), state)
+        for action, details in audit:
+            self._append_audit_log(action, details)
+        return ids
+
     def transfer_calibration(
         self,
         source_capability_ref: str,
