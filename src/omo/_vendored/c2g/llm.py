@@ -1,13 +1,33 @@
 import json
 import os
+import subprocess
 from pathlib import Path
 from typing import Any
 
 import httpx
 import yaml
 
-# LLM Gateway endpoint — 可配置，默认 localhost:9290
+# LLM Gateway endpoint(aetherforge 门面, OpenAI 兼容) — 可配置
 _LLM_GATEWAY_URL = os.environ.get("C2G_LLM_URL", "http://127.0.0.1:4000/v1/chat/completions")
+# 门面别名(aetherforge aliases.yaml)
+_LLM_MODEL = os.environ.get("C2G_LLM_MODEL", "fast")
+
+
+def _gateway_auth() -> dict[str, str]:
+    """门面对 /v1/* 一律要求 Bearer。env → macOS Keychain(aetherforge-gateway)。"""
+    key = os.environ.get("C2G_LLM_KEY") or os.environ.get("AETHERFORGE_API_KEY") or ""
+    if not key:
+        try:
+            out = subprocess.run(
+                ["security", "find-generic-password", "-s", "aetherforge-gateway", "-w"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            key = out.stdout.strip() if out.returncode == 0 else ""
+        except (OSError, subprocess.TimeoutExpired):
+            key = ""
+    return {"Authorization": f"Bearer {key}"} if key else {}
 
 
 def _find_cognitive_framework_dir() -> Path | None:
@@ -113,16 +133,17 @@ def extract_tasks_from_pitch(pitch_content: str) -> list[dict[str, Any]]:
     请严格返回合法的 JSON 数组，不要包含 ```json 等 Markdown 标记，直接返回内容。
     """
 
-    payload = {"prompt": prompt, "model": None}
+    # OpenAI chat 格式。旧请求体是退役的 /v1/generate 协议({"prompt","model":None}, 读 data["content"]),
+    # 端点改成 chat 后请求体没跟着改, 又不带鉴权 —— 每次都 4xx, 静默落到 _mock_extract。
+    payload = {"model": _LLM_MODEL, "messages": [{"role": "user", "content": prompt}], "max_tokens": 4096}
 
     try:
         # 使用 trust_env=False 避免本地代理报错 (socksio)
         with httpx.Client(trust_env=False) as client:
-            resp = client.post(url, json=payload, timeout=30.0)
+            resp = client.post(url, json=payload, headers=_gateway_auth(), timeout=180.0)
             resp.raise_for_status()
-            raw = resp.content
-            data = json.loads(raw)
-            result_text = data.get("content", "")
+            data = json.loads(resp.content)
+            result_text = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
 
         # 兼容 AetherForge LLM-Gateway 在无可用模型时的 HITL 返回
         if "[HITL]" in result_text or result_text.startswith("[ERROR]"):

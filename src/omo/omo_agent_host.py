@@ -110,11 +110,16 @@ def _llm_deep_eval(agent_id: str, question: str, context: dict[str, Any]) -> dic
     """Call local LLM for deep evaluation when rule-based confidence is insufficient.
 
     Pattern: rules first → if confidence < threshold → LLM deep eval.
-    Tries ollama (local, no auth) first, then falls back to None.
+    Goes through the aetherforge gateway (local, OpenAI-compatible, Bearer auth).
     If LLM unavailable → return None (caller falls back to rule verdict).
+
+    旧实现: `ollama list` 取第一行模型(实际是任意模型)再 `ollama run` —— 绕过网关,
+    模型不可控, 且会把任意大模型拉进内存。
     """
-    import shutil
+    import os
+    import re
     import subprocess as _sp
+    import urllib.request
 
     prompt = (
         f"You are {agent_id} agent in a self-governing digital organism.\n"
@@ -124,50 +129,39 @@ def _llm_deep_eval(agent_id: str, question: str, context: dict[str, Any]) -> dic
         f'{{"verdict": "approve|reject|needs_human", "confidence": 0.0-1.0, "reasoning": "...", "recommendation": "..."}}'
     )
 
-    # Backend 1: ollama (local, no auth needed — best for daemon)
-    if shutil.which("ollama"):
-        import re
-
+    base = (os.environ.get("LLM_GATEWAY_URL") or "http://127.0.0.1:4000").rstrip("/").removesuffix("/v1")
+    # 门面别名; mythos-fast = oMLX 常驻快答档, daemon 场景不触发冷加载
+    model = os.environ.get("OMO_AGENT_LLM_MODEL", "mythos-fast")
+    key = os.environ.get("AETHERFORGE_API_KEY", "")
+    if not key:
         try:
-            models_out = _sp.run(
-                ["ollama", "list"],
+            out = _sp.run(
+                ["security", "find-generic-password", "-s", "aetherforge-gateway", "-w"],
                 capture_output=True,
                 text=True,
                 timeout=5,
                 check=False,
             )
-            if models_out.returncode == 0 and models_out.stdout:
-                lines = models_out.stdout.strip().split("\n")
-                for line in lines[1:]:
-                    if line.strip():
-                        model_name = line.split()[0]
-                        result = _sp.run(
-                            ["ollama", "run", model_name, prompt],
-                            capture_output=True,
-                            text=True,
-                            timeout=90,
-                            check=False,
-                        )
-                        if result.returncode == 0 and result.stdout:
-                            # Strip ANSI escape codes + control chars
-                            clean = re.sub(
-                                r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\[\?[0-9]+[a-zA-Z]",
-                                "",
-                                result.stdout,
-                            )
-                            clean = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", clean)
-                            # Find JSON object in output
-                            json_match = re.search(r'\{[^{}]*"verdict"[^{}]*\}', clean)
-                            if json_match:
-                                try:
-                                    parsed = json.loads(json_match.group())
-                                    parsed["llm_backend"] = f"ollama:{model_name}"
-                                    return parsed
-                                except Exception:
-                                    pass
-                        break
-        except Exception:
-            pass
+            key = out.stdout.strip() if out.returncode == 0 else ""
+        except (OSError, _sp.TimeoutExpired):
+            key = ""
+    body = json.dumps({"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 512})
+    req = urllib.request.Request(
+        f"{base}/v1/chat/completions",
+        data=body.encode(),
+        headers={"Content-Type": "application/json", **({"Authorization": f"Bearer {key}"} if key else {})},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=90) as resp:  # noqa: S310
+            data = json.loads(resp.read())
+        content = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+        json_match = re.search(r'\{[^{}]*"verdict"[^{}]*\}', content)
+        if json_match:
+            parsed = json.loads(json_match.group())
+            parsed["llm_backend"] = f"gateway:{data.get('model') or model}"
+            return parsed
+    except Exception:  # noqa: BLE001  # defensive fallback → caller uses rule verdict
+        pass
 
     return None
 
