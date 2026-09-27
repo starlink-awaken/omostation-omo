@@ -5,6 +5,7 @@ projects/omo/src/omo/omo_belief.py — MOS Agent Belief 三表 Schema 与写入�
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -18,6 +19,111 @@ from .omo_shared import load_yaml_value
 
 def _utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+# 自动心跳类记录: agent-tick 每 5 分钟 × 6 agent 各写一条, 占校准 99% 且几乎全是 success=1.0。
+_AUTO_TICK_CAL = re.compile(r"^agent:[^:]+:tick:")
+_AUTO_TICK_EXP = re.compile(r"^(tick:\S+ on |A2A task: investigated )")
+AUTO_TICK_KEEP = 50
+
+
+def _next_id(entries: list[dict[str, Any]], prefix: str) -> str:
+    """max(现有数字 id)+1。原先用 len+1, 压缩后列表变短会撞号。"""
+    top = 0
+    for e in entries:
+        m = re.fullmatch(rf"{prefix}-(\d+)", str(e.get("id", "")))
+        if m:
+            top = max(top, int(m.group(1)))
+    return f"{prefix}-{top + 1:04d}"
+
+
+def _compact_group(entries: list[dict[str, Any]], key, keep: int, merge) -> list[dict[str, Any]]:
+    """按 key 分组, 每组只保留最近 keep 条原始记录, 更早的与已有 rollup 合并成一条。
+    rollup 置于列表最前, 保留的原始记录维持原相对顺序 —— 取 [-1] / 最近 N 条的读者结果不变。"""
+    groups: dict[Any, list[int]] = {}
+    for idx, e in enumerate(entries):
+        k = key(e)
+        if k is not None and not e.get("rollup"):
+            groups.setdefault(k, []).append(idx)
+    old_rollups = {key(e): e for e in entries if e.get("rollup") and key(e) is not None}
+    drop: set[int] = set()
+    rollups: dict[Any, dict[str, Any]] = dict(old_rollups)
+    for k, idxs in groups.items():
+        if len(idxs) <= keep:
+            continue
+        older = [entries[i] for i in idxs[:-keep]]
+        drop.update(idxs[:-keep])
+        rollups[k] = merge(k, old_rollups.get(k), older)
+    if not drop:
+        return entries
+    kept = [e for i, e in enumerate(entries) if i not in drop and not e.get("rollup")]
+    other_rollups = [e for e in entries if e.get("rollup") and key(e) is None]
+    return other_rollups + list(rollups.values()) + kept
+
+
+def _merge_calibrations(ref: str, prev: dict[str, Any] | None, older: list[dict[str, Any]]) -> dict[str, Any]:
+    items = ([prev] if prev else []) + older
+    n = sum(int(e.get("sample_size", 1) or 1) for e in items)
+    rate = sum(float(e.get("success_rate", 0.0)) * int(e.get("sample_size", 1) or 1) for e in items) / n
+    lat = sum(float(e.get("avg_latency_ms", 0.0)) * int(e.get("sample_size", 1) or 1) for e in items) / n
+    return {
+        "id": f"cc-rollup-{ref}",
+        "capability_ref": ref,
+        "measured_at": older[-1].get("measured_at"),
+        "success_rate": rate,
+        "avg_latency_ms": round(lat, 3),
+        "sample_size": n,
+        "last_run_id": None,
+        "rollup": True,
+        "rollup_since": (prev or older[0]).get("rollup_since") or older[0].get("measured_at"),
+    }
+
+
+def _merge_experiences(k: tuple[str, str], prev: dict[str, Any] | None, older: list[dict[str, Any]]) -> dict[str, Any]:
+    counts: dict[str, int] = dict((prev or {}).get("outcome_counts") or {})
+    for e in older:
+        counts[str(e.get("outcome"))] = counts.get(str(e.get("outcome")), 0) + 1
+    return {
+        "id": f"exp-rollup-{k[0]}-{k[1]}",
+        "agent_id": k[0],
+        "experience": k[1],
+        "outcome": max(counts, key=lambda o: counts[o]),
+        "context": "",
+        "recorded_at": older[-1].get("recorded_at"),
+        "rollup": True,
+        "rollup_since": (prev or older[0]).get("rollup_since") or older[0].get("recorded_at"),
+        "count": sum(counts.values()),
+        "outcome_counts": counts,
+    }
+
+
+def compact_auto_tick(state: dict[str, Any], keep: int = AUTO_TICK_KEEP) -> dict[str, int]:
+    """滚动压缩 agent-tick 自动心跳记录 (只动 agent:*:tick:* 校准与 tick/A2A 重复经验)。
+
+    每个 ref 保留最近 keep 条原始记录, 更早的合并进该 ref 的 rollup (sample_size 累加、
+    success_rate/latency 按样本加权), 不丢样本计数。场景校准等其他记录原样保留。
+    """
+    before = (len(state["capability_calibrations"]), len(state["agent_experiences"]))
+    state["capability_calibrations"] = _compact_group(
+        state["capability_calibrations"],
+        lambda e: e.get("capability_ref") if _AUTO_TICK_CAL.match(str(e.get("capability_ref", ""))) else None,
+        keep,
+        _merge_calibrations,
+    )
+    state["agent_experiences"] = _compact_group(
+        state["agent_experiences"],
+        lambda e: (
+            (str(e.get("agent_id")), str(e.get("experience")))
+            if _AUTO_TICK_EXP.match(str(e.get("experience", "")))
+            else None
+        ),
+        keep,
+        _merge_experiences,
+    )
+    return {
+        "calibrations_removed": before[0] - len(state["capability_calibrations"]),
+        "experiences_removed": before[1] - len(state["agent_experiences"]),
+    }
 
 
 @dataclass
@@ -390,7 +496,7 @@ class MOSBeliefManager:
     ) -> str:
         """记录自我模型校准 — agent 对自身能力的实测"""
         state = self._load_state()
-        cc_id = f"cc-{len(state['capability_calibrations']) + 1:04d}"
+        cc_id = _next_id(state["capability_calibrations"], "cc")
         entry = CapabilityCalibration(
             id=cc_id,
             capability_ref=capability_ref,
@@ -423,7 +529,7 @@ class MOSBeliefManager:
         ids: list[str] = []
         audit: list[tuple[str, str]] = []
         for cal in calibrations:
-            cc_id = f"cc-{len(state['capability_calibrations']) + 1:04d}"
+            cc_id = _next_id(state["capability_calibrations"], "cc")
             entry = CapabilityCalibration(
                 id=cc_id,
                 capability_ref=str(cal["capability_ref"]),
@@ -441,7 +547,7 @@ class MOSBeliefManager:
                 )
             )
         for exp in experiences or []:
-            ex_id = f"exp-{len(state['agent_experiences']) + 1:04d}"
+            ex_id = _next_id(state["agent_experiences"], "exp")
             state["agent_experiences"].append(
                 {
                     "id": ex_id,
@@ -456,6 +562,7 @@ class MOSBeliefManager:
             audit.append(("RECORD_EXPERIENCE", f"id={ex_id} agent={exp['agent_id']} outcome={exp['outcome']}"))
         if not ids:
             return ids
+        compact_auto_tick(state)  # 心跳类记录滚动压缩, 状态文件不再无界增长
         write_yaml_atomic(self.state_file, state)
         if calibrations:
             self._update_registry_summary(len(state["beliefs"]), state)
@@ -494,7 +601,7 @@ class MOSBeliefManager:
             sum(c.get("avg_latency_ms", 0.0) * c.get("sample_size", 1) for c in source_cals) / total_samples
         )
         # 创建迁移校准 (provenance 追溯)
-        cc_id = f"cc-{len(cals) + 1:04d}"
+        cc_id = _next_id(cals, "cc")
         entry = {
             "id": cc_id,
             "capability_ref": target_capability_ref,
@@ -630,7 +737,7 @@ class MOSBeliefManager:
     def record_experience(self, agent_id: str, experience: str, outcome: str, *, context: str = "") -> str:
         """P2-T2: 记录agent的正/反面经验教训."""
         state = self._load_state()
-        ex_id = f"exp-{len(state['agent_experiences']) + 1:04d}"
+        ex_id = _next_id(state["agent_experiences"], "exp")
         state["agent_experiences"].append(
             {
                 "id": ex_id,
