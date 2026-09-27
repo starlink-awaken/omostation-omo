@@ -34,6 +34,39 @@ def test_registry_workspace_root_anchors_relative_runtime_paths(tmp_path: Path) 
     assert core_mod.ledger_path(registry) == tmp_path / "events.jsonl"
 
 
+def test_production_layout_in_linked_worktree_bridges_to_canonical(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """BET-Y2Q4-T10-208: production runner layout inside a linked worktree of
+    the canonical checkout writes through a symlink bridge, while the dict
+    path stays worktree-relative (#4435: survives `worktree remove --force`)."""
+    canonical = tmp_path / "canonical"
+    (canonical / "docs").mkdir(parents=True)
+    (canonical / "docs" / "project-registry.yaml").write_text("schema: project-registry/v1\n", encoding="utf-8")
+    (canonical / ".git" / "worktrees" / "wt").mkdir(parents=True)
+    workspace = tmp_path / "worktree"
+    workspace.mkdir()
+    (workspace / ".git").write_text(f"gitdir: {canonical / '.git' / 'worktrees' / 'wt'}\n", encoding="utf-8")
+    monkeypatch.setenv("OMOSTATION_ROOT", str(canonical))
+    monkeypatch.delenv("OMOSTATION_STATE_ROOT", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "empty-home"))
+    registry = {"runner": {"workspace_root": str(workspace)}}
+
+    run_dir = core_mod.run_state_dir(registry)
+    lock_dir = core_mod.lock_state_dir(registry)
+    ledger = core_mod.ledger_path(registry)
+
+    bridge = workspace / ".omo" / "_delivery" / "agent-workflows"
+    assert bridge.is_symlink()
+    assert run_dir == workspace.resolve() / ".omo/_delivery/agent-workflows/runs"
+    assert lock_dir == workspace.resolve() / ".omo/_delivery/agent-workflows/locks"
+    assert ledger == workspace.resolve() / ".omo/_delivery/agent-workflows/events.jsonl"
+    canonical_delivery = canonical / ".omo" / "_delivery" / "agent-workflows"
+    assert run_dir.resolve() == (canonical_delivery / "runs").resolve()
+    assert ledger.resolve() == (canonical_delivery / "events.jsonl").resolve()
+
+
 def test_observe_matches_absolute_lock_ref_inside_registry_root(tmp_path: Path, monkeypatch) -> None:
     runtime_workspace = tmp_path / "runtime-workspace"
     registry = _registry(runtime_workspace)

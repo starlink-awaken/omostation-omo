@@ -12,6 +12,34 @@ from typing import Any
 
 import yaml
 
+if __package__:
+    from .delivery_anchor import DELIVERY_RELATIVE, ensure_delivery_anchor
+else:
+    # core.py is also loaded package-less by production code
+    # (bin/plan/bet-ledger._external_workflow_core) and by the root test
+    # loaders: a bare spec_from_file_location() gives __package__ == "" so a
+    # relative import has no parent package.  Mirror the install_namespace
+    # pattern from bin/agent-workflow.py: install the private package
+    # namespaces pointing at the real source dirs, then import absolutely, so
+    # every loader context binds the same omo.workflow.delivery_anchor module.
+    import importlib.util as _ilu
+    import sys as _sys
+
+    _workflow_dir = Path(__file__).resolve().parent
+    for _ns, _dir in (
+        ("omo", _workflow_dir.parent),
+        ("omo.workflow", _workflow_dir),
+    ):
+        if _ns not in _sys.modules:
+            _ns_spec = _ilu.spec_from_loader(_ns, loader=None, is_package=True)
+            if _ns_spec is None:
+                raise ImportError(f"cannot create private namespace {_ns}")
+            _ns_spec.submodule_search_locations = [str(_dir)]
+            _ns_module = _ilu.module_from_spec(_ns_spec)
+            _ns_module.__path__ = [str(_dir)]
+            _sys.modules[_ns] = _ns_module
+    from omo.workflow.delivery_anchor import DELIVERY_RELATIVE, ensure_delivery_anchor
+
 WORKSPACE = Path(__file__).resolve().parents[5]
 REGISTRY_PATH = WORKSPACE / ".omo/_truth/registry/agent-workflows"
 AGENT_CLIS_PATH = WORKSPACE / ".omo/_truth/registry/agent-clis.yaml"
@@ -422,7 +450,12 @@ def _runner_path(registry: dict[str, Any], key: str, default: str) -> Path:
     configured = Path(str(registry.get("runner", {}).get(key, default))).expanduser()
     if configured.is_absolute():
         return configured
-    return registry_workspace_root(registry) / configured
+    workspace = registry_workspace_root(registry)
+    # Delivery-state anchor (BET-Y2Q4-T10-208): only the production layout
+    # bridges to the canonical checkout; custom runner configs never trigger.
+    if configured.parts[: len(DELIVERY_RELATIVE.parts)] == DELIVERY_RELATIVE.parts:
+        ensure_delivery_anchor(workspace)
+    return workspace / configured
 
 
 def run_state_dir(registry: dict[str, Any]) -> Path:

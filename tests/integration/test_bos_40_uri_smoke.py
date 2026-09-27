@@ -63,6 +63,30 @@ def _default_args_for(uri: str) -> dict:
     return {"topic": "smoke test"}
 
 
+@pytest.fixture(autouse=True)
+def _delivery_anchor_isolation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """H2 hermetic seam: keep cross-process dispatch off this checkout's delivery dir.
+
+    ``invoke_bos_uri_tool`` runs registry endpoints in subprocesses with
+    ``cwd`` = this checkout (agora stdio adapter → ``uv run .../python
+    bin/agent-workflow.py``). Those children execute the workflow kernel
+    against the real registry, so since BET-Y2Q4-T10-208 they would
+    symlink-bridge THIS worktree's live ``.omo/_delivery/agent-workflows``
+    to the canonical checkout (H1: the claim-bound run would then ride on
+    the canonical copy and be destroyed by ``git worktree remove --force``
+    — the #4435 hazard this very suite must not reintroduce).
+
+    Point ADR-0456's declared state root at a tmp dir: the child's
+    ``delivery_anchor.locate_anchor()`` resolves an anchor this checkout is
+    not a worktree of → byte-identical no-op. Env propagates pool daemon →
+    stdio grandchildren (no ``env=`` overrides in the spawn chain);
+    production paths are untouched.
+    """
+    state_root = tmp_path / "state-root"
+    (state_root / "runtime" / "omo").mkdir(parents=True)
+    monkeypatch.setenv("OMOSTATION_STATE_ROOT", str(state_root))
+
+
 @pytest.mark.fast
 @pytest.mark.bos_40
 def test_40_uri_registry_loads():
