@@ -396,28 +396,27 @@ def _auto_calibrate(result: dict[str, Any]) -> None:
         from omo.omo_belief import MOSBeliefManager
 
         manager = MOSBeliefManager(root=workspace)
-        for r in result.get("results", []):
-            agent_id = r.get("agent_id", "unknown")
-            ok = r.get("ok", False)
-            action = r.get("action", "noop")
-            manager.record_capability_calibration(
-                capability_ref=f"agent:{agent_id}:tick:{action}",
-                success_rate=1.0 if ok else 0.0,
-                avg_latency_ms=0.0,
-                sample_size=1,
-            )
-        # 同时记录一条非 noop 的 experience
-        non_noop = [r for r in result.get("results", []) if r.get("action") != "noop"]
-        if non_noop:
-            for r in non_noop[:3]:  # 最多记3条, 别炸MOS
-                agent_id = r.get("agent_id", "unknown")
-                action = r.get("action", "noop")
-                outcome = "positive" if r.get("ok") else "negative"
-                manager.record_experience(
-                    agent_id=agent_id,
-                    experience=f"tick:{action} on {agent_id}",
-                    outcome=outcome,
-                )
+        results = result.get("results", [])
+        calibrations = [
+            {
+                "capability_ref": f"agent:{r.get('agent_id', 'unknown')}:tick:{r.get('action', 'noop')}",
+                "success_rate": 1.0 if r.get("ok", False) else 0.0,
+                "avg_latency_ms": 0.0,
+                "sample_size": 1,
+            }
+            for r in results
+        ]
+        # 同时记录非 noop 的 experience (最多 3 条, 别炸 MOS)
+        experiences = [
+            {
+                "agent_id": r.get("agent_id", "unknown"),
+                "experience": f"tick:{r.get('action', 'noop')} on {r.get('agent_id', 'unknown')}",
+                "outcome": "positive" if r.get("ok") else "negative",
+            }
+            for r in [r for r in results if r.get("action") != "noop"][:3]
+        ]
+        # 批量: 状态文件只 load/写 一次 (逐条写每轮 ~2 分钟 CPU)
+        manager.record_tick_outcomes(calibrations, experiences)
     except Exception:
         pass  # MOS unavailable — 不阻塞 tick
 
