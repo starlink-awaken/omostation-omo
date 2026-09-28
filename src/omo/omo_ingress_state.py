@@ -141,11 +141,6 @@ def _write_or_preview(
     return preview
 
 
-def _mirror_projection(path: Path, content: str, normalize=None) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    write_text_if_changed(path, content, normalize=normalize or (lambda x: x))
-
-
 def _record_state_sync(
     omo_dir: Path,
     *,
@@ -236,11 +231,6 @@ def sync_state_projection(
     brief_path = runtime_state_dir / "brief.md"
     governance_data_path = runtime_state_dir / "governance-data.json"
 
-    # Legacy paths kept during ADR-0129 migration (ADR-0129 Phase 1 dual-write)
-    legacy_health_path = omo_dir / "state" / "health.yaml"
-    legacy_brief_path = workspace_root / "BRIEF.md"
-    legacy_governance_data_path = omo_dir / "_control" / "governance-data.json"
-
     system_path = omo_dir / "state" / "system.yaml"
 
     with fcntl_lock(_lock_path(omo_dir)):
@@ -285,17 +275,6 @@ def sync_state_projection(
             ]
         )
 
-        # ADR-0129 Phase 1: dual-write legacy paths for backward compatibility.
-        # These are shallow copies and are not recorded as separate mutations;
-        # the canonical writes above hold the authoritative projection state.
-        if not dry_run:
-            _mirror_projection(legacy_health_path, health_content, normalize=normalize_health_yaml)
-            _mirror_projection(legacy_brief_path, brief_content, normalize=normalize_brief_md)
-            _mirror_projection(
-                legacy_governance_data_path,
-                serialize_governance_data(governance_data),
-                normalize=normalize_governance_data_json,
-            )
         changed_count = sum(1 for item in writes if item.get("changed"))
         artifact_ref = ""
         if not dry_run and changed_count:
