@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from omo.omo_paths import OMO_ROOT, WORKSPACE_ROOT
+from omo.omo_paths import OMO_ROOT, WORKSPACE_ROOT, projection_path
 
 
 def _check_state_freshness() -> dict:
@@ -45,7 +45,6 @@ def _check_key_files() -> dict:
     """检查关键文件是否存在."""
     key_files = [
         "state/system.yaml",
-        "state/health.yaml",
         "goals/current.yaml",
         "_truth/INDEX.md",
         "_truth/registry/mof-capabilities.yaml",
@@ -61,10 +60,14 @@ def _check_key_files() -> dict:
             "status": "fail",
             "detail": f"missing: {', '.join(missing)}",
         }
+    health_path = projection_path("health")
+    health_detail = (
+        "health projection present" if health_path.exists() else "health projection not generated (optional)"
+    )
     return {
         "id": "key-files",
         "status": "ok",
-        "detail": f"{len(key_files)} key files present",
+        "detail": f"{len(key_files)} key files present; {health_detail}",
     }
 
 
