@@ -100,6 +100,44 @@ def ensure_runtime_omo_dir(relative: str | Path) -> Path:
 # Runtime projection registry (ADR-0129)
 RUNTIME_PROJECTIONS_REGISTRY = TRUTH_DIR / "registry" / "runtime-projections.yaml"
 
+# Used only when the registry itself is not in this checkout (omo consumed as a
+# library without the workspace `.omo/` plane). Same values the registry declares
+# today; drift is pinned by tests/unit/test_projection_reader_resolution.py.
+_PROJECTION_FALLBACK_RELS: dict[str, tuple[str, str]] = {
+    "health": (".omo/state/runtime/health.yaml", ".omo/state/health.yaml"),
+    "system_health": (".omo/state/runtime/system_health.yaml", ".omo/state/system_health.yaml"),
+    "governance_data": (".omo/state/runtime/governance-data.json", ".omo/_control/governance-data.json"),
+    "brief": (".omo/state/runtime/brief.md", "BRIEF.md"),
+}
+
+
+def projection_rels(name: str) -> tuple[str, str]:
+    """已登记投影的 (canonical, legacy) **相对路径** —— 映射的唯一真源。
+
+    路径是登记表的事, 锚点是 profile 的事: canonical 挂 STATE_ROOT (写入侧),
+    legacy 挂 WORKSPACE_ROOT (当前检出侧)。把"读哪个文件"与"哪一层根"分开, 才不会出现
+    每个消费者各抄一份映射 —— 那是 ADR-0129 Phase 2 之后 legacy 冻结事故的根因
+    (读侧写死 legacy 路径的tools, 在生产机上量到一个不再被写的文件)。
+
+    未登记的名字抛 KeyError: 静默回退会把"读错文件"伪装成"读到了"。
+    """
+    if RUNTIME_PROJECTIONS_REGISTRY.is_file():
+        import yaml
+
+        # The registry carries YAML frontmatter, so it is a multi-document stream;
+        # the last document is the registry itself.
+        docs = yaml.safe_load_all(RUNTIME_PROJECTIONS_REGISTRY.read_text(encoding="utf-8"))
+        data = [d for d in docs if isinstance(d, dict)][-1]
+        entry = (data.get("projections") or {}).get(name)
+        if entry is None:
+            raise KeyError(f"Unknown runtime projection: {name}")
+        return entry["canonical"], entry["legacy"]
+
+    fallback = _PROJECTION_FALLBACK_RELS.get(name)
+    if fallback is None:
+        raise KeyError(f"Unknown runtime projection: {name}")
+    return fallback
+
 
 def projection_path(name: str, *, prefer_canonical: bool = True) -> Path:
     """Resolve the path of a registered runtime projection.
@@ -113,37 +151,13 @@ def projection_path(name: str, *, prefer_canonical: bool = True) -> Path:
 
     Canonical lands on STATE_ROOT (written state); legacy stays on
     WORKSPACE_ROOT so a dev profile can still read the committed file.
+
+    返回的路径**不存在**就是两侧都不存在 —— 投影没生成过, 这不是错误状态, 读取方
+    应当报 absent 而不是计为 fail/expired。
     """
-    import yaml
-
-    canonical: Path | None = None
-    legacy: Path | None = None
-    if RUNTIME_PROJECTIONS_REGISTRY.is_file():
-        # The registry carries YAML frontmatter, so it is a multi-document stream;
-        # the last document is the registry itself.
-        docs = yaml.safe_load_all(RUNTIME_PROJECTIONS_REGISTRY.read_text(encoding="utf-8"))
-        data = [d for d in docs if isinstance(d, dict)][-1]
-        entry = (data.get("projections") or {}).get(name)
-        if entry:
-            canonical = STATE_ROOT / entry["canonical"]
-            legacy = WORKSPACE_ROOT / entry["legacy"]
-
-    # Fallbacks keep existing tests and consumers working if registry is missing
-    # or the entry has not been added yet.
-    if name == "health":
-        canonical = canonical or STATE_DIR / "runtime" / "health.yaml"
-        legacy = legacy or STATE_DIR / "health.yaml"
-    elif name == "system_health":
-        canonical = canonical or STATE_DIR / "runtime" / "system_health.yaml"
-        legacy = legacy or STATE_DIR / "system_health.yaml"
-    elif name == "governance_data":
-        canonical = canonical or STATE_DIR / "runtime" / "governance-data.json"
-        legacy = legacy or CONTROL_DIR / "governance-data.json"
-    elif name == "brief":
-        canonical = canonical or STATE_DIR / "runtime" / "brief.md"
-        legacy = legacy or WORKSPACE_ROOT / "BRIEF.md"
-    else:
-        raise KeyError(f"Unknown runtime projection: {name}")
+    canonical_rel, legacy_rel = projection_rels(name)
+    canonical = STATE_ROOT / canonical_rel
+    legacy = WORKSPACE_ROOT / legacy_rel
 
     if prefer_canonical:
         if canonical.exists():
