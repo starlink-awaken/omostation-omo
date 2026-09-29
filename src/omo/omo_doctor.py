@@ -62,9 +62,7 @@ def _check_key_files() -> dict:
         }
     health_path = projection_path("health")
     health_detail = (
-        "health projection present"
-        if health_path.exists()
-        else "health projection not generated (optional)"
+        "health projection present" if health_path.exists() else "health projection not generated (optional)"
     )
     return {
         "id": "key-files",
