@@ -39,9 +39,14 @@ def test_sync_state_projection_skips_timestamp_only_changes(tmp_path: Path) -> N
 
     assert report["changed_count"] == 4
     assert report["artifact_ref"]
-    assert (state_dir / "health.yaml").exists()
-    assert (tmp_path / "BRIEF.md").exists()
-    assert (omo_dir / "_control" / "governance-data.json").exists()
+    runtime_dir = state_dir / "runtime"
+    assert (runtime_dir / "health.yaml").exists()
+    assert (runtime_dir / "brief.md").exists()
+    assert (runtime_dir / "governance-data.json").exists()
+    # ADR-0129 Phase 2: the legacy mirrors are no longer written.
+    assert not (state_dir / "health.yaml").exists()
+    assert not (tmp_path / "BRIEF.md").exists()
+    assert not (omo_dir / "_control").exists()
 
     governance_data["generated_at"] = "2026-07-03T00:01:00Z"
     second = sync_state_projection(
@@ -57,7 +62,7 @@ def test_sync_state_projection_skips_timestamp_only_changes(tmp_path: Path) -> N
 
     assert second["changed_count"] == 0
     assert second["artifact_ref"] == ""
-    written_governance = json.loads((omo_dir / "_control" / "governance-data.json").read_text(encoding="utf-8"))
+    written_governance = json.loads((runtime_dir / "governance-data.json").read_text(encoding="utf-8"))
     assert written_governance["generated_at"] == "2026-07-03T00:00:00Z"
 
     semantic_change = sync_state_projection(
