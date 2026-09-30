@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import os
 import sys
 from contextlib import redirect_stdout
 from copy import deepcopy
@@ -25,9 +26,23 @@ from omo.omo_ingress_paths import (
     _workspace_relative,
 )
 from omo.omo_io import fcntl_lock, write_text_if_changed, write_yaml_atomic
+from omo.omo_paths import STATE_ROOT_ENV
 from omo.omo_shared import load_yaml
 
 STATE_SYNC_TARGET = ".omo/state/health.yaml + .omo/state/system.yaml + BRIEF.md + .omo/_control/governance-data.json"
+
+
+def _resolve_write_root(code_root: Path, state_root: Path | None) -> Path:
+    """ADR-0456 C2 — the write root is declared, never inferred from the caller.
+
+    Precedence: explicit ``state_root`` > env ``OMOSTATION_STATE_ROOT`` > ``code_root``.
+    The last arm keeps an undeclared profile byte-identical to the historical layout
+    without letting a fixture-rooted caller write into the host checkout.
+    """
+    candidate = state_root if state_root is not None else os.environ.get(STATE_ROOT_ENV)
+    if candidate is not None and str(candidate):
+        return Path(str(candidate)).expanduser().absolute()
+    return code_root
 
 
 def _load_root_module(workspace_root: Path, name: str, relative_path: str):
@@ -78,9 +93,9 @@ def normalize_brief_md(payload: str) -> str:
     return "\n".join(lines).strip()
 
 
-def _build_health_projection(workspace_root: Path) -> tuple[str, dict[str, Any]]:
-    compass_radar = _load_root_module(workspace_root, "compass_radar", "bin/compass_radar.py")
-    omo_dir = workspace_root / ".omo"
+def _build_health_projection(code_root: Path) -> tuple[str, dict[str, Any]]:
+    compass_radar = _load_root_module(code_root, "compass_radar", "bin/compass_radar.py")
+    omo_dir = code_root / ".omo"
     output = omo_dir / "state" / "health.yaml"
     with redirect_stdout(io.StringIO()):
         report, _runtime_summary, _age_desc = compass_radar.build_health_projection(
@@ -88,13 +103,13 @@ def _build_health_projection(workspace_root: Path) -> tuple[str, dict[str, Any]]
             output=output,
         )
     return compass_radar.render_yaml(report), compass_radar.build_system_projection_updates(
-        workspace_root=workspace_root,
+        workspace_root=code_root,
         report=report,
     )
 
 
-def _build_brief_content(workspace_root: Path) -> str:
-    generate_brief = _load_root_module(workspace_root, "generate-brief", "bin/mof/generate-brief.py")
+def _build_brief_content(code_root: Path) -> str:
+    generate_brief = _load_root_module(code_root, "generate-brief", "bin/mof/generate-brief.py")
     return generate_brief.generate_brief_content()
 
 
@@ -142,8 +157,9 @@ def _write_or_preview(
 
 
 def _record_state_sync(
-    omo_dir: Path,
+    state_omo_dir: Path,
     *,
+    display_root: Path,
     actor: str,
     source_ref: str,
     timestamp: str,
@@ -152,7 +168,7 @@ def _record_state_sync(
     from omo.omo_ingress import _record_mutation, _record_trail
 
     changed_paths = [
-        _workspace_relative(Path(item["path"]), workspace_root=omo_dir.parent) for item in writes if item.get("changed")
+        _workspace_relative(Path(item["path"]), workspace_root=display_root) for item in writes if item.get("changed")
     ]
     artifact = {
         "kind": "state_projection_sync",
@@ -165,14 +181,14 @@ def _record_state_sync(
         "writes": [
             {
                 **item,
-                "path": _workspace_relative(Path(str(item["path"])), workspace_root=omo_dir.parent),
+                "path": _workspace_relative(Path(str(item["path"])), workspace_root=display_root),
             }
             for item in writes
         ],
     }
-    artifact_path = _delivery_root(omo_dir) / "state" / f"state-sync-{_timestamp_slug(timestamp)}.yaml"
+    artifact_path = _delivery_root(state_omo_dir) / "state" / f"state-sync-{_timestamp_slug(timestamp)}.yaml"
     write_yaml_atomic(artifact_path, artifact)
-    artifact_ref = _workspace_relative(artifact_path, workspace_root=omo_dir.parent)
+    artifact_ref = _workspace_relative(artifact_path, workspace_root=display_root)
     details = (
         f"actor={actor} source_ref={source_ref or '-'} "
         f"changed={','.join(changed_paths) if changed_paths else '-'} artifact={artifact_ref}"
@@ -182,17 +198,17 @@ def _record_state_sync(
         debt_id="",
         actor=actor,
         details=details,
-        audit_file=_audit_log_path(omo_dir),
+        audit_file=_audit_log_path(state_omo_dir),
     )
     _record_trail(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
-        omo_dir,
+        state_omo_dir,
         actor=f"broker:{actor}",
         action="sync_state_projection",
         target=STATE_SYNC_TARGET,
         parent_step_id=f"ingress:state-sync:{timestamp}",
     )
     _record_mutation(  # type: ignore[reportUndefinedVariable]  # rebound at module load from omo.omo_ingress
-        omo_dir,
+        state_omo_dir,
         actor=actor,
         action="sync_state_projection",
         target=STATE_SYNC_TARGET,
@@ -206,8 +222,9 @@ def _record_state_sync(
 
 
 def sync_state_projection(
-    workspace_root: Path,
+    code_root: Path,
     *,
+    state_root: Path | None = None,
     dry_run: bool = False,
     actor: str = "omo state sync",
     source_ref: str = "omo-state:sync",
@@ -216,14 +233,20 @@ def sync_state_projection(
     brief_content: str | None = None,
     governance_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Synchronize high-churn runtime projections through one OMO writer."""
-    workspace_root = workspace_root.resolve()
-    omo_dir = workspace_root / ".omo"
-    if not omo_dir.is_dir():
-        raise FileNotFoundError(f"missing .omo directory: {omo_dir}")
+    """Synchronize high-churn runtime projections through one OMO writer.
+
+    ``code_root`` is the read plane (governance SSOT, root modules, ``.omo`` existence);
+    every write target — the four projections and the runtime mirror root holding delivery,
+    audit, trail, lock and mutation logs — resolves from ``state_root`` (ADR-0456 C1/C2).
+    """
+    code_root = code_root.resolve()
+    write_root = _resolve_write_root(code_root, state_root)
+    if not (code_root / ".omo").is_dir():
+        raise FileNotFoundError(f"missing .omo directory: {code_root / '.omo'}")
 
     timestamp = _utc_now()
-    runtime_state_dir = omo_dir / "state" / "runtime"
+    state_omo_dir = write_root / ".omo"
+    runtime_state_dir = state_omo_dir / "state" / "runtime"
     runtime_state_dir.mkdir(parents=True, exist_ok=True)
 
     # Canonical paths under .omo/state/runtime/ (ADR-0129)
@@ -231,11 +254,11 @@ def sync_state_projection(
     brief_path = runtime_state_dir / "brief.md"
     governance_data_path = runtime_state_dir / "governance-data.json"
 
-    system_path = omo_dir / "state" / "system.yaml"
+    system_path = state_omo_dir / "state" / "system.yaml"
 
-    with fcntl_lock(_lock_path(omo_dir)):
+    with fcntl_lock(_lock_path(state_omo_dir)):
         if health_content is None or system_updates is None:
-            health_content, system_updates = _build_health_projection(workspace_root)
+            health_content, system_updates = _build_health_projection(code_root)
         system_updates = dict(system_updates)
         system_updates["governance_feedback_last_run"] = timestamp
         system_updates["updated_at"] = timestamp
@@ -255,9 +278,9 @@ def sync_state_projection(
             ),
         ]
         if brief_content is None:
-            brief_content = _build_brief_content(workspace_root)
+            brief_content = _build_brief_content(code_root)
         if governance_data is None:
-            governance_data = build_governance_data(workspace_root)
+            governance_data = build_governance_data(code_root)
         writes.extend(
             [
                 _write_or_preview(
@@ -279,7 +302,8 @@ def sync_state_projection(
         artifact_ref = ""
         if not dry_run and changed_count:
             artifact_ref = _record_state_sync(
-                omo_dir,
+                state_omo_dir,
+                display_root=code_root,
                 actor=actor,
                 source_ref=source_ref,
                 timestamp=timestamp,
@@ -292,12 +316,14 @@ def sync_state_projection(
         "actor": actor,
         "source_ref": source_ref,
         "target": STATE_SYNC_TARGET,
+        "code_root": str(code_root),
+        "state_root": str(write_root),
         "changed_count": changed_count,
         "artifact_ref": artifact_ref,
         "writes": [
             {
                 **item,
-                "path": _workspace_relative(Path(str(item["path"])), workspace_root=workspace_root),
+                "path": _workspace_relative(Path(str(item["path"])), workspace_root=code_root),
             }
             for item in writes
         ],
