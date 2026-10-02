@@ -19,6 +19,7 @@ from omo.omo_ingress_paths import (
 )
 from omo.omo_io import AppendOnlyLog, fcntl_lock, write_yaml_atomic
 from omo.omo_io_schemas import OmoTrailRecord
+from omo.omo_paths import system_yaml_for
 
 
 def _record_trail(
@@ -121,7 +122,7 @@ def write_system_projection_fields(
 ) -> dict[str, Any]:
     """原子写入 system.yaml 的投影字段 (白名单控制)."""
     timestamp = now or _utc_now()
-    system_path = omo_dir / "state" / "system.yaml"
+    system_path = system_yaml_for(omo_dir)
     if not system_path.exists():
         raise FileNotFoundError(f"missing state/system.yaml: {system_path}")
     if not isinstance(updates, dict) or not updates:

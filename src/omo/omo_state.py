@@ -13,7 +13,7 @@ import yaml
 from .omo_ingress import write_system_projection_fields
 from .omo_ingress_state import sync_state_projection
 from .omo_io import write_text_atomic
-from .omo_paths import find_omo_dir
+from .omo_paths import find_omo_dir, system_yaml_for, system_yaml_read
 from .omo_shared import load_yaml, load_yaml_required
 
 
@@ -30,7 +30,7 @@ def _emit(msg: str, *, quiet: bool = False) -> None:
 
 
 def cmd_state_show(omo_dir: Path, fmt: str) -> int:
-    state_file = omo_dir / "state" / "system.yaml"
+    state_file = system_yaml_read(omo_dir)
     if not state_file.exists():
         # warnings never pollute JSON stdout
         print(
@@ -317,7 +317,7 @@ def cmd_state_sync_tasks(omo_dir: Path, dry_run: bool, *, quiet: bool = False) -
     """
     import datetime as _dt
 
-    state_file = omo_dir / "state" / "system.yaml"
+    state_file = system_yaml_for(omo_dir)
     if not state_file.exists():
         _emit("⚠️  state/system.yaml not found", quiet=quiet)
         return 1
@@ -471,7 +471,7 @@ def cmd_state_sync(omo_dir: Path, dry_run: bool, fmt: str) -> int:
 
 def cmd_state_set(omo_dir: Path, key: str, value: str, fmt: str) -> int:
     """Set a state field via OMO broker — validates write-owners and writes atomically."""
-    state_file = omo_dir / "state" / "system.yaml"
+    state_file = system_yaml_for(omo_dir)
     if not state_file.exists():
         print("❌ state/system.yaml not found")
         return 1
