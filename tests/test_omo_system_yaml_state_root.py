@@ -27,12 +27,8 @@ def split_roots(tmp_path, monkeypatch):
     state_omo = tmp_path / "state" / ".omo"
     (checkout_omo / "state").mkdir(parents=True)
     (state_omo / "state").mkdir(parents=True)
-    (checkout_omo / "state" / "system.yaml").write_text(
-        yaml.dump({"health_score": 46}), encoding="utf-8"
-    )
-    (state_omo / "state" / "system.yaml").write_text(
-        yaml.dump({"health_score": 88}), encoding="utf-8"
-    )
+    (checkout_omo / "state" / "system.yaml").write_text(yaml.dump({"health_score": 46}), encoding="utf-8")
+    (state_omo / "state" / "system.yaml").write_text(yaml.dump({"health_score": 88}), encoding="utf-8")
     monkeypatch.setattr(omo_paths, "OMO_ROOT", checkout_omo)
     monkeypatch.setattr(omo_paths, "STATE_SYSTEM_YAML", state_omo / "state" / "system.yaml")
     return checkout_omo, state_omo
@@ -93,9 +89,7 @@ def _checkout_pinned_lines(source: str) -> list[int]:
         if not (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)):
             continue
         segs = _segments(node)
-        tail = "/".join(
-            str(s.value) for s in segs if isinstance(s, ast.Constant) and isinstance(s.value, str)
-        )
+        tail = "/".join(str(s.value) for s in segs if isinstance(s, ast.Constant) and isinstance(s.value, str))
         names = {s.id for s in segs if isinstance(s, ast.Name)}
         if tail.replace(" ", "").strip("/").endswith(CHECKOUT_SNAPSHOT) and "OMO_ROOT" in names:
             offenders.append(node.lineno)
@@ -110,7 +104,7 @@ def test_detector_itself_catches_a_known_offender():
     """
     assert _checkout_pinned_lines('PATH = OMO_ROOT / "state" / "system.yaml"\n') == [1]
     assert _checkout_pinned_lines('PATH = OMO_ROOT / ".omo" / "state" / "system.yaml"\n') == [1]
-    assert _checkout_pinned_lines('PATH = STATE_SYSTEM_YAML\n') == []
+    assert _checkout_pinned_lines("PATH = STATE_SYSTEM_YAML\n") == []
 
 
 @pytest.mark.parametrize(
