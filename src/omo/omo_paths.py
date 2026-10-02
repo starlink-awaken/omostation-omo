@@ -168,6 +168,37 @@ def projection_path(name: str, *, prefer_canonical: bool = True) -> Path:
     return legacy if legacy.exists() else canonical
 
 
+def system_yaml_for(omo_dir: Path | None = None) -> Path:
+    """system.yaml 的**写**目标 —— 运行态根那份 (ADR-0456 D1 / BET-Y2Q4-T10-220).
+
+    `find_omo_dir()` 返回的是**检出**里的 `.omo`, 拿它拼 `state/system.yaml` 会让声明
+    `OMOSTATION_STATE_ROOT` 的一次 sync 改写检出那份跟踪快照 —— 检出侧从此只是
+    "最后提交的快照", 运行态只落 `<state_root>/.omo/state/system.yaml`。
+
+    显式传入的其他目录(测试 fixture、`--omo-dir` 指到别处)按原样返回: 落点必须能在
+    指定根上验证, 否则"写到哪"变成不可断言的事。未声明 profile 时 STATE_ROOT ==
+    WORKSPACE_ROOT, 两条分支逐字节相同。
+    """
+    if omo_dir is not None and omo_dir.resolve() != OMO_ROOT.resolve():
+        return omo_dir / "state" / "system.yaml"
+    return STATE_SYSTEM_YAML
+
+
+def system_yaml_read(omo_dir: Path | None = None) -> Path:
+    """system.yaml 的读目标: 运行态根那份优先, 检出快照兜底。
+
+    与 projection_path() 同语义, 但 system.yaml **不**注册成投影 —— 它是同一个文件的
+    "快照 + 运行态镜像", 不是 canonical/legacy 两个名字(注册会让投影名映射把快照判成
+    legacy 位)。显式目录只看它自己。
+    """
+    target = system_yaml_for(omo_dir)
+    if target.is_file():
+        return target
+    if omo_dir is not None and omo_dir.resolve() != OMO_ROOT.resolve():
+        return target
+    return OMO_ROOT / "state" / "system.yaml"
+
+
 # Agora 路由表 (P30 拆分后, agora 已迁出 kairon, 现位于 projects/agora)
 # P31-W0-AGORA-ACTUAL-FIX: 修正路径指向
 AGORA_ROUTES_PATH = PROJECTS_DIR / "agora" / "src" / "agora-routes.json"
@@ -249,4 +280,6 @@ __all__ = (
     "ensure_runtime_omo_dir",
     "find_omo_dir",
     "runtime_omo_path",
+    "system_yaml_for",
+    "system_yaml_read",
 )
