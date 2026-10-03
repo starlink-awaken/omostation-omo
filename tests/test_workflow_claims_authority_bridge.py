@@ -3092,3 +3092,147 @@ def test_red_broker_has_no_remote_transport() -> None:
     assert "requests" not in imported
     assert "httpx" not in imported
     assert "run" not in calls
+
+
+# ---------------------------------------------------------------------------
+# describe-claim: 只读导出 fence 绑定 (ADR-0461)
+# ---------------------------------------------------------------------------
+
+
+def _describe_request(store: _AuthorityStore, claim_id: str, **extra: object) -> dict[str, object]:
+    return {
+        "schema": "claim-read-envelope/v1",
+        "authority_id": store.authority_id,
+        "claim_id": claim_id,
+        **extra,
+    }
+
+
+def _publishable_claim(store: _AuthorityStore) -> tuple[dict, dict, str]:
+    """建一条 publication-scoped allow 的 claim, 返回 (receipt, scope, descriptor_digest)。"""
+    activation = store.activate_shadow(valid_activation_request(store))
+    scope = _publication_scope(["docs/reports/2026-10-02-claims-fence-binding.md"])
+    request = valid_observe_request()
+    request.update(
+        {
+            "request_id": str(uuid4()),
+            "run_id": "run-describe",
+            "clone_identity_schema": "agent-clone-identity/v2",
+            "v1_claim_digest": canonical_digest({"run_id": "run-describe", "ordinal": 0}),
+            "v1_decision": {"decision": "allow", "code": "legacy_allow"},
+            "publication_scope": scope,
+            "requested_paths_digest": scope["paths_digest"],
+        }
+    )
+    receipt = store.observe_claim(request)
+    return receipt, scope, str(activation["descriptor_digest"])
+
+
+def test_describe_claim_round_trip_satisfies_issue_legacy_fence(
+    store: _AuthorityStore,
+) -> None:
+    """GREEN: describe-claim 的输出必须恰好够拼出被接受的 issue-legacy-fence 请求。
+
+    这是 ADR-0461 的核心契约 —— 此前 fence 要求的绑定全仓无生产方,
+    integrate --apply 在 shadow-active 态下 100% 阻塞。
+    """
+    receipt, scope, descriptor_digest = _publishable_claim(store)
+    binding = store.describe_claim(_describe_request(store, str(receipt["claim_id"])))
+
+    assert binding["publishable"] is True
+    # 拼装请求时只允许用 describe-claim 给的字段
+    fence_req = _issue_fence_request(
+        store,
+        {
+            "claim_id": binding["claim_id"],
+            "claim_version": binding["claim_version"],
+            "lease_epoch": binding["lease_epoch"],
+            "receipt_digest": binding["v1_allow_receipt_digest"],
+            "v1_run_digest": binding["v1_snapshot_digest"],
+        },
+        descriptor_digest,
+    )
+    fence_req["path_digest"] = binding["paths_digest"]
+    fence = store.issue_legacy_fence(fence_req)
+    assert fence["operation"] == "issue-legacy-fence"
+
+
+def test_describe_claim_is_read_only(store: _AuthorityStore) -> None:
+    """只读: 连续两次 describe 的 sequence 相同, 且不新增 receipt。"""
+    receipt, _scope, _d = _publishable_claim(store)
+    before_seq, _ = store._database_tip()
+    before_receipts = store._connection.execute(
+        "SELECT COUNT(*) FROM receipts WHERE authority_id=?", (store.authority_id,)
+    ).fetchone()[0]
+
+    first = store.describe_claim(_describe_request(store, str(receipt["claim_id"])))
+    second = store.describe_claim(_describe_request(store, str(receipt["claim_id"])))
+
+    after_seq, _ = store._database_tip()
+    after_receipts = store._connection.execute(
+        "SELECT COUNT(*) FROM receipts WHERE authority_id=?", (store.authority_id,)
+    ).fetchone()[0]
+    assert first["sequence"] == second["sequence"] == after_seq
+    assert before_seq == after_seq
+    assert before_receipts == after_receipts, "只读动词不得写 receipt"
+    assert first == second
+
+
+def test_red_describe_claim_unknown_claim_uses_existing_error_code(
+    store: _AuthorityStore,
+) -> None:
+    """未知 claim 必须复用 issue-legacy-fence 已有的 IDENTITY_MISMATCH, 不新增信息类别。"""
+    with pytest.raises(AuthorityError, match="IDENTITY_MISMATCH"):
+        store.describe_claim(_describe_request(store, "claim-does-not-exist"))
+
+
+def test_red_describe_claim_rejects_wrong_authority(store: _AuthorityStore) -> None:
+    with pytest.raises(AuthorityError, match="IDENTITY_MISMATCH"):
+        store.describe_claim(
+            {
+                "schema": "claim-read-envelope/v1",
+                "authority_id": "some-other-authority",
+                "claim_id": "c" * 16,
+            }
+        )
+
+
+def test_red_describe_claim_rejects_unknown_fields(store: _AuthorityStore) -> None:
+    with pytest.raises(AuthorityError, match="REQUEST_SCHEMA_INVALID"):
+        store.describe_claim(_describe_request(store, "c" * 16, allow_publish=True))
+
+
+def test_red_describe_claim_rejects_wrong_schema(store: _AuthorityStore) -> None:
+    with pytest.raises(AuthorityError, match="REQUEST_SCHEMA_INVALID"):
+        store.describe_claim(
+            {
+                "schema": "claim-mutation-envelope/v2",
+                "authority_id": store.authority_id,
+                "claim_id": "c" * 16,
+            }
+        )
+
+
+def test_describe_claim_without_allow_receipt_is_not_publishable(
+    store: _AuthorityStore,
+) -> None:
+    """无 allow 回执的 claim 正常返回并标 publishable=false, 而不是抛错。
+
+    调用方在 issue-legacy-fence 处会看到同样的结果, 故不构成新增信息泄漏。
+    """
+    store.activate_shadow(valid_activation_request(store))
+    request = valid_observe_request()
+    request.update(
+        {
+            "request_id": str(uuid4()),
+            "run_id": "run-noallow",
+            "clone_identity_schema": "agent-clone-identity/v2",
+            "v1_claim_digest": canonical_digest({"run_id": "run-noallow", "ordinal": 0}),
+        }
+    )
+    receipt = store.observe_claim(request)
+    binding = store.describe_claim(_describe_request(store, str(receipt["claim_id"])))
+    assert binding["publishable"] is False
+    assert binding["v1_allow_receipt_digest"] is None
+    assert binding["paths_digest"] is None
+    assert binding["claim_id"] == receipt["claim_id"]

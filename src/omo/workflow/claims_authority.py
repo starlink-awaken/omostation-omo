@@ -1925,6 +1925,79 @@ class _AuthorityStore:
             "instruction_capable": False,
         }
 
+    # ------------------------------------------------------------------
+    # Read-only: fence binding for one claim (ADR-0461)
+    # ------------------------------------------------------------------
+    def _allow_receipt_for_claim(self, claim_id: str) -> dict[str, Any] | None:
+        """最近一条本 claim 的 publication-scoped allow observe 回执。"""
+        for row in self._connection.execute(
+            "SELECT receipt_json FROM receipts WHERE authority_id=? ORDER BY sequence",
+            (self.authority_id,),
+        ):
+            receipt = json.loads(row["receipt_json"])
+            if not isinstance(receipt, dict) or receipt.get("operation") != "observe-claim":
+                continue
+            if receipt.get("claim_id") != claim_id:
+                continue
+            comparison = receipt.get("comparison")
+            effective = comparison.get("effective_v1") if isinstance(comparison, dict) else None
+            if isinstance(effective, dict) and effective.get("decision") == "allow":
+                return receipt
+        return None
+
+    def describe_claim(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        """读出 `issue-legacy-fence` 所需的绑定字段。**只读, 不授予任何权限。**
+
+        ADR-0461: 此前 fence 要求的 `claims_authority_fence_context` 全仓只有读取方、
+        没有生产方, 导致 `integrate --apply` 在 shadow-active 态下 100% 阻塞。
+
+        ## 这个动词不放松任何校验
+
+        它只是让调用方能把请求**拼装正确**; `issue-legacy-fence` 仍会逐项复核
+        allow 回执、snapshot 绑定、path 绑定、双读与批次状态, 任何一个不符即拒。
+        换言之它不是授权出口, 只是格式化助手。
+
+        ## 不泄漏超出既有信息面的内容
+
+        - claim 未知 -> `IDENTITY_MISMATCH`, 与 `issue_legacy_fence` 对未知 claim_id
+          抛的是同一个码, 不新增信息类别;
+        - claim 存在但尚无 allow 回执 -> 正常返回并标 `publishable: false`,
+          这与调用方在 `issue-legacy-fence` 处会看到的结果一致;
+        - 纯读, 不递增 sequence, 不写库。
+        """
+        if request.get("schema") != "claim-read-envelope/v1":
+            raise AuthorityError("REQUEST_SCHEMA_INVALID", "describe_claim_schema")
+        _reject_unknown_fields(request, {"schema", "authority_id", "claim_id"}, detail="describe_claim")
+        if request.get("authority_id") != self.authority_id:
+            raise AuthorityError("IDENTITY_MISMATCH", "authority_id")
+        claim_id = request.get("claim_id")
+        if not isinstance(claim_id, str) or not claim_id:
+            raise AuthorityError("REQUEST_SCHEMA_INVALID", "describe_claim_claim_id")
+
+        sequence, _tip = self._database_tip()
+        claim = self._connection.execute("SELECT * FROM claims WHERE claim_id=?", (claim_id,)).fetchone()
+        if claim is None:
+            raise AuthorityError("IDENTITY_MISMATCH", "claim_id")
+
+        allow = self._allow_receipt_for_claim(claim_id)
+        scope = allow.get("publication_scope") if isinstance(allow, dict) else None
+        scope = scope if isinstance(scope, Mapping) else None
+        return {
+            "schema": "claim-binding/v1",
+            "claim_id": claim_id,
+            "run_id": str(claim["run_id"]),
+            "claim_version": int(claim["authority_claim_version"]),
+            "lease_epoch": int(claim["authority_lease_epoch"]),
+            "state": str(claim["state"]),
+            "expires_at": str(claim["expires_at"]),
+            "identity_digest": str(claim["identity_digest"]),
+            "v1_snapshot_digest": str(claim["v1_snapshot_digest"]),
+            "v1_allow_receipt_digest": str(allow.get("receipt_digest")) if isinstance(allow, dict) else None,
+            "paths_digest": str(scope["paths_digest"]) if scope and scope.get("paths_digest") else None,
+            "publishable": allow is not None and scope is not None,
+            "sequence": sequence,
+        }
+
     def observe_claim(self, request: Mapping[str, Any]) -> dict[str, Any]:
         request_id = _uuid4(request.get("request_id"))
         if request.get("schema") != "claim-mutation-envelope/v2" or request.get("operation") != "observe-claim":
@@ -3450,6 +3523,7 @@ def evaluate_graduation(request: Mapping[str, Any]) -> dict[str, Any]:
 
 _DISPATCH_METHODS = {
     "observe-claim": "observe_claim",
+    "describe-claim": "describe_claim",
     "begin-claim-mutation": "begin_claim_mutation",
     "settle-claim-mutation": "settle_claim_mutation",
     "mark-claim-mutation-operator-required": "mark_claim_mutation_operator_required",
