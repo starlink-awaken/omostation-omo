@@ -1975,9 +1975,7 @@ class _AuthorityStore:
             raise AuthorityError("REQUEST_SCHEMA_INVALID", "describe_claim_claim_id")
 
         sequence, _tip = self._database_tip()
-        claim = self._connection.execute(
-            "SELECT * FROM claims WHERE claim_id=?", (claim_id,)
-        ).fetchone()
+        claim = self._connection.execute("SELECT * FROM claims WHERE claim_id=?", (claim_id,)).fetchone()
         if claim is None:
             raise AuthorityError("IDENTITY_MISMATCH", "claim_id")
 

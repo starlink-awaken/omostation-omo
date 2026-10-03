@@ -3199,9 +3199,7 @@ def test_red_describe_claim_rejects_wrong_authority(store: _AuthorityStore) -> N
 
 def test_red_describe_claim_rejects_unknown_fields(store: _AuthorityStore) -> None:
     with pytest.raises(AuthorityError, match="REQUEST_SCHEMA_INVALID"):
-        store.describe_claim(
-            _describe_request(store, "c" * 16, allow_publish=True)
-        )
+        store.describe_claim(_describe_request(store, "c" * 16, allow_publish=True))
 
 
 def test_red_describe_claim_rejects_wrong_schema(store: _AuthorityStore) -> None:
