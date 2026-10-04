@@ -3236,3 +3236,110 @@ def test_describe_claim_without_allow_receipt_is_not_publishable(
     assert binding["v1_allow_receipt_digest"] is None
     assert binding["paths_digest"] is None
     assert binding["claim_id"] == receipt["claim_id"]
+
+
+# ---------------------------------------------------------------------------
+# ADR-0461 第 1 步: observe 结果写进 ledger, run 记录与 run_digest 不得变动
+# ---------------------------------------------------------------------------
+
+
+def _registry() -> dict[str, object]:
+    return {
+        "runner": {},
+        "agent_profiles": {
+            "governance-agent": {
+                "id": "governance-agent",
+                "actor": "agent-a",
+                "allowed_workflows": ["project-code-change"],
+            }
+        },
+    }
+
+
+def _members() -> list[dict[str, object]]:
+    return [
+        {
+            "claim_id": "claim-1",
+            "claim_version": 1,
+            "lease_epoch": 2,
+            "v1_allow_receipt_digest": "sha256:" + "a" * 64,
+            "paths_digest": "sha256:" + "b" * 64,
+        }
+    ]
+
+
+def test_green_claim_binding_lands_in_ledger(monkeypatch: pytest.MonkeyPatch) -> None:
+    """observe 结果此前被直接丢弃; 现在必须进 ledger。"""
+    from omo.workflow import lifecycle_ledger
+
+    captured: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        lifecycle_ledger, "append_ledger_event", lambda _r, event: captured.append(event)
+    )
+    monkeypatch.setattr(lifecycle, "append_ledger_event", lambda _r, e: captured.append(e))
+
+    lifecycle._record_authority_claim_binding(_registry(), "run-1", "claim", _members())
+
+    assert len(captured) == 1
+    event = captured[0]
+    assert event["event"] == "claim_binding_observed"
+    assert event["run_id"] == "run-1"
+    member = event["members"][0]
+    assert member["claim_id"] == "claim-1"
+    assert member["claim_version"] == 1
+    assert member["lease_epoch"] == 2
+    assert member["v1_allow_receipt_digest"] == "sha256:" + "a" * 64
+    assert member["paths_digest"] == "sha256:" + "b" * 64
+
+
+def test_red_non_claim_operation_writes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[dict[str, object]] = []
+    monkeypatch.setattr(lifecycle, "append_ledger_event", lambda _r, e: captured.append(e))
+    lifecycle._record_authority_claim_binding(_registry(), "run-1", "close", _members())
+    assert captured == []
+
+
+def test_red_empty_members_writes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[dict[str, object]] = []
+    monkeypatch.setattr(lifecycle, "append_ledger_event", lambda _r, e: captured.append(e))
+    lifecycle._record_authority_claim_binding(_registry(), "run-1", "claim", [])
+    assert captured == []
+
+
+def test_hard_run_digest_unchanged_by_binding_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**硬判据**: 记录绑定后 run 记录与 `run_digest` 必须逐字节不变。
+
+    settle 之后若改动 run 文件, authority 刚认证过的 `resulting_run_digest`
+    会静默失配, 且 `:735` 之后无任何复校 —— 必然失配且不可检出。本测试是
+    该不变式的守门人: 摘要一旦变化即说明写错了地方。
+    """
+    registry = _registry()
+    workflow = {
+        "id": "project-code-change",
+        "title": "Project code change",
+        "purpose": "test",
+        "agents": {},
+        "allowed_lanes": ["governance_code"],
+        "lock_scopes": [],
+        "phases": {},
+    }
+    record = lifecycle.start_run(
+        registry,
+        workflow,
+        {"actor": "agent-a", "profile": "governance-agent", "project": "", "format": "openspec"},
+        "test objective",
+        False,
+        False,
+    )
+    run_id = record["run_id"] if isinstance(record, dict) else record.run_id
+    run_path, _payload = lifecycle.read_run(registry, run_id)
+    before_bytes = run_path.read_bytes()
+    before_digest = lifecycle._authority_file_digest(run_path)
+
+    monkeypatch.setattr(lifecycle, "append_ledger_event", lambda *_a, **_k: None)
+    lifecycle._record_authority_claim_binding(registry, run_id, "claim", _members())
+
+    assert run_path.read_bytes() == before_bytes, "记录绑定**不得**改动 run 记录字节"
+    assert lifecycle._authority_file_digest(run_path) == before_digest, "run_digest 必须不变"
