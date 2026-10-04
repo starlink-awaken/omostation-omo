@@ -3273,9 +3273,7 @@ def test_green_claim_binding_lands_in_ledger(monkeypatch: pytest.MonkeyPatch) ->
     from omo.workflow import lifecycle_ledger
 
     captured: list[dict[str, object]] = []
-    monkeypatch.setattr(
-        lifecycle_ledger, "append_ledger_event", lambda _r, event: captured.append(event)
-    )
+    monkeypatch.setattr(lifecycle_ledger, "append_ledger_event", lambda _r, event: captured.append(event))
     monkeypatch.setattr(lifecycle, "append_ledger_event", lambda _r, e: captured.append(e))
 
     lifecycle._record_authority_claim_binding(_registry(), "run-1", "claim", _members())
@@ -3306,9 +3304,7 @@ def test_red_empty_members_writes_nothing(monkeypatch: pytest.MonkeyPatch) -> No
     assert captured == []
 
 
-def test_hard_run_digest_unchanged_by_binding_record(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_hard_run_digest_unchanged_by_binding_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """**硬判据**: 记录绑定后 run 记录与 `run_digest` 必须逐字节不变。
 
     settle 之后若改动 run 文件, authority 刚认证过的 `resulting_run_digest`

@@ -623,7 +623,6 @@ def _authority_begin_mutation(
     return _call_claims_authority("begin-claim-mutation", request)
 
 
-
 def _record_authority_claim_binding(
     registry: dict[str, Any],
     run_id: str,
