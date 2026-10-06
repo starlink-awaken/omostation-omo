@@ -22,7 +22,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from omo.resident import WORKSPACE
+from omo.resident import WORKSPACE, write_path
 
 DEFAULT_INBOX_DIR = Path.home() / "Documents" / "@感知信号"
 WATERMARK_FILE = WORKSPACE / ".omo" / "_delivery" / "perception-inbox" / "watermark.json"
@@ -34,15 +34,15 @@ INBOX_SIGNAL_TYPE = "InboxSignal"
 
 def _load_watermark() -> dict[str, str]:
     try:
-        data = json.loads(WATERMARK_FILE.read_text(encoding="utf-8"))
+        data = json.loads(write_path(WATERMARK_FILE).read_text(encoding="utf-8"))
         return {k: v for k, v in data.items() if isinstance(v, str)}
     except (OSError, json.JSONDecodeError):
         return {}
 
 
 def _save_watermark(processed: dict[str, str]) -> None:
-    WATERMARK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    WATERMARK_FILE.write_text(json.dumps(processed, indent=2), encoding="utf-8")
+    write_path(WATERMARK_FILE).parent.mkdir(parents=True, exist_ok=True)
+    write_path(WATERMARK_FILE).write_text(json.dumps(processed, indent=2), encoding="utf-8")
 
 
 def _file_digest(path: Path) -> str:
@@ -73,8 +73,8 @@ def _append_to_events_jsonl(payload: dict[str, Any], trace_id: str) -> None:
         "producer": "perception-inbox",
         "schema_version": "workflow-mesh/v1",
     }
-    EVENTS_JSONL.parent.mkdir(parents=True, exist_ok=True)
-    with EVENTS_JSONL.open("a", encoding="utf-8") as fh:
+    write_path(EVENTS_JSONL).parent.mkdir(parents=True, exist_ok=True)
+    with write_path(EVENTS_JSONL).open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(event, ensure_ascii=False) + "\n")
 
 

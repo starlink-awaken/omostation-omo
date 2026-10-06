@@ -126,6 +126,9 @@ def _resolve_run_binding(run_id: str) -> dict[str, Any] | None:
     can pass.  Missing / mismatched / incomplete runs fail closed by returning
     None — the caller surfaces ``binding_run_unavailable`` instead of guessing.
     """
+    # 刻意不走 write_path(): ADR-0456 判据-4 把交付协调面锚在 canonical_root, 而
+    # delivery_anchor.ensure_delivery_anchor() 已把每个检出的 agent-workflows/ 做成指向
+    # canonical 的 symlink —— 经 WORKSPACE 解析正好落到那一面; 挂到 state 根会读到空目录。
     run_path = WORKSPACE / ".omo" / "_delivery" / "agent-workflows" / "runs" / f"{run_id}.yaml"
     if not run_path.is_file():
         return None

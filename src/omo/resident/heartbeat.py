@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from omo.resident import WORKSPACE
+from omo.resident import WORKSPACE, write_path
 
 # 统一事件流 (daemon 消费源)
 EVENTS_JSONL = WORKSPACE / ".omo" / "_knowledge" / "workflow-mesh" / "events.jsonl"
@@ -44,8 +44,8 @@ def _append_to_events_jsonl(payload: dict[str, Any], snapshot: dict[str, Any]) -
         "producer": "resident-heartbeat",
         "schema_version": "workflow-mesh/v1",
     }
-    EVENTS_JSONL.parent.mkdir(parents=True, exist_ok=True)
-    with EVENTS_JSONL.open("a", encoding="utf-8") as fh:
+    write_path(EVENTS_JSONL).parent.mkdir(parents=True, exist_ok=True)
+    with write_path(EVENTS_JSONL).open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(event, ensure_ascii=False) + "\n")
 
 
@@ -66,8 +66,8 @@ def _write_ledger_direct(payload: dict[str, Any], snap: dict[str, Any]) -> None:
         "degraded_components": payload.get("degraded_components", []),
         "source": "resident-heartbeat",
     }
-    HEARTBEAT_LEDGER.parent.mkdir(parents=True, exist_ok=True)
-    with HEARTBEAT_LEDGER.open("a", encoding="utf-8") as fh:
+    write_path(HEARTBEAT_LEDGER).parent.mkdir(parents=True, exist_ok=True)
+    with write_path(HEARTBEAT_LEDGER).open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
@@ -89,9 +89,9 @@ def _ledger_recover_best_effort() -> None:
     """Explicit T9-02 tick-path recover (cold-start non-fatal; status also recovers)."""
     try:
         from omo.resident.ledger_check import check_and_recover  # noqa: PLC0415
-        from omo.resident.status import LEDGER  # noqa: PLC0415
+        from omo.resident.status import resolve_ledger  # noqa: PLC0415
 
-        check_and_recover(LEDGER)
+        check_and_recover(resolve_ledger())
     except Exception:  # noqa: BLE001 - recover must not block heartbeat publish
         return
 
@@ -130,11 +130,11 @@ def _heartbeat_handler(event: dict[str, Any]) -> None:
     payload = event.get("payload") or {}
     idem = str(event.get("idempotency_key") or f"{event.get('event_id')}:{SYSTEM_ALIVE_TYPE}")
     existing: set[str] = set()
-    if HEARTBEAT_LEDGER.is_file():
+    if write_path(HEARTBEAT_LEDGER).is_file():
         try:
             existing = {
                 str(json.loads(line).get("idempotency_key") or "")
-                for line in HEARTBEAT_LEDGER.read_text(encoding="utf-8").splitlines()
+                for line in write_path(HEARTBEAT_LEDGER).read_text(encoding="utf-8").splitlines()
                 if line.strip()
             }
         except (OSError, json.JSONDecodeError):
@@ -149,8 +149,8 @@ def _heartbeat_handler(event: dict[str, Any]) -> None:
         "event_id": event.get("event_id"),
         "source": "resident-heartbeat",
     }
-    HEARTBEAT_LEDGER.parent.mkdir(parents=True, exist_ok=True)
-    with HEARTBEAT_LEDGER.open("a", encoding="utf-8") as fh:
+    write_path(HEARTBEAT_LEDGER).parent.mkdir(parents=True, exist_ok=True)
+    with write_path(HEARTBEAT_LEDGER).open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
@@ -171,7 +171,11 @@ def main(argv=None) -> int:
     parser.add_argument("--dump", action="store_true", help="查看已沉淀的活性台账")
     args = parser.parse_args(argv)
     if args.dump:
-        for line in HEARTBEAT_LEDGER.read_text(encoding="utf-8").splitlines() if HEARTBEAT_LEDGER.is_file() else []:
+        for line in (
+            write_path(HEARTBEAT_LEDGER).read_text(encoding="utf-8").splitlines()
+            if write_path(HEARTBEAT_LEDGER).is_file()
+            else []
+        ):
             print(line)
         return 0
     report = publish_heartbeat(dry_run=args.dry_run)

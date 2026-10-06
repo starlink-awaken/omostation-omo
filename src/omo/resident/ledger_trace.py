@@ -19,8 +19,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from omo.resident import WORKSPACE
-
 # 事件类型常量 (与 sediment.py 对齐)
 REQUESTED_EVENTS = frozenset({"WorkflowRequested"})
 # step 序列 (实际执行) — StepDispatched/StepStarted 也可能携带终态快照, 但仅取 step_name
@@ -29,8 +27,6 @@ STEP_EVENTS = frozenset({"StepStarted", "StepDispatched", "StepFailed"})
 FAILURE_EVENTS = frozenset({"StepFailed", "WorkflowFailed"})
 # 终态事件 (结果与证据)
 TERMINAL_EVENTS = frozenset({"WorkflowSucceeded", "WorkflowClosed", "WorkflowFailed"})
-
-DEFAULT_EVENTS_PATH = WORKSPACE / ".omo" / "_knowledge" / "workflow-mesh" / "events.jsonl"
 
 
 def _event_type(event: dict[str, Any]) -> str:

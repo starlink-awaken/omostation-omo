@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from omo.resident import WORKSPACE, ledger_trace
+from omo.resident import WORKSPACE, ledger_trace, write_path
 
 SEDIMENT_ROOT = WORKSPACE / ".omo" / "_knowledge" / "sediment"
 RETRO_ROOT = WORKSPACE / ".omo" / "_knowledge" / "retros" / "resident"
@@ -88,7 +88,7 @@ def _aggregate() -> dict[str, dict[str, Any]]:
     """按主题聚合 runs/failures 草稿, 附带解析后的 frontmatter 元数据."""
     topics: dict[str, dict[str, Any]] = {}
     for kind in ("runs", "failures"):
-        entries = _scan(SEDIMENT_ROOT / kind)
+        entries = _scan(write_path(SEDIMENT_ROOT) / kind)
         for topic, filename, path in entries:
             bucket = topics.setdefault(
                 topic, {"runs": [], "failures": [], "total": 0, "runs_meta": [], "failures_meta": []}
@@ -191,7 +191,7 @@ def _write_retro(
         body += "- [ ] 计划 vs 实际\n- [ ] 结果与证据\n- [ ] 关键发现\n- [ ] 净增减\n- [ ] 交接建议\n"
     if dry_run:
         return None
-    target = RETRO_ROOT / f"{topic}.md"
+    target = write_path(RETRO_ROOT) / f"{topic}.md"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(frontmatter + body, encoding="utf-8")
     return target
@@ -284,7 +284,7 @@ def _stale_draft_paths(retain_days: int) -> list[Path]:
     cutoff = time.time() - max(0, retain_days) * 86400
     stale: list[Path] = []
     for kind in ("runs", "failures"):
-        kind_dir = SEDIMENT_ROOT / kind
+        kind_dir = write_path(SEDIMENT_ROOT) / kind
         if not kind_dir.is_dir():
             continue
         for path in kind_dir.glob("*.md"):
@@ -303,7 +303,7 @@ def _archive_consumed_drafts(retain_days: int) -> int:
     """
     archived = 0
     for path in _stale_draft_paths(retain_days):
-        target_dir = ARCHIVE_ROOT / path.parent.name
+        target_dir = write_path(ARCHIVE_ROOT) / path.parent.name
         target_dir.mkdir(parents=True, exist_ok=True)
         target = target_dir / path.name
         if target.exists():
@@ -338,7 +338,7 @@ def _write_index(
         "| 主题 | 草稿数 | runs | failures | failure_rate | 生成时间 |\n"
         "|------|-------|------|----------|-------------|----------|\n" + "\n".join(rows) + "\n"
     )
-    target = RETRO_ROOT / "index.md"
+    target = write_path(RETRO_ROOT) / "index.md"
     try:
         target.write_text(content, encoding="utf-8")
     except OSError:
@@ -366,7 +366,7 @@ def promote(
     skeletons: dict[str, dict[str, Any]] = {}
     if fill_five_q:
         try:
-            path = Path(events_path) if events_path else EVENTS_PATH
+            path = Path(events_path) if events_path else write_path(EVENTS_PATH)
             skeletons = ledger_trace.load_run_skeletons(path)
         except OSError:
             skeletons = {}  # 事件流缺失时不阻断 promote, 退化为无骨架模式
@@ -395,7 +395,7 @@ def promote(
         "archivable_count": archivable,
         "archived_count": archived,
         "index_written": str(index_written) if index_written else None,
-        "written_to": str(RETRO_ROOT) if not dry_run else None,
+        "written_to": str(write_path(RETRO_ROOT)) if not dry_run else None,
         "topics_detail": {t: b["total"] for t, b in ordered},
         "coverage_ratio": round(min(1.0, len(topics) / max(1, total_drafts)), 4),
         "failure_breakdown": _global_breakdown(topics),
