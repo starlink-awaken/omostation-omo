@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import ast
 import os
-import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
@@ -42,7 +41,6 @@ from omo.resident import (
 )
 
 RESIDENT_DIR = Path(daemon.__file__).resolve().parent
-REPO_ROOT = Path(omo_paths.__file__).resolve().parents[2]
 RESOLVER_CALLS = frozenset({"write_path", "state_root", "event_ledger_path"})
 FS_ACTIONS = frozenset(
     {
@@ -369,27 +367,69 @@ def test_pure_read_plane_sites_are_not_flagged() -> None:
     assert scan_frozen_write_points(execute, "execute.py") == []
 
 
+# 改前 receipt.py 的冻结写点形状 (按源码顺序) —— 逐字取自 ba69696^ 的那 6 处文件动作。
+_PRECHANGE_SHAPES = [
+    (".mkdir()", 1),
+    (".open()", 1),
+    (".is_file()", 2),
+    (".read_text()", 2),
+]
+
+
 def test_prechange_baseline_is_not_zero() -> None:
-    """基线读数: 改前的真实模块必须被点名若干处 —— 绿是「从 N 归零」, 不是「一直为零」。"""
-    text = _git_show_head("src/omo/resident/receipt.py")
-    if text is None:
-        pytest.skip("无 git 对象库: 无基线可读 (合成自证用例仍覆盖检测器行为)")
-    hits = scan_frozen_write_points(text, "receipt.py@HEAD")
-    assert hits, "改前 receipt.py 必含冻结写点; 没命中说明检测器失效"
-    print(f"expect=0 got=0 (改前基线 {len(hits)} 处: {hits})")
+    """基线读数: 检测器必须在**改前的真实文本**上点名 6 处 —— 绿是「从 N 归零」, 不是「一直为零」。
+
+    基线文本逐字嵌进用例, 不用 ``git show HEAD:path``: 提交之后 HEAD **就是改后**的树,
+    而 CI 侧历史深浅不定 (worktree 里的子模块可能只有 1 个 commit) —— 两种都会让这条
+    判据在交付动作完成后当场假红 (omo PR #208 首跑就是这么红的)。改前状态由 fixture
+    自己物化, 与 #4606「测兜底必须先物化」同源。
+    """
+    hits = scan_frozen_write_points(_PRECHANGE_RECEIPT, "receipt.py@prechange")
+    assert len(hits) == sum(n for _, n in _PRECHANGE_SHAPES), repr(hits)
+    assert all(h.name == "RECEIPTS_FILE" for h in hits), repr(hits)
+    shapes = [h.shape for h in hits]
+    for shape, count in _PRECHANGE_SHAPES:
+        assert shapes.count(shape) == count, f"{shape}: expect={count} got={shapes.count(shape)}"
+    print(f"expect=6 got={len(hits)}")
 
 
-def _git_show_head(relative_path: str) -> str | None:
+_PRECHANGE_RECEIPT = """\
+from pathlib import Path
+from typing import Any
+
+WORKSPACE = Path("/checkout")
+
+RECEIPTS_FILE = WORKSPACE / ".omo" / "_delivery" / "resident-orchestrator" / "receipts.jsonl"
+MAX_RECENT = 200  # recent() 单次上限
+
+
+def record(entry, safe=True, err=""):
     try:
-        out = subprocess.run(
-            ["git", "-C", str(REPO_ROOT), "show", f"HEAD:{relative_path}"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except (OSError, subprocess.CalledProcessError):
-        return None
-    return out.stdout or None
+        RECEIPTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with RECEIPTS_FILE.open("a", encoding="utf-8") as fh:
+            fh.write("x")
+    except OSError:
+        pass
+
+
+def recent(limit: int = 50) -> list[Any]:
+    limit = max(1, min(int(limit), MAX_RECENT))
+    if not RECEIPTS_FILE.is_file():
+        return []
+    try:
+        lines = RECEIPTS_FILE.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    return lines
+
+
+def stats():
+    total = 0
+    if RECEIPTS_FILE.is_file():
+        for line in RECEIPTS_FILE.read_text(encoding="utf-8").splitlines():
+            total += 1
+    return total
+"""
 
 
 def test_package_exports_the_single_write_plane_vocabulary() -> None:
