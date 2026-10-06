@@ -23,10 +23,13 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from omo.resident import WORKSPACE
+from omo.resident import WORKSPACE, event_ledger_path, state_root, write_path
 from omo.resident.receipt import record as _receipt
 
-DEFAULT_LEDGER = WORKSPACE / "runtime" / "omo" / "event-ledger.sqlite3"
+# 写面路径: 定义留在 WORKSPACE 上 (既有 setattr 测试缝), 读用点一律经 write_path()
+# 或 event_ledger_path() 在调用时刻重新锚定到声明的 state 根 —— BET-Y2Q4-T10-233。
+# DEFAULT_LEDGER 常量已删除: 台账路径的唯一口径是 event_ledger_path(),
+# 优先级 OMO_EVENT_LEDGER_DB > state_root()/runtime/omo/event-ledger.sqlite3。
 DEFAULT_EVENTS_JSONL = WORKSPACE / ".omo" / "_knowledge" / "workflow-mesh" / "events.jsonl"
 PID_FILE = WORKSPACE / ".omo" / "_delivery" / "resident-orchestrator" / "daemon.pid"
 LOG_FILE = WORKSPACE / ".omo" / "_delivery" / "resident-orchestrator" / "daemon.log"
@@ -61,9 +64,10 @@ def register_handler(event_type: str, fn: Callable[[dict[str, Any]], None], *, s
 
 
 def _log(msg: str) -> None:
-    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    log_file = write_path(LOG_FILE)
+    log_file.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with LOG_FILE.open("a", encoding="utf-8") as fh:
+        with log_file.open("a", encoding="utf-8") as fh:
             fh.write(f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} {msg}\n")
     except OSError:
         pass
@@ -221,7 +225,7 @@ def _route(event: dict[str, Any]) -> None:
 
 
 def _wm_path(projector: str) -> Path:
-    return WORKSPACE / ".omo" / "_delivery" / "resident-orchestrator" / "watermarks" / f"{projector}.json"
+    return state_root() / ".omo" / "_delivery" / "resident-orchestrator" / "watermarks" / f"{projector}.json"
 
 
 def _load_byte_offset(projector: str) -> int:
@@ -271,7 +275,7 @@ def _ledger_recover_best_effort() -> None:
     try:
         from omo.resident.ledger_check import check_and_recover  # noqa: PLC0415
 
-        check_and_recover(DEFAULT_LEDGER)
+        check_and_recover(event_ledger_path())
     except Exception as exc:  # noqa: BLE001 - recover must not block ticks
         _log(f"ledger_recover_skipped: {type(exc).__name__}: {exc}")
 
@@ -319,7 +323,9 @@ def _process_task_queue() -> dict[str, Any]:
     """
     from omo.resident.task_queue import TaskQueue, TaskStatus, default_db_path  # noqa: PLC0415
 
-    db_path = default_db_path()
+    # task_queue.default_db_path() 仍挂在检出根上 (本轮迁移面之外); 由调用方在此重新锚定,
+    # 未声明 profile 时逐字节相同, 声明后队列 db 落到 state 根 —— 见 spec §5 残留登记。
+    db_path = write_path(default_db_path())
     if not db_path.exists():
         return {"picked": 0, "completed": 0, "failed": 0, "skipped": True}
 
@@ -453,7 +459,7 @@ def _role_publish(projector: str) -> None:
 def run_daemon(
     *,
     ledger: Path,
-    events_jsonl: Path = DEFAULT_EVENTS_JSONL,
+    events_jsonl: Path | None = None,
     interval: float = 30.0,
     once: bool = False,
     projector: str = PROJECTOR_ID,
@@ -462,15 +468,18 @@ def run_daemon(
     _inject_paths()
     _register_default_handlers()
     _load_routes()  # WP-C: rule-level subscription table (fail-closed)
+    if events_jsonl is None:  # 默认参数不得冻结路径 (BET-Y2Q4-T10-233)
+        events_jsonl = write_path(DEFAULT_EVENTS_JSONL)
     broker = _connect_with_retry(ledger)
-    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
-    PID_FILE.write_text(str(os.getpid()), encoding="utf-8")
+    pid_file = write_path(PID_FILE)
+    pid_file.parent.mkdir(parents=True, exist_ok=True)
+    pid_file.write_text(str(os.getpid()), encoding="utf-8")
 
     if once:
         report = tick_once(broker, events_jsonl, projector=projector, topic_filter=topic_filter)
         _role_publish(projector)  # 单次 tick 也发布 (下一 tick 消费)
         broker.close()
-        PID_FILE.unlink(missing_ok=True)
+        pid_file.unlink(missing_ok=True)
         print(json.dumps(report, sort_keys=True))
         return 0
 
@@ -494,15 +503,15 @@ def run_daemon(
             stop_event.wait(interval)
     finally:
         broker.close()
-        PID_FILE.unlink(missing_ok=True)
+        pid_file.unlink(missing_ok=True)
         _log("resident_orchestrator_stopped")
     return 0
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--ledger", type=Path, default=DEFAULT_LEDGER)
-    parser.add_argument("--events-jsonl", type=Path, default=DEFAULT_EVENTS_JSONL)
+    parser.add_argument("--ledger", type=Path, default=event_ledger_path())
+    parser.add_argument("--events-jsonl", type=Path, default=write_path(DEFAULT_EVENTS_JSONL))
     parser.add_argument("--interval", type=float, default=30.0)
     parser.add_argument("--once", action="store_true", help="run a single tick and exit")
     parser.add_argument("--yes", action="store_true", help="bypass human-approval gate for non-safe handlers")

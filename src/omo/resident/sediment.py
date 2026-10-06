@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from omo.resident import WORKSPACE
+from omo.resident import WORKSPACE, write_path
 
 SEDIMENT_ROOT = WORKSPACE / ".omo" / "_knowledge" / "sediment"
 SUCCESS_EVENTS = frozenset({"WorkflowSucceeded", "WorkflowClosed", "WorkflowAdmitted"})
@@ -77,15 +77,15 @@ def _sediment_run(event: dict[str, Any], *, kind: str) -> Path | None:
     event_id = str(event.get("event_id") or "")
     slug = _safe_slug(run_id)
     if kind == "failure":
-        target = SEDIMENT_ROOT / "failures" / f"{slug}-{event_id[:8]}.md"
+        target = write_path(SEDIMENT_ROOT) / "failures" / f"{slug}-{event_id[:8]}.md"
         title = "失败模式沉淀(事件驱动草稿)"
         section = "## 失败上下文"
     elif kind == "lifecycle":
-        target = SEDIMENT_ROOT / "runs" / f"{slug}.md"
+        target = write_path(SEDIMENT_ROOT) / "runs" / f"{slug}.md"
         title = "生命周期沉淀(事件驱动草稿)"
         section = "## 生命周期上下文"
     else:
-        target = SEDIMENT_ROOT / "runs" / f"{slug}.md"
+        target = write_path(SEDIMENT_ROOT) / "runs" / f"{slug}.md"
         title = "运行复盘沉淀(事件驱动草稿)"
         section = "## 运行上下文"
     if target.exists():
@@ -118,7 +118,7 @@ def _evidence_run(event: dict[str, Any]) -> Path | None:
     event_id = str(event.get("event_id") or "")
     slug = _safe_slug(run_id)
     ev_slug = _safe_slug(event_id) or "unknown"
-    target = SEDIMENT_ROOT / "evidence" / f"{slug}-{ev_slug[:8]}.md"
+    target = write_path(SEDIMENT_ROOT) / "evidence" / f"{slug}-{ev_slug[:8]}.md"
     target.parent.mkdir(parents=True, exist_ok=True)
     body = (
         f"# 证据沉淀(事件驱动草稿)\n\n"
@@ -154,7 +154,7 @@ def consume_event(event: dict[str, Any]) -> Path | None:
         # 个人文件信号 → 信号沉淀草稿 (slug 用文件名, 溯源 trace_id)
         filename = str((event.get("payload") or {}).get("file") or "unknown")
         slug = _safe_slug(filename.removesuffix(".md")) or "personal-signal"
-        target = SEDIMENT_ROOT / "signals" / f"{slug}.md"
+        target = write_path(SEDIMENT_ROOT) / "signals" / f"{slug}.md"
         target.parent.mkdir(parents=True, exist_ok=True)
         body = (
             f"# 个人信号沉淀(事件驱动草稿)\n\n"
@@ -177,7 +177,7 @@ def consume_event(event: dict[str, Any]) -> Path | None:
         # 感知文件夹信号 → 感知信号沉淀草稿 (slug 用文件名, 溯源 trace_id)
         filename = str((event.get("payload") or {}).get("file") or "unknown")
         slug = _safe_slug(filename.removesuffix(".md")) or "perception-inbox"
-        target = SEDIMENT_ROOT / "inbox" / f"{slug}.md"
+        target = write_path(SEDIMENT_ROOT) / "inbox" / f"{slug}.md"
         target.parent.mkdir(parents=True, exist_ok=True)
         body = (
             f"# 感知信号沉淀(事件驱动草稿)\n\n"
@@ -287,7 +287,7 @@ def main(argv=None) -> int:
     if args.enqueue:
         from omo.resident.task_queue import TaskQueue, default_db_path  # noqa: PLC0415
 
-        queue = TaskQueue(Path(args.db) if args.db else default_db_path())
+        queue = TaskQueue(Path(args.db) if args.db else write_path(default_db_path()))
         result = queue.submit("bos://resident/sediment/trigger", event if isinstance(event, dict) else {})
         print(json.dumps({"queued": result.ok, "task_id": result.task_id, "reason": result.reason}))
         return 0 if result.ok else 2

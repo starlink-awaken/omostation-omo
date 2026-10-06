@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from omo.resident import WORKSPACE
+from omo.resident import WORKSPACE, write_path
 
 RECEIPTS_FILE = WORKSPACE / ".omo" / "_delivery" / "resident-orchestrator" / "receipts.jsonl"
 MAX_RECENT = 200  # recent() 单次上限
@@ -49,8 +49,8 @@ def record(
         "err": err or None,
     }
     try:
-        RECEIPTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with RECEIPTS_FILE.open("a", encoding="utf-8") as fh:
+        write_path(RECEIPTS_FILE).parent.mkdir(parents=True, exist_ok=True)
+        with write_path(RECEIPTS_FILE).open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except OSError:
         pass
@@ -60,10 +60,10 @@ def record(
 def recent(limit: int = 50) -> list[dict[str, Any]]:
     """读最近 N 条 receipt (最新在最后)."""
     limit = max(1, min(int(limit), MAX_RECENT))
-    if not RECEIPTS_FILE.is_file():
+    if not write_path(RECEIPTS_FILE).is_file():
         return []
     try:
-        lines = RECEIPTS_FILE.read_text(encoding="utf-8").splitlines()
+        lines = write_path(RECEIPTS_FILE).read_text(encoding="utf-8").splitlines()
     except OSError:
         return []
     out: list[dict[str, Any]] = []
@@ -82,9 +82,9 @@ def stats() -> dict[str, Any]:
     """轻量统计: 总数 + 各 status 计数 + 最后写入时间."""
     total = ok = blocked = error = skipped = attempted = 0
     last_ts = None
-    if RECEIPTS_FILE.is_file():
+    if write_path(RECEIPTS_FILE).is_file():
         try:
-            for line in RECEIPTS_FILE.read_text(encoding="utf-8").splitlines():
+            for line in write_path(RECEIPTS_FILE).read_text(encoding="utf-8").splitlines():
                 line = line.strip()
                 if not line:
                     continue

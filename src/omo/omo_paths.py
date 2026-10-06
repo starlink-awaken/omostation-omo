@@ -20,6 +20,8 @@ import os
 from pathlib import Path
 
 STATE_ROOT_ENV = "OMOSTATION_STATE_ROOT"
+LEDGER_DB_ENV = "OMO_EVENT_LEDGER_DB"
+LEDGER_RELATIVE = Path("runtime") / "omo" / "event-ledger.sqlite3"
 
 _MODULE_DIR = Path(__file__).resolve().parent
 OMO_SRC_PARENT = _MODULE_DIR.parents[1]  # /Users/xiamingxing/Workspace/projects/omo
@@ -31,6 +33,37 @@ HOME_DIR = _MODULE_DIR.parents[4]  # /Users/xiamingxing
 STATE_ROOT = (
     Path(os.environ[STATE_ROOT_ENV]).expanduser().absolute() if os.environ.get(STATE_ROOT_ENV) else WORKSPACE_ROOT
 )
+
+
+def state_root() -> Path:
+    """运行态写入根, **每次调用读 env** —— STATE_ROOT 常量做不到的一件事 (BET-Y2Q4-T10-233)。
+
+    `STATE_ROOT` 在 import 时求值一次: 声明 `OMOSTATION_STATE_ROOT` 晚于 import 的调用方
+    (daemon、库式复用、env seam 测试) 会读到声明前的根, 而且**没有任何测试会红** ——
+    现有用例都在 setenv 之后才构造路径, 恰好绕开冻结窗口 (AGENTS.md §7「写路径要在调用时刻解析」)。
+
+    未声明 profile 时返回 WORKSPACE_ROOT, 与 `STATE_ROOT` 的历史取值逐字节相同: 现役
+    launchd/crontab 都不声明该 env, 所以走这条函数的写者**当场不换位置**。本轮只提供机制,
+    把 profile 值真正写进安装位是 B4b (逐批授权)。
+    """
+    declared = os.environ.get(STATE_ROOT_ENV)
+    return Path(declared).expanduser().absolute() if declared else WORKSPACE_ROOT
+
+
+def event_ledger_path() -> Path:
+    """事件台账路径, 优先级 `OMO_EVENT_LEDGER_DB` > `state_root()/runtime/omo/...`。
+
+    与 root 仓 `bin/lib/repo_root.py` 的同名函数同契约、同优先级 (BET-Y2Q4-T10-233 判据-1
+    要求两仓用同一个名字, 否则「单一口径」只能靠文档措辞维持), 在此重述而不跨仓导入 ——
+    omo 被当作库消费时不能依赖宿主检出里的 `bin/`。两处 omo 侧的
+    `WORKSPACE / "runtime" / "omo" / "event-ledger.sqlite3"` 字面分叉因此收口到这里:
+    它们是 B1 判据「`resident daemon --once` 只写 dev state root」在 omo 侧的最后两个断点。
+    """
+    declared = os.environ.get(LEDGER_DB_ENV)
+    if declared:
+        return Path(declared).expanduser().absolute()
+    return state_root() / LEDGER_RELATIVE
+
 
 # 关键路径
 OMO_ROOT = WORKSPACE_ROOT / ".omo"
@@ -268,8 +301,12 @@ __all__ = (
     "RUNTIME_TRUTH_DIR",
     "STANDARDS_DIR",
     "STATE_DIR",
+    "LEDGER_DB_ENV",
+    "LEDGER_RELATIVE",
     "STATE_ROOT",
     "STATE_ROOT_ENV",
+    "event_ledger_path",
+    "state_root",
     "STATE_SYSTEM_YAML",
     "TASKS_DIR",
     "TASKS_PLANNED_DIR",

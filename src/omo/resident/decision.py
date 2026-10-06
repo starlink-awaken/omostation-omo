@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from omo.resident import WORKSPACE
+from omo.resident import WORKSPACE, write_path
 
 PROPOSAL_DIR = WORKSPACE / ".omo" / "_knowledge" / "evolution-proposals"
 # T10-13: 人读 md 收件箱 (增量双写, 与 JSON 同 ts+slug 一一对应)
@@ -85,8 +85,8 @@ def _write_proposal_md(result: dict[str, Any], *, ts: str, slug: str) -> Path | 
     is idempotent — an existing file is never overwritten (each proposal is
     unique by timestamp; a retry of the same event keeps the first draft).
     """
-    INBOX_DIR.mkdir(parents=True, exist_ok=True)
-    target = INBOX_DIR / f"decision-{ts}-{slug}.md"
+    write_path(INBOX_DIR).mkdir(parents=True, exist_ok=True)
+    target = write_path(INBOX_DIR) / f"decision-{ts}-{slug}.md"
     if target.exists():
         return target
     target.write_text(_render_proposal_md(result), encoding="utf-8")
@@ -94,14 +94,17 @@ def _write_proposal_md(result: dict[str, Any], *, ts: str, slug: str) -> Path | 
 
 
 def _write_proposal(result: dict[str, Any], trace_id: str) -> str | None:
-    PROPOSAL_DIR.mkdir(parents=True, exist_ok=True)
+    write_path(PROPOSAL_DIR).mkdir(parents=True, exist_ok=True)
     ts = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     slug = _safe_slug(trace_id or "event")
-    path = PROPOSAL_DIR / f"decision-{ts}-{slug}.json"
+    path = write_path(PROPOSAL_DIR) / f"decision-{ts}-{slug}.json"
     path.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
     # T10-13: 增量双写 md 收件箱 (同一提案的人读视图)
     _write_proposal_md(result, ts=ts, slug=slug)
-    return str(path.relative_to(WORKSPACE))
+    try:
+        return str(path.relative_to(WORKSPACE))
+    except ValueError:  # profile 声明后提案落在 state 根: 退回相对提案目录
+        return str(path.relative_to(write_path(PROPOSAL_DIR)))
 
 
 def _scan_proposals() -> list[dict[str, Any]]:
@@ -133,7 +136,7 @@ def _decide(event: dict[str, Any]) -> str | None:
     # retries of the same failure must not append near-identical files.
     today = datetime.now(UTC).strftime("%Y%m%d")
     slug = _safe_slug(trace_id)
-    for existing in PROPOSAL_DIR.glob(f"decision-{today}-*-{slug}.json"):
+    for existing in write_path(PROPOSAL_DIR).glob(f"decision-{today}-*-{slug}.json"):
         try:
             data = json.loads(existing.read_text(encoding="utf-8"))
         except (OSError, ValueError):  # unreadable draft → treat as absent
@@ -175,9 +178,9 @@ def _decision_handler(event: dict[str, Any]) -> None:
 
 def _iter_proposal_files() -> list[Path]:
     """All proposal JSONs under evolution-proposals, newest first."""
-    if not PROPOSAL_DIR.exists():
+    if not write_path(PROPOSAL_DIR).exists():
         return []
-    return sorted(PROPOSAL_DIR.glob("decision-*.json"), reverse=True)
+    return sorted(write_path(PROPOSAL_DIR).glob("decision-*.json"), reverse=True)
 
 
 def _load_proposal(path: Path) -> dict[str, Any] | None:
@@ -250,7 +253,7 @@ def _show_command(file_name: str) -> int:
     if "/" in file_name or ".." in file_name:
         print(f"[error] 只接受文件名 (非路径): {file_name}", file=sys.stderr)
         return 2
-    path = PROPOSAL_DIR / file_name
+    path = write_path(PROPOSAL_DIR) / file_name
     if not path.exists() or not path.name.startswith("decision-"):
         print(f"[error] 提案不存在: {file_name}", file=sys.stderr)
         return 2
@@ -282,7 +285,7 @@ def main(argv=None) -> int:
 
         raw_event = json.loads(args.json) if args.json else json.loads(sys.stdin.read() or "{}")
         event = raw_event if isinstance(raw_event, dict) else {}
-        queue = TaskQueue(Path(args.db) if args.db else default_db_path())
+        queue = TaskQueue(Path(args.db) if args.db else write_path(default_db_path()))
         result = queue.submit("bos://resident/decision/trigger", event)
         print(json.dumps({"queued": result.ok, "task_id": result.task_id, "reason": result.reason}))
         return 0 if result.ok else 2
@@ -408,7 +411,7 @@ def batch_archive_status(status: str = "reviewed", dry_run: bool = False) -> dic
     if status not in VALID_TRIAGE_STATUSES:
         return {"total": 0, "marked": 0, "skipped": 0, "error": "invalid_status"}
 
-    inbox_dir = WORKSPACE / ".omo" / "_knowledge" / "decision-proposals"
+    inbox_dir = write_path(INBOX_DIR)
     if not inbox_dir.exists():
         return {"total": 0, "marked": 0, "skipped": 0}
 
@@ -435,7 +438,7 @@ def batch_archive_status(status: str = "reviewed", dry_run: bool = False) -> dic
 
 def get_archive_progress() -> dict[str, Any]:
     """获取归档进度统计."""
-    inbox_dir = WORKSPACE / ".omo" / "_knowledge" / "decision-proposals"
+    inbox_dir = write_path(INBOX_DIR)
     if not inbox_dir.exists():
         return {"total": 0, "reviewed": 0, "promoted": 0, "dismissed": 0, "unreviewed": 0}
 
