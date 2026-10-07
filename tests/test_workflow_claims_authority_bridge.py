@@ -1105,6 +1105,242 @@ def test_red_production_mutation_broker_recomputes_run_and_lock_snapshots(
         claims_authority._verify_production_mutation_request(request, paths, phase="before")
 
 
+def _broker992_rebind_observe(
+    paths: claims_authority.AuthorityPaths,
+    request: dict[str, object],
+    *,
+    claimed_path: str,
+    write_surfaces: object,
+    surfaces: list[str] | None = None,
+) -> Path:
+    clone = paths.account_home / "agents/agent-a/attempts/attempt-a/ws"
+    run_path = clone / ".omo/_delivery/agent-workflows/runs/run-authority.yaml"
+    run = yaml.safe_load(run_path.read_text(encoding="utf-8"))
+    claim = run["claims"][0]
+    claim["paths"] = [claimed_path]
+    claim["surfaces"] = surfaces or []
+    run["work_packet"]["scope"]["write_surfaces"] = write_surfaces
+    run["work_packet_hash"] = canonical_digest(run["work_packet"])
+    run_path.write_text(yaml.safe_dump(run, sort_keys=False), encoding="utf-8")
+    request.update(
+        work_packet_digest=run["work_packet_hash"],
+        v1_claim_digest=canonical_digest(claim),
+        v1_run_digest=f"sha256:{hashlib.sha256(run_path.read_bytes()).hexdigest()}",
+        requested_paths_digest=canonical_digest({"paths": claim["paths"], "surfaces": claim["surfaces"]}),
+    )
+    return clone
+
+
+@pytest.mark.parametrize(
+    "surface",
+    [
+        "bin/panorama/assets/host",
+        "bin/panorama/assets/host/",
+        "bin/panorama/assets/host/live_server.py.asset",
+        "bin/panorama/assets/host/*.asset",
+    ],
+)
+def test_broker992_observe_accepts_native_exact_directory_and_glob_scope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    surface: str,
+) -> None:
+    paths, request, _ = _production_observe_fixture(tmp_path, monkeypatch)
+    clone = _broker992_rebind_observe(
+        paths,
+        request,
+        claimed_path="bin/panorama/assets/host/live_server.py.asset",
+        write_surfaces=[surface],
+    )
+    run_path = clone / ".omo/_delivery/agent-workflows/runs/run-authority.yaml"
+    before = run_path.read_bytes()
+    assert claims_authority._verify_production_observe_request(request, paths)["run_id"] == "run-authority"
+    assert run_path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("claimed_path", "write_surfaces", "surfaces"),
+    [
+        ("bin/panorama/assets/host-other/file.asset", ["bin/panorama/assets/host"], []),
+        ("dir/file.py/child", ["dir/file.py"], []),
+        ("existing.py", ["other.py"], []),
+        ("existing.py", [""], []),
+        ("existing.py", [7], []),
+        ("existing.py", None, []),
+        ("../outside.py", ["../outside.py"], []),
+        ("/tmp/outside.py", ["/tmp/outside.py"], []),
+        ("existing.py", ["existing.py"], ["governance_state"]),
+    ],
+)
+def test_broker992_observe_rejects_prefix_escape_invalid_scope_and_surface_labels(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    claimed_path: str,
+    write_surfaces: object,
+    surfaces: list[str],
+) -> None:
+    paths, request, _ = _production_observe_fixture(tmp_path, monkeypatch)
+    _broker992_rebind_observe(
+        paths,
+        request,
+        claimed_path=claimed_path,
+        write_surfaces=write_surfaces,
+        surfaces=surfaces,
+    )
+    with pytest.raises(AuthorityError, match="CLAIM_SCOPE_VIOLATION"):
+        claims_authority._verify_production_observe_request(request, paths)
+
+
+@pytest.mark.parametrize("outside", [False, True])
+def test_broker992_observe_rejects_symlink_alias_and_escape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outside: bool,
+) -> None:
+    paths, request, _ = _production_observe_fixture(tmp_path, monkeypatch)
+    clone = _broker992_rebind_observe(
+        paths,
+        request,
+        claimed_path="dir/link/file.py",
+        write_surfaces=["dir" + "/link"],
+    )
+    target = tmp_path / "outside" if outside else clone / "dir/real"
+    target.mkdir(parents=True)
+    link = clone / "dir/link"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(target, target_is_directory=True)
+    with pytest.raises(AuthorityError, match="CLAIM_SCOPE_VIOLATION"):
+        claims_authority._verify_production_observe_request(request, paths)
+
+
+def _broker992_mutation_request(
+    paths: claims_authority.AuthorityPaths,
+    *,
+    operation: str = "heartbeat",
+) -> dict[str, object]:
+    clone = paths.account_home / "agents/agent-a/attempts/attempt-a/ws"
+    registry = {
+        "runner": {
+            "workspace_root": str(clone),
+            "run_state_dir": ".omo/_delivery/agent-workflows/runs",
+            "lock_state_dir": ".omo/_delivery/agent-workflows/locks",
+        }
+    }
+    snapshot = lifecycle._authority_snapshot(registry, "run-authority")
+    identity = lifecycle._authority_envelope_identity(registry, snapshot)
+    return {
+        "schema": "claim-mutation-envelope/v2",
+        **{key: identity[key] for key in claims_authority._ENVELOPE_IDENTITY_FIELDS},
+        "request_id": str(uuid4()),
+        "authority_id": "omo-claims-authority-r0",
+        "operation": operation,
+        "run_digest": snapshot["run_digest"],
+        "lock_set_digest": snapshot["lock_set_digest"],
+        "resulting_run_digest": snapshot["run_digest"],
+        "resulting_lock_set_digest": snapshot["lock_set_digest"],
+        "members": [],
+        "mutation_process_identity_digest": _digest("9"),
+    }
+
+
+@pytest.mark.parametrize("phase", ["before", "after"])
+def test_broker992_mutation_deduplicates_relative_and_absolute_lock_aliases(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    phase: str,
+) -> None:
+    paths, _, _ = _production_observe_fixture(tmp_path, monkeypatch)
+    clone = paths.account_home / "agents/agent-a/attempts/attempt-a/ws"
+    run_path = clone / ".omo/_delivery/agent-workflows/runs/run-authority.yaml"
+    run = yaml.safe_load(run_path.read_text(encoding="utf-8"))
+    run["locks"].append(".omo/_delivery/agent-workflows/locks/path_existing.py.lock.yaml")
+    run_path.write_text(yaml.safe_dump(run, sort_keys=False), encoding="utf-8")
+    request = _broker992_mutation_request(paths)
+    verified = claims_authority._verify_production_mutation_request(request, paths, phase=phase)
+    assert verified["lock_set_digest"] == request["lock_set_digest"]
+    assert verified["claims_empty"] is False
+    lock_path = clone / run["locks"][-1]
+    lock_path.write_text(lock_path.read_text(encoding="utf-8") + "tampered: true\n", encoding="utf-8")
+    with pytest.raises(AuthorityError, match="AFFECTED_GRAPH_MISMATCH"):
+        claims_authority._verify_production_mutation_request(request, paths, phase=phase)
+
+
+def _broker992_empty_run(paths: claims_authority.AuthorityPaths) -> None:
+    clone = paths.account_home / "agents/agent-a/attempts/attempt-a/ws"
+    run_path = clone / ".omo/_delivery/agent-workflows/runs/run-authority.yaml"
+    run = yaml.safe_load(run_path.read_text(encoding="utf-8"))
+    for raw in run["locks"]:
+        Path(raw).unlink()
+    run["claims"] = []
+    run["locks"] = []
+    run_path.write_text(yaml.safe_dump(run, sort_keys=False), encoding="utf-8")
+
+
+@pytest.mark.parametrize("operation", ["heartbeat", "close"])
+def test_broker992_real_empty_native_run_can_reserve_idempotently(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    paths, _, _ = _production_observe_fixture(tmp_path, monkeypatch)
+    _broker992_empty_run(paths)
+    local_store = _AuthorityStore.connect_for_test(paths.account_home / "test-authority", f"test:{uuid4()}")
+    request = _broker992_mutation_request(paths, operation=operation)
+    request.pop("resulting_run_digest")
+    request.pop("resulting_lock_set_digest")
+    request["authority_id"] = local_store.authority_id
+    receipt = local_store.begin_claim_mutation(request)
+    assert receipt["state"] == "reserved"
+    assert receipt["members"] == []
+    assert local_store.begin_claim_mutation(request) == receipt
+    changed = {**request, "run_digest": _digest("f")}
+    with pytest.raises(AuthorityError, match="REQUEST_ID_REUSE_MISMATCH"):
+        local_store.begin_claim_mutation(changed)
+
+
+def test_broker992_empty_members_do_not_hide_real_native_claims(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths, _, _ = _production_observe_fixture(tmp_path, monkeypatch)
+    local_store = _AuthorityStore.connect_for_test(paths.account_home / "test-authority", f"test:{uuid4()}")
+    request = _broker992_mutation_request(paths)
+    request.pop("resulting_run_digest")
+    request.pop("resulting_lock_set_digest")
+    request["authority_id"] = local_store.authority_id
+    with pytest.raises(AuthorityError, match="CLAIM_SCOPE_VIOLATION"):
+        local_store.begin_claim_mutation(request)
+    assert local_store.scalar("SELECT COUNT(*) FROM claim_mutation_batches") == 0
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "error"),
+    [
+        ("head_oid", "b" * 40, "IDENTITY_MISMATCH"),
+        ("work_packet_digest", _digest("f"), "WORK_PACKET_UNBOUND"),
+        ("run_digest", _digest("f"), "AFFECTED_GRAPH_MISMATCH"),
+    ],
+)
+def test_broker992_empty_run_still_rechecks_identity_binding_and_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: str,
+    error: str,
+) -> None:
+    paths, _, _ = _production_observe_fixture(tmp_path, monkeypatch)
+    _broker992_empty_run(paths)
+    local_store = _AuthorityStore.connect_for_test(paths.account_home / "test-authority", f"test:{uuid4()}")
+    request = _broker992_mutation_request(paths)
+    request.pop("resulting_run_digest")
+    request.pop("resulting_lock_set_digest")
+    request.update(authority_id=local_store.authority_id)
+    request[field] = value
+    with pytest.raises(AuthorityError, match=error):
+        local_store.begin_claim_mutation(request)
+    assert local_store.scalar("SELECT COUNT(*) FROM claim_mutation_batches") == 0
+
+
 @pytest.mark.parametrize(
     ("field", "value", "code"),
     [
