@@ -6,6 +6,7 @@ and never performs Git, GitHub, service-control, or host-recovery effects.
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 import os
@@ -18,7 +19,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 import yaml
@@ -605,6 +606,20 @@ def _safe_repo_relative(root: Path, raw: str, *, code: str) -> Path:
     return resolved
 
 
+def _surface_allows_path(surface: str, claimed_path: str) -> bool:
+    """Match the native WorkPacket rule in bin/plan/bet-ledger.py."""
+    normalized_surface = surface.strip().strip("/")
+    if not normalized_surface:
+        return False
+    if any(token in normalized_surface for token in "*?["):
+        return fnmatch.fnmatchcase(claimed_path, normalized_surface)
+    if claimed_path == normalized_surface:
+        return True
+    surface_path = PurePosixPath(normalized_surface)
+    looks_like_directory = "/" in normalized_surface and not surface_path.suffix
+    return looks_like_directory and claimed_path.startswith(normalized_surface + "/")
+
+
 _REMOTE_OBSERVATION_FIELDS = {
     "schema",
     "repository_identity_digest",
@@ -839,10 +854,31 @@ def _verify_production_observe_request(
         raise AuthorityError("CLAIM_SCOPE_VIOLATION", "requested_paths_digest")
     scope = work_packet.get("scope")
     write_surfaces = scope.get("write_surfaces") if isinstance(scope, dict) else None
-    if not isinstance(write_surfaces, list) or not set(requested_paths["paths"]).issubset(
-        {str(item) for item in write_surfaces}
+    if (
+        requested_paths["surfaces"]
+        or not isinstance(write_surfaces, list)
+        or any(not isinstance(surface, str) or not surface.strip() for surface in write_surfaces)
     ):
         raise AuthorityError("CLAIM_SCOPE_VIOLATION", "work_packet_scope")
+    root = clone_root.resolve()
+    safe_surfaces = [
+        (
+            Path(surface.strip()).as_posix(),
+            _safe_repo_relative(root, surface.strip(), code="CLAIM_SCOPE_VIOLATION").relative_to(root).as_posix(),
+        )
+        for surface in write_surfaces
+    ]
+    for raw_path in requested_paths["paths"]:
+        resolved = _safe_repo_relative(root, raw_path, code="CLAIM_SCOPE_VIOLATION")
+        if resolved != root / Path(raw_path):
+            raise AuthorityError("CLAIM_SCOPE_VIOLATION", "symlink")
+        normalized = Path(raw_path).as_posix()
+        if not any(
+            _surface_allows_path(surface, normalized)
+            and _surface_allows_path(resolved_surface, resolved.relative_to(root).as_posix())
+            for surface, resolved_surface in safe_surfaces
+        ):
+            raise AuthorityError("CLAIM_SCOPE_VIOLATION", "work_packet_scope")
     affected = claim.get("affected_graph")
     if not isinstance(affected, dict):
         raise AuthorityError("AFFECTED_GRAPH_MISMATCH", "claim_receipt")
@@ -967,46 +1003,18 @@ def _verify_production_mutation_request(
     if request.get("affected_graph_digest") != canonical_digest(affected_hashes):
         raise AuthorityError("AFFECTED_GRAPH_MISMATCH", "affected_graph_digest")
 
-    lock_dir = clone_root / ".omo/_delivery/agent-workflows/locks"
-    raw_locks = run.get("locks")
-    if raw_locks is None:
-        raw_locks = []
-    if not isinstance(raw_locks, list) or not all(isinstance(item, str) and item for item in raw_locks):
-        raise AuthorityError("AFFECTED_GRAPH_MISMATCH", "lock_set")
-    selected = {str(item) for item in raw_locks}
-    if lock_dir.exists():
-        for candidate in lock_dir.glob("*.lock.yaml"):
-            try:
-                lock = yaml.safe_load(candidate.read_text(encoding="utf-8")) or {}
-            except (OSError, UnicodeError, yaml.YAMLError):
-                lock = {}
-            if isinstance(lock, dict) and lock.get("run_id") == run_id:
-                selected.add(str(candidate))
-    lock_records = []
-    for raw in sorted(selected):
-        candidate = Path(raw)
-        if not candidate.is_absolute():
-            candidate = clone_root / candidate
-        resolved = candidate.resolve(strict=False)
-        try:
-            resolved.relative_to(lock_dir.resolve())
-        except ValueError as exc:
-            raise AuthorityError("AFFECTED_GRAPH_MISMATCH", "lock_path") from exc
-        exists = resolved.is_file()
-        lock_records.append(
-            {
-                "path": str(resolved.relative_to(clone_root.resolve())),
-                "exists": exists,
-                "content_digest": (f"sha256:{hashlib.sha256(resolved.read_bytes()).hexdigest()}" if exists else None),
-            }
-        )
     expected_run_field = "run_digest" if phase == "before" else "resulting_run_digest"
     expected_lock_field = "lock_set_digest" if phase == "before" else "resulting_lock_set_digest"
     run_digest = f"sha256:{hashlib.sha256(run_bytes).hexdigest()}"
-    lock_set_digest = canonical_digest(lock_records)
+    lock_set_digest = _recompute_lock_set_digest(clone_root, run_id, run)
     if request.get(expected_run_field) != run_digest or request.get(expected_lock_field) != lock_set_digest:
         raise AuthorityError("AFFECTED_GRAPH_MISMATCH", f"{phase}_snapshot")
-    return {"run_id": run_id, "run_digest": run_digest, "lock_set_digest": lock_set_digest}
+    return {
+        "run_id": run_id,
+        "run_digest": run_digest,
+        "lock_set_digest": lock_set_digest,
+        "claims_empty": not claims,
+    }
 
 
 class _AuthorityStore:
@@ -2194,6 +2202,13 @@ class _AuthorityStore:
             actual_members = [self._member_from_row(row) for row in rows]
             if not rows and operation == "claim" and supplied_members == []:
                 pass
+            elif not rows and operation in {"heartbeat", "close"} and supplied_members == []:
+                # Empty members are valid only for a genuinely empty native Run.
+                # Re-read its identity/binding/snapshot inside the store transaction;
+                # a caller's empty members list alone is never proof of emptiness.
+                verified = _verify_production_mutation_request(request, self.test_paths, phase="before")
+                if not verified["claims_empty"]:
+                    raise AuthorityError("CLAIM_SCOPE_VIOLATION", "complete_run_members")
             elif not rows or supplied_members != actual_members:
                 if len(supplied_members) == len(actual_members):
                     raise AuthorityError("CLAIM_VERSION_STALE", "member_version")
