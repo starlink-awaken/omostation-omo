@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA = "omo.pipeline-supervisor.v1"
-EMBED_NODE_URL = "http://100.64.110.118:18700/embed"  # Mac mini mesh 节点 (T3-02 P3)
+EMBED_NODE_URL = "http://mac-mini-brew:18700/embed"  # Mac mini mesh 节点 (T3-02 P3); MagicDNS 名, 免随 tailscale IP 变更断链 (2026-10-10, 已历一次 IP 漂移)
 INBOUND_DIR = Path.home() / "Inbox" / "ocr-inbound"
 
 PIPELINE_VECTORS = "pipeline-vectors.jsonl"
