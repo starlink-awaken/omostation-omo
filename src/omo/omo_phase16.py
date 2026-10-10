@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from .omo_paths import state_root
 from .omo_shared import utc_now, write_text, write_yaml
 
 
@@ -414,8 +415,7 @@ def adoption_payload() -> dict[str, Any]:
 
 
 def external_docs() -> dict[Path, str]:
-    workspace_root = os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace"))
-    workspace = f"{workspace_root}/.omo/"
+    workspace = f"{state_root()}/.omo/"
     return {
         EXTERNAL_OMO_ROOT
         / "_delivery"

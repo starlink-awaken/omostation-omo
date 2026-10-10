@@ -178,7 +178,9 @@ class TestSelfHealingEngine:
         assert engine._rules[0].name == "error_spike_audit"
 
     def test_debt_action_creates_file(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("omo.omo_self_healing.OMO_ROOT", tmp_path)
+        # T10-239: ``OMO_ROOT`` 从 import 时常量换成调用时刻 resolver,
+        # 缝跟着搬到 ``omo_project_root()`` 上 —— 断言与落点判据一条没改。
+        monkeypatch.setattr("omo.omo_self_healing.omo_project_root", lambda: tmp_path)
 
         rules = [
             HealingRule(

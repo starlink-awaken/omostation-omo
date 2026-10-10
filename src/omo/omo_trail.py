@@ -36,15 +36,22 @@ CLI:
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 from typing import Any
 
 from omo.omo_io import AppendOnlyLog
 from omo.omo_io_schemas import OmoTrailRecord
+from omo.omo_paths import state_root
 
-_WORKSPACE = Path(os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace")))
-DEFAULT_TRAIL_PATH = _WORKSPACE / ".omo" / "_knowledge" / "omo-trail.jsonl"
+
+def default_trail_path() -> Path:
+    """trail step 的落点 —— 写面，跟随 profile 的 state 根 (BET-Y2Q4-T10-239)。
+
+    原先是模块级常量并作为 ``record_step`` / ``read_trail`` 的**默认参数**，
+    于是取值冻结在 import 时刻；改成函数后默认参数为 ``None``，在调用时刻解析。
+    未声明 profile 时与历史取值逐字节相同。
+    """
+    return state_root() / ".omo" / "_knowledge" / "omo-trail.jsonl"
 
 
 def record_step(
@@ -55,7 +62,7 @@ def record_step(
     status: str = "ok",
     duration_ms: int = 0,
     parent_step_id: str | None = None,
-    log_path: Path | str = DEFAULT_TRAIL_PATH,
+    log_path: Path | str | None = None,
 ) -> dict[str, Any]:
     """追加一条 trail step (AppendOnlyLog 写, Pydantic schema 校验).
 
@@ -78,6 +85,8 @@ def record_step(
     """
     from omo.omo_audit import _utc_now  # Round 8 P2 锁: Z-suffix 统一
 
+    path = Path(log_path) if log_path is not None else default_trail_path()
+
     record_obj = OmoTrailRecord(
         ts=_utc_now(),
         actor=actor,
@@ -89,13 +98,13 @@ def record_step(
     )
     record = record_obj.model_dump()
     # Round 9 P0: 写时 Pydantic 校验 (schema= 参数)
-    AppendOnlyLog(Path(log_path)).append(record, schema=OmoTrailRecord, sort_keys=True)
+    AppendOnlyLog(path).append(record, schema=OmoTrailRecord, sort_keys=True)
     return record
 
 
 def read_trail(
     *,
-    log_path: Path | str = DEFAULT_TRAIL_PATH,
+    log_path: Path | str | None = None,
     limit: int = 100,
     actor: str | None = None,
     action: str | None = None,
@@ -103,7 +112,7 @@ def read_trail(
     """读最近 trail steps (倒序, 最新的在前).
 
     Args:
-        log_path: 源 .jsonl (默认 DEFAULT_TRAIL_PATH).
+        log_path: 源 .jsonl (默认 default_trail_path()).
         limit: 最大返回条数 (默认 100).
         actor: 可选 actor 过滤 (e.g. "user", "agent:foo").
         action: 可选 action 过滤 (e.g. "edit", "exec").
@@ -111,7 +120,8 @@ def read_trail(
     Returns:
         trail steps list (倒序, 最新在前), 长度 ≤ limit.
     """
-    log = AppendOnlyLog(Path(log_path))
+    path = Path(log_path) if log_path is not None else default_trail_path()
+    log = AppendOnlyLog(path)
     records = log.read_all()
 
     if actor is not None:
@@ -207,8 +217,8 @@ def main(argv: list[str] | None = None) -> int:
     rec.add_argument(
         "--log",
         type=Path,
-        default=DEFAULT_TRAIL_PATH,
-        help=f"落点 .jsonl (默认: {DEFAULT_TRAIL_PATH})",
+        default=default_trail_path(),
+        help=f"落点 .jsonl (默认: {default_trail_path()})",
     )
 
     # show 子命令
@@ -219,8 +229,8 @@ def main(argv: list[str] | None = None) -> int:
     show.add_argument(
         "--log",
         type=Path,
-        default=DEFAULT_TRAIL_PATH,
-        help=f"源 .jsonl (默认: {DEFAULT_TRAIL_PATH})",
+        default=default_trail_path(),
+        help=f"源 .jsonl (默认: {default_trail_path()})",
     )
 
     # seed 子命令 (Round 19 P0: 让 trail 业务真落地, 写 5 条样例 step)
@@ -228,8 +238,8 @@ def main(argv: list[str] | None = None) -> int:
     seed.add_argument(
         "--log",
         type=str,
-        default=str(DEFAULT_TRAIL_PATH),
-        help=f"落点 .jsonl (默认: {DEFAULT_TRAIL_PATH})",
+        default=str(default_trail_path()),
+        help=f"落点 .jsonl (默认: {default_trail_path()})",
     )
 
     args = parser.parse_args(argv)

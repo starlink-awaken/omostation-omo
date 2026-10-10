@@ -7,10 +7,12 @@ import sys
 import warnings
 from pathlib import Path
 
+from omo.omo_paths import code_root
+
 
 def _omo_dir() -> Path | None:
     """定位当前 workspace 的 .omo 目录；不存在则返回 None。"""
-    ws = Path(os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace")))
+    ws = Path(os.environ.get("WORKSPACE_ROOT", str(code_root())))
     omo_dir = ws / ".omo"
     return omo_dir if omo_dir.is_dir() else None
 
@@ -474,7 +476,7 @@ def _refresh_dashboard_safely(trigger: str = "") -> None:
 
         from omo.omo_debt import refresh_outputs
 
-        ws = Path(os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace")))
+        ws = Path(os.environ.get("WORKSPACE_ROOT", str(code_root())))
         omo_dir = ws / ".omo"
         if not omo_dir.is_dir():
             return

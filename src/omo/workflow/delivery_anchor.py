@@ -19,8 +19,13 @@ Trigger discipline — all three must hold, otherwise byte-identical no-op:
   (b) the production layout is being addressed (enforced by the caller hook in
       ``core._runner_path``; custom runner configs never reach here).
   (c) an anchor is locatable (``OMOSTATION_STATE_ROOT`` first — ADR-0456
-      profile — then ``canonical_root()`` semantics: ``OMOSTATION_ROOT`` +
-      marker, ``~/Workspace`` + marker); otherwise silent no-op (CI-safe).
+      profile — then ``OMOSTATION_ROOT`` + marker, then the checkout that owns
+      ``ws`` as read from its own ``gitdir:`` pointer + marker); otherwise
+      silent no-op (CI-safe). The ``gitdir:`` pointer is the same value
+      ``git rev-parse --git-common-dir`` resolves to, so the owning root is read
+      from git's own record instead of guessed from a machine location — a
+      worktree of a *different* clone (e.g. an install root) now anchors to its
+      own clone rather than to whatever ``~/Workspace`` happens to be.
 """
 
 from __future__ import annotations
@@ -38,11 +43,49 @@ CONFLICT_LOG_NAME = ".delivery-anchor-conflicts.log"
 LEDGER_NAME = "events.jsonl"
 
 
-def locate_anchor() -> Path | None:
+def _worktree_gitdir(ws: Path) -> Path | None:
+    """Resolved ``gitdir:`` target of a linked worktree; ``None`` otherwise.
+
+    ``ws/.git`` is a *file* only for a linked worktree — an ordinary clone keeps
+    a directory there and a foreign checkout of some other repo never anchors.
+    """
+    git_entry = ws / ".git"
+    if not git_entry.is_file():
+        return None
+    try:
+        text = git_entry.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return None
+    head, sep, raw = text.partition("gitdir:")
+    if not sep or head.strip():
+        return None
+    gitdir = Path(raw.strip())
+    if not gitdir.is_absolute():
+        gitdir = ws / gitdir
+    try:
+        return gitdir.resolve()
+    except OSError:
+        return None
+
+
+def _anchor_from_checkout(ws: Path) -> Path | None:
+    """The checkout that owns ``ws``, read from ``ws``'s own ``gitdir:`` pointer."""
+    gitdir = _worktree_gitdir(ws)
+    if gitdir is None:
+        return None
+    worktrees = gitdir.parent
+    if worktrees.name != "worktrees" or worktrees.parent.name != ".git":
+        return None
+    root = worktrees.parent.parent
+    return root if (root / MARKER).is_file() else None
+
+
+def locate_anchor(ws: Path | None = None) -> Path | None:
     """Locate the root that owns delivery state; ``None`` when not locatable.
 
-    Declared ADR-0456 profile env wins, then ``canonical_root()`` semantics.
-    Never falls back to ``__file__`` — an unlocatable anchor is a silent no-op.
+    Declared ADR-0456 profile env wins, then ``OMOSTATION_ROOT`` + marker, then
+    the checkout that owns ``ws``. Never falls back to ``__file__`` or to a
+    guessed machine path — an unlocatable anchor is a silent no-op.
     """
     declared = os.environ.get(STATE_ROOT_ENV)
     if declared:
@@ -53,33 +96,20 @@ def locate_anchor() -> Path | None:
         candidate = Path(env_root).expanduser()
         if (candidate / MARKER).is_file():
             return candidate
-    home_root = Path.home() / "Workspace"
-    if (home_root / MARKER).is_file():
-        return home_root
-    return None
+    return _anchor_from_checkout(ws) if ws is not None else None
 
 
 def is_worktree_of(ws: Path, anchor: Path) -> bool:
     """True only for a linked worktree *of* ``anchor`` (stricter than
     ``repo_root.is_worktree``: a foreign clone of some other repo never anchors)."""
-    git_entry = ws / ".git"
-    if not git_entry.is_file():
+    gitdir = _worktree_gitdir(ws)
+    if gitdir is None:
         return False
-    try:
-        text = git_entry.read_text(encoding="utf-8", errors="replace").strip()
-    except OSError:
-        return False
-    head, sep, raw = text.partition("gitdir:")
-    if not sep or head.strip():
-        return False
-    gitdir = Path(raw.strip())
-    if not gitdir.is_absolute():
-        gitdir = ws / gitdir
     worktrees_root = anchor / ".git" / "worktrees"
     if not worktrees_root.is_dir():
         return False
     try:
-        return gitdir.resolve().is_relative_to(worktrees_root.resolve())
+        return gitdir.is_relative_to(worktrees_root.resolve())
     except OSError:
         return False
 
@@ -92,7 +122,7 @@ def ensure_delivery_anchor(ws: Path) -> Path | None:
     no-op (no anchor locatable, not a worktree of it, or an unexpected
     non-directory occupant).
     """
-    anchor = locate_anchor()
+    anchor = locate_anchor(ws)
     if anchor is None or not is_worktree_of(ws, anchor):
         return None
     target = ws / DELIVERY_RELATIVE

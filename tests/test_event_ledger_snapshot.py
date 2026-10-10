@@ -380,7 +380,7 @@ def test_cli_snapshot_does_not_create_the_default_ledger(tmp_path: Path, monkeyp
     silently initialize a real database the operator never asked for.
     """
     workspace = tmp_path / "ws"
-    monkeypatch.setenv("WORKSPACE_ROOT", str(workspace))
+    monkeypatch.setenv("OMOSTATION_STATE_ROOT", str(workspace))
     monkeypatch.delenv("OMO_EVENT_LEDGER_DB", raising=False)
     default_db = workspace / "runtime" / "omo" / "event-ledger.sqlite3"
     dest = tmp_path / "prod" / "event-ledger.sqlite3"

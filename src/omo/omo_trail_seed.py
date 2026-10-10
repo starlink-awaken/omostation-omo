@@ -30,7 +30,7 @@ from __future__ import annotations
 import argparse
 from typing import Any
 
-from omo.omo_trail import DEFAULT_TRAIL_PATH, record_step
+from omo.omo_trail import default_trail_path, record_step
 
 # 5 条代表性 step (反映老王 Round 12-18 工作模式)
 SEED_STEPS: list[dict[str, Any]] = [
@@ -92,8 +92,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--log",
         type=str,
-        default=str(DEFAULT_TRAIL_PATH),
-        help=f"落点 .jsonl (默认: {DEFAULT_TRAIL_PATH})",
+        default=str(default_trail_path()),
+        help=f"落点 .jsonl (默认: {default_trail_path()})",
     )
     args = parser.parse_args(argv)
     return cmd_trail_seed(args)

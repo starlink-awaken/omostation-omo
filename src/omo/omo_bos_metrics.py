@@ -34,10 +34,18 @@ from omo.omo_io import AppendOnlyLog
 
 # Round 17 P0: 改用 Pydantic OmoBosMetricsRecord + BosStatus enum (替代旧 dataclass)
 from omo.omo_io_schemas import BosStatus, OmoBosMetricsRecord
+from omo.omo_paths import state_root
 
-# 复用 omo_bos 的工作区根
-_WORKSPACE = Path(os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace")))
-DEFAULT_METRICS_PATH = _WORKSPACE / ".omo" / "_knowledge" / "bos-metrics.jsonl"
+
+def default_metrics_path() -> Path:
+    """BOS invoke 指标的落点 —— 写面，跟随 profile 的 state 根 (BET-Y2Q4-T10-239)。
+
+    函数而非常量：常量在 import 时求值，在 import 之后声明 profile 的调用方会冻结在旧根。
+    模块内 ``path = default_metrics_path()`` 这类写法本来就是运行时解析，
+    monkeypatch 缝照旧可用 —— 只是缝的名字从常量名换成这个函数名。
+    """
+    return state_root() / ".omo" / "_knowledge" / "bos-metrics.jsonl"
+
 
 # Agora 内部 SQLite metrics 库路径 (与 agora.mcp.bos_metrics 默认值一致)
 _AGORA_METRICS_DB = Path(os.environ.get("AGORA_METRICS_DB", str(Path.home() / ".agora" / "bos_metrics.db")))
@@ -79,7 +87,7 @@ def sync_from_agora_metrics(
     用 id watermark 去重, 不依赖 Agora 进程.
     """
     if path is None:
-        path = DEFAULT_METRICS_PATH
+        path = default_metrics_path()
     db_path = Path(agora_db if agora_db is not None else _AGORA_METRICS_DB)
     if not db_path.exists():
         return 0
@@ -124,7 +132,7 @@ def sync_from_agora_metrics(
     return appended
 
 
-# 注意: 不在模块级 instantiate log, 让 monkeypatch.DEFAULT_METRICS_PATH 仍生效.
+# 注意: 不在模块级 instantiate log, 让 monkeypatch default_metrics_path() 仍生效.
 # AppendOnlyLog 构造轻量 (Path + Lock), per-call 创建开销可忽略.
 
 # Status 白名单 (type hint, caller 兼容 — Round 17 P0 保留作为向后兼容)
@@ -149,12 +157,12 @@ def record(
 ) -> None:
     """记录 1 次 invoke 结果.
 
-    ``path`` 缺省走 ``DEFAULT_METRICS_PATH`` (运行时读, 支持 monkeypatch).
+    ``path`` 缺省走 ``default_metrics_path()`` (运行时读, 支持 monkeypatch).
     JSONL 物理写盘走 AppendOnlyLog (Round 2: SSOT).
     Round 17 P0: 内部用 Pydantic OmoBosMetricsRecord + BosStatus enum + schema= 写时校验.
     """
     if path is None:
-        path = DEFAULT_METRICS_PATH
+        path = default_metrics_path()
     # Pydantic 构造 (Status Literal -> BosStatus enum 转换)
     rec = OmoBosMetricsRecord(
         uri=uri,
@@ -211,11 +219,13 @@ class _Timer:
             self.error = error[:200]
 
 
-def _read_all(path: Path = DEFAULT_METRICS_PATH) -> list[dict[str, Any]]:
+def _read_all(path: Path | None = None) -> list[dict[str, Any]]:
     """读所有 metrics 记录 — 走 AppendOnlyLog.read_all (Round 2: SSOT).
 
     内部用 ``AppendOnlyLog(path).read_all()`` — 复用 omo_io 的容错 JSONL 读.
     """
+    if path is None:
+        path = default_metrics_path()
     return AppendOnlyLog(path).read_all()
 
 
@@ -226,7 +236,7 @@ def get_metrics(
 ) -> list[dict[str, Any]]:
     """读 metrics 记录. uri 过滤; limit=0 全量, 否则取最近 N 条."""
     if path is None:
-        path = DEFAULT_METRICS_PATH
+        path = default_metrics_path()
     recs = _read_all(path)
     if uri is not None:
         recs = [r for r in recs if r.get("uri") == uri]
@@ -250,7 +260,7 @@ def summary(
         }
     """
     if path is None:
-        path = DEFAULT_METRICS_PATH
+        path = default_metrics_path()
         # 长期机制: 默认路径自动同步 Agora SQLite metrics, 保证 OMO 看到真实 BOS 流量.
         # 显式传 path 时跳过 — 调用方/test 控制自己的 metrics 源, 不 auto-sync 污染.
         sync_from_agora_metrics(path)
@@ -319,12 +329,12 @@ def reset(path: Path | None = None) -> int:
     Round 2: 走 AppendOnlyLog.clear (SSOT 原子清空).
     """
     if path is None:
-        path = DEFAULT_METRICS_PATH
+        path = default_metrics_path()
     return AppendOnlyLog(path).clear()
 
 
 __all__ = (
-    "DEFAULT_METRICS_PATH",
+    "default_metrics_path",
     "BosStatus",  # Round 17 P0: Pydantic enum 替代旧 Literal
     "OmoBosMetricsRecord",  # Round 17 P0: Pydantic 替代旧 BosInvokeRecord dataclass
     "Status",

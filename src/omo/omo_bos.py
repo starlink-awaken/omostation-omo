@@ -37,17 +37,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from omo.omo_paths import code_root
+
+
 # ── 路径配置 (P33-W3 暴露给外部) ──────────────────────
 # kairon packages 根目录 — kairon 23 个包, 包含 kos 实体存储
-_KAIRON_PACKAGES_SRC = (
-    Path(os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace")))
-    / "projects"
-    / "knowledge"
-    / "kairon"
-    / "packages"
-    / "kos"
-    / "src"
-)
+def kairon_packages_src() -> Path:
+    """kos 包源码根 —— 读侧，跟随当前检出 (BET-Y2Q4-T10-239)。
+
+    这条拼的是检出内的源码，不是运行态，所以挂 code 根；
+    注册表的写在面在下面的 ``default_registry_path()``。
+    """
+    return code_root() / "projects" / "knowledge" / "kairon" / "packages" / "kos" / "src"
+
 
 # ── BOS URI 命名空间 ────────────────────────────────────────
 # 5 个 domain 固定不可扩展 (北星 ADR-0007 约束)
@@ -86,11 +88,21 @@ LEGACY_DOMAIN_MAP: dict[str, str] = {
 Domain = Literal["memory", "governance", "analysis", "persona", "capability"]
 Protocol = Literal["http", "stdio", "internal"]
 
+
 # ── 持久化路径 ────────────────────────────────────────────
 # P33-W1: 战役 2 起步故意走本地 JSON (避开 KOS 写入复杂)
-DEFAULT_REGISTRY_PATH = (
-    Path(os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace"))) / ".omo" / "_knowledge" / "bos-registry.json"
-)
+def default_registry_path() -> Path:
+    """BOS 注册表落点 —— 检出的已跟踪治理镜像，跟随当前检出 (BET-Y2Q4-T10-239)。
+
+    定性依据（三条实测，不是「目录名像运行态」）：该文件在根仓被 git 跟踪
+    （`git ls-files --error-unmatch` 命中、`check-ignore` 无匹配），生成者是
+    `bin/ssot/sync-bos-registry.py`（写检出的那份，并在不一致时 FAIL），CI 按
+    `bos-services.yaml` 校验它。挂 state 根会让声明 dev profile 后
+    `load_registry()` 读到一个空目录 —— 而且没有测试会红；`save_registry()` 与
+    读侧必须同根，否则注册写进去、读者看不见。同目录的 `*.jsonl`（只追加、
+    不跟踪）仍挂 state 根，见 `omo_trail` / `omo_event` / `omo_bos_metrics`。
+    """
+    return code_root() / ".omo" / "_knowledge" / "bos-registry.json"
 
 
 # ── 数据类 ───────────────────────────────────────────────
@@ -195,7 +207,7 @@ def parse_bos_uri(uri: str) -> dict[str, str]:
 # ── 本地 JSON 持久化 ──────────────────────────────────────
 
 
-def load_registry(path: Path = DEFAULT_REGISTRY_PATH) -> list[dict[str, Any]]:
+def load_registry(path: Path | None = None) -> list[dict[str, Any]]:
     """Load BOS registrations from local JSON file.
 
     Returns:
@@ -203,6 +215,7 @@ def load_registry(path: Path = DEFAULT_REGISTRY_PATH) -> list[dict[str, Any]]:
         or is malformed (we treat malformed as "no registrations" to
         avoid blocking W1 起步, but log to stderr).
     """
+    path = default_registry_path() if path is None else path
     if not path.exists():
         return []
     try:
@@ -230,13 +243,14 @@ def load_registry(path: Path = DEFAULT_REGISTRY_PATH) -> list[dict[str, Any]]:
 
 def save_registry(
     registrations: list[dict[str, Any]],
-    path: Path = DEFAULT_REGISTRY_PATH,
+    path: Path | None = None,
 ) -> None:
     """Atomically write BOS registrations to local JSON file.
 
     Uses tempfile + os.replace for atomic write — prevents half-written
     state on crash.  Creates parent dirs as needed.
     """
+    path = default_registry_path() if path is None else path
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(registrations, ensure_ascii=False, indent=2)
     # 原子写: 写到同目录临时文件, 然后 rename
@@ -268,9 +282,10 @@ def _ensure_kos_importable() -> str | None:
         spec = None
     if spec is not None:
         return None
-    if not _KAIRON_PACKAGES_SRC.exists():
-        return f"kos src not found at {_KAIRON_PACKAGES_SRC}"
-    sys.path.insert(0, str(_KAIRON_PACKAGES_SRC))
+    src = kairon_packages_src()
+    if not src.exists():
+        return f"kos src not found at {src}"
+    sys.path.insert(0, str(src))
     # 重新检查
     try:
         spec = importlib.util.find_spec("kos.ontology.store")
@@ -381,7 +396,7 @@ def register_uri(
     protocol: Protocol = "internal",
     description: str = "",
     registered_by: str = "omo-bos-cli",
-    path: Path = DEFAULT_REGISTRY_PATH,
+    path: Path | None = None,
     kos_zone: str = "bos_registry",
     dual_write: bool = True,
 ) -> dict[str, Any]:
@@ -461,7 +476,7 @@ def register_uri(
 def list_registrations(
     *,
     domain: str | None = None,
-    path: Path = DEFAULT_REGISTRY_PATH,
+    path: Path | None = None,
 ) -> list[BosRegistration]:
     """List registered BOS URIs from local JSON.
 
@@ -501,7 +516,7 @@ def list_registrations(
 
 
 def register_seeds(
-    path: Path = DEFAULT_REGISTRY_PATH,
+    path: Path | None = None,
     *,
     dual_write: bool = True,
     kos_zone: str = "bos_registry",
@@ -592,7 +607,7 @@ def verify_endpoint(endpoint: str) -> dict[str, Any]:
 
 
 def verify_all_endpoints(
-    path: Path = DEFAULT_REGISTRY_PATH,
+    path: Path | None = None,
 ) -> list[dict[str, Any]]:
     """遍历注册表, 验证每条 URI 的 endpoint 模块是否可定位.
 
@@ -706,7 +721,7 @@ def main(argv: list[str] | None = None) -> int:
     lst.add_argument(
         "--path",
         default=None,
-        help=f"注册表路径 (默认: {DEFAULT_REGISTRY_PATH})",
+        help=f"注册表路径 (默认: {default_registry_path()})",
     )
 
     # validate
@@ -733,7 +748,7 @@ def main(argv: list[str] | None = None) -> int:
     ver.add_argument(
         "--path",
         default=None,
-        help=f"注册表路径 (默认: {DEFAULT_REGISTRY_PATH})",
+        help=f"注册表路径 (默认: {default_registry_path()})",
     )
 
     # W3: status (metrics) / discover (schema-validated listing) / health (verify + status)
@@ -748,7 +763,7 @@ def main(argv: list[str] | None = None) -> int:
     disc.add_argument(
         "--path",
         default=None,
-        help=f"注册表路径 (默认: {DEFAULT_REGISTRY_PATH})",
+        help=f"注册表路径 (默认: {default_registry_path()})",
     )
 
     hlt = sub.add_parser(
@@ -758,7 +773,7 @@ def main(argv: list[str] | None = None) -> int:
     hlt.add_argument(
         "--path",
         default=None,
-        help=f"注册表路径 (默认: {DEFAULT_REGISTRY_PATH})",
+        help=f"注册表路径 (默认: {default_registry_path()})",
     )
 
     args = parser.parse_args(argv)
@@ -772,7 +787,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.cmd in ("list",):
-        path = Path(args.path) if args.path else DEFAULT_REGISTRY_PATH
+        path = Path(args.path) if args.path else default_registry_path()
         regs = list_registrations(domain=args.domain, path=path)
         if args.json:
             print(json.dumps([r.to_dict() for r in regs], ensure_ascii=False, indent=2))
@@ -803,7 +818,7 @@ def main(argv: list[str] | None = None) -> int:
         results = register_seeds()
         ok = sum(1 for r in results if "error" not in r)
         failed = [r for r in results if "error" in r]
-        print(f"[omo bos {args.cmd}] registered {ok}/{len(SEED_REGISTRATIONS)} SEED URIs → {DEFAULT_REGISTRY_PATH}")
+        print(f"[omo bos {args.cmd}] registered {ok}/{len(SEED_REGISTRATIONS)} SEED URIs → {default_registry_path()}")
         for r in results:
             if "error" in r:
                 print(f"  FAIL {r['error']}", file=sys.stderr)
@@ -814,7 +829,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "verify":
-        path = Path(args.path) if args.path else DEFAULT_REGISTRY_PATH
+        path = Path(args.path) if args.path else default_registry_path()
         results = verify_all_endpoints(path=path)
         ok = sum(1 for r in results if r.get("module_found"))
         fail = len(results) - ok
@@ -865,7 +880,7 @@ def main(argv: list[str] | None = None) -> int:
 
         from omo.omo_bos_schema import BosRegistryModel
 
-        path = Path(args.path) if args.path else DEFAULT_REGISTRY_PATH
+        path = Path(args.path) if args.path else default_registry_path()
         raw = load_registry(path)
         # 批量 validate (一次跑 40 条, 比 40 次 model_validate 快 ~5x)
         adapter = TypeAdapter(list)
@@ -902,7 +917,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "health":
         # W3 health: verify (endpoint reachability) + status (metrics) 一次性报告
-        path = Path(args.path) if args.path else DEFAULT_REGISTRY_PATH
+        path = Path(args.path) if args.path else default_registry_path()
         ep_results = verify_all_endpoints(path=path)
         ep_ok = sum(1 for r in ep_results if r.get("module_found"))
         try:
@@ -941,12 +956,12 @@ __all__ = (
     "ALLOWED_DOMAINS",
     "BOS_URI_LEGACY_PATTERN",
     "BOS_URI_PATTERN",
-    "DEFAULT_REGISTRY_PATH",
     "LEGACY_DOMAIN_MAP",
     "SEED_REGISTRATIONS",
     "BosRegistration",
     "Domain",
     "Protocol",
+    "default_registry_path",
     "list_registrations",
     "load_registry",
     "main",

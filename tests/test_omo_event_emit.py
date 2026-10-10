@@ -65,7 +65,9 @@ def test_omo_event_emit_help_renders():
 
 def test_omo_event_emit_default_log_path():
     """不传 --log 时落 .omo/_knowledge/omo-events.jsonl (默认)."""
-    from omo.omo_event import DEFAULT_EVENT_LOG_PATH
+    from omo.omo_event import default_event_log_path
+
+    DEFAULT_EVENT_LOG_PATH = default_event_log_path()
 
     assert ".omo" in str(DEFAULT_EVENT_LOG_PATH)
     assert "knowledge" in str(DEFAULT_EVENT_LOG_PATH)

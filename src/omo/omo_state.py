@@ -13,7 +13,7 @@ import yaml
 from .omo_ingress import write_system_projection_fields
 from .omo_ingress_state import sync_state_projection
 from .omo_io import write_text_atomic
-from .omo_paths import find_omo_dir, system_yaml_for, system_yaml_read
+from .omo_paths import code_root, find_omo_dir, system_yaml_for, system_yaml_read
 from .omo_shared import load_yaml, load_yaml_required
 
 
@@ -118,7 +118,7 @@ def cmd_state_refresh(omo_dir: Path, dry_run: bool) -> int:
 
     updates = 0
     # 1. Query runtime Matrix for service list
-    runtime_root = Path.home() / "Workspace" / "projects" / "runtime"
+    runtime_root = code_root() / "projects" / "runtime"
     try:
         result = subprocess.run(
             [

@@ -37,7 +37,7 @@ def run_cli(tmp_path, *args, db_name="sov.db"):
     db = tmp_path / db_name
     env = dict(os.environ)
     env["PYTHONPATH"] = str(OMO_SRC)
-    env["WORKSPACE_ROOT"] = str(tmp_path)
+    env["OMO_EVENT_LEDGER_DB"] = str(db)
     proc = subprocess.run(
         [sys.executable, "-m", "omo.omo_ledger", *args, "--db", str(db)],
         capture_output=True,

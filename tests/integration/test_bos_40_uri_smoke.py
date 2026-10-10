@@ -27,10 +27,12 @@ from pathlib import Path
 
 import pytest
 
+from omo.omo_bos import default_registry_path
 from omo.omo_llm_bos_bridge import invoke_bos_uri_tool
 
-OMOSTATION_ROOT = Path(__file__).resolve().parents[3]
-BOS_REGISTRY = OMOSTATION_ROOT / ".omo" / "_knowledge" / "bos-registry.json"
+# 被测对象的根不得由 __file__ 反推 (AGENTS.md §7): PASW 子树检出里 parents[3] 是
+# <ws>/.subtrees 而非工作区根 —— 「本地绿 / 子树红」。与被读侧同一个 resolver。
+BOS_REGISTRY = default_registry_path()
 
 
 # ── Pytest markers (P44-W4 上线, CI 按需分组跑) ─────────

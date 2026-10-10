@@ -13,9 +13,10 @@ import os
 import sys
 from pathlib import Path
 
+from omo.omo_paths import OMO_ROOT
 from omo.omo_shared import load_yaml
 
-OMO_DIR = Path(os.environ.get("OMO_DIR", str(Path.home() / "Workspace" / ".omo")))
+OMO_DIR = Path(os.environ.get("OMO_DIR", str(OMO_ROOT)))
 _OMO_DASHBOARD_API_KEY = os.environ.get("OMO_DASHBOARD_API_KEY", "")
 
 
