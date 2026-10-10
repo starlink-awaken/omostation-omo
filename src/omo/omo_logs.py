@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from collections import Counter
 from datetime import UTC, datetime
@@ -24,17 +23,26 @@ from pathlib import Path
 
 from omo.omo_io import AppendOnlyLog
 from omo.omo_io_schemas import SCHEMA_REGISTRY
+from omo.omo_paths import state_root
 
-_WORKSPACE = Path(os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace")))
-KNOWLEDGE_DIR = _WORKSPACE / ".omo" / "_knowledge"
+
+def knowledge_dir() -> Path:
+    """.omo/_knowledge 的 jsonl 日志面 —— 写面，跟随 profile 的 state 根 (BET-Y2Q4-T10-239)。
+
+    本模块只在该目录里 glob/读 ``*.jsonl``（AppendOnlyLog 消费者的落点），不读
+    ``_knowledge/decisions/**`` 那类已跟踪内容，所以整目录挂 state 根是安全的；
+    治理 SSOT 的已跟踪知识面走 ``omo_paths.DECISIONS_DIR``（检出根），两者不同名也不同根。
+    """
+    return state_root() / ".omo" / "_knowledge"
 
 
 def _list_log_paths() -> list[Path]:
     """List all .jsonl in .omo/_knowledge/, sorted by mtime (newest first)."""
-    if not KNOWLEDGE_DIR.exists():
+    base = knowledge_dir()
+    if not base.exists():
         return []
     return sorted(
-        (p for p in KNOWLEDGE_DIR.glob("*.jsonl") if p.is_file()),
+        (p for p in base.glob("*.jsonl") if p.is_file()),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )
@@ -42,11 +50,12 @@ def _list_log_paths() -> list[Path]:
 
 def _resolve_log_path(name: str) -> Path:
     """从 user 给的 name 解析 .jsonl 路径. 支持 'foo' 或 'foo.jsonl'."""
-    if (KNOWLEDGE_DIR / name).exists():
-        return KNOWLEDGE_DIR / name
-    if (KNOWLEDGE_DIR / f"{name}.jsonl").exists():
-        return KNOWLEDGE_DIR / f"{name}.jsonl"
-    raise FileNotFoundError(f"log not found: {name} (in {KNOWLEDGE_DIR})")
+    base = knowledge_dir()
+    if (base / name).exists():
+        return base / name
+    if (base / f"{name}.jsonl").exists():
+        return base / f"{name}.jsonl"
+    raise FileNotFoundError(f"log not found: {name} (in {base})")
 
 
 # ── 子命令: list ──────────────────────────────────────────
@@ -56,7 +65,7 @@ def cmd_logs_list() -> int:
     """列出所有 .omo/_knowledge/*.jsonl 文件."""
     paths = _list_log_paths()
     if not paths:
-        print(f"ℹ️  No logs in {KNOWLEDGE_DIR}")
+        print(f"ℹ️  No logs in {knowledge_dir()}")
         return 0
     print(f"{'NAME':30s} {'SIZE':>10s} {'RECORDS':>10s} {'MTIME':20s}")
     print("-" * 75)
@@ -409,7 +418,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command")
 
     # list
-    sub.add_parser("list", help=f"列出 {KNOWLEDGE_DIR} 下所有 .jsonl")
+    sub.add_parser("list", help=f"列出 {knowledge_dir()} 下所有 .jsonl")
 
     # inspect
     ins = sub.add_parser("inspect", help="查指定 jsonl 字段分布 + 必填字段缺失")

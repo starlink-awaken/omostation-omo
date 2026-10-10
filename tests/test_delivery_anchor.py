@@ -147,16 +147,31 @@ def test_noop_for_foreign_worktree(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_noop_when_no_anchor_locatable(tmp_path: Path, monkeypatch) -> None:
+    unmarked = tmp_path / "unmarked"
+    (unmarked / ".git" / "worktrees" / "wt").mkdir(parents=True)
+    ws = _fake_worktree(tmp_path, gitdir=unmarked / ".git" / "worktrees" / "wt")
+    monkeypatch.delenv("OMOSTATION_STATE_ROOT", raising=False)
+    monkeypatch.delenv("OMOSTATION_ROOT", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "empty-home"))
+
+    assert locate_anchor() is None
+    assert locate_anchor(ws) is None
+    before = _snapshot(ws)
+    assert ensure_delivery_anchor(ws) is None
+    assert _snapshot(ws) == before
+
+
+def test_anchor_located_from_the_checkout_pointer_without_env(tmp_path: Path, monkeypatch) -> None:
+    """BET-Y2Q4-T10-239: with no profile env and no machine guess, the owning root
+    comes from ``ws``'s own ``gitdir:`` pointer — the same value git resolves."""
     canonical = _fake_canonical(tmp_path)
     ws = _fake_worktree(tmp_path)
     monkeypatch.delenv("OMOSTATION_STATE_ROOT", raising=False)
     monkeypatch.delenv("OMOSTATION_ROOT", raising=False)
-    monkeypatch.setenv("HOME", str(tmp_path / "empty-home"))  # no ~/Workspace marker
+    monkeypatch.setenv("HOME", str(tmp_path / "empty-home"))
 
-    assert locate_anchor() is None
-    before = _snapshot(ws)
-    assert ensure_delivery_anchor(ws) is None
-    assert _snapshot(ws) == before
+    assert locate_anchor(ws) == canonical
+    assert ensure_delivery_anchor(ws) == canonical / DELIVERY_RELATIVE
 
 
 def test_state_root_env_wins_over_canonical_root(tmp_path: Path, monkeypatch) -> None:

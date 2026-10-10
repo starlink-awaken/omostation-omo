@@ -23,6 +23,34 @@ STATE_ROOT_ENV = "OMOSTATION_STATE_ROOT"
 LEDGER_DB_ENV = "OMO_EVENT_LEDGER_DB"
 LEDGER_RELATIVE = Path("runtime") / "omo" / "event-ledger.sqlite3"
 
+# 会改写某个落点路径的 env 名 —— ADR-0456 的 profile env 面, 也是测试的隔离面。
+# 判据不是「哪些名字像根」而是「哪些 env 读取的值在 src/omo 里进了路径语境」(Path(...) /
+# expanduser / resolve / 与路径段做 / 拼接, 含先赋值再被这样消费的名字), 由 AST 从源码导出:
+# 316 个文件里 14 个名字命中, 29 个未命中 (端口、密钥、URL、开关 —— 名单本身不手抄)。
+# 完整性与「无死名」两侧都由 tests/unit/test_omo_root_plane_landing.py 的 roster 判据反查,
+# 因为手写它有实测过的失效方式: 两份测试各抄一份时抄漏了 OMOSTATION_STATE_ROOT 本身,
+# 「未声明 profile 两根相等」那条判据在已声明 profile 的 env 下当场红
+# (BET-Y2Q4-T10-239, dev profile 全量跑实测 1 failed / 3040 passed)。
+PROFILE_ENVS = (
+    # profile 三根
+    STATE_ROOT_ENV,  # omo_paths.state_root() / workflow/delivery_anchor.py
+    LEDGER_DB_ENV,  # omo_paths.event_ledger_path() / event_ledger/surface.py
+    "OMOSTATION_ROOT",  # workflow/delivery_anchor.CANONICAL_ROOT_ENV
+    # code 面站点自行读的同名/邻名 env 默认
+    "WORKSPACE_ROOT",  # cli._omo_dir / mcp_server / resident.swarm_custodian / omo_xplane
+    "WORKSPACE_CODE_ROOT",  # omo_agent_host runner 根
+    "WORKSPACE",  # omo_evolution_loop._workspace_root
+    "OMO_WORKSPACE",  # 同上, 备用名
+    "OMO_ROOT",  # omo_self_healing 两个 code 面站点
+    "OMO_DIR",  # omo_dashboard.OMO_DIR (import 时求值)
+    # 站点级路径覆盖
+    "RUNTIME_HOME",  # omo_alert / omo_cost / omo_quota / omo_observability / omo_dashboard
+    "AGORA_METRICS_DB",  # omo_bos_metrics
+    "OMO_EXTERNAL_ROOT",  # omo_phase16
+    "EXECUTION_LOG",  # omo_observability._execution_log_path
+    "OMO_PATH_ACL_PROFILE",  # omo_path_acl._default_profile_path
+)
+
 _MODULE_DIR = Path(__file__).resolve().parent
 OMO_SRC_PARENT = _MODULE_DIR.parents[1]  # /Users/xiamingxing/Workspace/projects/omo
 PROJECTS_DIR = _MODULE_DIR.parents[2]  # /Users/xiamingxing/Workspace/projects
@@ -33,6 +61,21 @@ HOME_DIR = _MODULE_DIR.parents[4]  # /Users/xiamingxing
 STATE_ROOT = (
     Path(os.environ[STATE_ROOT_ENV]).expanduser().absolute() if os.environ.get(STATE_ROOT_ENV) else WORKSPACE_ROOT
 )
+
+
+def code_root() -> Path:
+    """当前检出根 —— 读侧锚点，与 `bin/lib/repo_root.py:code_root()` 同语义 (BET-Y2Q4-T10-239)。
+
+    刻意**不**读 `OMOSTATION_ROOT`：那是 `canonical_root()` 的职责，而 ADR-0456 的读面契约是
+    「读跟随当前检出」。让它读 env 会让两仓的同名函数分叉，并把 worktree 里的读侧指到主检出。
+
+    存在这条函数而不是让人直接用 `WORKSPACE_ROOT` 常量，是为了给 `src/` 里那批站点一个可挂的
+    锚 —— 它们原本读 `WORKSPACE_ROOT` 这个 env 名、并把兜底写成仓根的 host 字面量。
+    那条缝在本机从未被声明 (crontab / LaunchAgents / 进程 env 三处实测都是 0)，
+    于是恒取 host 字面量兜底，而在 CI 干净检出与 `~/.local/opt/omostation` 上该兜底指向
+    一个不存在的路径。未声明 profile 时本函数等于 `WORKSPACE_ROOT`，逐字节复现历史路径。
+    """
+    return WORKSPACE_ROOT
 
 
 def state_root() -> Path:
@@ -292,6 +335,7 @@ __all__ = (
     "PITCHES_DIR",
     "PROJECTS_DIR",
     "PROJECTS_REGISTRY_YAML",
+    "PROFILE_ENVS",
     "ROOT_INDEX_MD",
     "RUNTIME_CHANGE_LOG_DIR",
     "RUNTIME_CONTROL_DIR",
@@ -305,6 +349,7 @@ __all__ = (
     "LEDGER_RELATIVE",
     "STATE_ROOT",
     "STATE_ROOT_ENV",
+    "code_root",
     "event_ledger_path",
     "state_root",
     "STATE_SYSTEM_YAML",

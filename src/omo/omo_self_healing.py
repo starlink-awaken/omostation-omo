@@ -32,6 +32,7 @@ from pathlib import Path
 import yaml
 
 from .omo_ingress import upsert_debt_item
+from .omo_paths import code_root
 
 logger = logging.getLogger("omo.self_healing")
 
@@ -40,9 +41,13 @@ logger = logging.getLogger("omo.self_healing")
 # Configuration
 # ═══════════════════════════════════════════════════════════════════════════
 
-OMO_ROOT = Path(os.environ.get("OMO_ROOT", Path.home() / "Workspace/projects/omo"))
-DEBT_ITEMS_DIR = OMO_ROOT / ".omo" / "debt" / "items"
-DEBT_REGISTRY = OMO_ROOT / ".omo" / "debt" / "registry.yaml"
+
+def omo_project_root() -> Path:
+    """omo 子项目目录 —— 检出内读写，跟随当前检出 (BET-Y2Q4-T10-239)。
+
+    ``OMO_ROOT`` 这个 env 名保留为对外缝；缺省值不再写死机器上的仓根。
+    """
+    return Path(os.environ.get("OMO_ROOT", str(code_root() / "projects" / "omo")))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -51,7 +56,7 @@ DEBT_REGISTRY = OMO_ROOT / ".omo" / "debt" / "registry.yaml"
 
 
 def _omo_dir() -> Path:
-    return OMO_ROOT / ".omo"
+    return omo_project_root() / ".omo"
 
 
 class ErrorEventCounter:
@@ -473,11 +478,8 @@ class SelfHealingEngine:
 
 def fix_clear_pytest_cache(context: dict | None = None) -> tuple[bool, str]:
     """清理 .pytest_cache 和 .ruff_cache 目录。"""
-    roots = [
-        Path.home() / "Workspace" / "projects" / p
-        for p in os.listdir(Path.home() / "Workspace" / "projects")
-        if not p.startswith("_")
-    ]
+    projects_dir = code_root() / "projects"
+    roots = [projects_dir / p for p in os.listdir(projects_dir) if not p.startswith("_")]
     cleaned = 0
     for root in roots:
         for cache_dir in [".pytest_cache", ".ruff_cache", "__pycache__"]:
@@ -501,8 +503,8 @@ def fix_restart_agora(context: dict | None = None) -> tuple[bool, str]:
 
 
 def fix_git_gc(context: dict | None = None) -> tuple[bool, str]:
-    """对 Workspace 目录运行 git gc。"""
-    ws = Path.home() / "Workspace"
+    """对当前检出运行 git gc。"""
+    ws = code_root()
     try:
         result = subprocess.run(
             ["git", "gc", "--auto"],
@@ -520,7 +522,7 @@ def fix_clean_temp_files(context: dict | None = None) -> tuple[bool, str]:
     """清理临时文件和空日志。"""
     patterns = ["*.pyc", "*.log.1", "*.log.2"]
     cleaned = 0
-    ws = Path.home() / "Workspace"
+    ws = code_root()
     for pattern in patterns:
         for path in ws.rglob(pattern):
             try:
@@ -771,12 +773,14 @@ def start_http_status_server(engine: SelfHealingEngine | None = None) -> None:
 # Configuration Persistence
 # ═══════════════════════════════════════════════════════════════════════════
 
-HEALING_CONFIG_PATH = OMO_ROOT / ".omo" / "self_healing_rules.yaml"
+
+def healing_config_path() -> Path:
+    return _omo_dir() / "self_healing_rules.yaml"
 
 
 def save_rules(rules: list[HealingRule], path: Path | None = None) -> None:
     """保存自定义规则到 YAML 配置文件。"""
-    target = path or HEALING_CONFIG_PATH
+    target = path or healing_config_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     data = []
     for r in rules:
@@ -800,7 +804,7 @@ def save_rules(rules: list[HealingRule], path: Path | None = None) -> None:
 
 def load_rules(path: Path | None = None) -> list[HealingRule]:
     """从 YAML 配置文件加载自定义规则。"""
-    target = path or HEALING_CONFIG_PATH
+    target = path or healing_config_path()
     if not target.exists():
         return []
     from .omo_shared import load_yaml_value
@@ -858,9 +862,10 @@ _RULES_MTIME: float = 0.0
 def _check_and_reload() -> bool:
     """检查配置文件是否变更，若是则自动重载引擎规则。返回 True 表示已重载。"""
     global _HOT_RELOAD_STARTED, _RULES_MTIME, _engine
-    if not HEALING_CONFIG_PATH.exists():
+    cfg = healing_config_path()
+    if not cfg.exists():
         return False
-    current_mtime = HEALING_CONFIG_PATH.stat().st_mtime
+    current_mtime = cfg.stat().st_mtime
     if current_mtime == _RULES_MTIME:
         return False
     _RULES_MTIME = current_mtime
@@ -878,7 +883,7 @@ def start_hot_reload(interval_seconds: int = 30) -> None:
     if _HOT_RELOAD_STARTED:
         return
     _HOT_RELOAD_STARTED = True
-    if HEALING_CONFIG_PATH.exists():
+    if healing_config_path().exists():
         global _RULES_MTIME
         _RULES_MTIME = 0  # force first check
     import threading

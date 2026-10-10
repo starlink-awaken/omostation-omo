@@ -20,6 +20,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+from .omo_paths import code_root, projection_path, state_root
+
 
 class AgentProtocol(Protocol):
     """Agent 注入契约 (SOLID D, AgentHost 调度)."""
@@ -166,15 +168,18 @@ def _llm_deep_eval(agent_id: str, question: str, context: dict[str, Any]) -> dic
     return None
 
 
-def _check_a2a_inbox(agent_id: str, workspace: Path) -> list[dict[str, Any]]:
+def _check_a2a_inbox(agent_id: str, root_state: Path) -> list[dict[str, Any]]:
     """读 A2A inbox — 找发给自己的未处理 task 消息, 写 reply 标记 resolved.
 
     多 Agent 协作的关键: Governor 发 task → 目标 agent tick 时读取 → 处理 → reply.
     返回收到的 task 列表 (agent 自行决定如何处理).
+
+    ``root_state`` 是运行态根: ``.omo/state/a2a-messages.jsonl`` 是追加写的消息队列,
+    未跟踪, 所以读写都挂 state 而不是检出 (BET-Y2Q4-T10-239).
     """
     import json as _json
 
-    msg_file = workspace / ".omo" / "state" / "a2a-messages.jsonl"
+    msg_file = root_state / ".omo" / "state" / "a2a-messages.jsonl"
     if not msg_file.exists():
         return []
 
@@ -217,6 +222,16 @@ def _check_a2a_inbox(agent_id: str, workspace: Path) -> list[dict[str, Any]]:
     return my_tasks
 
 
+def health_snapshot_path() -> Path:
+    """system_health 快照路径 —— 由投影登记决定落在哪个根，不手拼 (BET-Y2Q4-T10-239).
+
+    原先这里是 `<仓根>/.omo/state/system_health.yaml` 一条硬拼的 legacy 路径，仓根
+    默认值写成 host 字面量。走 `projection_path()` 后 canonical/legacy 双语义由登记表
+    (`runtime-projections.yaml: system_health`) 决定，本机两份内容逐字节相同。
+    """
+    return projection_path("system_health")
+
+
 class HealthMonitorAgent:
     """HealthMonitor (α.3 续: 读 system_health.yaml 快照 + 异常服务告警).
 
@@ -227,9 +242,6 @@ class HealthMonitorAgent:
     """
 
     agent_id = "health-monitor"
-
-    _WORKSPACE = Path(os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace")))
-    _HEALTH_YAML = _WORKSPACE / ".omo" / "state" / "system_health.yaml"
 
     def tick(self) -> dict[str, Any]:
         services = self._load_services()
@@ -258,12 +270,13 @@ class HealthMonitorAgent:
     @classmethod
     def _load_services(cls) -> dict[str, Any] | None:
         """读 system_health.yaml 服务快照 (缺失/损坏返回 None, 守 F14)."""
-        if not cls._HEALTH_YAML.exists():
+        snapshot = health_snapshot_path()
+        if not snapshot.exists():
             return None
         try:
             import yaml
 
-            data = yaml.safe_load(cls._HEALTH_YAML.read_text(encoding="utf-8")) or {}
+            data = yaml.safe_load(snapshot.read_text(encoding="utf-8")) or {}
             services = data.get("services")
             return services if isinstance(services, dict) else None
         except Exception:
@@ -300,26 +313,27 @@ class KnowledgeCuratorAgent:
 
     def tick(self) -> dict[str, Any]:
         """Read decision_outcomes + process A2A tasks → build knowledge graph."""
-        from pathlib import Path as _Path
-
-        workspace = _Path(os.environ.get("WORKSPACE_ROOT", str(_Path.home() / "Workspace")))
+        # 一处变量两属 = 必拆: a2a 队列与 MOS beliefs 是运行态 (state 根),
+        # projects/omo/src 是检出的读面 (code 根) (BET-Y2Q4-T10-239).
+        root_state = state_root()
+        root_code = code_root()
 
         # A2A: 读 governor 发来的 task 消息 (多 Agent 协作)
-        a2a_tasks = _check_a2a_inbox("knowledge-curator", workspace)
+        a2a_tasks = _check_a2a_inbox("knowledge-curator", root_state)
         a2a_processed = []
         for task in a2a_tasks:
             finding = task.get("payload", {}).get("finding", {})
             a2a_processed.append(finding.get("type", "unknown"))
 
         try:
-            omo_src = str(workspace / "projects" / "omo" / "src")
+            omo_src = str(root_code / "projects" / "omo" / "src")
             import sys
 
             if omo_src not in sys.path:
                 sys.path.insert(0, omo_src)
             from omo.omo_belief import MOSBeliefManager
 
-            manager = MOSBeliefManager(root=workspace)
+            manager = MOSBeliefManager(root=root_state)
             state = manager._load_state()
             outcomes = state.get("decision_outcomes", [])
             snapshots = state.get("world_snapshots", [])
@@ -386,16 +400,17 @@ def _auto_calibrate(result: dict[str, Any]) -> None:
     自主度评分的 adaptivity/generalization 维度永远趋零.
     守 KISS: 只记 ok/success_rate, 不做复杂分析 (那是 scanner 的活).
     """
-    workspace = Path(os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace")))
+    root_state = state_root()
+    root_code = code_root()
     try:
         import sys as _sys
 
-        omo_src = str(workspace / "projects" / "omo" / "src")
+        omo_src = str(root_code / "projects" / "omo" / "src")
         if omo_src not in _sys.path:
             _sys.path.insert(0, omo_src)
         from omo.omo_belief import MOSBeliefManager
 
-        manager = MOSBeliefManager(root=workspace)
+        manager = MOSBeliefManager(root=root_state)
         results = result.get("results", [])
         calibrations = [
             {
@@ -460,11 +475,12 @@ class JourneyRunnerAgent:
     def tick(self) -> dict[str, Any]:
         """Scan for resumable journey runs."""
         import json as _json
-        from pathlib import Path as _Path
 
-        workspace = _Path(os.environ.get("WORKSPACE_ROOT", str(_Path.home() / "Workspace")))
-        code_root = _Path(os.environ.get("WORKSPACE_CODE_ROOT", str(workspace)))
-        states_dir = workspace / ".omo" / "_knowledge" / "workflow-mesh" / "journey-states"
+        root_state = state_root()
+        # WORKSPACE_CODE_ROOT 是本仓唯一活着缝 (bin/ssot/agent-tick-daemon.py 声明,
+        # tests/test_omo_agent_host.py 断言): 保留 env 名, 只把 host 字面量默认值换成检出根。
+        runner_root = Path(os.environ.get("WORKSPACE_CODE_ROOT", str(code_root())))
+        states_dir = root_state / ".omo" / "_knowledge" / "workflow-mesh" / "journey-states"
         if not states_dir.is_dir():
             return {"action": "noop", "details": {"note": "no journey states dir"}}
 
@@ -497,7 +513,7 @@ class JourneyRunnerAgent:
 
             resumed: list[dict[str, Any]] = []
             for r in resumable:
-                runner = code_root / "bin" / "ssot" / "journey-runner.py"
+                runner = runner_root / "bin" / "ssot" / "journey-runner.py"
                 if not runner.exists():
                     continue
                 try:
@@ -556,13 +572,13 @@ class GovernorAgent:
     def tick(self) -> dict[str, Any]:
         """Governance tick — scan for issues and propose improvements."""
         import json as _json
-        from pathlib import Path as _Path
 
-        workspace = _Path(os.environ.get("WORKSPACE_ROOT", str(_Path.home() / "Workspace")))
+        root_state = state_root()
+        root_code = code_root()
         findings: list[dict[str, str]] = []
 
         # 1. Check for timed-out journey checkpoints
-        states_dir = workspace / ".omo" / "_knowledge" / "workflow-mesh" / "journey-states"
+        states_dir = root_state / ".omo" / "_knowledge" / "workflow-mesh" / "journey-states"
         if states_dir.is_dir():
             for jd in states_dir.iterdir():
                 if not jd.is_dir():
@@ -584,17 +600,19 @@ class GovernorAgent:
                         continue
 
         # 2. Check mesh events for anomalies
-        mesh_log = workspace / ".omo" / "_knowledge" / "workflow-mesh" / "events.jsonl"
+        mesh_log = root_state / ".omo" / "_knowledge" / "workflow-mesh" / "events.jsonl"
         if mesh_log.exists():
             event_count = len(mesh_log.read_text(encoding="utf-8").strip().split("\n"))
             if event_count > 100:
                 findings.append({"type": "high_event_volume", "count": str(event_count)})
 
         # 3. Check debt registry growth (T-B5: debt 台账趋势)
-        debt_items_dir = workspace / ".omo" / "debt" / "items"
+        # .omo/debt/items 已跟踪 (台账 SSOT, 读检出), .omo/debt/gap-items 未跟踪 (运行态)
+        # —— 同一个表达式里两个根, 按各自 trackedness 挂 (BET-Y2Q4-T10-239).
+        debt_items_dir = root_code / ".omo" / "debt" / "items"
         if debt_items_dir.is_dir():
             debt_count = len(list(debt_items_dir.glob("*.yaml")))
-            gap_count = len(list((workspace / ".omo" / "debt" / "gap-items").glob("*.yaml")))
+            gap_count = len(list((root_state / ".omo" / "debt" / "gap-items").glob("*.yaml")))
             if debt_count + gap_count > 30:
                 findings.append(
                     {
@@ -606,14 +624,14 @@ class GovernorAgent:
 
         # 4. Check MOS trust/calibration trends (T-B5: agent trust 趋势)
         try:
-            omo_src = str(workspace / "projects/omo/src")
+            omo_src = str(root_code / "projects/omo/src")
             import sys
 
             if omo_src not in sys.path:
                 sys.path.insert(0, omo_src)
             from omo.omo_belief import MOSBeliefManager
 
-            manager = MOSBeliefManager(root=workspace)
+            manager = MOSBeliefManager(root=root_state)
             state = manager._load_state()
             calib = state.get("capability_calibrations", [])
             low_trust = [c for c in calib if float(c.get("success_rate", 1.0)) < 0.6]
@@ -630,7 +648,7 @@ class GovernorAgent:
 
         if findings:
             # P6-T1: Governor dispatch — 向相关agent发送任务消息
-            dispatched = self._dispatch_findings(findings, workspace)
+            dispatched = self._dispatch_findings(findings, root_state)
 
             # LLM deep eval: findings优先级判断 (模型驱动)
             deep_eval = _llm_deep_eval(
@@ -653,7 +671,7 @@ class GovernorAgent:
             }
         return {"action": "noop", "details": {"note": "no governance issues detected"}}
 
-    def _dispatch_findings(self, findings: list, workspace: Path) -> list[str]:
+    def _dispatch_findings(self, findings: list, root_state: Path) -> list[str]:
         """P6: Governor向其他agent分发findings通过A2A消息队列."""
         # 匹配finding类型→目标agent
         dispatch_map = {
@@ -663,7 +681,7 @@ class GovernorAgent:
             "human_hold": ["journey-runner"],
         }
         dispatched: list[str] = []
-        msg_queue = workspace / ".omo" / "state" / "a2a-messages.jsonl"
+        msg_queue = root_state / ".omo" / "state" / "a2a-messages.jsonl"
         msg_queue.parent.mkdir(parents=True, exist_ok=True)
 
         import json as _json
@@ -699,24 +717,25 @@ class AdvisorAgent:
 
     def tick(self) -> dict[str, Any]:
         """Evaluate system alignment with TELOS principles + process A2A tasks."""
-        workspace = Path(os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace")))
+        root_state = state_root()
+        root_code = code_root()
 
         # A2A: 读 governor 发来的 task 消息 (多 Agent 协作)
-        a2a_tasks = _check_a2a_inbox("advisor", workspace)
+        a2a_tasks = _check_a2a_inbox("advisor", root_state)
         a2a_processed = []
         for task in a2a_tasks:
             finding = task.get("payload", {}).get("finding", {})
             a2a_processed.append(finding.get("type", "unknown"))
 
         try:
-            omo_src = str(workspace / "projects/omo/src")
+            omo_src = str(root_code / "projects/omo/src")
             import sys
 
             if omo_src not in sys.path:
                 sys.path.insert(0, omo_src)
             from omo.omo_belief import MOSBeliefManager
 
-            manager = MOSBeliefManager(root=workspace)
+            manager = MOSBeliefManager(root=root_state)
             state = manager._load_state()
             calibrations = state.get("capability_calibrations", [])
             outcomes = state.get("decision_outcomes", [])
@@ -807,16 +826,17 @@ class AutonomyAssessmentAgent:
 
     def tick(self) -> dict[str, Any]:
         """Calculate 5-dimension autonomy score."""
-        workspace = Path(os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace")))
+        root_state = state_root()
+        root_code = code_root()
         try:
-            omo_src = str(workspace / "projects/omo/src")
+            omo_src = str(root_code / "projects/omo/src")
             import sys
 
             if omo_src not in sys.path:
                 sys.path.insert(0, omo_src)
             from omo.omo_belief import MOSBeliefManager
 
-            manager = MOSBeliefManager(root=workspace)
+            manager = MOSBeliefManager(root=root_state)
             state = manager._load_state()
         except Exception:
             return {"action": "noop", "details": {"note": "MOS unavailable"}}

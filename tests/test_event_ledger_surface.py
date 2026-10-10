@@ -41,7 +41,9 @@ def _tmp_surface(tmp_path: Path) -> Any:
 
 
 def _cli_env(tmp_path: Path) -> dict[str, str]:
-    return {**os.environ, "PYTHONPATH": str(OMO_SRC), "WORKSPACE_ROOT": str(tmp_path)}
+    # T10-239: 台账默认落点的规范缝是 ``OMO_EVENT_LEDGER_DB``; 再注入 ``WORKSPACE_ROOT``
+    # 已不被读侧消费，子进程会静默退回兜底根 (spec §4「不是可选优化」)。
+    return {**os.environ, "PYTHONPATH": str(OMO_SRC), "OMO_EVENT_LEDGER_DB": str(tmp_path / "event-ledger.sqlite3")}
 
 
 def _run(tmp_path: Path, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:

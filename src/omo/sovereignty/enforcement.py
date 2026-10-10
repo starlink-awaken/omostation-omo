@@ -51,6 +51,7 @@ from ecos.ssot.mof.generated.control.mof_control_models import (
 from pydantic import ValidationError as PydanticValidationError
 
 from omo.event_ledger.broker import DuplicateEventError, LedgerBroker, LedgerError
+from omo.omo_paths import event_ledger_path
 from omo.sovereignty.mandates import EVT_MANDATE_GRANT, MANDATE_PRODUCER, MandateManager
 from omo.sovereignty.persistent_queue import PersistentQueue
 
@@ -116,8 +117,7 @@ def _default_db_path() -> Path:
     env = os_environ().get(ENV_LEDGER_DB)
     if env:
         return Path(env).resolve()
-    root = os_environ().get("WORKSPACE_ROOT", str(Path.home() / "Workspace"))
-    return (Path(root) / "runtime" / "omo" / "event-ledger.sqlite3").resolve()
+    return event_ledger_path().resolve()
 
 
 def os_environ() -> Mapping[str, str]:
