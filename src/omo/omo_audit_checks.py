@@ -129,6 +129,11 @@ def governance_check_debt_integrity() -> CheckResult:
             score=100.0,
             message="no debt items dir",
         )
+    # 证据字段等价 (2026-09-19): 本仓既有工具 (bin/gac/fix-debt-fields.py 的
+    # 占位符扫描、bin/ssot/_shared.py 的 check_evidence) 都把 closed_evidence 与
+    # resolution_evidence 视为**等价**证据字段; 两处审计此前只认后者 —— 对使用
+    # closed_evidence 的条目产生误报 (实测: ATTIC_ORPHAN_GITLINK / SUBMODULE_DRIFT
+    # 两项均有 closed_evidence + evidence_refs, 却被判『无证据』)。此处对齐。
     suspicious: list[str] = []
     for yaml_file in sorted(debt_items_dir.glob("*.yaml")):
         data = _load_yaml_safely(yaml_file)
@@ -139,6 +144,8 @@ def governance_check_debt_integrity() -> CheckResult:
             continue
         evidence = str(data.get("resolution_evidence", "")).strip()
         if not evidence:
+            evidence = str(data.get("closed_evidence", "")).strip()
+        if not evidence:
             history = data.get("history")
             if isinstance(history, list) and history:
                 last = history[-1]
@@ -147,7 +154,7 @@ def governance_check_debt_integrity() -> CheckResult:
                     if note and len(note) >= 20:
                         evidence = note
         if not evidence or len(evidence) < 20:
-            suspicious.append(f"{yaml_file.stem}: lifecycle={lifecycle} 但无 resolution_evidence")
+            suspicious.append(f"{yaml_file.stem}: lifecycle={lifecycle} 但无 resolution_evidence/closed_evidence")
     if not suspicious:
         return CheckResult(
             name="debt integrity",

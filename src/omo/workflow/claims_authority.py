@@ -6,6 +6,7 @@ and never performs Git, GitHub, service-control, or host-recovery effects.
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 import os
@@ -18,7 +19,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 import yaml
@@ -437,6 +438,36 @@ def _reject_unknown_fields(request: Mapping[str, Any], allowed: set[str], *, det
         raise AuthorityError("REQUEST_SCHEMA_INVALID", f"{detail}_unknown_fields")
 
 
+def _validate_publication_scoped_allow(request: Mapping[str, Any]) -> None:
+    """ADR-0455 option A — v2 managed-clone allow only when publication-scoped.
+
+    General allow remains forbidden. Scope must bind exact changed_paths and a
+    one-shot legacy fence effect ceiling; paths digest must match the observe
+    request's requested_paths_digest.
+    """
+    scope = request.get("publication_scope")
+    if not isinstance(scope, Mapping):
+        raise AuthorityError("V1_AUTHORITY_FORBIDDEN", "managed_clone")
+    if scope.get("schema") != "claims-publication-scope/v1":
+        raise AuthorityError("REQUEST_SCHEMA_INVALID", "publication_scope_schema")
+    if scope.get("kind") != "legacy-publication":
+        raise AuthorityError("REQUEST_SCHEMA_INVALID", "publication_scope_kind")
+    if scope.get("effect_ceiling") != "one-legacy-fence":
+        raise AuthorityError("V1_AUTHORITY_FORBIDDEN", "publication_scope_ceiling")
+    paths = scope.get("changed_paths")
+    if not isinstance(paths, list) or not paths:
+        raise AuthorityError("V1_AUTHORITY_FORBIDDEN", "publication_scope_paths")
+    if not all(isinstance(p, str) and p and not p.startswith("/") for p in paths):
+        raise AuthorityError("REQUEST_SCHEMA_INVALID", "publication_scope_path_value")
+    if len(set(paths)) != len(paths):
+        raise AuthorityError("REQUEST_SCHEMA_INVALID", "publication_scope_path_dup")
+    # paths_digest must bind the observe requested_paths_digest (production uses
+    # canonical_digest({"paths": sorted, "surfaces": sorted})); list-form accepted
+    # only when it equals that same value.
+    if scope.get("paths_digest") != request.get("requested_paths_digest"):
+        raise AuthorityError("CLAIM_SCOPE_VIOLATION", "publication_scope_bound")
+
+
 def _validate_observe_request(request: Mapping[str, Any]) -> None:
     _reject_unknown_fields(
         request,
@@ -471,6 +502,7 @@ def _validate_observe_request(request: Mapping[str, Any]) -> None:
             "v1_decision",
             "authority_mode",
             "clone_identity_schema",
+            "publication_scope",
         },
         detail="observe_claim",
     )
@@ -532,7 +564,8 @@ def _validate_observe_request(request: Mapping[str, Any]) -> None:
     if request.get("authority_mode") == "cutover" and v1_decision.get("decision") == "allow":
         raise AuthorityError("V1_AUTHORITY_FORBIDDEN", "post_cutover")
     if request.get("clone_identity_schema") == "agent-clone-identity/v2" and v1_decision.get("decision") == "allow":
-        raise AuthorityError("V1_AUTHORITY_FORBIDDEN", "managed_clone")
+        # ADR-0455 方案 A: 仅允许绑定 exact changed_paths + 单次 fence 效果上限的 allow
+        _validate_publication_scoped_allow(request)
 
 
 def _read_head_oid(clone_root: Path, identity: Mapping[str, Any]) -> str:
@@ -571,6 +604,20 @@ def _safe_repo_relative(root: Path, raw: str, *, code: str) -> Path:
     except ValueError as exc:
         raise AuthorityError(code, "path") from exc
     return resolved
+
+
+def _surface_allows_path(surface: str, claimed_path: str) -> bool:
+    """Match the native WorkPacket rule in bin/plan/bet-ledger.py."""
+    normalized_surface = surface.strip().strip("/")
+    if not normalized_surface:
+        return False
+    if any(token in normalized_surface for token in "*?["):
+        return fnmatch.fnmatchcase(claimed_path, normalized_surface)
+    if claimed_path == normalized_surface:
+        return True
+    surface_path = PurePosixPath(normalized_surface)
+    looks_like_directory = "/" in normalized_surface and not surface_path.suffix
+    return looks_like_directory and claimed_path.startswith(normalized_surface + "/")
 
 
 _REMOTE_OBSERVATION_FIELDS = {
@@ -807,10 +854,31 @@ def _verify_production_observe_request(
         raise AuthorityError("CLAIM_SCOPE_VIOLATION", "requested_paths_digest")
     scope = work_packet.get("scope")
     write_surfaces = scope.get("write_surfaces") if isinstance(scope, dict) else None
-    if not isinstance(write_surfaces, list) or not set(requested_paths["paths"]).issubset(
-        {str(item) for item in write_surfaces}
+    if (
+        requested_paths["surfaces"]
+        or not isinstance(write_surfaces, list)
+        or any(not isinstance(surface, str) or not surface.strip() for surface in write_surfaces)
     ):
         raise AuthorityError("CLAIM_SCOPE_VIOLATION", "work_packet_scope")
+    root = clone_root.resolve()
+    safe_surfaces = [
+        (
+            Path(surface.strip()).as_posix(),
+            _safe_repo_relative(root, surface.strip(), code="CLAIM_SCOPE_VIOLATION").relative_to(root).as_posix(),
+        )
+        for surface in write_surfaces
+    ]
+    for raw_path in requested_paths["paths"]:
+        resolved = _safe_repo_relative(root, raw_path, code="CLAIM_SCOPE_VIOLATION")
+        if resolved != root / Path(raw_path):
+            raise AuthorityError("CLAIM_SCOPE_VIOLATION", "symlink")
+        normalized = Path(raw_path).as_posix()
+        if not any(
+            _surface_allows_path(surface, normalized)
+            and _surface_allows_path(resolved_surface, resolved.relative_to(root).as_posix())
+            for surface, resolved_surface in safe_surfaces
+        ):
+            raise AuthorityError("CLAIM_SCOPE_VIOLATION", "work_packet_scope")
     affected = claim.get("affected_graph")
     if not isinstance(affected, dict):
         raise AuthorityError("AFFECTED_GRAPH_MISMATCH", "claim_receipt")
@@ -935,46 +1003,18 @@ def _verify_production_mutation_request(
     if request.get("affected_graph_digest") != canonical_digest(affected_hashes):
         raise AuthorityError("AFFECTED_GRAPH_MISMATCH", "affected_graph_digest")
 
-    lock_dir = clone_root / ".omo/_delivery/agent-workflows/locks"
-    raw_locks = run.get("locks")
-    if raw_locks is None:
-        raw_locks = []
-    if not isinstance(raw_locks, list) or not all(isinstance(item, str) and item for item in raw_locks):
-        raise AuthorityError("AFFECTED_GRAPH_MISMATCH", "lock_set")
-    selected = {str(item) for item in raw_locks}
-    if lock_dir.exists():
-        for candidate in lock_dir.glob("*.lock.yaml"):
-            try:
-                lock = yaml.safe_load(candidate.read_text(encoding="utf-8")) or {}
-            except (OSError, UnicodeError, yaml.YAMLError):
-                lock = {}
-            if isinstance(lock, dict) and lock.get("run_id") == run_id:
-                selected.add(str(candidate))
-    lock_records = []
-    for raw in sorted(selected):
-        candidate = Path(raw)
-        if not candidate.is_absolute():
-            candidate = clone_root / candidate
-        resolved = candidate.resolve(strict=False)
-        try:
-            resolved.relative_to(lock_dir.resolve())
-        except ValueError as exc:
-            raise AuthorityError("AFFECTED_GRAPH_MISMATCH", "lock_path") from exc
-        exists = resolved.is_file()
-        lock_records.append(
-            {
-                "path": str(resolved.relative_to(clone_root.resolve())),
-                "exists": exists,
-                "content_digest": (f"sha256:{hashlib.sha256(resolved.read_bytes()).hexdigest()}" if exists else None),
-            }
-        )
     expected_run_field = "run_digest" if phase == "before" else "resulting_run_digest"
     expected_lock_field = "lock_set_digest" if phase == "before" else "resulting_lock_set_digest"
     run_digest = f"sha256:{hashlib.sha256(run_bytes).hexdigest()}"
-    lock_set_digest = canonical_digest(lock_records)
+    lock_set_digest = _recompute_lock_set_digest(clone_root, run_id, run)
     if request.get(expected_run_field) != run_digest or request.get(expected_lock_field) != lock_set_digest:
         raise AuthorityError("AFFECTED_GRAPH_MISMATCH", f"{phase}_snapshot")
-    return {"run_id": run_id, "run_digest": run_digest, "lock_set_digest": lock_set_digest}
+    return {
+        "run_id": run_id,
+        "run_digest": run_digest,
+        "lock_set_digest": lock_set_digest,
+        "claims_empty": not claims,
+    }
 
 
 class _AuthorityStore:
@@ -1594,7 +1634,6 @@ class _AuthorityStore:
         ):
             raise AuthorityError("AUTHORITY_DESCRIPTOR_MISMATCH", "activation_cas")
         self.verify_high_water()
-        self._ensure_daily_backup()
         sequence, previous_digest = self._database_tip()
         next_sequence = sequence + 1
         prepared = _witness_payload(
@@ -1697,6 +1736,7 @@ class _AuthorityStore:
         )
         _atomic_write_json(self.test_paths.activation_witness, active)
         _activation_checkpoint("active")
+        self._ensure_daily_backup()
         return receipt
 
     def reconcile_activation_witness(self) -> dict[str, Any]:
@@ -1784,6 +1824,28 @@ class _AuthorityStore:
         os.chmod(database_path, 0o600)
         sequence, receipt_digest = self._database_tip()
         _, _, descriptor_digest = self._activation_meta()
+        if descriptor_digest is None and self.test_paths.activation_witness.is_file():
+            witness = _read_json_mapping(
+                self.test_paths.activation_witness,
+                code="AUTHORITY_STORE_CORRUPT",
+            )
+            if witness.get("state") == "shadow-active":
+                descriptor_digest = str(witness["descriptor_digest"])
+        if descriptor_digest is None:
+            activation_row = self._connection.execute(
+                """
+                SELECT receipt_json FROM receipts
+                WHERE authority_id=? AND sequence=1
+                ORDER BY sequence DESC LIMIT 1
+                """,
+                (self.authority_id,),
+            ).fetchone()
+            if activation_row is not None:
+                activation_receipt = json.loads(activation_row["receipt_json"])
+                if activation_receipt.get("operation") == "activate-shadow" and isinstance(
+                    activation_receipt.get("descriptor_digest"), str
+                ):
+                    descriptor_digest = str(activation_receipt["descriptor_digest"])
         manifest: dict[str, Any] = {
             "schema": "claims-authority-backup-manifest/v1",
             "authority_id": self.authority_id,
@@ -1869,6 +1931,79 @@ class _AuthorityStore:
             "fresh": fresh,
             "effective_claim_authority": "v1",
             "instruction_capable": False,
+        }
+
+    # ------------------------------------------------------------------
+    # Read-only: fence binding for one claim (ADR-0461)
+    # ------------------------------------------------------------------
+    def _allow_receipt_for_claim(self, claim_id: str) -> dict[str, Any] | None:
+        """最近一条本 claim 的 publication-scoped allow observe 回执。"""
+        for row in self._connection.execute(
+            "SELECT receipt_json FROM receipts WHERE authority_id=? ORDER BY sequence",
+            (self.authority_id,),
+        ):
+            receipt = json.loads(row["receipt_json"])
+            if not isinstance(receipt, dict) or receipt.get("operation") != "observe-claim":
+                continue
+            if receipt.get("claim_id") != claim_id:
+                continue
+            comparison = receipt.get("comparison")
+            effective = comparison.get("effective_v1") if isinstance(comparison, dict) else None
+            if isinstance(effective, dict) and effective.get("decision") == "allow":
+                return receipt
+        return None
+
+    def describe_claim(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        """读出 `issue-legacy-fence` 所需的绑定字段。**只读, 不授予任何权限。**
+
+        ADR-0461: 此前 fence 要求的 `claims_authority_fence_context` 全仓只有读取方、
+        没有生产方, 导致 `integrate --apply` 在 shadow-active 态下 100% 阻塞。
+
+        ## 这个动词不放松任何校验
+
+        它只是让调用方能把请求**拼装正确**; `issue-legacy-fence` 仍会逐项复核
+        allow 回执、snapshot 绑定、path 绑定、双读与批次状态, 任何一个不符即拒。
+        换言之它不是授权出口, 只是格式化助手。
+
+        ## 不泄漏超出既有信息面的内容
+
+        - claim 未知 -> `IDENTITY_MISMATCH`, 与 `issue_legacy_fence` 对未知 claim_id
+          抛的是同一个码, 不新增信息类别;
+        - claim 存在但尚无 allow 回执 -> 正常返回并标 `publishable: false`,
+          这与调用方在 `issue-legacy-fence` 处会看到的结果一致;
+        - 纯读, 不递增 sequence, 不写库。
+        """
+        if request.get("schema") != "claim-read-envelope/v1":
+            raise AuthorityError("REQUEST_SCHEMA_INVALID", "describe_claim_schema")
+        _reject_unknown_fields(request, {"schema", "authority_id", "claim_id"}, detail="describe_claim")
+        if request.get("authority_id") != self.authority_id:
+            raise AuthorityError("IDENTITY_MISMATCH", "authority_id")
+        claim_id = request.get("claim_id")
+        if not isinstance(claim_id, str) or not claim_id:
+            raise AuthorityError("REQUEST_SCHEMA_INVALID", "describe_claim_claim_id")
+
+        sequence, _tip = self._database_tip()
+        claim = self._connection.execute("SELECT * FROM claims WHERE claim_id=?", (claim_id,)).fetchone()
+        if claim is None:
+            raise AuthorityError("IDENTITY_MISMATCH", "claim_id")
+
+        allow = self._allow_receipt_for_claim(claim_id)
+        scope = allow.get("publication_scope") if isinstance(allow, dict) else None
+        scope = scope if isinstance(scope, Mapping) else None
+        return {
+            "schema": "claim-binding/v1",
+            "claim_id": claim_id,
+            "run_id": str(claim["run_id"]),
+            "claim_version": int(claim["authority_claim_version"]),
+            "lease_epoch": int(claim["authority_lease_epoch"]),
+            "state": str(claim["state"]),
+            "expires_at": str(claim["expires_at"]),
+            "identity_digest": str(claim["identity_digest"]),
+            "v1_snapshot_digest": str(claim["v1_snapshot_digest"]),
+            "v1_allow_receipt_digest": str(allow.get("receipt_digest")) if isinstance(allow, dict) else None,
+            "paths_digest": str(scope["paths_digest"]) if scope and scope.get("paths_digest") else None,
+            "publishable": allow is not None and scope is not None,
+            "sequence": sequence,
         }
 
     def observe_claim(self, request: Mapping[str, Any]) -> dict[str, Any]:
@@ -1973,6 +2108,11 @@ class _AuthorityStore:
                     "work_packet_digest": str(request.get("work_packet_digest") or ""),
                     "affected_graph_digest": str(request.get("affected_graph_digest") or ""),
                     "requested_paths_digest": str(request.get("requested_paths_digest") or ""),
+                    "publication_scope": (
+                        dict(request["publication_scope"])
+                        if isinstance(request.get("publication_scope"), Mapping)
+                        else None
+                    ),
                     "v1_claim_digest": claim_digest,
                     "v1_run_digest": run_snapshot_digest,
                     "v1_lock_set_digest": str(request.get("v1_lock_set_digest") or ""),
@@ -2062,6 +2202,13 @@ class _AuthorityStore:
             actual_members = [self._member_from_row(row) for row in rows]
             if not rows and operation == "claim" and supplied_members == []:
                 pass
+            elif not rows and operation in {"heartbeat", "close"} and supplied_members == []:
+                # Empty members are valid only for a genuinely empty native Run.
+                # Re-read its identity/binding/snapshot inside the store transaction;
+                # a caller's empty members list alone is never proof of emptiness.
+                verified = _verify_production_mutation_request(request, self.test_paths, phase="before")
+                if not verified["claims_empty"]:
+                    raise AuthorityError("CLAIM_SCOPE_VIOLATION", "complete_run_members")
             elif not rows or supplied_members != actual_members:
                 if len(supplied_members) == len(actual_members):
                     raise AuthorityError("CLAIM_VERSION_STALE", "member_version")
@@ -2569,6 +2716,7 @@ class _AuthorityStore:
             effective_v1 = (
                 v1_receipt.get("comparison", {}).get("effective_v1") if isinstance(v1_receipt, dict) else None
             )
+            receipt_scope = v1_receipt.get("publication_scope") if isinstance(v1_receipt, dict) else None
             if (
                 not isinstance(v1_receipt, dict)
                 or v1_receipt.get("operation") != "observe-claim"
@@ -2579,6 +2727,11 @@ class _AuthorityStore:
                 or v1_receipt.get("v1_run_digest") != claim["v1_snapshot_digest"]
             ):
                 raise AuthorityError("V1_AUTHORITY_FORBIDDEN", "allow_receipt")
+            if isinstance(receipt_scope, Mapping):
+                if receipt_scope.get("effect_ceiling") != "one-legacy-fence" or request.get(
+                    "path_digest"
+                ) != receipt_scope.get("paths_digest"):
+                    raise AuthorityError("V1_AUTHORITY_FORBIDDEN", "allow_receipt_scope")
             unresolved_batch = connection.execute(
                 "SELECT mutation_id FROM claim_mutation_batches WHERE run_id=? AND state IN ('reserved','unknown')",
                 (claim["run_id"],),
@@ -3385,6 +3538,7 @@ def evaluate_graduation(request: Mapping[str, Any]) -> dict[str, Any]:
 
 _DISPATCH_METHODS = {
     "observe-claim": "observe_claim",
+    "describe-claim": "describe_claim",
     "begin-claim-mutation": "begin_claim_mutation",
     "settle-claim-mutation": "settle_claim_mutation",
     "mark-claim-mutation-operator-required": "mark_claim_mutation_operator_required",

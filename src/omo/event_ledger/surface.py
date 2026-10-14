@@ -1,8 +1,8 @@
 """EventLedgerSurface — small, stable surface API for the causal Event Ledger.
 
 Resolves a database path with explicit ``db_path``, ``OMO_EVENT_LEDGER_DB``
-environment variable, or the workspace default
-``workspace/runtime/omo/event-ledger.sqlite3``.  All persistence delegates to
+environment variable, or the ADR-0456 state-root default
+``<state_root>/runtime/omo/event-ledger.sqlite3``.  All persistence delegates to
 :class:`LedgerBroker` — no second SQLite connection or business logic lives
 here.
 
@@ -31,14 +31,11 @@ from omo.event_ledger.broker import (
     DEFAULT_SCHEMA_VERSION,
     LedgerBroker,
 )
-
-
-def _workspace_root() -> Path:
-    return Path(os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace")))
+from omo.omo_paths import event_ledger_path
 
 
 def _default_db_path() -> Path:
-    return (_workspace_root() / "runtime" / "omo" / "event-ledger.sqlite3").resolve()
+    return event_ledger_path().resolve()
 
 
 def _resolve_db_path(explicit: Path | str | None = None) -> Path:

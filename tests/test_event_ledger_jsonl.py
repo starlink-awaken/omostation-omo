@@ -395,7 +395,7 @@ def _run_cli(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
         env={
             **os.environ,
             "PYTHONPATH": str(OMO_SRC),
-            "WORKSPACE_ROOT": str(tmp_path),
+            "OMO_EVENT_LEDGER_DB": str(tmp_path / "event-ledger.sqlite3"),
         },
     )
 

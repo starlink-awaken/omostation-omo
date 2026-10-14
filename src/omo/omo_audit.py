@@ -67,7 +67,7 @@ def _default_audit_file() -> Path:
     return Path.home() / "runtime" / "audit" / "governance-audit.jsonl"
 
 
-# 注: per-call log 创建 (与 omo_bos_metrics 一致), 便于 monkeypatch DEFAULT_METRICS_PATH.
+# 注: per-call log 创建 (与 omo_bos_metrics 一致), 便于 monkeypatch omo_bos_metrics.default_metrics_path.
 # AppendOnlyLog 构造轻量 (Path + Lock), per-call 创建开销可忽略.
 
 

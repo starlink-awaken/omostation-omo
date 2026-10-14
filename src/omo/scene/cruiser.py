@@ -6,7 +6,7 @@
 阈值 SSOT: ``.omo/standards/scene-card-lifecycle.yaml``
 - shadow 门: n_samples ≥ 3
 - assisted 门: n_samples ≥ 30 且 calibration ≥ 0.6
-- 熔断: calibration < 0.5 → 自动降级并告警 (circuit breaker)
+- 熔断: calibration < 0.5 → 提议降级并告警 (proposal only, 需人类执行)
 - routine 晋级: 必须人类确认, 本模块只返回 needs_human, 永不自动晋级
 
 设计决策:
@@ -33,7 +33,11 @@ _PROMOTE_GATES: dict[str, tuple[int, float]] = {
     "supervised": (30, 0.6),
 }
 
-# 熔断阈值 (circuit breaker: 校准骤降自动回退上一级)
+# 熔断阈值 (circuit breaker: 校准骤降提议回退上一级, 需人类执行)
+# SSOT: .omo/standards/scene-card-lifecycle.yaml → demotion
+# (calibration < 0.5 且 sample_count >= 10 → 提议降一级)。
+# 本模块只输出 CruiseDecision (action="demote" 即 needs_human 语义的提议),
+# 调用方必须经人类之手执行 (`omo scene demote ...`), 永不自动变更场景卡。
 _DEMOTE_CALIBRATION = 0.5
 
 

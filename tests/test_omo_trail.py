@@ -301,7 +301,9 @@ def test_cli_help_renders():
 
 def test_default_trail_path():
     """不传 --log 时落 .omo/_knowledge/omo-trail.jsonl (默认)."""
-    from omo.omo_trail import DEFAULT_TRAIL_PATH
+    from omo.omo_trail import default_trail_path
+
+    DEFAULT_TRAIL_PATH = default_trail_path()
 
     assert ".omo" in str(DEFAULT_TRAIL_PATH)
     assert "_knowledge" in str(DEFAULT_TRAIL_PATH)

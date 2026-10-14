@@ -8,7 +8,7 @@ Checks KEI audit logs for:
 
 Round 4 (P1-2): 接入 AppendOnlyLog (第 4 个 consumer).
   - 读源: KEI_AUDIT (其他模块写) → 用 AppendOnlyLog.since(hour_ago) 替代手写时间过滤
-  - 写汇: 新增 ALERT_LOG (自身写) → 每次 alert 触发落盘, 历史可查
+  - 写汇: 新增 alert_log_path() (自身写) → 每次 alert 触发落盘, 历史可查
 """
 
 from __future__ import annotations
@@ -20,13 +20,23 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from omo.omo_io import AppendOnlyLog
+from omo.omo_paths import code_root, state_root
 
 KEI_AUDIT = Path(os.environ.get("RUNTIME_HOME", str(Path.home() / "runtime"))) / "data" / "kei_audit.jsonl"
-NOTIFY_SCRIPT = Path.home() / "Workspace" / "projects" / "runtime" / "scripts" / "notify-alerts.sh"
 
-# Round 4: 自身写的 alert 历史 (AppendOnlyLog consumer)
-_WORKSPACE = Path(os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace")))
-ALERT_LOG = _WORKSPACE / ".omo" / "_knowledge" / "omo-alerts.jsonl"
+
+def notify_script() -> Path:
+    """仓内 notify-alerts.sh 的位置 —— 读侧，跟随当前检出 (BET-Y2Q4-T10-239)。
+
+    这条拼的是 ``projects/runtime/scripts/``，是检出内的源码而不是运行态，所以挂 code 根；
+    写面（alert 历史）在下面的 ``alert_log_path()``。
+    """
+    return code_root() / "projects" / "runtime" / "scripts" / "notify-alerts.sh"
+
+
+def alert_log_path() -> Path:
+    """alert 触发历史 —— 追加写运行态，跟随 profile 的 state 根 (BET-Y2Q4-T10-239)。"""
+    return state_root() / ".omo" / "_knowledge" / "omo-alerts.jsonl"
 
 
 def cmd_alert_check(threshold: int, notify: bool) -> int:
@@ -61,9 +71,9 @@ def cmd_alert_check(threshold: int, notify: bool) -> int:
     for a in alerts:
         print(f"  {a}")
 
-    # Round 4: 每次 alert 触发, 落 ALERT_LOG 一行 (结构化, 便于事后审计)
+    # Round 4: 每次 alert 触发, 落 alert_log_path() 一行 (结构化, 便于事后审计)
     # Round 37 P0: 加 sort_keys=True 守 §12.1.4 跨仓 4 不变量
-    alert_log = AppendOnlyLog(ALERT_LOG)
+    alert_log = AppendOnlyLog(alert_log_path())
     for a in alerts:
         alert_log.append(
             {
@@ -81,8 +91,8 @@ def cmd_alert_check(threshold: int, notify: bool) -> int:
     if notify:
         for a in alerts:
             try:
-                subprocess.run(["bash", str(NOTIFY_SCRIPT), "KEI Alert", a], timeout=10)
-                print(f"   → Notified via {NOTIFY_SCRIPT}")
+                subprocess.run(["bash", str(script), "KEI Alert", a], timeout=10)
+                print(f"   → Notified via {script}")
             except (subprocess.TimeoutExpired, FileNotFoundError) as e:
                 print(f"   → Notification failed: {e}")
     return 1 if alerts else 0
@@ -90,12 +100,12 @@ def cmd_alert_check(threshold: int, notify: bool) -> int:
 
 def cmd_alert_channel(enable: bool, webhook_url: str | None) -> int:
     """Configure notification channel."""
-    notify_script = NOTIFY_SCRIPT
-    if not notify_script.exists():
-        print(f"❌ notify-alerts.sh not found at {notify_script}")
+    script = notify_script()
+    if not script.exists():
+        print(f"❌ notify-alerts.sh not found at {script}")
         # Create the skeleton if it doesn't exist
-        notify_script.parent.mkdir(parents=True, exist_ok=True)
-        notify_script.write_text("""#!/bin/bash
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text("""#!/bin/bash
 # KEI Alert Notification Script
 # Usage: notify-alerts.sh <title> <body>
 set -euo pipefail
@@ -107,8 +117,8 @@ BODY="$2"
 #   -d "{\\"msgtype\\": \\"markdown\\", \\"markdown\\": {\\"content\\": \\"## $TITLE\\\\n$BODY\\"}}"
 echo "[NOTIFY] $TITLE: $BODY"
 """)
-        notify_script.chmod(0o755)
-        print(f"   Created: {notify_script}")
+        script.chmod(0o755)
+        print(f"   Created: {script}")
 
     if enable and webhook_url:
         # Write webhook URL to config

@@ -266,7 +266,27 @@ def _authority_witness_state() -> dict[str, Any]:
     raise WorkflowError("AUTHORITY_ACTIVATION_WITNESS_INVALID")
 
 
+def _authority_has_clone_identity(workspace: Path) -> bool:
+    target = workspace / ".git/agent-clone-identity.json"
+    if target.is_file():
+        return True
+    git_entry = workspace / ".git"
+    if git_entry.is_file():
+        try:
+            line = git_entry.read_text(encoding="utf-8").strip()
+            if line.startswith("gitdir:"):
+                git_dir = Path(line.split(":", 1)[1].strip())
+                if not git_dir.is_absolute():
+                    git_dir = (workspace / git_dir).resolve()
+                return (git_dir / "agent-clone-identity.json").is_file()
+        except OSError:
+            return False
+    return False
+
+
 def _authority_run_is_eligible(payload: Mapping[str, Any]) -> bool:
+    if not _authority_has_clone_identity(WORKSPACE):
+        return False
     return (
         bool(payload.get("run_id"))
         and bool(payload.get("actor"))
@@ -433,10 +453,16 @@ def _authority_sha_ref(value: Any, *, code: str) -> str:
 def _authority_observe_members(
     registry: dict[str, Any],
     snapshot: Mapping[str, Any],
-) -> list[dict[str, Any]]:
+) -> dict[str, list[dict[str, Any]]]:
+    """返回 {members, bindings}。
+
+    `members` 是发给 authority 的线上格式(形状被 member_version 锁定, 不得加字段);
+    `bindings` 供 ledger 记录 fence 绑定, 不进 authority 请求。
+    """
     base = _authority_envelope_identity(registry, snapshot)
     payload = snapshot["payload"]
     members: list[dict[str, Any]] = []
+    bindings: list[dict[str, Any]] = []
     claims = payload.get("claims")
     if not isinstance(claims, list):
         raise WorkflowError("CLAIM_SCOPE_VIOLATION")
@@ -474,9 +500,29 @@ def _authority_observe_members(
                 "claim_id": str(receipt.get("claim_id") or ""),
                 "claim_version": int(receipt.get("claim_version", -1)),
                 "lease_epoch": int(receipt.get("lease_epoch", -1)),
+                # ADR-0461: 一并带回回执摘要与 path 绑定, 供 changeset 侧拼装 fence 上下文
             }
         )
-    return sorted(members, key=lambda item: item["claim_id"])
+        # 额外绑定走独立列表: `members` 是发给 authority 的线上格式, 其形状由
+        # authority 的 member_version 校验锁定, **不得**就地加字段
+        # (否则 CLAIM_VERSION_STALE: member_version)。
+        bindings.append(
+            {
+                "claim_id": str(receipt.get("claim_id") or ""),
+                "claim_version": int(receipt.get("claim_version", -1)),
+                "lease_epoch": int(receipt.get("lease_epoch", -1)),
+                "v1_allow_receipt_digest": str(receipt.get("receipt_digest") or ""),
+                "paths_digest": str(
+                    (receipt.get("publication_scope") or {}).get("paths_digest") or ""
+                    if isinstance(receipt.get("publication_scope"), Mapping)
+                    else ""
+                ),
+            }
+        )
+    return {
+        "members": sorted(members, key=lambda item: item["claim_id"]),
+        "bindings": sorted(bindings, key=lambda item: item["claim_id"]),
+    }
 
 
 def _authority_envelope_identity(
@@ -485,9 +531,20 @@ def _authority_envelope_identity(
 ) -> dict[str, Any]:
     payload = snapshot["payload"]
     workspace = registry_workspace_root(registry)
-    identity = _authority_read_json(workspace / ".git/agent-clone-identity.json", code="IDENTITY_MISMATCH")
-    readiness = _authority_read_json(workspace / ".git/agent-clone-readiness.json", code="IDENTITY_MISMATCH")
-    provenance = _authority_read_json(workspace / ".git/agent-clone-provenance.json", code="IDENTITY_MISMATCH")
+    git_dir = workspace / ".git"
+    if git_dir.is_file():
+        try:
+            line = git_dir.read_text(encoding="utf-8").strip()
+            if line.startswith("gitdir:"):
+                gd = Path(line.split(":", 1)[1].strip())
+                if not gd.is_absolute():
+                    gd = (workspace / gd).resolve()
+                git_dir = gd
+        except OSError:
+            pass
+    identity = _authority_read_json(git_dir / "agent-clone-identity.json", code="IDENTITY_MISMATCH")
+    readiness = _authority_read_json(git_dir / "agent-clone-readiness.json", code="IDENTITY_MISMATCH")
+    provenance = _authority_read_json(git_dir / "agent-clone-provenance.json", code="IDENTITY_MISMATCH")
     if Path(str(identity.get("canonical_root") or "")).resolve() != workspace.resolve():
         raise WorkflowError("IDENTITY_MISMATCH")
     repository = str(provenance.get("repository", {}).get("canonical_repository") or "")
@@ -546,7 +603,7 @@ def _authority_begin_mutation(
     operation: str,
     snapshot: Mapping[str, Any],
 ) -> dict[str, Any]:
-    members = _authority_observe_members(registry, snapshot)
+    members = _authority_observe_members(registry, snapshot)["members"]
     process_identity = _authority_digest(
         {
             "process_nonce": _CLAIMS_AUTHORITY_PROCESS_NONCE,
@@ -566,6 +623,43 @@ def _authority_begin_mutation(
     return _call_claims_authority("begin-claim-mutation", request)
 
 
+def _record_authority_claim_binding(
+    registry: dict[str, Any],
+    run_id: str,
+    operation: str,
+    members: list[dict[str, Any]],
+) -> None:
+    """把 observe 得到的 claim 绑定追加到 ledger。**不触碰 run 记录。**
+
+    硬约束: 调用前后 `run_digest` 必须逐字节不变 —— 摘要一旦变化即说明
+    写错了地方 (settle 之后改 run 会让 authority 刚认证的
+    `resulting_run_digest` 静默失配, 且无复校)。本函数只 append ledger。
+    """
+    if operation != "claim" or not members:
+        return
+    append_ledger_event(
+        registry,
+        {
+            "event": "claim_binding_observed",
+            "run_id": run_id,
+            "operation": operation,
+            "code": "binding_available",
+            "effective_claim_authority": "v1",
+            "instruction_capable": False,
+            "members": [
+                {
+                    "claim_id": str(member.get("claim_id") or ""),
+                    "claim_version": int(member.get("claim_version", -1)),
+                    "lease_epoch": int(member.get("lease_epoch", -1)),
+                    "v1_allow_receipt_digest": str(member.get("v1_allow_receipt_digest") or ""),
+                    "paths_digest": str(member.get("paths_digest") or ""),
+                }
+                for member in members
+            ],
+        },
+    )
+
+
 def _authority_settle_mutation(
     registry: dict[str, Any],
     run_id: str,
@@ -576,7 +670,18 @@ def _authority_settle_mutation(
     outcome: str,
 ) -> dict[str, Any]:
     if operation == "claim" and outcome == "applied":
-        _authority_observe_members(registry, snapshot)
+        # 2026-10-04 (ADR-0461 第 1 步): 此前 observe 结果被**直接丢弃**, 于是唯一携带
+        # claim_id / claim_version / lease_epoch 的东西随调用返回即灭 —— 下游 changeset
+        # 永远拿不到绑定, legacy publish fence 100% 阻塞于
+        # LEGACY_FENCE_CONTEXT_UNAVAILABLE。
+        #
+        # 写入 **ledger** 而非 run 记录: `_authority_snapshot` 的
+        # `run_digest = _authority_file_digest(run_path)` 只覆盖 run 文件字节
+        # (`lifecycle.py:365`), ledger 是独立存储。若改为给 claim 记录加字段,
+        # settle 之后再写就会让 authority 刚认证过的 resulting_run_digest 静默失配,
+        # 且 :735 之后无任何复校 —— 必然失配且不可检出。
+        observed = _authority_observe_members(registry, snapshot)
+        _record_authority_claim_binding(registry, run_id, operation, observed["bindings"])
     request = {
         **_authority_envelope_identity(registry, snapshot),
         "request_id": str(begin["settlement_request_id"]),
@@ -1075,6 +1180,7 @@ def start_run(
         "updated_at": utc_now(),
         "context": context,
         "locks": [],
+        "claims": [],
         "plan": plan,
         "evidence": [],
     }

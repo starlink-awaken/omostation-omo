@@ -1,8 +1,8 @@
 ---
 type: ssot
 last_updated: 2026-09-04
-last_updated: 2026-08-26
 owner: governance-team
+last-reviewed: 2026-09-18
 ---
 
 # OMO Documentation
@@ -38,9 +38,9 @@ This directory collects project-level documentation for **OMO**.
 
 ## Workspace Context
 
-- Workspace architecture: [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md)
-- Project metadata SSOT: [`../../docs/project-registry.yaml`](../../docs/project-registry.yaml)
-- Layer placement: [`../../LAYER-INDEX.md`](../../LAYER-INDEX.md)
+- Workspace architecture: [`../../../ARCHITECTURE.md`](../../../ARCHITECTURE.md)
+- Project metadata SSOT: [`../../../docs/project-registry.yaml`](../../../docs/project-registry.yaml)
+- Layer placement: [`../../../LAYER-INDEX.md`](../../../LAYER-INDEX.md)
 
 ## SSOT Rules
 

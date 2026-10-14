@@ -13,20 +13,21 @@ Round 3: 摆脱 omo_audit 应急方案 (把 phase/health_score 拍扁成 details
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
 from omo.omo_audit import _utc_now  # 仍用: synced_at 字段时间戳
 from omo.omo_io import AppendOnlyLog
 from omo.omo_io_schemas import OmoSyncRecord  # Round 15 P0: 写时 Pydantic 校验
+from omo.omo_paths import state_root
 from omo.omo_shared import load_yaml
 
 AUDIT_CHECKS = 6
 
-# 复用 omo_bos / omo_bos_metrics 的工作区根约定
-_WORKSPACE = Path(os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace")))
-DEFAULT_SYNC_LOG_PATH = _WORKSPACE / ".omo" / "_knowledge" / "omo-sync.jsonl"
+
+def default_sync_log_path() -> Path:
+    """治理历史 append 的落点 —— 写面，跟随 profile 的 state 根 (BET-Y2Q4-T10-239)。"""
+    return state_root() / ".omo" / "_knowledge" / "omo-sync.jsonl"
 
 
 def run_sync(args: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -40,7 +41,7 @@ def run_sync(args: dict[str, Any] | None = None) -> dict[str, Any]:
 
     Args (可选):
       - "dry_run": bool (默认 False) — True 时只读不写
-      - "log_path": Path (默认 DEFAULT_SYNC_LOG_PATH) — 测试可覆盖
+      - "log_path": Path (默认 default_sync_log_path()) — 测试可覆盖
 
     Returns:
       - status: "ok" / "error"
@@ -51,7 +52,7 @@ def run_sync(args: dict[str, Any] | None = None) -> dict[str, Any]:
     """
     args = args or {}
     dry_run = bool(args.get("dry_run", False))
-    log_path = args.get("log_path", DEFAULT_SYNC_LOG_PATH)
+    log_path = args.get("log_path", default_sync_log_path())
 
     try:
         phase = 0
@@ -116,4 +117,4 @@ def run_sync(args: dict[str, Any] | None = None) -> dict[str, Any]:
         }
 
 
-__all__ = ["AUDIT_CHECKS", "DEFAULT_SYNC_LOG_PATH", "run_sync"]
+__all__ = ["AUDIT_CHECKS", "default_sync_log_path", "run_sync"]

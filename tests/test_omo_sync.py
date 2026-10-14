@@ -110,7 +110,9 @@ def test_omo_sync_accepts_multi_document_state_yaml(tmp_path, monkeypatch):
 
 def test_omo_sync_default_log_path_in_omo_knowledge():
     """默认 log path 应在 .omo/_knowledge/ (与 bos-metrics.jsonl 一致)."""
-    from omo.omo_sync import DEFAULT_SYNC_LOG_PATH
+    from omo.omo_sync import default_sync_log_path
+
+    DEFAULT_SYNC_LOG_PATH = default_sync_log_path()
 
     assert ".omo" in str(DEFAULT_SYNC_LOG_PATH)
     assert "knowledge" in str(DEFAULT_SYNC_LOG_PATH)

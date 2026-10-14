@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from .omo_debt_metrics import collect_stale_evidence_item_ids
+from .omo_debt_metrics import TERMINAL_STATES, collect_stale_evidence_item_ids
 from .omo_debt_registry import DebtItem
 
 REVIEW_WINDOW_DAYS = 7
@@ -67,7 +67,7 @@ def build_review_queue(items: tuple[DebtItem, ...], now: str, repo_root: Path) -
     unscheduled: list[dict[str, Any]] = []
 
     for item in items:
-        if item.lifecycle_state == "closed":
+        if item.lifecycle_state in TERMINAL_STATES:
             continue
         if not item.next_review_at:
             unscheduled.append(_entry_payload(item, stale_ids=stale_ids, overdue_by=0))
@@ -121,7 +121,7 @@ def build_review_queue(items: tuple[DebtItem, ...], now: str, repo_root: Path) -
     )
     unscheduled.sort(key=lambda entry: (severity_rank(entry["severity"]), entry["id"]))
 
-    open_items = [item for item in items if item.lifecycle_state != "closed"]
+    open_items = [item for item in items if item.lifecycle_state not in TERMINAL_STATES]
     return {
         "generated_at": now,
         "defaults": {

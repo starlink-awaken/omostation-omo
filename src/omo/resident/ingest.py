@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from omo.resident import WORKSPACE
+from omo.resident import WORKSPACE, write_path
 
 # ── topic mapping ────────────────────────────────────────────────────
 _EVENT_TYPE_TOPIC: dict[str, str] = {
@@ -52,15 +52,15 @@ def _inject_bus_foundation_path() -> None:
 def _load_watermark() -> str:
     """Return the last published event_id (empty string when none)."""
     try:
-        data = json.loads(WATERMARK_FILE.read_text(encoding="utf-8"))
+        data = json.loads(write_path(WATERMARK_FILE).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return ""
     return str(data.get("workflow_mesh_last_event_id") or "")
 
 
 def _save_watermark(event_id: str) -> None:
-    WATERMARK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    WATERMARK_FILE.write_text(
+    write_path(WATERMARK_FILE).parent.mkdir(parents=True, exist_ok=True)
+    write_path(WATERMARK_FILE).write_text(
         json.dumps({"workflow_mesh_last_event_id": event_id}, indent=2),
         encoding="utf-8",
     )
@@ -82,9 +82,11 @@ def _read_events(events_jsonl: Path) -> list[dict[str, Any]]:
 
 
 def publish_events(
-    *, dry_run: bool = False, events_jsonl: Path = EVENTS_JSONL, ledger: Path | None = None
+    *, dry_run: bool = False, events_jsonl: Path | None = None, ledger: Path | None = None
 ) -> dict[str, Any]:
     """Publish new events to the bus; optionally also ingest into the ledger."""
+    if events_jsonl is None:  # 默认参数冻结在 def 时, 路径必须在调用时刻解析 (T10-233)
+        events_jsonl = write_path(EVENTS_JSONL)
     last_id = _load_watermark()
     events = _read_events(events_jsonl)
 
@@ -197,7 +199,9 @@ def _inject_omo_path() -> None:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true", help="show new events without publishing")
-    parser.add_argument("--events-jsonl", type=Path, default=EVENTS_JSONL, help="override events.jsonl path")
+    parser.add_argument(
+        "--events-jsonl", type=Path, default=write_path(EVENTS_JSONL), help="override events.jsonl path"
+    )
     parser.add_argument("--ledger", type=Path, default=None, help="also ingest into this event ledger")
     args = parser.parse_args(argv)
 

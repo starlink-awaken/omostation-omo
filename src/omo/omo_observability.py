@@ -18,11 +18,18 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from omo.omo_paths import code_root, state_root
+
 RUNTIME_DATA = Path(os.environ.get("RUNTIME_HOME", str(Path.home() / "runtime"))) / "data"
 
-# Round 4: .omo/_knowledge/ 是 AppendOnlyLog 消费者的落点目录
-_WORKSPACE = Path(os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace")))
-KNOWLEDGE_DIR = _WORKSPACE / ".omo" / "_knowledge"
+
+def knowledge_dir() -> Path:
+    """AppendOnlyLog 消费者的 ``.omo/_knowledge`` 落点 —— 写面，跟随 state 根 (BET-Y2Q4-T10-239)。
+
+    与 ``omo_logs.knowledge_dir()`` 同契约；本模块同样只在该目录 glob ``*.jsonl``，
+    不读 ``_knowledge/decisions/**`` 那类已跟踪治理内容。
+    """
+    return state_root() / ".omo" / "_knowledge"
 
 
 def _kei_audit_path() -> Path:
@@ -30,12 +37,16 @@ def _kei_audit_path() -> Path:
 
 
 def _execution_log_path() -> Path:
+    """kairon agent-runtime 的执行日志落点 —— 检出处相对路径，跟随 code 根 (BET-Y2Q4-T10-239)。
+
+    ``EXECUTION_LOG`` 作为显式覆盖名保留；被禁止的只是它原来那个仓根的 host 字面量默认值
+    —— 原本写成跨行的 home 目录拼接，所以行级字面量尺扫不到它。
+    """
     return Path(
         os.environ.get(
             "EXECUTION_LOG",
             str(
-                Path.home()
-                / "Workspace"
+                code_root()
                 / "projects"
                 / "kairon"
                 / "packages"
@@ -54,10 +65,11 @@ def _taskobject_log_path() -> Path:
 
 def _knowledge_log_paths() -> list[Path]:
     """List all .jsonl files in .omo/_knowledge/ (sorted by mtime, newest first)."""
-    if not KNOWLEDGE_DIR.exists():
+    base = knowledge_dir()
+    if not base.exists():
         return []
     return sorted(
-        (p for p in KNOWLEDGE_DIR.glob("*.jsonl") if p.is_file()),
+        (p for p in base.glob("*.jsonl") if p.is_file()),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
     )

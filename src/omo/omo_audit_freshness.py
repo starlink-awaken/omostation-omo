@@ -42,12 +42,14 @@ def check_debt_evidence() -> dict:
             continue
         state = data.get("lifecycle_state", "unknown")
         if state == "closed":
-            evidence = data.get("resolution_evidence", "")
+            # 等价字段: closed_evidence 与 resolution_evidence 同权 (见文末注释)
+            evidence = data.get("resolution_evidence") or data.get("closed_evidence") or ""
             if not evidence or len(str(evidence)) < 20:
                 stale.append(
                     {
                         "id": data.get("id", yaml_file.stem),
-                        "issue": f"closed without resolution_evidence >= 20 chars (got {len(str(evidence))})",
+                        "issue": "closed without resolution_evidence/closed_evidence >= 20 chars "
+                        f"(got {len(str(evidence))})",
                     }
                 )
         elif state == "deferred":

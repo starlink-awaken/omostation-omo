@@ -18,6 +18,8 @@ New subcommand mode::
     omo ledger mandate-grant --mandate-id mandate:... --principal-id principal:alice ...
     omo ledger mandate-revoke --mandate-id mandate:... --principal-id principal:alice
     omo ledger mandate-admit --mandate-id mandate:... --principal-id principal:alice ...
+    omo ledger snapshot --source <db> --dest <db>
+    omo ledger snapshot --bootstrap --dest <db>
 
 The ``sovereignty-assign`` / ``sovereignty-query`` commands are the local-only
 W2-01 sovereignty surface (see ``omo.sovereignty``): flat CLI with
@@ -33,6 +35,13 @@ The ``import-jsonl`` / ``export-jsonl`` / ``compare-jsonl`` commands are the
 local JSONL shadow adapter (BET-Y1Q2-T1-03): they are local-only, do not
 support ``--agora``, and only ever write through ``LedgerBroker.append`` /
 the requested output file.
+
+The ``snapshot`` command is the ADR-0456 B4b batch-1 state-root mechanism (see
+``omo.event_ledger.snapshot``): it copies a live ledger with the SQLite online
+backup API and proves the copy is a gap-free hash prefix of the source, or
+bootstraps an empty dev-profile store.  It is local-only, takes ``--source`` /
+``--dest`` instead of ``--db``, and never promotes either artifact — every
+output carries ``authoritative=false``.
 
 Agora stdio mode (--agora)::
 
@@ -53,6 +62,7 @@ from pathlib import Path
 from typing import Any
 
 from .event_ledger.broker import DuplicateEventError, LedgerError
+from .event_ledger.snapshot import SnapshotError, bootstrap_store, snapshot_ledger
 from .event_ledger.surface import (
     AgoraValidationError,
     EventLedgerSurface,
@@ -121,6 +131,7 @@ SUBCMDS = frozenset(
         "mandate-grant",
         "mandate-revoke",
         "mandate-admit",
+        "snapshot",
     }
 )
 
@@ -404,6 +415,22 @@ def _build_subcommand_parser() -> argparse.ArgumentParser:
     pma.add_argument("--disclosure-policy", required=True, help="Disclosure policy (disclosure:...)")
     _add_local_flags(pma)
 
+    # ADR-0456 B4b batch 1 — state snapshot.  Deliberately no --db: this command
+    # operates on two paths, and letting --db silently supply the default
+    # workspace ledger would make an accidental "snapshot of nothing" possible.
+    psn = sub.add_parser(
+        "snapshot",
+        help="Copy a live ledger to a state root, or bootstrap an empty dev store (local only)",
+    )
+    psn.add_argument("--source", default=None, help="Ledger to copy (read-only; never modified)")
+    psn.add_argument("--dest", required=True, help="New store path (existing path is refused)")
+    psn.add_argument(
+        "--bootstrap",
+        action="store_true",
+        help="Create an empty store instead of copying --source",
+    )
+    psn.add_argument("--json", action="store_true", help="Emit JSON output")
+
     return parser
 
 
@@ -673,6 +700,11 @@ def _subcommand_main(argv: list[str]) -> int:
         # Merge remaining fields into params (overriding CLI defaults)
         params.update(incoming)
 
+    # snapshot never opens a surface: constructing one would create the default
+    # workspace ledger as a side effect of a command that was not asked to touch it.
+    if subcmd == "snapshot":
+        return _cmd_snapshot(params, is_json)
+
     try:
         surface = EventLedgerSurface(db_path=db_path)
     except Exception as exc:
@@ -817,6 +849,41 @@ def _cmd_status(surface: EventLedgerSurface, is_json: bool, is_agora: bool) -> i
         is_json,
         is_agora,
     )
+    return 0
+
+
+def _cmd_snapshot(params: dict[str, Any], is_json: bool) -> int:
+    dest = params.get("dest")
+    source = params.get("source")
+    bootstrap = bool(params.get("bootstrap"))
+    if not dest:
+        _emit_error(
+            {"ok": False, "error": "snapshot requires --dest", "reason": "missing_dest"},
+            is_agora=False,
+            is_json=is_json,
+        )
+        return 1
+    if bootstrap == (source is not None):
+        _emit_error(
+            {
+                "ok": False,
+                "error": "snapshot takes exactly one mode: --source <db> (copy) or --bootstrap (empty store)",
+                "reason": "snapshot_mode",
+            },
+            is_agora=False,
+            is_json=is_json,
+        )
+        return 1
+    try:
+        receipt = bootstrap_store(dest) if bootstrap else snapshot_ledger(source, dest)
+    except SnapshotError as exc:
+        _emit_error(
+            {"ok": False, "error": exc.message, "reason": exc.reason},
+            is_agora=False,
+            is_json=is_json,
+        )
+        return 1
+    _emit_receipt({"ok": True, **receipt}, is_json, False)
     return 0
 
 

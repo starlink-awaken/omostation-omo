@@ -12,10 +12,12 @@ omo 端 (本测试) 验证:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
-BOS_REGISTRY = Path(str(Path(__file__).resolve().parents[3]) + "/.omo/_knowledge/bos-registry.json")
-OMOSTATION_ROOT = Path(__file__).resolve().parents[3]
+# 被测对象的根不得由 __file__ 反推 (AGENTS.md §7): 在 PASW 子树检出里 parents[3] 是
+# <ws>/.subtrees 而非工作区根, 于是「本地绿 / 子树红」。走生产侧 resolver。
+from omo.omo_bos import default_registry_path
+
+BOS_REGISTRY = default_registry_path()
 
 
 # ── Registry 元数据 ─────────────────────────────────

@@ -2,6 +2,8 @@
 type: ssot
 last_updated: 2026-09-04
 owner: governance-team
+last_updated: 2026-09-04
+last-reviewed: 2026-09-18
 ---
 
 # CLAUDE.md — OMO AI Context

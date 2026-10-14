@@ -76,16 +76,21 @@ def load_debt_ledger(omo_dir: Path) -> DebtLedger:
         payload = load_yaml(item_file)
         items.append(_parse_debt_item(payload))
 
+    # 缺键容忍 (2026-09-19): 此前一律用 registry["x_ref"] 直取, 任一 ref 键缺失
+    # 即 KeyError —— 而 ref 的**目标文件**本身就是派生产物 (dashboard/reviews/
+    # review-queue/action-packet/owner-routing/dispatch/campaign/reporting),
+    # 由 `omo-debt refresh|dispatch|campaign|report` 按需生成, 未跑时不存在。
+    # 键与文件是两回事: 键缺失不该让整条读取路径崩溃。
     return DebtLedger(
         registry_ref=registry_ref_str,
-        dashboard_ref=registry["dashboard_ref"],
-        review_pack_ref=registry["review_pack_ref"],
-        review_queue_ref=registry["review_queue_ref"],
-        action_packet_ref=registry["action_packet_ref"],
-        owner_routing_ref=registry["owner_routing_ref"],
-        dispatch_ref=registry["dispatch_ref"],
-        campaign_ref=registry["campaign_ref"],
-        reporting_ref=registry["reporting_ref"],
+        dashboard_ref=registry.get("dashboard_ref", ""),
+        review_pack_ref=registry.get("review_pack_ref", ""),
+        review_queue_ref=registry.get("review_queue_ref", ""),
+        action_packet_ref=registry.get("action_packet_ref", ""),
+        owner_routing_ref=registry.get("owner_routing_ref", ""),
+        dispatch_ref=registry.get("dispatch_ref", ""),
+        campaign_ref=registry.get("campaign_ref", ""),
+        reporting_ref=registry.get("reporting_ref", ""),
         items=tuple(items),
     )
 

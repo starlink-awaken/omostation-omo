@@ -1,10 +1,13 @@
-"""omo_adjudication.py — AdjudicationRecorded 事件与裁决存储 (BET-Y1Q1-T4-01).
+"""Legacy adjudication projection and feedback helpers (BET-Y1Q1-T4-01).
 
 结果面: 系统第一次能记录"人类接受了什么、改了什么".
 守 ADR-0372: 决策日志入 bos://memory/mos/*.
 关联: decision_outcome.decision_id (do-NNNN).
 
-存储: .omo/_delivery/outcomes/adjudications.jsonl (append-only).
+存储: .omo/_delivery/outcomes/adjudications.jsonl (append-only historical projection).
+
+Canonical Personal Episode adjudication and value truth live only in the OMO
+Event Ledger.  This module must not promote JSONL rows to qualifying value.
 """
 
 from __future__ import annotations
@@ -53,7 +56,7 @@ def is_qualifying_outcome(
     scene_id: str,
     episode_id: str,
 ) -> tuple[bool, str]:
-    """WP5 qualifying 判定 (spec §2 价值真值边界)。
+    """Validate a legacy WP5 row without promoting it to value truth.
 
     返回 (qualifying, reason)。非 qualifying 不计 gate、价值状态不变。
     """
@@ -67,7 +70,7 @@ def is_qualifying_outcome(
         return False, "adjudication must bind a persisted decision"
     if not scene_id or not episode_id:
         return False, "scene/episode lineage required"
-    return True, "ok"
+    return False, "legacy projection cannot qualify; canonical Event Ledger EpisodeClosed required"
 
 
 VERDICT_CONFIDENCE_DELTA: dict[str, float] = {
@@ -179,54 +182,24 @@ class AdjudicationStore:
         episode_id: str,
         burden_minutes: float | None = None,
     ) -> dict[str, Any]:
-        """WP5 truth-writer (BET-Y1Q3-T4-07): authority-bound 裁决 → qualifying outcome。
+        """Reject new WP5 JSONL truth writes after Event Ledger convergence.
 
-        事务边界语义 (spec §3): qualifying 验证 → 幂等查重 → append-only 写入。
-        非 qualifying / replay conflict 一律拒绝且计数不变; append 失败不返回 success。
-        同一 adjudication_id 重放复用已写入记录 (幂等)。
+        Historical rows remain readable and byte-preserved.  New human
+        adjudications must enter through ``PersonalEpisodeService`` and close a
+        fully bound canonical Event Ledger chain; a projection caller cannot
+        independently change the value verdict.
         """
-        ok, reason = is_qualifying_outcome(
+        _, reason = is_qualifying_outcome(
             adjudication,
             decision_persisted=True,
             scene_id=scene_id,
             episode_id=episode_id,
         )
-        if not ok:
-            return {
-                "qualifying": False,
-                "reason": reason,
-                "qualifying_count": self._wp5_count(),
-            }
-        existing = self._wp5_find(adjudication.adjudication_id)
-        if existing is not None:
-            if existing.get("authority_receipt_digest") != adjudication.authority_receipt_digest:
-                return {
-                    "qualifying": False,
-                    "reason": "replay_conflict: same id different authority digest",
-                    "qualifying_count": self._wp5_count(),
-                }
-            return {
-                "qualifying": True,
-                "replayed": True,
-                "adjudication_id": adjudication.adjudication_id,
-                "qualifying_count": self._wp5_count(),
-            }
-        record = {
-            "schema": "wp5-human-adjudication/v1",
-            **asdict(adjudication),
-            "scene_id": scene_id,
-            "episode_id": episode_id,
-            "burden_minutes": burden_minutes,
-        }
-        self._log.append(record, sort_keys=True)
-        appended = self._wp5_find(adjudication.adjudication_id)
-        if appended is None:
-            raise RuntimeError("wp5 outcome append failed (truth-writer durable guarantee)")
         return {
-            "qualifying": True,
-            "replayed": False,
-            "adjudication_id": adjudication.adjudication_id,
-            "qualifying_count": self._wp5_count(),
+            "qualifying": False,
+            "reason": reason,
+            "qualifying_count": 0,
+            "legacy_record_count": len(self._wp5_records()),
         }
 
     def _wp5_records(self) -> list[dict[str, Any]]:
@@ -241,7 +214,8 @@ class AdjudicationStore:
         )
 
     def _wp5_count(self) -> int:
-        return len(self._wp5_records())
+        """Compatibility accessor: legacy projection rows never qualify."""
+        return 0
 
     def _apply_belief_feedback(self, decision_id: str, verdict: str) -> None:
         """闭环: 裁决 → 信念置信度修正 (best-effort, 不抛异常)."""

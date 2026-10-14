@@ -202,11 +202,8 @@ def test_daemon_role_arg_maps_projector(monkeypatch: pytest.MonkeyPatch, tmp_pat
     events = [_event("WorkflowClosed")]
     _write_events(tmp_path / "events.jsonl", events)
     monkeypatch.setattr(daemon, "_wm_path", lambda p: tmp_path / "watermarks" / f"{p}.json")
-    monkeypatch.setattr(
-        daemon,
-        "DEFAULT_LEDGER",
-        tmp_path / "ledger.sqlite3",
-    )
+    # 台账不再有模块常量 (T10-233): 唯一口径是 OMO_EVENT_LEDGER_DB env seam
+    monkeypatch.setenv("OMO_EVENT_LEDGER_DB", str(tmp_path / "ledger.sqlite3"))
     monkeypatch.setattr(
         daemon,
         "DEFAULT_EVENTS_JSONL",

@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from omo.resident import WORKSPACE
+from omo.resident import WORKSPACE, write_path
 from omo.resident import alert as _alert
 
 # 统一事件流 (daemon 消费源)
@@ -51,8 +51,8 @@ def _append_to_events_jsonl(payload: dict[str, Any], idempotency_key: str) -> No
         "producer": "resident-monitor",
         "schema_version": "workflow-mesh/v1",
     }
-    EVENTS_JSONL.parent.mkdir(parents=True, exist_ok=True)
-    with EVENTS_JSONL.open("a", encoding="utf-8") as fh:
+    write_path(EVENTS_JSONL).parent.mkdir(parents=True, exist_ok=True)
+    with write_path(EVENTS_JSONL).open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(event, ensure_ascii=False) + "\n")
 
 
@@ -114,11 +114,11 @@ def _write_alive_heartbeat(*, events_scanned: int, published: int) -> None:
     """
     now = datetime.now(timezone.utc)  # noqa: UP017 -- cron python3.9 兼容 (同 _utc_now)
     hour_key = f"monitor-alive:{now.strftime('%Y%m%dT%H')}"
-    if ALERT_LEDGER.is_file():
+    if write_path(ALERT_LEDGER).is_file():
         try:
             existing = {
                 str(json.loads(line).get("idempotency_key") or "")
-                for line in ALERT_LEDGER.read_text(encoding="utf-8").splitlines()
+                for line in write_path(ALERT_LEDGER).read_text(encoding="utf-8").splitlines()
                 if line.strip()
             }
             if hour_key in existing:
@@ -133,8 +133,8 @@ def _write_alive_heartbeat(*, events_scanned: int, published: int) -> None:
         "published": published,
         "source": "resident-monitor",
     }
-    ALERT_LEDGER.parent.mkdir(parents=True, exist_ok=True)
-    with ALERT_LEDGER.open("a", encoding="utf-8") as fh:
+    write_path(ALERT_LEDGER).parent.mkdir(parents=True, exist_ok=True)
+    with write_path(ALERT_LEDGER).open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
@@ -146,11 +146,11 @@ def _alert_handler(event: dict[str, Any]) -> None:
     obs = payload.get("observability") or {}
     idem = str(event.get("idempotency_key") or f"{event.get('event_id')}:{ALERT_TYPE}")
     existing: set[str] = set()
-    if ALERT_LEDGER.is_file():
+    if write_path(ALERT_LEDGER).is_file():
         try:
             existing = {
                 str(json.loads(line).get("idempotency_key") or "")
-                for line in ALERT_LEDGER.read_text(encoding="utf-8").splitlines()
+                for line in write_path(ALERT_LEDGER).read_text(encoding="utf-8").splitlines()
                 if line.strip()
             }
         except (OSError, json.JSONDecodeError):
@@ -179,8 +179,8 @@ def _alert_handler(event: dict[str, Any]) -> None:
         "delivered": delivered,
         "source": "resident-monitor",
     }
-    ALERT_LEDGER.parent.mkdir(parents=True, exist_ok=True)
-    with ALERT_LEDGER.open("a", encoding="utf-8") as fh:
+    write_path(ALERT_LEDGER).parent.mkdir(parents=True, exist_ok=True)
+    with write_path(ALERT_LEDGER).open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
@@ -201,7 +201,11 @@ def main(argv=None) -> int:
     parser.add_argument("--dump", action="store_true", help="查看已沉淀的告警记录")
     args = parser.parse_args(argv)
     if args.dump:
-        for line in ALERT_LEDGER.read_text(encoding="utf-8").splitlines() if ALERT_LEDGER.is_file() else []:
+        for line in (
+            write_path(ALERT_LEDGER).read_text(encoding="utf-8").splitlines()
+            if write_path(ALERT_LEDGER).is_file()
+            else []
+        ):
             print(line)
         return 0
     report = publish_monitor(dry_run=args.dry_run)

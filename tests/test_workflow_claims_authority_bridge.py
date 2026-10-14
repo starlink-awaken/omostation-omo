@@ -150,6 +150,57 @@ def test_ac01_canonical_json_and_digest_are_stable() -> None:
     assert lifecycle._authority_digest(left) == canonical_digest(left)
 
 
+def test_new_run_is_claims_eligible_before_its_first_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = {
+        "runner": {},
+        "agent_profiles": {
+            "governance-agent": {
+                "id": "governance-agent",
+                "actor": "agent-a",
+                "allowed_workflows": ["project-code-change"],
+            }
+        },
+    }
+    workflow = {
+        "id": "project-code-change",
+        "title": "Project code change",
+        "purpose": "test",
+        "agents": {},
+        "allowed_lanes": ["governance_code"],
+        "lock_scopes": [],
+        "phases": {},
+    }
+    record = lifecycle.start_run(
+        registry,
+        workflow,
+        {
+            "actor": "agent-a",
+            "profile": "governance-agent",
+            "project": "",
+            "format": "openspec",
+            "source_file": "",
+            "run_id": "",
+        },
+        "test initial Claims eligibility",
+        True,
+        False,
+    )
+
+    assert record["claims"] == []
+    record.update(
+        {
+            "bet_id": "BET-Y2Q2-T4-01",
+            "spec_binding": {"spec_ref": "repo://spec.md"},
+            "work_packet": {"packet_id": "WP-BET-Y2Q2-T4-01"},
+            "work_packet_hash": _digest("1"),
+        }
+    )
+    monkeypatch.setattr(lifecycle, "_authority_has_clone_identity", lambda _workspace: True)
+    assert lifecycle._authority_run_is_eligible(record) is True
+
+
 def test_red_frozen_child_public_api_is_complete_and_explicit() -> None:
     assert claims_authority.__all__ == (
         "AuthorityError",
@@ -1054,6 +1105,242 @@ def test_red_production_mutation_broker_recomputes_run_and_lock_snapshots(
         claims_authority._verify_production_mutation_request(request, paths, phase="before")
 
 
+def _broker992_rebind_observe(
+    paths: claims_authority.AuthorityPaths,
+    request: dict[str, object],
+    *,
+    claimed_path: str,
+    write_surfaces: object,
+    surfaces: list[str] | None = None,
+) -> Path:
+    clone = paths.account_home / "agents/agent-a/attempts/attempt-a/ws"
+    run_path = clone / ".omo/_delivery/agent-workflows/runs/run-authority.yaml"
+    run = yaml.safe_load(run_path.read_text(encoding="utf-8"))
+    claim = run["claims"][0]
+    claim["paths"] = [claimed_path]
+    claim["surfaces"] = surfaces or []
+    run["work_packet"]["scope"]["write_surfaces"] = write_surfaces
+    run["work_packet_hash"] = canonical_digest(run["work_packet"])
+    run_path.write_text(yaml.safe_dump(run, sort_keys=False), encoding="utf-8")
+    request.update(
+        work_packet_digest=run["work_packet_hash"],
+        v1_claim_digest=canonical_digest(claim),
+        v1_run_digest=f"sha256:{hashlib.sha256(run_path.read_bytes()).hexdigest()}",
+        requested_paths_digest=canonical_digest({"paths": claim["paths"], "surfaces": claim["surfaces"]}),
+    )
+    return clone
+
+
+@pytest.mark.parametrize(
+    "surface",
+    [
+        "bin/panorama/assets/host",
+        "bin/panorama/assets/host/",
+        "bin/panorama/assets/host/live_server.py.asset",
+        "bin/panorama/assets/host/*.asset",
+    ],
+)
+def test_broker992_observe_accepts_native_exact_directory_and_glob_scope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    surface: str,
+) -> None:
+    paths, request, _ = _production_observe_fixture(tmp_path, monkeypatch)
+    clone = _broker992_rebind_observe(
+        paths,
+        request,
+        claimed_path="bin/panorama/assets/host/live_server.py.asset",
+        write_surfaces=[surface],
+    )
+    run_path = clone / ".omo/_delivery/agent-workflows/runs/run-authority.yaml"
+    before = run_path.read_bytes()
+    assert claims_authority._verify_production_observe_request(request, paths)["run_id"] == "run-authority"
+    assert run_path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("claimed_path", "write_surfaces", "surfaces"),
+    [
+        ("bin/panorama/assets/host-other/file.asset", ["bin/panorama/assets/host"], []),
+        ("dir/file.py/child", ["dir/file.py"], []),
+        ("existing.py", ["other.py"], []),
+        ("existing.py", [""], []),
+        ("existing.py", [7], []),
+        ("existing.py", None, []),
+        ("../outside.py", ["../outside.py"], []),
+        ("/tmp/outside.py", ["/tmp/outside.py"], []),
+        ("existing.py", ["existing.py"], ["governance_state"]),
+    ],
+)
+def test_broker992_observe_rejects_prefix_escape_invalid_scope_and_surface_labels(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    claimed_path: str,
+    write_surfaces: object,
+    surfaces: list[str],
+) -> None:
+    paths, request, _ = _production_observe_fixture(tmp_path, monkeypatch)
+    _broker992_rebind_observe(
+        paths,
+        request,
+        claimed_path=claimed_path,
+        write_surfaces=write_surfaces,
+        surfaces=surfaces,
+    )
+    with pytest.raises(AuthorityError, match="CLAIM_SCOPE_VIOLATION"):
+        claims_authority._verify_production_observe_request(request, paths)
+
+
+@pytest.mark.parametrize("outside", [False, True])
+def test_broker992_observe_rejects_symlink_alias_and_escape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    outside: bool,
+) -> None:
+    paths, request, _ = _production_observe_fixture(tmp_path, monkeypatch)
+    clone = _broker992_rebind_observe(
+        paths,
+        request,
+        claimed_path="dir/link/file.py",
+        write_surfaces=["dir" + "/link"],
+    )
+    target = tmp_path / "outside" if outside else clone / "dir/real"
+    target.mkdir(parents=True)
+    link = clone / "dir/link"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(target, target_is_directory=True)
+    with pytest.raises(AuthorityError, match="CLAIM_SCOPE_VIOLATION"):
+        claims_authority._verify_production_observe_request(request, paths)
+
+
+def _broker992_mutation_request(
+    paths: claims_authority.AuthorityPaths,
+    *,
+    operation: str = "heartbeat",
+) -> dict[str, object]:
+    clone = paths.account_home / "agents/agent-a/attempts/attempt-a/ws"
+    registry = {
+        "runner": {
+            "workspace_root": str(clone),
+            "run_state_dir": ".omo/_delivery/agent-workflows/runs",
+            "lock_state_dir": ".omo/_delivery/agent-workflows/locks",
+        }
+    }
+    snapshot = lifecycle._authority_snapshot(registry, "run-authority")
+    identity = lifecycle._authority_envelope_identity(registry, snapshot)
+    return {
+        "schema": "claim-mutation-envelope/v2",
+        **{key: identity[key] for key in claims_authority._ENVELOPE_IDENTITY_FIELDS},
+        "request_id": str(uuid4()),
+        "authority_id": "omo-claims-authority-r0",
+        "operation": operation,
+        "run_digest": snapshot["run_digest"],
+        "lock_set_digest": snapshot["lock_set_digest"],
+        "resulting_run_digest": snapshot["run_digest"],
+        "resulting_lock_set_digest": snapshot["lock_set_digest"],
+        "members": [],
+        "mutation_process_identity_digest": _digest("9"),
+    }
+
+
+@pytest.mark.parametrize("phase", ["before", "after"])
+def test_broker992_mutation_deduplicates_relative_and_absolute_lock_aliases(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    phase: str,
+) -> None:
+    paths, _, _ = _production_observe_fixture(tmp_path, monkeypatch)
+    clone = paths.account_home / "agents/agent-a/attempts/attempt-a/ws"
+    run_path = clone / ".omo/_delivery/agent-workflows/runs/run-authority.yaml"
+    run = yaml.safe_load(run_path.read_text(encoding="utf-8"))
+    run["locks"].append(".omo/_delivery/agent-workflows/locks/path_existing.py.lock.yaml")
+    run_path.write_text(yaml.safe_dump(run, sort_keys=False), encoding="utf-8")
+    request = _broker992_mutation_request(paths)
+    verified = claims_authority._verify_production_mutation_request(request, paths, phase=phase)
+    assert verified["lock_set_digest"] == request["lock_set_digest"]
+    assert verified["claims_empty"] is False
+    lock_path = clone / run["locks"][-1]
+    lock_path.write_text(lock_path.read_text(encoding="utf-8") + "tampered: true\n", encoding="utf-8")
+    with pytest.raises(AuthorityError, match="AFFECTED_GRAPH_MISMATCH"):
+        claims_authority._verify_production_mutation_request(request, paths, phase=phase)
+
+
+def _broker992_empty_run(paths: claims_authority.AuthorityPaths) -> None:
+    clone = paths.account_home / "agents/agent-a/attempts/attempt-a/ws"
+    run_path = clone / ".omo/_delivery/agent-workflows/runs/run-authority.yaml"
+    run = yaml.safe_load(run_path.read_text(encoding="utf-8"))
+    for raw in run["locks"]:
+        Path(raw).unlink()
+    run["claims"] = []
+    run["locks"] = []
+    run_path.write_text(yaml.safe_dump(run, sort_keys=False), encoding="utf-8")
+
+
+@pytest.mark.parametrize("operation", ["heartbeat", "close"])
+def test_broker992_real_empty_native_run_can_reserve_idempotently(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    paths, _, _ = _production_observe_fixture(tmp_path, monkeypatch)
+    _broker992_empty_run(paths)
+    local_store = _AuthorityStore.connect_for_test(paths.account_home / "test-authority", f"test:{uuid4()}")
+    request = _broker992_mutation_request(paths, operation=operation)
+    request.pop("resulting_run_digest")
+    request.pop("resulting_lock_set_digest")
+    request["authority_id"] = local_store.authority_id
+    receipt = local_store.begin_claim_mutation(request)
+    assert receipt["state"] == "reserved"
+    assert receipt["members"] == []
+    assert local_store.begin_claim_mutation(request) == receipt
+    changed = {**request, "run_digest": _digest("f")}
+    with pytest.raises(AuthorityError, match="REQUEST_ID_REUSE_MISMATCH"):
+        local_store.begin_claim_mutation(changed)
+
+
+def test_broker992_empty_members_do_not_hide_real_native_claims(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths, _, _ = _production_observe_fixture(tmp_path, monkeypatch)
+    local_store = _AuthorityStore.connect_for_test(paths.account_home / "test-authority", f"test:{uuid4()}")
+    request = _broker992_mutation_request(paths)
+    request.pop("resulting_run_digest")
+    request.pop("resulting_lock_set_digest")
+    request["authority_id"] = local_store.authority_id
+    with pytest.raises(AuthorityError, match="CLAIM_SCOPE_VIOLATION"):
+        local_store.begin_claim_mutation(request)
+    assert local_store.scalar("SELECT COUNT(*) FROM claim_mutation_batches") == 0
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "error"),
+    [
+        ("head_oid", "b" * 40, "IDENTITY_MISMATCH"),
+        ("work_packet_digest", _digest("f"), "WORK_PACKET_UNBOUND"),
+        ("run_digest", _digest("f"), "AFFECTED_GRAPH_MISMATCH"),
+    ],
+)
+def test_broker992_empty_run_still_rechecks_identity_binding_and_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: str,
+    error: str,
+) -> None:
+    paths, _, _ = _production_observe_fixture(tmp_path, monkeypatch)
+    _broker992_empty_run(paths)
+    local_store = _AuthorityStore.connect_for_test(paths.account_home / "test-authority", f"test:{uuid4()}")
+    request = _broker992_mutation_request(paths)
+    request.pop("resulting_run_digest")
+    request.pop("resulting_lock_set_digest")
+    request.update(authority_id=local_store.authority_id)
+    request[field] = value
+    with pytest.raises(AuthorityError, match=error):
+        local_store.begin_claim_mutation(request)
+    assert local_store.scalar("SELECT COUNT(*) FROM claim_mutation_batches") == 0
+
+
 @pytest.mark.parametrize(
     ("field", "value", "code"),
     [
@@ -1121,6 +1408,79 @@ def test_red_v1_managed_clone_allow_is_forbidden(store: _AuthorityStore) -> None
 
     with pytest.raises(AuthorityError, match="V1_AUTHORITY_FORBIDDEN"):
         store.observe_claim(request)
+
+
+def _publication_scope(paths: list[str]) -> dict[str, object]:
+    return {
+        "schema": "claims-publication-scope/v1",
+        "kind": "legacy-publication",
+        "effect_ceiling": "one-legacy-fence",
+        "changed_paths": paths,
+        "paths_digest": canonical_digest(paths),
+    }
+
+
+def test_red_v2_general_allow_still_forbidden_without_scope(store: _AuthorityStore) -> None:
+    request = valid_observe_request()
+    request["clone_identity_schema"] = "agent-clone-identity/v2"
+    request["v1_decision"] = {"decision": "allow", "code": "legacy_allow"}
+
+    with pytest.raises(AuthorityError, match="V1_AUTHORITY_FORBIDDEN"):
+        store.observe_claim(request)
+
+
+def test_red_v2_publication_scope_wrong_ceiling_rejected(store: _AuthorityStore) -> None:
+    request = valid_observe_request()
+    request["clone_identity_schema"] = "agent-clone-identity/v2"
+    request["v1_decision"] = {"decision": "allow", "code": "legacy_allow"}
+    scope = _publication_scope(["docs/reports/example.md"])
+    scope["effect_ceiling"] = "unlimited"
+    request["publication_scope"] = scope
+    request["requested_paths_digest"] = scope["paths_digest"]
+
+    with pytest.raises(AuthorityError, match="V1_AUTHORITY_FORBIDDEN"):
+        store.observe_claim(request)
+
+
+def test_red_v2_publication_scope_unbound_paths_rejected(store: _AuthorityStore) -> None:
+    request = valid_observe_request()
+    request["clone_identity_schema"] = "agent-clone-identity/v2"
+    request["v1_decision"] = {"decision": "allow", "code": "legacy_allow"}
+    scope = _publication_scope(["docs/reports/example.md"])
+    request["publication_scope"] = scope
+    request["requested_paths_digest"] = _digest("other")
+
+    with pytest.raises(AuthorityError, match="CLAIM_SCOPE_VIOLATION"):
+        store.observe_claim(request)
+
+
+def test_green_v2_publication_scoped_allow_observe_and_fence(store: _AuthorityStore) -> None:
+    activation = store.activate_shadow(valid_activation_request(store))
+    descriptor_digest = str(activation["descriptor_digest"])
+
+    paths = ["docs/reports/2026-09-20-claims-authority-lifecycle-regression-runbook.md"]
+    scope = _publication_scope(paths)
+    request = valid_observe_request()
+    request.update(
+        {
+            "request_id": str(uuid4()),
+            "run_id": "run-pub-scope",
+            "claim_ordinal": 0,
+            "clone_identity_schema": "agent-clone-identity/v2",
+            "v1_claim_digest": canonical_digest({"run_id": "run-pub-scope", "ordinal": 0}),
+            "v1_decision": {"decision": "allow", "code": "legacy_allow"},
+            "publication_scope": scope,
+            "requested_paths_digest": scope["paths_digest"],
+        }
+    )
+    receipt = store.observe_claim(request)
+    assert receipt["comparison"]["effective_v1"]["decision"] == "allow"
+    assert receipt["publication_scope"]["effect_ceiling"] == "one-legacy-fence"
+
+    fence_req = _issue_fence_request(store, receipt, descriptor_digest)
+    fence_req["path_digest"] = scope["paths_digest"]
+    fence = store.issue_legacy_fence(fence_req)
+    assert fence["operation"] == "issue-legacy-fence"
 
 
 def test_red_future_cutover_rejects_v1_publication_fixture(store: _AuthorityStore) -> None:
@@ -2968,3 +3328,250 @@ def test_red_broker_has_no_remote_transport() -> None:
     assert "requests" not in imported
     assert "httpx" not in imported
     assert "run" not in calls
+
+
+# ---------------------------------------------------------------------------
+# describe-claim: 只读导出 fence 绑定 (ADR-0461)
+# ---------------------------------------------------------------------------
+
+
+def _describe_request(store: _AuthorityStore, claim_id: str, **extra: object) -> dict[str, object]:
+    return {
+        "schema": "claim-read-envelope/v1",
+        "authority_id": store.authority_id,
+        "claim_id": claim_id,
+        **extra,
+    }
+
+
+def _publishable_claim(store: _AuthorityStore) -> tuple[dict, dict, str]:
+    """建一条 publication-scoped allow 的 claim, 返回 (receipt, scope, descriptor_digest)。"""
+    activation = store.activate_shadow(valid_activation_request(store))
+    scope = _publication_scope(["docs/reports/2026-10-02-claims-fence-binding.md"])
+    request = valid_observe_request()
+    request.update(
+        {
+            "request_id": str(uuid4()),
+            "run_id": "run-describe",
+            "clone_identity_schema": "agent-clone-identity/v2",
+            "v1_claim_digest": canonical_digest({"run_id": "run-describe", "ordinal": 0}),
+            "v1_decision": {"decision": "allow", "code": "legacy_allow"},
+            "publication_scope": scope,
+            "requested_paths_digest": scope["paths_digest"],
+        }
+    )
+    receipt = store.observe_claim(request)
+    return receipt, scope, str(activation["descriptor_digest"])
+
+
+def test_describe_claim_round_trip_satisfies_issue_legacy_fence(
+    store: _AuthorityStore,
+) -> None:
+    """GREEN: describe-claim 的输出必须恰好够拼出被接受的 issue-legacy-fence 请求。
+
+    这是 ADR-0461 的核心契约 —— 此前 fence 要求的绑定全仓无生产方,
+    integrate --apply 在 shadow-active 态下 100% 阻塞。
+    """
+    receipt, scope, descriptor_digest = _publishable_claim(store)
+    binding = store.describe_claim(_describe_request(store, str(receipt["claim_id"])))
+
+    assert binding["publishable"] is True
+    # 拼装请求时只允许用 describe-claim 给的字段
+    fence_req = _issue_fence_request(
+        store,
+        {
+            "claim_id": binding["claim_id"],
+            "claim_version": binding["claim_version"],
+            "lease_epoch": binding["lease_epoch"],
+            "receipt_digest": binding["v1_allow_receipt_digest"],
+            "v1_run_digest": binding["v1_snapshot_digest"],
+        },
+        descriptor_digest,
+    )
+    fence_req["path_digest"] = binding["paths_digest"]
+    fence = store.issue_legacy_fence(fence_req)
+    assert fence["operation"] == "issue-legacy-fence"
+
+
+def test_describe_claim_is_read_only(store: _AuthorityStore) -> None:
+    """只读: 连续两次 describe 的 sequence 相同, 且不新增 receipt。"""
+    receipt, _scope, _d = _publishable_claim(store)
+    before_seq, _ = store._database_tip()
+    before_receipts = store._connection.execute(
+        "SELECT COUNT(*) FROM receipts WHERE authority_id=?", (store.authority_id,)
+    ).fetchone()[0]
+
+    first = store.describe_claim(_describe_request(store, str(receipt["claim_id"])))
+    second = store.describe_claim(_describe_request(store, str(receipt["claim_id"])))
+
+    after_seq, _ = store._database_tip()
+    after_receipts = store._connection.execute(
+        "SELECT COUNT(*) FROM receipts WHERE authority_id=?", (store.authority_id,)
+    ).fetchone()[0]
+    assert first["sequence"] == second["sequence"] == after_seq
+    assert before_seq == after_seq
+    assert before_receipts == after_receipts, "只读动词不得写 receipt"
+    assert first == second
+
+
+def test_red_describe_claim_unknown_claim_uses_existing_error_code(
+    store: _AuthorityStore,
+) -> None:
+    """未知 claim 必须复用 issue-legacy-fence 已有的 IDENTITY_MISMATCH, 不新增信息类别。"""
+    with pytest.raises(AuthorityError, match="IDENTITY_MISMATCH"):
+        store.describe_claim(_describe_request(store, "claim-does-not-exist"))
+
+
+def test_red_describe_claim_rejects_wrong_authority(store: _AuthorityStore) -> None:
+    with pytest.raises(AuthorityError, match="IDENTITY_MISMATCH"):
+        store.describe_claim(
+            {
+                "schema": "claim-read-envelope/v1",
+                "authority_id": "some-other-authority",
+                "claim_id": "c" * 16,
+            }
+        )
+
+
+def test_red_describe_claim_rejects_unknown_fields(store: _AuthorityStore) -> None:
+    with pytest.raises(AuthorityError, match="REQUEST_SCHEMA_INVALID"):
+        store.describe_claim(_describe_request(store, "c" * 16, allow_publish=True))
+
+
+def test_red_describe_claim_rejects_wrong_schema(store: _AuthorityStore) -> None:
+    with pytest.raises(AuthorityError, match="REQUEST_SCHEMA_INVALID"):
+        store.describe_claim(
+            {
+                "schema": "claim-mutation-envelope/v2",
+                "authority_id": store.authority_id,
+                "claim_id": "c" * 16,
+            }
+        )
+
+
+def test_describe_claim_without_allow_receipt_is_not_publishable(
+    store: _AuthorityStore,
+) -> None:
+    """无 allow 回执的 claim 正常返回并标 publishable=false, 而不是抛错。
+
+    调用方在 issue-legacy-fence 处会看到同样的结果, 故不构成新增信息泄漏。
+    """
+    store.activate_shadow(valid_activation_request(store))
+    request = valid_observe_request()
+    request.update(
+        {
+            "request_id": str(uuid4()),
+            "run_id": "run-noallow",
+            "clone_identity_schema": "agent-clone-identity/v2",
+            "v1_claim_digest": canonical_digest({"run_id": "run-noallow", "ordinal": 0}),
+        }
+    )
+    receipt = store.observe_claim(request)
+    binding = store.describe_claim(_describe_request(store, str(receipt["claim_id"])))
+    assert binding["publishable"] is False
+    assert binding["v1_allow_receipt_digest"] is None
+    assert binding["paths_digest"] is None
+    assert binding["claim_id"] == receipt["claim_id"]
+
+
+# ---------------------------------------------------------------------------
+# ADR-0461 第 1 步: observe 结果写进 ledger, run 记录与 run_digest 不得变动
+# ---------------------------------------------------------------------------
+
+
+def _registry() -> dict[str, object]:
+    return {
+        "runner": {},
+        "agent_profiles": {
+            "governance-agent": {
+                "id": "governance-agent",
+                "actor": "agent-a",
+                "allowed_workflows": ["project-code-change"],
+            }
+        },
+    }
+
+
+def _members() -> list[dict[str, object]]:
+    return [
+        {
+            "claim_id": "claim-1",
+            "claim_version": 1,
+            "lease_epoch": 2,
+            "v1_allow_receipt_digest": "sha256:" + "a" * 64,
+            "paths_digest": "sha256:" + "b" * 64,
+        }
+    ]
+
+
+def test_green_claim_binding_lands_in_ledger(monkeypatch: pytest.MonkeyPatch) -> None:
+    """observe 结果此前被直接丢弃; 现在必须进 ledger。"""
+    from omo.workflow import lifecycle_ledger
+
+    captured: list[dict[str, object]] = []
+    monkeypatch.setattr(lifecycle_ledger, "append_ledger_event", lambda _r, event: captured.append(event))
+    monkeypatch.setattr(lifecycle, "append_ledger_event", lambda _r, e: captured.append(e))
+
+    lifecycle._record_authority_claim_binding(_registry(), "run-1", "claim", _members())
+
+    assert len(captured) == 1
+    event = captured[0]
+    assert event["event"] == "claim_binding_observed"
+    assert event["run_id"] == "run-1"
+    member = event["members"][0]
+    assert member["claim_id"] == "claim-1"
+    assert member["claim_version"] == 1
+    assert member["lease_epoch"] == 2
+    assert member["v1_allow_receipt_digest"] == "sha256:" + "a" * 64
+    assert member["paths_digest"] == "sha256:" + "b" * 64
+
+
+def test_red_non_claim_operation_writes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[dict[str, object]] = []
+    monkeypatch.setattr(lifecycle, "append_ledger_event", lambda _r, e: captured.append(e))
+    lifecycle._record_authority_claim_binding(_registry(), "run-1", "close", _members())
+    assert captured == []
+
+
+def test_red_empty_members_writes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[dict[str, object]] = []
+    monkeypatch.setattr(lifecycle, "append_ledger_event", lambda _r, e: captured.append(e))
+    lifecycle._record_authority_claim_binding(_registry(), "run-1", "claim", [])
+    assert captured == []
+
+
+def test_hard_run_digest_unchanged_by_binding_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """**硬判据**: 记录绑定后 run 记录与 `run_digest` 必须逐字节不变。
+
+    settle 之后若改动 run 文件, authority 刚认证过的 `resulting_run_digest`
+    会静默失配, 且 `:735` 之后无任何复校 —— 必然失配且不可检出。本测试是
+    该不变式的守门人: 摘要一旦变化即说明写错了地方。
+    """
+    registry = _registry()
+    workflow = {
+        "id": "project-code-change",
+        "title": "Project code change",
+        "purpose": "test",
+        "agents": {},
+        "allowed_lanes": ["governance_code"],
+        "lock_scopes": [],
+        "phases": {},
+    }
+    record = lifecycle.start_run(
+        registry,
+        workflow,
+        {"actor": "agent-a", "profile": "governance-agent", "project": "", "format": "openspec"},
+        "test objective",
+        False,
+        False,
+    )
+    run_id = record["run_id"] if isinstance(record, dict) else record.run_id
+    run_path, _payload = lifecycle.read_run(registry, run_id)
+    before_bytes = run_path.read_bytes()
+    before_digest = lifecycle._authority_file_digest(run_path)
+
+    monkeypatch.setattr(lifecycle, "append_ledger_event", lambda *_a, **_k: None)
+    lifecycle._record_authority_claim_binding(registry, run_id, "claim", _members())
+
+    assert run_path.read_bytes() == before_bytes, "记录绑定**不得**改动 run 记录字节"
+    assert lifecycle._authority_file_digest(run_path) == before_digest, "run_digest 必须不变"

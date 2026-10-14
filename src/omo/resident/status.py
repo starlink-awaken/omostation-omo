@@ -16,13 +16,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 import sys
 import time
 from pathlib import Path
 from typing import Any
 
-from omo.resident import WORKSPACE
+from omo.resident import LEDGER_DB_ENV, WORKSPACE, event_ledger_path, write_path
 
 DELIVERY = WORKSPACE / ".omo" / "_delivery"
 DAEMON_WATERMARKS = DELIVERY / "resident-orchestrator" / "watermarks"
@@ -30,6 +31,21 @@ EVENTS_JSONL = WORKSPACE / ".omo" / "_knowledge" / "workflow-mesh" / "events.jso
 SEDIMENT_ROOT = WORKSPACE / ".omo" / "_knowledge" / "sediment"
 ALERT_WATERMARK = DELIVERY / "alert-forwarder" / "watermark.json"
 LEDGER = WORKSPACE / "runtime" / "omo" / "event-ledger.sqlite3"
+
+
+def resolve_ledger() -> Path:
+    """台账路径的**调用时刻**口径: `OMO_EVENT_LEDGER_DB` > 显式 patch 的 LEDGER 模板 > state 根。
+
+    `event_ledger_path()` 是同一契约的另一半 (env 优先), 这里在它前面插一层模板探测:
+    既有 12 处 `status.LEDGER` 用例把该属性当缝用 (touch/建库/monkeypatch), 常量改函数会
+    当场打断, 而那个测试文件在本 BET 的 write_surfaces 之外。未声明 profile 且未 patch 时,
+    两条分支都落到 `state_root()/runtime/omo/event-ledger.sqlite3` —— 与历史取值逐字节相同。
+    """
+    if os.environ.get(LEDGER_DB_ENV):
+        return event_ledger_path()
+    return write_path(LEDGER)
+
+
 STALE_THRESHOLD_SECONDS = 1800  # 30min
 
 
@@ -60,7 +76,9 @@ def _daemon_snapshot() -> dict[str, Any]:
     # 排除订阅层 resident-sub.json — subscribe 非 cron daemon tick 证据, 更新频率低,
     # 混入会让健康体系被陈旧 sub 水位误判 degraded。
     # Cold start (never ticked) is non-fatal for status health (BET-Y1Q4-T9-01 Spec).
-    watermark_files = sorted(p for p in DAEMON_WATERMARKS.glob("resident-*.json") if p.name != "resident-sub.json")
+    watermark_files = sorted(
+        p for p in write_path(DAEMON_WATERMARKS).glob("resident-*.json") if p.name != "resident-sub.json"
+    )
     if not watermark_files:
         return {
             "ok": True,
@@ -82,30 +100,30 @@ def _daemon_snapshot() -> dict[str, Any]:
 
 
 def _events_snapshot() -> dict[str, Any]:
-    if not EVENTS_JSONL.is_file():
+    if not write_path(EVENTS_JSONL).is_file():
         return {"ok": True, "detail": "no events.jsonl yet", "lines": 0, "bytes": 0}
-    age = _file_age(EVENTS_JSONL)
+    age = _file_age(write_path(EVENTS_JSONL))
     lines = 0
-    with EVENTS_JSONL.open(encoding="utf-8") as fh:
+    with write_path(EVENTS_JSONL).open(encoding="utf-8") as fh:
         for _ in fh:
             lines += 1
     return {
         "ok": True,
         "detail": f"{lines} events (input stream idle {age:.0f}s)" if age else f"{lines} events",
         "lines": lines,
-        "bytes": EVENTS_JSONL.stat().st_size,
+        "bytes": write_path(EVENTS_JSONL).stat().st_size,
         "idle_seconds": int(age) if age is not None else None,
     }
 
 
 def _sediment_snapshot() -> dict[str, Any]:
-    runs = _count_files(SEDIMENT_ROOT / "runs", "*.md")
-    failures = _count_files(SEDIMENT_ROOT / "failures", "*.md")
+    runs = _count_files(write_path(SEDIMENT_ROOT) / "runs", "*.md")
+    failures = _count_files(write_path(SEDIMENT_ROOT) / "failures", "*.md")
     return {"ok": True, "runs": runs, "failures": failures, "total": runs + failures}
 
 
 def _alert_snapshot() -> dict[str, Any]:
-    wm = _load_json(ALERT_WATERMARK)
+    wm = _load_json(write_path(ALERT_WATERMARK))
     return {
         "ok": True,
         "watermark_byte_offset": int(wm.get("byte_offset", 0)) if wm else None,
@@ -165,7 +183,8 @@ def _probe_ledger_once() -> dict[str, Any]:
 
 def _ledger_snapshot() -> dict[str, Any]:
     # Missing ledger is cold-start non-fatal (BET-Y1Q4-T9-01 Spec).
-    if not LEDGER.is_file():
+    ledger = resolve_ledger()
+    if not ledger.is_file():
         return {
             "ok": True,
             "detail": "ledger sqlite missing — cold start non-fatal",
@@ -186,7 +205,7 @@ def _ledger_snapshot() -> dict[str, Any]:
 
     from omo.resident.ledger_check import check_lock_state_only  # noqa: PLC0415
 
-    lock_state = check_lock_state_only(LEDGER)
+    lock_state = check_lock_state_only(ledger)
     chain = _probe_ledger_once()
     state = str(lock_state.get("state") or "unknown")
     locked = True if state in {"locked", "busy"} else False if state == "unlocked" else None

@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from omo.resident import WORKSPACE
+from omo.resident import WORKSPACE, write_path
 
 OBS_EVENTS = WORKSPACE / ".omo" / "_delivery" / "observability" / "events.jsonl"
 WATERMARK_FILE = WORKSPACE / ".omo" / "_delivery" / "alert-forwarder" / "watermark.json"
@@ -27,27 +27,27 @@ ALERT_SEVERITIES = frozenset({"critical", "degraded"})
 
 def _load_byte_offset() -> int:
     try:
-        return int(json.loads(WATERMARK_FILE.read_text(encoding="utf-8")).get("byte_offset", 0))
+        return int(json.loads(write_path(WATERMARK_FILE).read_text(encoding="utf-8")).get("byte_offset", 0))
     except (OSError, json.JSONDecodeError):
         return 0
 
 
 def _save_byte_offset(offset: int) -> None:
-    WATERMARK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    WATERMARK_FILE.write_text(json.dumps({"byte_offset": offset}), encoding="utf-8")
+    write_path(WATERMARK_FILE).parent.mkdir(parents=True, exist_ok=True)
+    write_path(WATERMARK_FILE).write_text(json.dumps({"byte_offset": offset}), encoding="utf-8")
 
 
 def _read_incremental() -> tuple[list[dict[str, Any]], int]:
-    if not OBS_EVENTS.is_file():
+    if not write_path(OBS_EVENTS).is_file():
         return [], 0
-    file_size = OBS_EVENTS.stat().st_size
+    file_size = write_path(OBS_EVENTS).stat().st_size
     offset = _load_byte_offset()
     if file_size < offset:
         offset = 0
     if offset == file_size:
         return [], file_size
     events: list[dict[str, Any]] = []
-    with OBS_EVENTS.open("rb") as fh:
+    with write_path(OBS_EVENTS).open("rb") as fh:
         fh.seek(offset)
         data = fh.read()
     for line in data.decode("utf-8", "replace").splitlines():

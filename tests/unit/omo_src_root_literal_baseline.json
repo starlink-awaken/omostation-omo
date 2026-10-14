@@ -1,0 +1,166 @@
+{
+"src/omo/cli.py": [
+{
+"start": 13,
+"text": "ws = Path(os.environ.get(\"WORKSPACE_ROOT\", str(Path.home() / \"Workspace\")))"
+},
+{
+"start": 477,
+"text": "ws = Path(os.environ.get(\"WORKSPACE_ROOT\", str(Path.home() / \"Workspace\")))"
+}
+],
+"src/omo/event_ledger/surface.py": [
+{
+"start": 37,
+"text": "return Path(os.environ.get(\"WORKSPACE_ROOT\", str(Path.home() / \"Workspace\")))"
+}
+],
+"src/omo/omo_agent_host.py": [
+{
+"start": 231,
+"text": "_WORKSPACE = Path(os.environ.get(\"WORKSPACE_ROOT\", str(Path.home() / \"Workspace\")))"
+},
+{
+"start": 305,
+"text": "workspace = _Path(os.environ.get(\"WORKSPACE_ROOT\", str(_Path.home() / \"Workspace\")))"
+},
+{
+"start": 389,
+"text": "workspace = Path(os.environ.get(\"WORKSPACE_ROOT\", str(Path.home() / \"Workspace\")))"
+},
+{
+"start": 465,
+"text": "workspace = _Path(os.environ.get(\"WORKSPACE_ROOT\", str(_Path.home() / \"Workspace\")))"
+},
+{
+"start": 561,
+"text": "workspace = _Path(os.environ.get(\"WORKSPACE_ROOT\", str(_Path.home() / \"Workspace\")))"
+},
+{
+"start": 702,
+"text": "workspace = Path(os.environ.get(\"WORKSPACE_ROOT\", str(Path.home() / \"Workspace\")))"
+},
+{
+"start": 810,
+"text": "workspace = Path(os.environ.get(\"WORKSPACE_ROOT\", str(Path.home() / \"Workspace\")))"
+}
+],
+"src/omo/omo_alert.py": [
+{
+"start": 25,
+"text": "NOTIFY_SCRIPT = Path.home() / \"Workspace\" / \"projects\" / \"runtime\" / \"scripts\" / \"notify-alerts.sh\""
+},
+{
+"start": 28,
+"text": "_WORKSPACE = Path(os.environ.get(\"WORKSPACE_ROOT\", str(Path.home() / \"Workspace\")))"
+}
+],
+"src/omo/omo_bos.py": [
+{
+"start": 42,
+"text": "_KAIRON_PACKAGES_SRC = (\n    Path(os.environ.get(\"WORKSPACE_ROOT\", str(Path.home() / \"Workspace\")))\n    / \"projects\"\n    / \"knowledge\"\n    / \"kairon\"\n    / \"packages\"\n    / \"kos\"\n    / \"src\"\n)"
+},
+{
+"start": 91,
+"text": "DEFAULT_REGISTRY_PATH = (\n    Path(os.environ.get(\"WORKSPACE_ROOT\", str(Path.home() / \"Workspace\"))) / \".omo\" / \"_knowledge\" / \"bos-registry.json\"\n)"
+}
+],
+"src/omo/omo_bos_metrics.py": [
+{
+"start": 39,
+"text": "_WORKSPACE = Path(os.environ.get(\"WORKSPACE_ROOT\", str(Path.home() / \"Workspace\")))"
+}
+],
+"src/omo/omo_cards.py": [
+{
+"start": 669,
+"text": "layer_index = Path.home() / \"Workspace\" / \"LAYER-INDEX.md\""
+},
+{
+"start": 758,
+"text": "checks = [\n    (\"CARDS DB\", \"SQLite\", DB_PATH, DB_PATH.exists()),\n    (\n        \"OMO 治理\",\n        \"YAML\",\n        Path.home() / \"Workspace\" / \".omo\",\n        (Path.home() / \"Workspace\" / \".omo\").exists(),\n    ),\n    (\n        \"Vault\",\n        \"Markdown\",\n        Path.home() / \"Documents\" / \"学习进化\",\n        (Path.home() / \"Documents\" / \"学习进化\").exists(),\n    ),\n    (\"驾驶舱\", \"MD+SQLite\", _get_cockpit_dir(), _get_cockpit_dir().exists()),\n    (\"MADF 视图\", \"Markdown(自动生成)\", views_dir, views_dir.exists()),\n]"
+}
+],
+"src/omo/omo_dashboard.py": [
+{
+"start": 18,
+"text": "OMO_DIR = Path(os.environ.get(\"OMO_DIR\", str(Path.home() / \"Workspace\" / \".omo\")))"
+}
+],
+"src/omo/omo_event.py": [
+{
+"start": 18,
+"text": "_WORKSPACE = Path(os.environ.get(\"WORKSPACE_ROOT\", str(Path.home() / \"Workspace\")))"
+}
+],
+"src/omo/omo_logs.py": [
+{
+"start": 28,
+"text": "_WORKSPACE = Path(os.environ.get(\"WORKSPACE_ROOT\", str(Path.home() / \"Workspace\")))"
+}
+],
+"src/omo/omo_observability.py": [
+{
+"start": 24,
+"text": "_WORKSPACE = Path(os.environ.get(\"WORKSPACE_ROOT\", str(Path.home() / \"Workspace\")))"
+},
+{
+"start": 33,
+"text": "return Path(\n    os.environ.get(\n        \"EXECUTION_LOG\",\n        str(\n            Path.home()\n            / \"Workspace\"\n            / \"projects\"\n            / \"kairon\"\n            / \"packages\"\n            / \"agent-runtime\"\n            / \"src\"\n            / \"agent_runtime\"\n            / \"execution_log.jsonl\"\n        ),\n    )\n)"
+}
+],
+"src/omo/omo_phase16.py": [
+{
+"start": 417,
+"text": "workspace_root = os.environ.get(\"WORKSPACE_ROOT\", str(Path.home() / \"Workspace\"))"
+}
+],
+"src/omo/omo_self_healing.py": [
+{
+"start": 43,
+"text": "OMO_ROOT = Path(os.environ.get(\"OMO_ROOT\", Path.home() / \"Workspace/projects/omo\"))"
+},
+{
+"start": 476,
+"text": "roots = [\n    Path.home() / \"Workspace\" / \"projects\" / p\n    for p in os.listdir(Path.home() / \"Workspace\" / \"projects\")\n    if not p.startswith(\"_\")\n]"
+},
+{
+"start": 505,
+"text": "ws = Path.home() / \"Workspace\""
+},
+{
+"start": 523,
+"text": "ws = Path.home() / \"Workspace\""
+}
+],
+"src/omo/omo_state.py": [
+{
+"start": 121,
+"text": "runtime_root = Path.home() / \"Workspace\" / \"projects\" / \"runtime\""
+}
+],
+"src/omo/omo_sync.py": [
+{
+"start": 28,
+"text": "_WORKSPACE = Path(os.environ.get(\"WORKSPACE_ROOT\", str(Path.home() / \"Workspace\")))"
+}
+],
+"src/omo/omo_trail.py": [
+{
+"start": 46,
+"text": "_WORKSPACE = Path(os.environ.get(\"WORKSPACE_ROOT\", str(Path.home() / \"Workspace\")))"
+}
+],
+"src/omo/sovereignty/enforcement.py": [
+{
+"start": 119,
+"text": "root = os_environ().get(\"WORKSPACE_ROOT\", str(Path.home() / \"Workspace\"))"
+}
+],
+"src/omo/workflow/delivery_anchor.py": [
+{
+"start": 56,
+"text": "home_root = Path.home() / \"Workspace\""
+}
+]
+}

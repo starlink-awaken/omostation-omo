@@ -18,6 +18,8 @@ except ImportError:
     UTC = UTC
 from pathlib import Path
 
+from .omo_paths import OMO_ROOT, code_root
+
 DB_PATH = Path(__file__).resolve().parents[4] / "data" / "cards" / "cards.db"
 
 
@@ -666,7 +668,7 @@ def cmd_generate_views(args=None):
     generated += 1
 
     # ── V2-开发: 从 LAYER-INDEX 提取 ──
-    layer_index = Path.home() / "Workspace" / "LAYER-INDEX.md"
+    layer_index = code_root() / "LAYER-INDEX.md"
     v2 = f"""# V2 开发视图（自动生成）
 
 > 生成: {now} | 源: Workspace/LAYER-INDEX.md
@@ -760,8 +762,8 @@ def cmd_generate_views(args=None):
         (
             "OMO 治理",
             "YAML",
-            Path.home() / "Workspace" / ".omo",
-            (Path.home() / "Workspace" / ".omo").exists(),
+            OMO_ROOT,
+            OMO_ROOT.exists(),
         ),
         (
             "Vault",

@@ -24,8 +24,8 @@ import pytest
 from omo.omo_bos import (
     ALLOWED_DOMAINS,
     BOS_URI_PATTERN,
-    DEFAULT_REGISTRY_PATH,
     SEED_REGISTRATIONS,
+    default_registry_path,
     list_registrations,
     load_registry,
     parse_bos_uri,
@@ -292,7 +292,13 @@ def test_cli_validate_subcommand() -> None:
 
 
 def test_default_registry_path_under_omo_knowledge() -> None:
-    """默认注册表路径在 .omo/_knowledge/ 下 (P33-W1 战役 2 起步约定)."""
+    """默认注册表路径在 .omo/_knowledge/ 下 (P33-W1 战役 2 起步约定).
+
+    T10-239: 原先读 import 时常量 ``DEFAULT_REGISTRY_PATH``; 现在是调用时刻经
+    ``state_root()`` 解析的 ``default_registry_path()`` —— 三条断言逐字保留，
+    只是取值时机从 import 挪到调用 (正是本轮要的)。
+    """
+    DEFAULT_REGISTRY_PATH = default_registry_path()
     assert ".omo" in str(DEFAULT_REGISTRY_PATH)
     assert "_knowledge" in str(DEFAULT_REGISTRY_PATH)
     assert str(DEFAULT_REGISTRY_PATH).endswith("bos-registry.json")

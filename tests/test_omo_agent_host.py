@@ -17,7 +17,18 @@ import json
 import subprocess
 from pathlib import Path
 
+from omo import omo_agent_host
 from omo.omo_agent_host import AgentHost, HealthMonitorAgent, JourneyRunnerAgent
+
+
+def _pin_snapshot(monkeypatch, path: Path) -> None:
+    """把 HealthMonitorAgent 的快照路径挂到指定文件。
+
+    原先缝在类属性 ``_HEALTH_YAML`` 上; T10-239 把那条 import 时求值的常量换成
+    ``health_snapshot_path()`` (投影登记 + 调用时刻解析), 所以缝跟着搬到函数上 ——
+    注入的仍然是读者实际打开的那个路径, 断言一条没少。
+    """
+    monkeypatch.setattr(omo_agent_host, "health_snapshot_path", lambda: path)
 
 
 def _write_health(tmp_path: Path, services: dict) -> Path:
@@ -29,9 +40,8 @@ def _write_health(tmp_path: Path, services: dict) -> Path:
 
 def test_all_healthy_returns_noop(tmp_path: Path, monkeypatch) -> None:
     """全 healthy → action=noop (含 'healthy (probe)' 不报)."""
-    monkeypatch.setattr(
-        HealthMonitorAgent,
-        "_HEALTH_YAML",
+    _pin_snapshot(
+        monkeypatch,
         _write_health(
             tmp_path,
             {
@@ -50,9 +60,8 @@ def test_all_healthy_returns_noop(tmp_path: Path, monkeypatch) -> None:
 
 def test_unhealthy_returns_alert(tmp_path: Path, monkeypatch) -> None:
     """有 unhealthy → action=alert + details 含异常服务清单 (不落盘)."""
-    monkeypatch.setattr(
-        HealthMonitorAgent,
-        "_HEALTH_YAML",
+    _pin_snapshot(
+        monkeypatch,
         _write_health(
             tmp_path,
             {
@@ -73,37 +82,25 @@ def test_unhealthy_returns_alert(tmp_path: Path, monkeypatch) -> None:
 
 def test_scheduled_not_flagged(tmp_path: Path, monkeypatch) -> None:
     """scheduled (定时任务未到点) 不报."""
-    monkeypatch.setattr(
-        HealthMonitorAgent,
-        "_HEALTH_YAML",
-        _write_health(tmp_path, {"cron": {"health_check": "scheduled"}}),
-    )
+    _pin_snapshot(monkeypatch, _write_health(tmp_path, {"cron": {"health_check": "scheduled"}}))
     assert HealthMonitorAgent().tick()["action"] == "noop"
 
 
 def test_empty_health_check_skipped(tmp_path: Path, monkeypatch) -> None:
     """空 health_check (未探活, 如 unmanaged 服务) 不报."""
-    monkeypatch.setattr(
-        HealthMonitorAgent,
-        "_HEALTH_YAML",
-        _write_health(tmp_path, {"gbrain": {"runtime": {"status": "unmanaged"}}}),
-    )
+    _pin_snapshot(monkeypatch, _write_health(tmp_path, {"gbrain": {"runtime": {"status": "unmanaged"}}}))
     assert HealthMonitorAgent().tick()["action"] == "noop"
 
 
 def test_non_dict_service_skipped(tmp_path: Path, monkeypatch) -> None:
     """非 dict service 条目跳过 (容错, 守 F14)."""
-    monkeypatch.setattr(
-        HealthMonitorAgent,
-        "_HEALTH_YAML",
-        _write_health(tmp_path, {"weird": "not-a-dict", "good": {"health_check": "healthy"}}),
-    )
+    _pin_snapshot(monkeypatch, _write_health(tmp_path, {"weird": "not-a-dict", "good": {"health_check": "healthy"}}))
     assert HealthMonitorAgent().tick()["action"] == "noop"
 
 
 def test_snapshot_missing_returns_noop(tmp_path: Path, monkeypatch) -> None:
     """快照缺失 → noop (note)."""
-    monkeypatch.setattr(HealthMonitorAgent, "_HEALTH_YAML", tmp_path / "nonexistent.yaml")
+    _pin_snapshot(monkeypatch, tmp_path / "nonexistent.yaml")
     r = HealthMonitorAgent().tick()
     assert r["action"] == "noop"
     assert "note" in r["details"]
@@ -113,7 +110,7 @@ def test_snapshot_corrupt_returns_noop(tmp_path: Path, monkeypatch) -> None:
     """快照损坏 (非法 YAML) → noop, 不抛 (守 F14)."""
     corrupt = tmp_path / "system_health.yaml"
     corrupt.write_text("{ not valid yaml @@@ }", encoding="utf-8")
-    monkeypatch.setattr(HealthMonitorAgent, "_HEALTH_YAML", corrupt)
+    _pin_snapshot(monkeypatch, corrupt)
     assert HealthMonitorAgent().tick()["action"] == "noop"
 
 
@@ -175,7 +172,7 @@ def test_journey_runner_executes_code_root_and_reads_runtime_root(tmp_path: Path
         calls.append(argv)
         return subprocess.CompletedProcess(argv, 0, "", "")
 
-    monkeypatch.setenv("WORKSPACE_ROOT", str(runtime_root))
+    monkeypatch.setenv("OMOSTATION_STATE_ROOT", str(runtime_root))
     monkeypatch.setenv("WORKSPACE_CODE_ROOT", str(code_root))
     monkeypatch.setattr(subprocess, "run", _run)
 

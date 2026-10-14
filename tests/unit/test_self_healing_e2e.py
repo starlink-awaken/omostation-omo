@@ -23,9 +23,9 @@ def engine_with_tmp(tmp_path, monkeypatch):
     """创建带临时目录的自愈引擎。返回 (engine, tmp_path)。"""
     (tmp_path / ".omo" / "debt").mkdir(parents=True)
     (tmp_path / ".omo" / "debt" / "registry.yaml").write_text("seed_items: []\n")
-    monkeypatch.setattr(sh, "OMO_ROOT", tmp_path)
-    monkeypatch.setattr(sh, "DEBT_ITEMS_DIR", tmp_path / ".omo" / "debt" / "items")
-    monkeypatch.setattr(sh, "DEBT_REGISTRY", tmp_path / ".omo" / "debt" / "registry.yaml")
+    # T10-239: 三个 import 时常量收成单一 resolver; DEBT_ITEMS_DIR / DEBT_REGISTRY
+    # 在本模块从未被读过, 所以只挂 ``omo_project_root()`` 这一条缝。
+    monkeypatch.setattr(sh, "omo_project_root", lambda: tmp_path)
     engine = SelfHealingEngine(window_seconds=60)
     return engine, tmp_path
 
@@ -185,7 +185,7 @@ class TestConfigPersistence:
             HealingRule(name="only_this", threshold=1, action="fix"),
         ]
         save_rules(custom, path)
-        monkeypatch.setattr(sh, "HEALING_CONFIG_PATH", path)
+        monkeypatch.setattr(sh, "healing_config_path", lambda: path)
         # Reset singleton
         sh._engine = None
         engine = get_healing_engine()
@@ -209,7 +209,7 @@ class TestEngineState:
         assert len(status["recent_fixes"]) == 1
 
     def test_trigger_count_accumulates(self, monkeypatch):
-        monkeypatch.setattr(sh, "OMO_ROOT", Path(tempfile.mkdtemp()))
+        monkeypatch.setattr(sh, "omo_project_root", lambda: Path(tempfile.mkdtemp()))
         rules = [HealingRule(name="test", threshold=1, cooldown_seconds=0, action="debt")]
         engine = SelfHealingEngine(rules=rules)
 

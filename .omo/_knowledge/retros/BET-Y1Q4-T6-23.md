@@ -4,6 +4,7 @@ bet_id: BET-Y1Q4-T6-23
 title: "Resident Daemon & CellPool Integration — Retrospective"
 date: 2026-09-11
 status: draft
+last-reviewed: 2026-09-18
 ---
 
 # BET-Y1Q4-T6-23 Retrospective

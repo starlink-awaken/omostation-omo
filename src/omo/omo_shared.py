@@ -15,10 +15,14 @@ import yaml
 
 from .omo_io import write_text_atomic, write_yaml_atomic
 
+_SAFE_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
 
 def load_yaml_value_docs(text: str) -> Any:
     """Parse YAML text, preserving list payloads and merging multi-doc values."""
-    docs = [doc for doc in yaml.safe_load_all(text) if doc is not None]
+    # libyaml 的 CSafeLoader 与 SafeLoader 共用 SafeConstructor/Resolver, 结果一致, 解析快 ~5x
+    # (5.6MB 的 agent-beliefs/index.yaml: 4.3s → 0.8s); 未编译 libyaml 时回落纯 Python。
+    docs = [doc for doc in yaml.load_all(text, Loader=_SAFE_LOADER) if doc is not None]
     if not docs:
         return {}
     if len(docs) == 1:

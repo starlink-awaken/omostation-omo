@@ -14,9 +14,17 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 from omo.omo_io import AppendOnlyLog
+from omo.omo_paths import state_root
 
-_WORKSPACE = Path(os.environ.get("WORKSPACE_ROOT", str(Path.home() / "Workspace")))
-DEFAULT_EVENT_LOG_PATH = _WORKSPACE / ".omo" / "_knowledge" / "omo-events.jsonl"
+
+def default_event_log_path() -> Path:
+    """`emit` 的落点 —— 追加写运行态，跟随 profile 的 state 根 (BET-Y2Q4-T10-239)。
+
+    原先是模块级常量，在 import 时读 `WORKSPACE_ROOT` 并以仓根的 host 字面量兜底；
+    那条缝从未被声明过，所以恒等于兜底值，且在干净检出上指向不存在的路径。
+    改成调用时刻解析后，未声明 profile 时取值与历史逐字节相同。
+    """
+    return state_root() / ".omo" / "_knowledge" / "omo-events.jsonl"
 
 
 def _agora_url(path: str) -> str:
@@ -101,8 +109,8 @@ def main(argv: list[str] | None = None) -> int:
     em.add_argument(
         "--log",
         type=Path,
-        default=DEFAULT_EVENT_LOG_PATH,
-        help=f"落点 .jsonl (默认: {DEFAULT_EVENT_LOG_PATH})",
+        default=default_event_log_path(),
+        help=f"落点 .jsonl (默认: {default_event_log_path()})",
     )
 
     args = parser.parse_args(argv)

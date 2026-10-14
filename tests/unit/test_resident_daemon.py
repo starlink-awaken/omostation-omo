@@ -350,7 +350,12 @@ def test_tick_once_independent_projectors(monkeypatch: pytest.MonkeyPatch, tmp_p
 
 
 def test_tick_once_invokes_check_and_recover(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _ledger) -> None:
-    """BET-Y1Q4-T9-02: daemon tick path must call ledger_check.check_and_recover."""
+    """BET-Y1Q4-T9-02: daemon tick path must call ledger_check.check_and_recover.
+
+    BET-Y2Q4-T10-233 判据-1: 断言对象是**调用时刻**解析出的台账路径。旧写法
+    `assert calls == [daemon.DEFAULT_LEDGER]` 拿 import 时冻结的常量当基线, 按构造
+    证不了「晚声明的 env 能被读到」—— 那正是冻结做不到的事。
+    """
     calls: list[Path] = []
 
     def _fake_recover(ledger: Path) -> dict:
@@ -358,6 +363,8 @@ def test_tick_once_invokes_check_and_recover(monkeypatch: pytest.MonkeyPatch, tm
         return {"ok": True, "locked": False}
 
     monkeypatch.setattr("omo.resident.ledger_check.check_and_recover", _fake_recover)
+    declared = tmp_path / "declared" / "event-ledger.sqlite3"
+    monkeypatch.setenv("OMO_EVENT_LEDGER_DB", str(declared))
     events_file, _, _ = _tick_setup(monkeypatch, tmp_path, [])
     daemon.tick_once(_ledger, events_file)
-    assert calls == [daemon.DEFAULT_LEDGER]
+    assert calls == [declared]

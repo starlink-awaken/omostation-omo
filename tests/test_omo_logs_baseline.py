@@ -1,7 +1,7 @@
 """Tests for omo logs audit --baseline-init / --baseline-check (Round 13 P0).
 
 设计: 写一个 fixture fake_workspace 隔离 .omo/_knowledge/ 目录, 通过 monkeypatch
-      注入 omo_logs 模块的 _WORKSPACE / KNOWLEDGE_DIR 指向 tmp_path.
+      注入 omo_logs 模块的 knowledge_dir() 指向 tmp_path/.omo/_knowledge.
 
 覆盖场景:
   1. --baseline-init 创建文件 + JSON 包含 drift_by_consumer / total_drift / total_records
@@ -24,21 +24,20 @@ if str(OMO_SRC) not in sys.path:
     sys.path.insert(0, str(OMO_SRC))
 
 
-# ── Fixture: 隔离 workspace + 准备 KNOWLEDGE_DIR ───────────
+# ── Fixture: 隔离 workspace + 准备 knowledge 目录 ───────────
 
 
 @pytest.fixture
 def fake_workspace(tmp_path, monkeypatch):
-    """设 WORKSPACE_ROOT + 准备 .omo/_knowledge/ 目录, 注入 omo_logs 模块.
+    """准备 .omo/_knowledge/ 目录, 把 omo_logs 的 knowledge_dir() 挂到 tmp_path.
 
     Returns:
         tmp_path (workspace 根)
     """
-    # 修 omo_logs 模块常量, 让 _list_log_paths() 走 tmp_path
+    # T10-239: 常量缝换成调用时刻 resolver 缝, _list_log_paths() 仍走 tmp_path
     from omo import omo_logs
 
-    monkeypatch.setattr(omo_logs, "_WORKSPACE", tmp_path)
-    monkeypatch.setattr(omo_logs, "KNOWLEDGE_DIR", tmp_path / ".omo" / "_knowledge")
+    monkeypatch.setattr(omo_logs, "knowledge_dir", lambda: tmp_path / ".omo" / "_knowledge")
     knowledge = tmp_path / ".omo" / "_knowledge"
     knowledge.mkdir(parents=True, exist_ok=True)
     return tmp_path
