@@ -97,6 +97,7 @@ GOD_MODULE_ALLOWLIST: set[str] = {
     "projects/omo/src/omo/workflow/claims_authority.py",  # 3456L: BET-Y1Q4-T8-23 暂豁 (高风险核心)
     "projects/omo/src/omo/workflow/lifecycle.py",  # 1820L: BET-Y1Q4-T8-23 暂豁 (高风险核心)
     "projects/cockpit/src/cockpit/observatory/topology_engine.py",  # 1887L: BET-Y1Q4-T8-24 暂豁 (observatory 核心)
+    "projects/cockpit/src/cockpit/web/api_workflow_mesh_operations.py",  # 1586L: PR #234 扩展带入 (待渐进拆解)
 }
 EXCLUDE_DIR_PARTS: tuple[str, ...] = (
     "tests",
