@@ -42,14 +42,16 @@ class ResidentPatrolRunner:
 
     def probe_projection_lease(self) -> PatrolFinding | None:
         """探针 1: 全景驾驶舱投影租约时效检查 (超 15 分钟告警/自愈)."""
-        proj_file = self.workspace / "runtime/dashboard/panorama-projection.json"
+        proj_file = self.workspace / "runtime/dashboard/data.json"
+        if not proj_file.exists():
+            proj_file = self.workspace / "runtime/dashboard/panorama-projection.json"
         if not proj_file.exists():
             return PatrolFinding(
                 component="dashboard_projection",
                 issue="全景投影文件不存在",
                 risk_tier="R0",
                 remediation_action="REFRESH_PROJECTION_LEASE",
-                detail="panorama-projection.json 缺失，需触发一次全景刷新",
+                detail="全景投影数据缺失，需触发一次全景刷新",
             )
         try:
             mtime = proj_file.stat().st_mtime
@@ -157,7 +159,7 @@ class ResidentPatrolRunner:
         # 与 api_reflection.py 共享白名单标准
         cmds = {
             "FIX_SSOT_DRIFT": ["python3", "bin/gac/materialize-system-state.py"],
-            "REFRESH_PROJECTION_LEASE": ["python3", "bin/compass_radar.py", "--refresh-now"],
+            "REFRESH_PROJECTION_LEASE": ["python3", "bin/panorama/panorama-collect.py"],
             "CLEAR_SUBMODULE_CACHE": ["git", "status", "--short"],
         }
         cmd = cmds.get(action_id)
