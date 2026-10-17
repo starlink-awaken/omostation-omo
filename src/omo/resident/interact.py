@@ -422,34 +422,11 @@ def execute_react_tool(action_name: str, arg_str: str) -> str:
 
     elif action_name == "probe_hardware_compute":
         try:
-            res_lm = subprocess.run(
-                ["curl", "-s", "http://127.0.0.1:1234/v1/models"], capture_output=True, text=True, timeout=2
-            )
-            lm_models = []
-            if res_lm.returncode == 0:
-                try:
-                    lm_models = [m.get("id") for m in json.loads(res_lm.stdout).get("data", [])]
-                except Exception:
-                    pass
-            mini_online = _probe(4000, MACMINI_TAILSCALE_IP)
-            return json.dumps(
-                {
-                    "mbp_flagship": {
-                        "unified_memory": "128.0 GB",
-                        "gpu_vram_limit": "112.0 GB",
-                        "lmstudio_port_1234": len(lm_models) > 0,
-                        "active_heavy_models": lm_models[:5],
-                        "aetherforge_port_4000": _probe(4000, "127.0.0.1"),
-                    },
-                    "macmini_sentinel": {
-                        "unified_memory": "24.0 GB",
-                        "tailscale_ip": MACMINI_TAILSCALE_IP,
-                        "agent_daemon_online": mini_online,
-                        "magpie_port_3425": _probe(3425, MACMINI_TAILSCALE_IP),
-                    },
-                },
-                ensure_ascii=False,
-            )
+            from omo.resident.swarm_mesh import get_swarm_mesh
+
+            mesh = get_swarm_mesh()
+            res = mesh.probe_mesh()
+            return json.dumps(res, ensure_ascii=False)
         except Exception as exc:
             return f"error: {exc}"
 
