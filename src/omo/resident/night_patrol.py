@@ -230,6 +230,30 @@ def run_night_patrol(force: bool = False, deep: bool = True) -> dict[str, Any]:
     except Exception:
         pass
 
+    # 5. 跨会话长效记忆自结晶 (Phase 8 Batch 8.2)
+    try:
+        from omo.resident.memory_distiller import get_memory_distiller
+
+        distiller = get_memory_distiller(WORKSPACE)
+        cryst = distiller.distill_and_crystallize(extra_text=review_output)
+        report["memory_crystallization"] = {
+            "preferences_count": len(cryst.get("preferences", [])),
+            "guardrail_count": cryst.get("guardrail_count", 0),
+        }
+    except Exception as exc:
+        logger.debug("Night patrol memory crystallization failed: %s", exc)
+
+    # 6. 生成晨间自治简报 (Phase 8 Batch 8.3)
+    try:
+        from omo.resident.morning_briefing import get_morning_briefing_generator
+
+        briefing_gen = get_morning_briefing_generator(WORKSPACE)
+        briefing = briefing_gen.generate_and_save(patrol_report=report)
+        report["morning_briefing_generated"] = True
+        report["morning_briefing_summary"] = briefing.get("greeting", "")
+    except Exception as exc:
+        logger.debug("Night patrol morning briefing failed: %s", exc)
+
     # 若有重大发现推入 SwiftBar Action Desk
     if drafted_proposal:
         try:

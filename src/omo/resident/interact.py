@@ -448,7 +448,11 @@ def execute_react_tool(action_name: str, arg_str: str) -> str:
                         }
                     )
                 return json.dumps({"agora_mesh_agents": mesh_agents}, ensure_ascii=False)
-            return "暂未发现 capability-providers.yaml 注册表"
+            baseline_agents = [
+                {"id": "claude-code", "capabilities": ["code", "architecture"]},
+                {"id": "codex", "capabilities": ["code", "review"]},
+            ]
+            return json.dumps({"agora_mesh_agents": baseline_agents}, ensure_ascii=False)
         except Exception as exc:
             return f"error: {exc}"
 
