@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from omo.resident.arbitration import PrecedentArbiter, Precedent
+from omo.resident.arbitration import Precedent, PrecedentArbiter
 from omo.resident.decision_bridge import DecisionGraph, DecisionGraphError
 
 

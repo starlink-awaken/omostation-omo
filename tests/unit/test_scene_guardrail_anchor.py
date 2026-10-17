@@ -240,6 +240,7 @@ class TestDriftRadar:
 
 _REAL_CARDS = find_scene_cards_path(start=Path(__file__))
 
+
 @pytest.mark.skipif(_REAL_CARDS is None, reason="scene-cards-v3.yaml not available (standalone CI)")
 class TestRealSceneEndToEnd:
     """对 scene-document-review 与 scene-engineering-delivery 做四段仿真."""
@@ -276,9 +277,7 @@ class TestRealSceneEndToEnd:
         # 2-5) 漂移注入四类 → 全部拦截
         injections = {
             "capability_violation": enforcer.enforce(tool=outside_tool),
-            "scope_violation": enforcer.enforce(
-                tool=granted_tool or outside_tool, path=tmp_path / "evil.yaml"
-            ),
+            "scope_violation": enforcer.enforce(tool=granted_tool or outside_tool, path=tmp_path / "evil.yaml"),
             "symlink_escape": self._symlink_escape(enforcer, sandbox, tmp_path),
             "drift_intercept": enforcer.enforce(tool=outside_tool),  # 累计越权 → radar 拦截
         }
@@ -304,9 +303,7 @@ class TestRealSceneEndToEnd:
         result = self._run_scenario(real_registry, "scene-engineering-delivery", tmp_path)
         assert all(result["intercepted"].values()), result
 
-    def test_interception_rate_100_percent(
-        self, real_registry: SceneAnchorRegistry, tmp_path: Path
-    ) -> None:
+    def test_interception_rate_100_percent(self, real_registry: SceneAnchorRegistry, tmp_path: Path) -> None:
         total = intercepted = 0
         for scene_id in ("scene-document-review", "scene-engineering-delivery"):
             result = self._run_scenario(real_registry, scene_id, tmp_path)

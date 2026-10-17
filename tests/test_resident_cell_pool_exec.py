@@ -29,38 +29,30 @@ class TestCellPoolRunPrompt(unittest.TestCase):
 
     def test_run_prompt_success(self):
         """A prompt dispatched through run_prompt returns ok status."""
-        receipt = asyncio.run(
-            self.pool.run_prompt("ep-001", "test prompt", timeout_seconds=30)
-        )
+        receipt = asyncio.run(self.pool.run_prompt("ep-001", "test prompt", timeout_seconds=30))
         self.assertEqual(receipt["status"], "ok")
         self.assertIn("cell_id", receipt)
         self.assertEqual(receipt["backend"], "pi")
 
     def test_run_prompt_assigns_cell(self):
         """run_prompt should assign a Cell and track the episode."""
-        receipt = asyncio.run(
-            self.pool.run_prompt("ep-002", "another prompt", timeout_seconds=30)
-        )
+        receipt = asyncio.run(self.pool.run_prompt("ep-002", "another prompt", timeout_seconds=30))
         self.assertIn("cell_id", receipt)
         self.assertEqual(receipt["episode_id"], "ep-002")
 
     def test_run_prompt_timeout_circuit_breaker(self):
         """When a Cell exceeds the hard timeout, it is marked failed and removed."""
         # Create a pool with a very short timeout to trigger the circuit breaker
-        receipt = asyncio.run(
-            self.pool.run_prompt("ep-003", "slow prompt", timeout_seconds=0)
-        )
+        receipt = asyncio.run(self.pool.run_prompt("ep-003", "slow prompt", timeout_seconds=0))
         # With timeout=0, asyncio.wait_for should immediately timeout
         self.assertEqual(receipt["status"], "timeout")
         self.assertEqual(receipt["timeout_seconds"], 0)
 
     def test_concurrent_dispatch(self):
         """Multiple prompts dispatched concurrently should each get a Cell."""
+
         async def dispatch_all():
-            tasks = [
-                self.pool.run_prompt(f"ep-conc-{i}", f"prompt-{i}", timeout_seconds=30)
-                for i in range(4)
-            ]
+            tasks = [self.pool.run_prompt(f"ep-conc-{i}", f"prompt-{i}", timeout_seconds=30) for i in range(4)]
             return await asyncio.gather(*tasks)
 
         receipts = asyncio.run(dispatch_all())
@@ -82,7 +74,7 @@ class TestCellPoolRunPrompt(unittest.TestCase):
 
     def test_failover_cell_crash(self):
         """When a Cell crashes, the error is captured and does not propagate."""
-        from omo.resident.cell_pool import CellPool, CELL_FAILED
+        from omo.resident.cell_pool import CELL_FAILED, CellPool
 
         pool = CellPool(max_cells=2, auto_scale=False)
         cell = pool.create_cell()

@@ -510,7 +510,9 @@ class TestListAndMetrics:
         ids = [t["id"] for t in out["tasks"]]
         assert ids == [r2.task_id, r1.task_id]
 
-    def test_list_sort_invalid_field_falls_back_to_created_at(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    def test_list_sort_invalid_field_falls_back_to_created_at(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture
+    ) -> None:
         from omo.resident import task_queue as tq
 
         db = str(tmp_path / "list-sort-invalid.sqlite3")

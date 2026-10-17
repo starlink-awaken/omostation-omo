@@ -86,7 +86,7 @@ def _daemon_snapshot() -> dict[str, Any]:
             "tick_age_seconds": None,
             "cold_start": True,
         }
-    newest = min(watermark_files, key=lambda p: p.stat().st_mtime)
+    newest = max(watermark_files, key=lambda p: p.stat().st_mtime)
     age = time.time() - newest.stat().st_mtime
     ok = age <= STALE_THRESHOLD_SECONDS
     wm = _load_json(newest)

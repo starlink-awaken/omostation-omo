@@ -27,6 +27,19 @@ SUBCOMMANDS = {
     "promote": "omo.resident.promote",
     "resources": "omo.resident.resources",
     "roles": "omo.resident.roles",
+    "interact": "omo.resident.interact",
+    "ask": "omo.resident.interact",
+    "chat": "omo.resident.interact",
+    "web": "omo.resident.interact",
+    "tick": "omo.resident.interact",
+    "distill": "omo.resident.interact",
+    "dispatch": "omo.resident.dispatch",
+    "worker": "omo.resident.worker",
+    "epiphany": "omo.resident.epiphany",
+    "lifeos-sync": "omo.resident.lifeos_sync",
+    "night-patrol": "omo.resident.night_patrol",
+    "escalate": "omo.resident.escalate",
+    "patrol": "omo.resident.escalate",
 }
 
 
@@ -42,7 +55,8 @@ def main(argv: list[str] | None = None) -> int:
     import importlib
 
     mod = importlib.import_module(SUBCOMMANDS[sub])
-    return mod.main(rest)  # type: ignore[attr-defined]
+    forward_args = [sub, *rest] if SUBCOMMANDS[sub] == "omo.resident.interact" and sub != "interact" else rest
+    return mod.main(forward_args)  # type: ignore[attr-defined]
 
 
 if __name__ == "__main__":

@@ -62,10 +62,7 @@ class TestScoring:
 class TestTokenBudget:
     def test_over_budget_truncates_to_fallback(self) -> None:
         """评估消耗累计 > 500 token → 强制截断 → Archetype 兜底."""
-        expensive = [
-            _bid(f"a{i}", ["code:write", "test:run"], token_cost=400, confidence=0.9)
-            for i in range(3)
-        ]
+        expensive = [_bid(f"a{i}", ["code:write", "test:run"], token_cost=400, confidence=0.9) for i in range(3)]
         award = evaluate_with_fallback(_ANN, expensive)
         # 第一名 400 已花, 第二名 400 超预算 → 截断; 已评估者中分最高者中标
         assert award.token_spent <= TOKEN_BUDGET
@@ -127,14 +124,16 @@ class TestPerf:
         award = evaluate(_ANN, bids)
         elapsed = time.perf_counter() - t0
         assert award is not None
-        assert elapsed <= 0.300, f"评估耗时 {elapsed*1000:.1f}ms 超 300ms 预算"
+        assert elapsed <= 0.300, f"评估耗时 {elapsed * 1000:.1f}ms 超 300ms 预算"
 
 
 class TestTaskForce:
     def test_create_and_disband(self) -> None:
         mgr = TaskForceManager(now_fn=lambda: 1000.0)
         award = evaluate_with_fallback(_ANN, [_bid("a", ["code:write", "test:run"], confidence=0.9)])
-        force = mgr.create(award, [_bid("a", ["code:write", "test:run"]), _bid("b", ["code:write", "test:run"], confidence=0.7)])
+        force = mgr.create(
+            award, [_bid("a", ["code:write", "test:run"]), _bid("b", ["code:write", "test:run"], confidence=0.7)]
+        )
         assert force.leader == "a"
         assert "a" in force.members and "b" in force.members
         assert mgr.disband(force.force_id, "task_complete") is True

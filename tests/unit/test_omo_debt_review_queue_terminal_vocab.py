@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from types import SimpleNamespace
 
 from omo.omo_debt_metrics import TERMINAL_STATES
@@ -90,7 +90,7 @@ def test_open_item_without_next_review_lands_unscheduled(tmp_path) -> None:
 
 
 def test_open_item_overdue_lands_due_now(tmp_path) -> None:
-    overdue = datetime(2026, 9, 1, tzinfo=timezone.utc).isoformat()
+    overdue = datetime(2026, 9, 1, tzinfo=UTC).isoformat()
     queue = build_review_queue((_item("OPEN-3", "identified", next_review_at=overdue),), now=NOW, repo_root=tmp_path)
     assert [e["id"] for e in queue["due_now"]] == ["OPEN-3"]
 

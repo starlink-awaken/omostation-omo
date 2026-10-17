@@ -43,26 +43,34 @@ class TestKnowledgeQualityScoring:
 
     def test_specificity_with_code(self):
         """包含代码引用提高特异性."""
-        with_code = score_knowledge({
-            "content": "使用 `validate_input()` 函数检查输入, 返回 0 表示成功, -1 表示错误",
-            "type": "code_review",
-        })
-        without_code = score_knowledge({
-            "content": "需要验证输入是否正确",
-            "type": "code_review",
-        })
+        with_code = score_knowledge(
+            {
+                "content": "使用 `validate_input()` 函数检查输入, 返回 0 表示成功, -1 表示错误",
+                "type": "code_review",
+            }
+        )
+        without_code = score_knowledge(
+            {
+                "content": "需要验证输入是否正确",
+                "type": "code_review",
+            }
+        )
         assert with_code["breakdown"]["specificity"] > without_code["breakdown"]["specificity"]
 
     def test_source_trust_calibration(self):
         """来源 calibration 影响可信度."""
-        high_trust = score_knowledge({
-            "content": "测试内容",
-            "source_calibration": 0.9,
-        })
-        low_trust = score_knowledge({
-            "content": "测试内容",
-            "source_calibration": 0.2,
-        })
+        high_trust = score_knowledge(
+            {
+                "content": "测试内容",
+                "source_calibration": 0.9,
+            }
+        )
+        low_trust = score_knowledge(
+            {
+                "content": "测试内容",
+                "source_calibration": 0.2,
+            }
+        )
         assert high_trust["breakdown"]["source_trust"] > low_trust["breakdown"]["source_trust"]
 
     def test_source_trust_none_defaults(self):
@@ -83,12 +91,16 @@ class TestKnowledgeQualityScoring:
 
     def test_completeness_keywords(self):
         """命中完整性关键词加分."""
-        complete = score_knowledge({
-            "content": "因为设计缺陷导致系统崩溃。方法是增加重试机制。结果: 稳定性提升。注意: 避免无限重试。",
-            "type": "code_review",
-        })
-        incomplete = score_knowledge({
-            "content": "系统出问题了",
-            "type": "code_review",
-        })
+        complete = score_knowledge(
+            {
+                "content": "因为设计缺陷导致系统崩溃。方法是增加重试机制。结果: 稳定性提升。注意: 避免无限重试。",
+                "type": "code_review",
+            }
+        )
+        incomplete = score_knowledge(
+            {
+                "content": "系统出问题了",
+                "type": "code_review",
+            }
+        )
         assert complete["breakdown"]["completeness"] > incomplete["breakdown"]["completeness"]

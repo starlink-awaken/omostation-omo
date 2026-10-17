@@ -89,6 +89,7 @@ def cmd_alert_check(threshold: int, notify: bool) -> int:
         )
 
     if notify:
+        script = notify_script()
         for a in alerts:
             try:
                 subprocess.run(["bash", str(script), "KEI Alert", a], timeout=10)
