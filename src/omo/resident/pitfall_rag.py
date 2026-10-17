@@ -216,4 +216,174 @@ def verify_code_against_pitfalls(
                             f"【违反 SwiftBar 域正则】新增行使用了保留 emoji `{emoji}` 作为行首: `{added_code}`。这会导致 bar-lint.sh 识别异常，请更换为 🐝 / ⚡️ 等非保留符号。"
                         )
 
+    # 4. 扫描动态自蒸馏的确定性防御规则 (Phase 7 动态防线)
+    dynamic_rules = [r for r in load_dynamic_pitfalls() if r.get("status") == "active" and r.get("pattern")]
+    for rule in dynamic_rules:
+        pattern = rule.get("pattern", "")
+        regex_pat = rule.get("validation_regex") or re.escape(pattern)
+        try:
+            for line in diff_text.splitlines():
+                if line.startswith("+") and not line.startswith("+++"):
+                    added_code = line[1:].strip()
+                    if re.search(regex_pat, added_code):
+                        violations.append(
+                            f"【违反动态自蒸馏防御硬约束: {rule.get('id', 'rule')}】{rule.get('title', '违规模式')}: `{added_code}`。处置对策: {rule.get('remedy', '')}"
+                        )
+        except Exception as exc:
+            logger.debug("Regex match error for dynamic rule %s: %s", rule.get("id"), exc)
+
     return violations
+
+
+# ── Phase 7: 动态避坑记忆自蒸馏与知识库热加载 ──
+
+DYNAMIC_PITFALLS_DIR = code_root() / ".omo/state/memory/pitfalls"
+
+
+def load_dynamic_pitfalls() -> list[dict[str, Any]]:
+    """扫描并热加载所有动态自蒸馏出的规则卡片."""
+    rules = []
+    if not DYNAMIC_PITFALLS_DIR.exists():
+        return rules
+    try:
+        import yaml
+
+        for f in DYNAMIC_PITFALLS_DIR.glob("*.yaml"):
+            try:
+                data = yaml.safe_load(f.read_text(encoding="utf-8"))
+                if isinstance(data, dict) and "id" in data:
+                    data["source"] = f"dynamic/{f.name}"
+                    rules.append(data)
+            except Exception as exc:
+                logger.debug("Failed reading dynamic pitfall file %s: %s", f, exc)
+    except Exception as exc:
+        logger.warning("Error scanning dynamic pitfalls directory: %s", exc)
+    return rules
+
+
+def get_high_priority_pitfalls() -> list[dict[str, Any]]:
+    """聚合内置核心硬纪律与动态自蒸馏出的最新规则，供驾驶舱与守卫展示."""
+    # 转换为统一的格式
+    results = []
+    # 1. 内置基础硬规则
+    for item in CANONICAL_PITFALLS:
+        results.append(
+            {
+                "id": item["id"],
+                "title": item["title"],
+                "domain": "governance",
+                "severity": "CRITICAL" if "word-split" in item["id"] or "root" in item["id"] else "HIGH",
+                "pattern": item["rule"][:100],
+                "remedy": item["rule"],
+                "source_file": item.get("source", "AGENTS.md"),
+                "status": "active",
+            }
+        )
+
+    # 2. 动态自蒸馏规则 (最新热增优先)
+    for d in load_dynamic_pitfalls():
+        results.insert(
+            0,
+            {
+                "id": d.get("id"),
+                "title": d.get("title", ""),
+                "domain": d.get("domain", "system"),
+                "severity": d.get("severity", "HIGH"),
+                "pattern": d.get("pattern", ""),
+                "remedy": d.get("remedy", ""),
+                "source_file": d.get("source", "dynamic"),
+                "status": d.get("status", "active"),
+                "is_deterministic": d.get("is_deterministic", True),
+            },
+        )
+    return results
+
+
+def distill_pitfall_from_diff(
+    error_log: str,
+    diff_text: str = "",
+    context: str = "",
+) -> dict[str, Any]:
+    """从报错日志与修复补丁中，提炼出标准的结构化 Anti-pattern 规则 (Phase 7).
+
+    自动判定确定性 (is_deterministic):
+    - 确定性特征 (精确报错+特定命令/语句错配): status="active", 参与静态守卫硬拦截;
+    - 模糊/启发式特征: status="shadow", 仅在雷达大屏记录告警，不强行阻断。
+    """
+    error_lower = error_log.lower()
+    diff_lower = diff_text.lower()
+
+    # 典型模式 1: 子仓构建 runtime 错配 (如 npm vs bun)
+    if "edgesout" in error_lower or ("npm install" in diff_lower and "bun.lock" in diff_lower):
+        rule_id = "pitfall-distilled-npm-bun-lock-mismatch"
+        title = "子模块使用 bun.lock 时严禁在主仓 CI 中使用 npm"
+        domain = "ci/build"
+        severity = "HIGH"
+        pattern = "npm install"
+        remedy = "子仓原生使用 bun 锁文件时，主仓 CI 必须对齐使用 oven-sh/setup-bun@v2 + bun install"
+        regex = r"\bcd\s+projects/[a-zA-Z0-9_-]+\s*&&\s*npm\s+(install|i)"
+        is_deterministic = True
+
+    # 典型模式 2: zsh 参数裸变量展开
+    elif "wordsplit" in error_lower or re.search(r"\bfor\s+\w+\s+in\s+\$[A-Za-z0-9_]+", diff_text):
+        rule_id = "pitfall-distilled-zsh-wordsplit"
+        title = "zsh 裸变量切词崩溃禁令"
+        domain = "shell"
+        severity = "CRITICAL"
+        pattern = "for x in $VAR"
+        remedy = "改用字面量列表或命令替换 $(printf ...) 或数组"
+        regex = r"\bfor\s+\w+\s+in\s+\$[A-Za-z0-9_]+\s*(?:;|\bdo)"
+        is_deterministic = True
+
+    # 典型模式 3: 工作区双根硬编码
+    elif "/users/xiamingxing/workspace" in diff_lower and "code_root" in diff_lower:
+        rule_id = "pitfall-distilled-workspace-hardcoding"
+        title = "严禁硬编码 Workspace 字面量路径"
+        domain = "python/paths"
+        severity = "HIGH"
+        pattern = "/Users/xiamingxing/Workspace"
+        remedy = "使用 omo.omo_paths.code_root() 或 state_root() 动态解析"
+        regex = r"['\"]/Users/[a-zA-Z0-9_.-]+/Workspace"
+        is_deterministic = True
+
+    # 默认/通用提炼 (影子模式)
+    else:
+        # 生成基于错误前 40 字符的通用规则
+        first_line = error_log.strip().splitlines()[0] if error_log.strip() else "未知系统执行异常"
+        clean_name = re.sub(r"[^a-zA-Z0-9]+", "-", first_line[:30].strip()).strip("-").lower() or "generic-anomaly"
+        rule_id = f"pitfall-distilled-{clean_name}"
+        title = f"排障沉淀: {first_line[:50]}"
+        domain = "runtime"
+        severity = "MEDIUM"
+        pattern = first_line[:80]
+        remedy = f"关注此模式并在修改时参考 context: {context[:100]}"
+        regex = ""
+        is_deterministic = False
+
+    status = "active" if is_deterministic else "shadow"
+
+    return {
+        "id": rule_id,
+        "title": title,
+        "domain": domain,
+        "severity": severity,
+        "pattern": pattern,
+        "remedy": remedy,
+        "validation_regex": regex,
+        "is_deterministic": is_deterministic,
+        "status": status,
+        "evidence_context": context[:200],
+    }
+
+
+def save_distilled_pitfall(rule: dict[str, Any]) -> Path:
+    """持久化自蒸馏规则卡片至 .omo/state/memory/pitfalls/."""
+    DYNAMIC_PITFALLS_DIR.mkdir(parents=True, exist_ok=True)
+    rule_id = rule.get("id", "pitfall-unnamed")
+    target_path = DYNAMIC_PITFALLS_DIR / f"{rule_id}.yaml"
+
+    import yaml
+
+    target_path.write_text(yaml.safe_dump(rule, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    logger.info("Successfully persisted distilled pitfall rule: %s", target_path)
+    return target_path
