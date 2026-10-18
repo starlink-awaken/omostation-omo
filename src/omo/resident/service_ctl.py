@@ -172,7 +172,7 @@ def trigger_job(job_name: str, workspace: Path = WORKSPACE) -> dict[str, Any]:
     return runner.run_single_job(job_name)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="omostation resident service ctl")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -183,7 +183,7 @@ def main() -> None:
     trig = sub.add_parser("trigger", help="Immediately run a scheduled job")
     trig.add_argument("job", choices=["patrol", "night", "briefing"], help="Job to trigger")
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.cmd == "install":
         print(json.dumps(install_service(), ensure_ascii=False, indent=2))
     elif args.cmd == "uninstall":
@@ -192,7 +192,8 @@ def main() -> None:
         print(json.dumps(get_service_status(), ensure_ascii=False, indent=2))
     elif args.cmd == "trigger":
         print(json.dumps(trigger_job(args.job), ensure_ascii=False, indent=2))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -10,8 +10,10 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -258,3 +260,44 @@ def get_inference_gateway(workspace_root: Path | None = None) -> SwarmInferenceG
     if _GLOBAL_GATEWAY is None:
         _GLOBAL_GATEWAY = SwarmInferenceGateway(workspace_root)
     return _GLOBAL_GATEWAY
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="omostation resident inference gateway")
+    parser.add_argument("--tier", default="tier1_inspection", help="Inference tier")
+    parser.add_argument("--prompt", default="ping", help="Prompt text")
+    parser.add_argument("--model", default=None, help="Model name override")
+    parser.add_argument("--json", action="store_true", help="Output JSON")
+    args = parser.parse_args(argv)
+
+    gateway = get_inference_gateway()
+    res = gateway.chat_completion(
+        messages=[{"role": "user", "content": args.prompt}],
+        tier=args.tier,
+        model=args.model,
+    )
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "content": res.content,
+                    "target_node": res.target_node,
+                    "target_host": res.target_host,
+                    "target_port": res.target_port,
+                    "tier": res.tier,
+                    "latency_ms": res.latency_ms,
+                    "fallback_used": res.fallback_used,
+                    "model_used": res.model_used,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    else:
+        print(f"[{res.target_node}] ({res.latency_ms}ms) (fallback={res.fallback_used}): {res.content}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
