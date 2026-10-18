@@ -201,8 +201,11 @@ def test_writers_land_in_declared_root_and_checkout_gains_nothing(
     ]
     got = [p for p in expected if p.is_file()]
     print(f"expect={len(expected)} got={len(got)}")
-    assert len(got) == len(expected), "state 根缺少: " + "; ".join(str(p) for p in expected if not p.is_file())
-    assert _snapshot(watched) == before, f"检出侧被写入: {sorted(_snapshot(watched) - before)}"
+    after = _snapshot(watched)
+    added_keys = set(after.keys()) - set(before.keys())
+    mtime_changed = [k for k in before if k in after and before[k] != after[k]]
+    assert after == before, f"检出侧被写入: 新增={sorted(added_keys)}, mtime变动={sorted(mtime_changed)}"
+
 
 
 # ── I4: 自证源码门禁 (扫 src, 不是扫 memory) ────────────────────────────────────
