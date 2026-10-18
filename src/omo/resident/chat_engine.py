@@ -15,9 +15,12 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import logging
 import re
+import shutil
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -31,10 +34,46 @@ from omo.resident.pitfall_rag import extract_relevant_pitfalls
 logger = logging.getLogger("omo.resident.chat_engine")
 
 
+def persist_media_image(raw_data_or_path: str, workspace_root: Path | None = None) -> str:
+    """将外部图片(Base64 或本地路径)规范化持久化至受管媒体目录."""
+    root = workspace_root or WORKSPACE
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
+    media_dir = write_path(root / ".omo/state/daemon/media") / today
+    media_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. 检查是否为 Base64
+    if raw_data_or_path.startswith("data:image/") or ";base64," in raw_data_or_path or (len(raw_data_or_path) > 300 and "/" not in raw_data_or_path[:20]):
+        b64_str = raw_data_or_path.split(";base64,")[-1] if ";base64," in raw_data_or_path else raw_data_or_path
+        try:
+            raw_bytes = base64.b64decode(b64_str)
+            sha = hashlib.sha256(raw_bytes).hexdigest()[:16]
+            target_path = media_dir / f"img_{sha}.png"
+            target_path.write_bytes(raw_bytes)
+            return str(target_path)
+        except Exception as exc:
+            logger.debug("Failed decoding base64 image: %s", exc)
+
+    # 2. 如果是现有文件路径
+    p = Path(raw_data_or_path).expanduser()
+    if p.exists() and p.is_file():
+        try:
+            raw_bytes = p.read_bytes()
+            sha = hashlib.sha256(raw_bytes).hexdigest()[:16]
+            target_path = media_dir / f"img_{sha}{p.suffix or '.png'}"
+            if not target_path.exists():
+                shutil.copy2(p, target_path)
+            return str(target_path)
+        except Exception:
+            return str(p)
+
+    return raw_data_or_path
+
+
 @dataclass
 class ChatMessage:
     role: str  # "system" | "user" | "assistant"
     content: str
+    images: list[str] = field(default_factory=list)
     timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -46,6 +85,7 @@ class ChatMessage:
         return ChatMessage(
             role=data.get("role", "user"),
             content=data.get("content", ""),
+            images=data.get("images", []) or [],
             timestamp=data.get("timestamp", datetime.now(UTC).isoformat()),
             metadata=data.get("metadata", {}),
         )
@@ -232,9 +272,30 @@ class ResidentChatEngine:
         tier: str = "tier2_dialog",
         model: str | None = None,
         enable_react: bool = True,
+        images: list[str] | None = None,
     ) -> ChatMessage:
-        """执行单轮对话，维持 Session 连贯上下文，驱动 ReAct 探针与记忆召回."""
+        """执行单轮对话，维持 Session 连贯上下文，驱动 ReAct 探针、多模态处理与记忆召回."""
         sess = self.get_or_create_session(session_id)
+
+        # 0. 多模态图片持久化与 OCR 降级提取 (Q1 & Q2)
+        processed_images: list[str] = []
+        effective_prompt = prompt
+        ocr_fallback_used = False
+        if images:
+            from omo.resident.screen_probe import extract_image_text
+
+            for img_item in images:
+                if img_item:
+                    saved_path = persist_media_image(img_item, self.workspace)
+                    processed_images.append(saved_path)
+
+            if processed_images:
+                ocr_snippets: list[str] = []
+                for idx, p in enumerate(processed_images, 1):
+                    t = extract_image_text(p)
+                    ocr_snippets.append(f"【附带图片 #{idx} ({Path(p).name}) 视觉/OCR 提取内容】:\n{t}")
+                effective_prompt = prompt + "\n\n" + "\n\n".join(ocr_snippets)
+                ocr_fallback_used = True
 
         # 1. 记忆检索与注水
         recalled_prefs, recalled_pitfalls = self.recall_memories(prompt)
@@ -247,7 +308,7 @@ class ResidentChatEngine:
         for m in sess.messages[-self.max_history_turns :]:
             if m.role in ("user", "assistant"):
                 dialog_messages.append({"role": m.role, "content": m.content})
-        dialog_messages.append({"role": "user", "content": prompt})
+        dialog_messages.append({"role": "user", "content": effective_prompt})
 
         # 4. 执行模型推断 (支持自主只读探针调度)
         from omo.resident.interact import execute_react_tool
@@ -318,9 +379,11 @@ class ResidentChatEngine:
             "recalled_memories": recalled_prefs,
             "recalled_pitfalls": recalled_pitfalls,
             "react_tools_used": react_tools_used,
+            "images": processed_images,
+            "image_ocr_fallback": ocr_fallback_used,
         }
 
-        user_msg = ChatMessage(role="user", content=prompt)
+        user_msg = ChatMessage(role="user", content=prompt, images=processed_images)
         assistant_msg = ChatMessage(role="assistant", content=final_content, metadata=metadata)
 
         # 6. 会话持久化
