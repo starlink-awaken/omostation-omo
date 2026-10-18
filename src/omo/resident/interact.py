@@ -657,10 +657,23 @@ def _call_llm(
     return "（未生成有效内容）"
 
 
-def ask(prompt: str, tier: str | None = None, history: list[dict[str, str]] | None = None) -> str:
-    """公用 API 入口，供 live_server 或其它模块直接调用 (支持 ReAct 只读探针)."""
-    ctx = _get_context_summary()
-    return _call_llm(prompt, context=ctx, tier=tier, messages_history=history, stream=False, enable_react=True)
+def ask(
+    prompt: str,
+    tier: str | None = None,
+    history: list[dict[str, str]] | None = None,
+    session_id: str = "default",
+) -> str:
+    """公用 API 入口，接入 ResidentChatEngine (支持记忆召回与 ReAct 探针)."""
+    try:
+        from omo.resident.chat_engine import get_chat_engine
+
+        engine = get_chat_engine()
+        msg = engine.chat(prompt, session_id=session_id, tier=tier or "tier2_dialog", enable_react=True)
+        return msg.content
+    except Exception as exc:
+        logger.debug("ChatEngine failed, falling back to legacy _call_llm: %s", exc)
+        ctx = _get_context_summary()
+        return _call_llm(prompt, context=ctx, tier=tier, messages_history=history, stream=False, enable_react=True)
 
 
 def _get_clipboard_text() -> str:
@@ -671,9 +684,16 @@ def _get_clipboard_text() -> str:
         return ""
 
 
-def cmd_ask(prompt: str, dispatch: bool = False, tier: str | None = None, with_clip: bool = False) -> int:
+def cmd_ask(
+    prompt: str,
+    dispatch: bool = False,
+    tier: str | None = None,
+    with_clip: bool = False,
+    as_json: bool = False,
+    session_id: str = "default",
+) -> int:
     if not prompt and not with_clip:
-        print('用法: omo resident ask "你的指令或问题" [-d] [--tier fast|pro] [--clip]')
+        print('用法: omo resident ask "你的指令或问题" [-d] [--tier fast|pro] [--clip] [--json]')
         return 1
 
     clip_text = _get_clipboard_text() if with_clip else ""
@@ -692,9 +712,28 @@ def cmd_ask(prompt: str, dispatch: bool = False, tier: str | None = None, with_c
         print("🚀 指令已发布至常驻事件总线，等待常驻 Agent 消费！")
         return 0
 
-    print(f'🤖 常驻首席认知 Agent 研判中: "{prompt[:60]}" ...\n')
-    ctx = _get_context_summary()
-    _call_llm(full_prompt, context=ctx, tier=tier, stream=True)
+    from omo.resident.chat_engine import get_chat_engine
+
+    engine = get_chat_engine()
+    if not as_json:
+        print(f'🤖 常驻首席认知 Agent 研判中: "{prompt[:60]}" ...\n')
+
+    msg = engine.chat(full_prompt, session_id=session_id, tier=tier or "tier2_dialog", enable_react=True)
+
+    if as_json:
+        print(json.dumps(msg.to_dict(), ensure_ascii=False, indent=2))
+    else:
+        meta = msg.metadata
+        mem_count = len(meta.get("recalled_memories", []))
+        pit_count = len(meta.get("recalled_pitfalls", []))
+        node = meta.get("target_node", "local-mac")
+        latency = meta.get("latency_ms", 0.0)
+        tools = meta.get("react_tools_used", [])
+        tool_str = f" | 探针: {', '.join(tools)}" if tools else ""
+        print(msg.content)
+        print(
+            f"\n\033[2m[💡 记忆召回: {mem_count}项偏好 · {pit_count}项避坑 | 算力: {node} ({latency:.1f}ms){tool_str}]\033[0m"
+        )
     return 0
 
 
@@ -745,23 +784,24 @@ def cmd_distill(history: list[dict[str, str]] | None = None) -> int:
     return 0
 
 
-def cmd_chat() -> int:
-    """进入常驻 Agent 持续对话终端 (REPL 交互式 + 流式输出 + 会话记忆)."""
+def cmd_chat(session_id: str = "default") -> int:
+    """进入常驻 Agent 持续对话终端 (REPL 交互式 + 会话记忆 + 记忆召回透明度)."""
+    from omo.resident.chat_engine import get_chat_engine
+
+    engine = get_chat_engine()
     print("=" * 64)
-    print("💬 eCOS 常驻首席认知 Agent 交互终端 (REPL · Stream)")
-    print("已激活: 实时流式打字机 + 多轮会话记忆 + 剪贴板注入 + 智能分层算力")
+    print(f"💬 eCOS 常驻首席认知 Agent 交互终端 (REPL · Session: {session_id})")
+    print("已激活: 会话长效持久化 + 情境化记忆深度注水 + 避坑硬约束防御 + 智能分层算力")
     print("输入 /help 查看内置快捷指令，输入 /exit 退出。")
     print("=" * 64 + "\n")
 
-    history: list[dict[str, str]] = []
     current_tier: str | None = None
 
     while True:
         try:
             tier_hint = f" ({current_tier})" if current_tier else ""
-            line = input(f"\033[1;36meCOS-Resident{tier_hint} ❯\033[0m ").strip()
+            line = input(f"\033[1;36meCOS-Resident[{session_id}]{tier_hint} ❯\033[0m ").strip()
         except (KeyboardInterrupt, EOFError):
-            _distill_session_epiphany(history)
             print("\n已退出会话。")
             break
 
@@ -769,21 +809,33 @@ def cmd_chat() -> int:
             continue
 
         if line in ("/exit", "/quit", "exit", "quit"):
-            _distill_session_epiphany(history)
             print("再见！常驻守护进程继续在后台守护系统。")
             break
         elif line == "/help":
             print("\n[内置快捷指令]")
-            print("  /status      查看常驻系统全景运行状态")
-            print("  /tier <name> 切换算力档位 (fast/deep/pro/auto)")
-            print("  /clip [q]    自动抓取系统剪贴板内容并向大脑提问")
-            print("  /run <cmd>   安全运行只读命令 (如 /run git status, /run gh pr list)")
-            print("  /clear       清空多轮会话记忆")
-            print("  /skills      列出已知可调度的 186 项 Skills 清单")
-            print("  /events      查看最近事件总线流")
-            print("  /tick        推进一次全角色协同循环")
-            print("  /distill     触发大模型夜间知识卡片萃取")
-            print("  /exit        退出交互终端\n")
+            print("  /status        查看常驻系统全景运行状态")
+            print("  /history       查看当前会话的历史对话")
+            print("  /clear, /reset 清空当前会话历史记忆")
+            print("  /tier <name>   切换算力档位 (fast/deep/pro/auto)")
+            print("  /clip [q]      自动抓取系统剪贴板内容并向大脑提问")
+            print("  /run <cmd>     安全运行只读命令 (如 /run git status, /run gh pr list)")
+            print("  /skills        列出已知可调度的 186 项 Skills 清单")
+            print("  /events        查看最近事件总线流")
+            print("  /tick          推进一次全角色协同循环")
+            print("  /distill       触发大模型夜间知识卡片萃取")
+            print("  /exit          退出交互终端\n")
+            continue
+        elif line in ("/clear", "/reset"):
+            engine.clear_history(session_id)
+            print(f"🧹 会话 [{session_id}] 历史记忆已重置。\n")
+            continue
+        elif line == "/history":
+            hist = engine.get_history(session_id)
+            print(f"\n[会话 '{session_id}' 历史消息 (共 {len(hist)} 条)]")
+            for h in hist[-10:]:
+                role_label = "👤 用户" if h.get("role") == "user" else "🤖 助手"
+                print(f"{role_label}: {h.get('content', '')[:120]}")
+            print()
             continue
         elif line.startswith("/tier"):
             parts = line.split()
@@ -793,10 +845,6 @@ def cmd_chat() -> int:
             else:
                 current_tier = None
                 print("✅ 算力档位已恢复为: 智能动态裁决 (Auto)\n")
-            continue
-        elif line == "/clear":
-            history.clear()
-            print("🧹 会话历史记忆已重置。\n")
             continue
         elif line.startswith("/clip"):
             extra_q = line[5:].strip() or "请分析以下剪贴板内容"
@@ -851,25 +899,25 @@ def cmd_chat() -> int:
             cmd_tick("all")
             continue
         elif line == "/distill":
-            cmd_distill(history)
+            hist = engine.get_history(session_id)
+            cmd_distill([{"role": m.get("role", "user"), "content": m.get("content", "")} for m in hist])
             continue
 
-        # 自然语言流式交互 (带多轮历史与上下文)
+        # 自然语言交互 (带持久化上下文与记忆召回)
         print("\n\033[1;32m[首席认知 Agent]\033[0m")
-        ctx = _get_context_summary()
-        reply = _call_llm(
-            line,
-            context=ctx,
-            tier=current_tier,
-            messages_history=history[-6:],  # 保留最近 3 轮完整上下文
-            stream=True,
+        msg = engine.chat(line, session_id=session_id, tier=current_tier or "tier2_dialog", enable_react=True)
+        meta = msg.metadata
+        mem_count = len(meta.get("recalled_memories", []))
+        pit_count = len(meta.get("recalled_pitfalls", []))
+        node = meta.get("target_node", "local-mac")
+        latency = meta.get("latency_ms", 0.0)
+        tools = meta.get("react_tools_used", [])
+        tool_str = f" | 探针: {', '.join(tools)}" if tools else ""
+
+        print(msg.content)
+        print(
+            f"\n\033[2m[💡 记忆召回: {mem_count}项偏好 · {pit_count}项避坑 | 算力: {node} ({latency:.1f}ms){tool_str}]\033[0m\n"
         )
-        if reply:
-            history.append({"role": "user", "content": line})
-            history.append({"role": "assistant", "content": reply})
-            if len(history) > 12:
-                history = history[-12:]
-        print()
 
 
 def triage_component_failure(
@@ -1414,8 +1462,9 @@ def main(argv: list[str] | None = None) -> int:
     # 兼容通过 cli.py 调度进入: 如果第一个词直接是 prompt 内容或以 -d 开头
     if args_list and args_list[0] not in ("ask", "chat", "web", "tick", "distill", "-h", "--help"):
         dispatch = "-d" in args_list or "--dispatch" in args_list
-        clean_prompt = " ".join([a for a in args_list if a not in ("-d", "--dispatch")])
-        return cmd_ask(clean_prompt, dispatch=dispatch)
+        as_json = "--json" in args_list
+        clean_prompt = " ".join([a for a in args_list if a not in ("-d", "--dispatch", "--json")])
+        return cmd_ask(clean_prompt, dispatch=dispatch, as_json=as_json)
 
     parser = argparse.ArgumentParser(description="eCOS 常驻 Agent 交互与协同控制台")
     subparsers = parser.add_subparsers(dest="action", help="交互动作")
@@ -1424,9 +1473,14 @@ def main(argv: list[str] | None = None) -> int:
     p_ask = subparsers.add_parser("ask", help="向常驻 Agent 提问或派发任务")
     p_ask.add_argument("prompt", nargs="?", default="", help="提问或指令内容")
     p_ask.add_argument("-d", "--dispatch", action="store_true", help="异步派发至事件总线与信号箱")
+    p_ask.add_argument("--tier", default=None, help="指定算力分层 (fast/deep/pro/tier1/tier2/tier3)")
+    p_ask.add_argument("--session", default="default", help="指定会话 ID (默认 default)")
+    p_ask.add_argument("--clip", action="store_true", help="注入剪贴板内容")
+    p_ask.add_argument("--json", action="store_true", help="输出结构化 JSON")
 
     # chat
-    subparsers.add_parser("chat", help="进入持续对话终端 (REPL 交互式)")
+    p_chat = subparsers.add_parser("chat", help="进入持续对话终端 (REPL 交互式)")
+    p_chat.add_argument("--session", default="default", help="指定会话 ID (默认 default)")
 
     # web
     p_web = subparsers.add_parser("web", help="启动常驻 Copilot Web 交互控制台")
@@ -1443,9 +1497,16 @@ def main(argv: list[str] | None = None) -> int:
     parsed = parser.parse_args(args_list)
 
     if parsed.action == "ask":
-        return cmd_ask(parsed.prompt, dispatch=parsed.dispatch)
+        return cmd_ask(
+            parsed.prompt,
+            dispatch=parsed.dispatch,
+            tier=parsed.tier,
+            with_clip=parsed.clip,
+            as_json=parsed.json,
+            session_id=parsed.session,
+        )
     elif parsed.action == "chat":
-        return cmd_chat()
+        return cmd_chat(session_id=parsed.session)
     elif parsed.action == "web":
         return cmd_web(port=parsed.port, host=parsed.host)
     elif parsed.action == "tick":

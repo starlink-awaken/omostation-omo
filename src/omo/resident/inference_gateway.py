@@ -127,9 +127,13 @@ class SwarmInferenceGateway:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 if resp.status == 200:
                     body = json.loads(resp.read().decode("utf-8"))
+                    if "error" in body:
+                        return False, "", body
                     choices = body.get("choices", [])
                     if choices and "message" in choices[0]:
-                        return True, choices[0]["message"].get("content", ""), body
+                        cnt = choices[0]["message"].get("content", "")
+                        if cnt:
+                            return True, cnt, body
         except Exception as exc:
             logger.debug("OpenAI protocol failed on %s:%d: %s", host, port, exc)
         return False, "", {}
@@ -153,8 +157,12 @@ class SwarmInferenceGateway:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 if resp.status == 200:
                     body = json.loads(resp.read().decode("utf-8"))
+                    if "error" in body:
+                        return False, "", body
                     msg = body.get("message", {})
-                    return True, msg.get("content", ""), body
+                    cnt = msg.get("content", "")
+                    if cnt:
+                        return True, cnt, body
         except Exception as exc:
             logger.debug("Ollama native protocol failed on %s:%d: %s", host, port, exc)
         return False, "", {}

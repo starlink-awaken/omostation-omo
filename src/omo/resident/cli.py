@@ -42,6 +42,7 @@ SUBCOMMANDS = {
     "patrol": "omo.resident.escalate",
     "service": "omo.resident.service_ctl",
     "gateway": "omo.resident.inference_gateway",
+    "chat-engine": "omo.resident.chat_engine",
 }
 
 
