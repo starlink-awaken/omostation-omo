@@ -40,6 +40,8 @@ SUBCOMMANDS = {
     "night-patrol": "omo.resident.night_patrol",
     "escalate": "omo.resident.escalate",
     "patrol": "omo.resident.escalate",
+    "service": "omo.resident.service_ctl",
+    "gateway": "omo.resident.inference_gateway",
 }
 
 
