@@ -135,7 +135,8 @@ def _build_system_cognition_prompt() -> str:
         '- Action: dispatch_agora_task(objective="...", agent="codex") # 拆解派发任务给 Agora 专业 Agent 并拉起隔离 Worktree\n'
         '- Action: search_codebase(query="...", path=".") # 全局代码与文档快速检索\n'
         '- Action: read_codebase_file(path="...", start=1, end=50) # 读取指定代码或决策文件行范围\n'
-        "- Action: read_decision_proposals(limit=3)       # 查看最新未决的系统演进提案\n\n"
+        "- Action: read_decision_proposals(limit=3)       # 查看最新未决的系统演进提案\n"
+        "- Action: probe_screen_state(fullscreen=False)   # 捕获前台应用窗口或屏幕快照进行视觉分析\n\n"
         "【交互与执行准则】\n"
         "1. 表达专业、清晰、简洁，直击要害，使用中文回答。\n"
         "2. 若你需要事实支撑，请输出单个 Action: tool(...)。若信息已足够，直接输出最终答案，切勿伪造 Observation。\n"
@@ -511,6 +512,24 @@ def execute_react_tool(action_name: str, arg_str: str) -> str:
         except Exception as exc:
             return f"error: {exc}"
 
+    elif action_name == "probe_screen_state":
+        try:
+            from omo.resident.screen_probe import capture_screen
+
+            fs = kwargs.get("fullscreen", False) or (args[0] if args else False)
+            img_path = capture_screen(fullscreen=bool(fs))
+            return json.dumps(
+                {
+                    "status": "captured",
+                    "image_path": str(img_path),
+                    "fullscreen": bool(fs),
+                    "size_bytes": img_path.stat().st_size,
+                },
+                ensure_ascii=False,
+            )
+        except Exception as exc:
+            return f"error: {exc}"
+
     return f"error: unknown tool '{action_name}'"
 
 
@@ -662,13 +681,19 @@ def ask(
     tier: str | None = None,
     history: list[dict[str, str]] | None = None,
     session_id: str = "default",
+    images: list[str] | None = None,
+    voice: bool = False,
 ) -> str:
-    """公用 API 入口，接入 ResidentChatEngine (支持记忆召回与 ReAct 探针)."""
+    """公用 API 入口，接入 ResidentChatEngine (支持多模态与语音桥梁)."""
     try:
         from omo.resident.chat_engine import get_chat_engine
 
         engine = get_chat_engine()
-        msg = engine.chat(prompt, session_id=session_id, tier=tier or "tier2_dialog", enable_react=True)
+        msg = engine.chat(prompt, session_id=session_id, tier=tier or "tier2_dialog", enable_react=True, images=images)
+        if voice:
+            from omo.resident.voice_bridge import speak_text
+
+            speak_text(msg.content, play=True)
         return msg.content
     except Exception as exc:
         logger.debug("ChatEngine failed, falling back to legacy _call_llm: %s", exc)
@@ -691,10 +716,26 @@ def cmd_ask(
     with_clip: bool = False,
     as_json: bool = False,
     session_id: str = "default",
+    images: list[str] | None = None,
+    screen: bool = False,
+    voice: bool = False,
 ) -> int:
-    if not prompt and not with_clip:
-        print('用法: omo resident ask "你的指令或问题" [-d] [--tier fast|pro] [--clip] [--json]')
+    if not prompt and not with_clip and not screen and not images:
+        print('用法: omo resident ask "你的指令或问题" [-d] [--tier fast|pro] [--clip] [--screen] [--image FILE] [--voice] [--json]')
         return 1
+
+    input_images: list[str] = list(images or [])
+    if screen:
+        try:
+            from omo.resident.screen_probe import capture_screen
+
+            shot = capture_screen(fullscreen=False)
+            input_images.append(str(shot))
+            if not prompt:
+                prompt = "请分析当前屏幕上的内容与状态"
+            print(f"📸 已捕获前台屏幕快照: {shot.name}")
+        except Exception as exc:
+            print(f"⚠️ 屏幕捕获失败: {exc}")
 
     clip_text = _get_clipboard_text() if with_clip else ""
     full_prompt = prompt
@@ -716,9 +757,15 @@ def cmd_ask(
 
     engine = get_chat_engine()
     if not as_json:
-        print(f'🤖 常驻首席认知 Agent 研判中: "{prompt[:60]}" ...\n')
+        print(f'🤖 常驻首席认知 Agent 研判中: "{full_prompt[:60]}" ...\n')
 
-    msg = engine.chat(full_prompt, session_id=session_id, tier=tier or "tier2_dialog", enable_react=True)
+    msg = engine.chat(
+        full_prompt,
+        session_id=session_id,
+        tier=tier or "tier2_dialog",
+        enable_react=True,
+        images=input_images,
+    )
 
     if as_json:
         print(json.dumps(msg.to_dict(), ensure_ascii=False, indent=2))
@@ -730,10 +777,21 @@ def cmd_ask(
         latency = meta.get("latency_ms", 0.0)
         tools = meta.get("react_tools_used", [])
         tool_str = f" | 探针: {', '.join(tools)}" if tools else ""
+        img_str = f" | 视觉感知: {len(input_images)}张图片" if input_images else ""
         print(msg.content)
         print(
-            f"\n\033[2m[💡 记忆召回: {mem_count}项偏好 · {pit_count}项避坑 | 算力: {node} ({latency:.1f}ms){tool_str}]\033[0m"
+            f"\n\033[2m[💡 记忆召回: {mem_count}项偏好 · {pit_count}项避坑 | 算力: {node} ({latency:.1f}ms){tool_str}{img_str}]\033[0m"
         )
+
+    if voice:
+        try:
+            from omo.resident.voice_bridge import speak_text
+
+            print("🔊 正在伴随朗读核心结论...")
+            speak_text(msg.content, play=True)
+        except Exception as exc:
+            logger.debug("Voice speak failed: %s", exc)
+
     return 0
 
 
@@ -1476,6 +1534,9 @@ def main(argv: list[str] | None = None) -> int:
     p_ask.add_argument("--tier", default=None, help="指定算力分层 (fast/deep/pro/tier1/tier2/tier3)")
     p_ask.add_argument("--session", default="default", help="指定会话 ID (默认 default)")
     p_ask.add_argument("--clip", action="store_true", help="注入剪贴板内容")
+    p_ask.add_argument("--screen", action="store_true", help="截取前台屏幕快照并附带分析")
+    p_ask.add_argument("--image", action="append", default=[], help="附带本地图片进行多模态分析 (可指定多次)")
+    p_ask.add_argument("--voice", action="store_true", help="开启语音朗读助手回答")
     p_ask.add_argument("--json", action="store_true", help="输出结构化 JSON")
 
     # chat
@@ -1504,6 +1565,9 @@ def main(argv: list[str] | None = None) -> int:
             with_clip=parsed.clip,
             as_json=parsed.json,
             session_id=parsed.session,
+            images=parsed.image,
+            screen=parsed.screen,
+            voice=parsed.voice,
         )
     elif parsed.action == "chat":
         return cmd_chat(session_id=parsed.session)
