@@ -173,6 +173,23 @@ class MorningBriefingGenerator:
         except Exception as exc:
             logger.warning("Failed writing morning briefing files: %s", exc)
 
+        # 3. 触发主动晨间简报通知 (Notification Hub)
+        try:
+            from omo.resident.notification import AlertLevel, NotificationEvent, get_notification_hub
+
+            hub = get_notification_hub(self.workspace)
+            ev = NotificationEvent(
+                id=f"briefing-{int(time.time())}",
+                level=AlertLevel.P2_INFO,
+                title="🌅 晨间自治与系统运行简报就绪",
+                body=f"系统健康度: {briefing.health_score}/100。{briefing.yesterday_summary} {briefing.cluster_online_summary}",
+                source="morning_briefing",
+                tags=["briefing", "daily"],
+            )
+            hub.notify(ev, force_macos=True)
+        except Exception as exc:
+            logger.debug("Failed notifying morning briefing: %s", exc)
+
         b_dict["markdown"] = md_content
         return b_dict
 
