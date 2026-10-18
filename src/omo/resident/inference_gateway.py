@@ -101,6 +101,10 @@ class SwarmInferenceGateway:
         """获取当前推断网关性能与切流摘要."""
         return dict(self._metrics)
 
+    def get_metrics(self) -> dict[str, Any]:
+        """获取指标别名方法，与 cockpit 端点对齐."""
+        return self.get_metrics_summary()
+
     def _call_openai_compatible(
         self, host: str, port: int, messages: list[dict[str, str]], model: str, timeout: float
     ) -> tuple[bool, str, dict[str, Any]]:

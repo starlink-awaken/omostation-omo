@@ -27,8 +27,6 @@ logger = logging.getLogger("omo.resident.service_ctl")
 PLIST_LABEL = "com.omostation.resident-agent"
 USER_LAUNCHAGENTS_DIR = Path.home() / "Library/LaunchAgents"
 TARGET_PLIST_FILE = USER_LAUNCHAGENTS_DIR / f"{PLIST_LABEL}.plist"
-LOG_DIR = WORKSPACE / "runtime/cron"
-STDOUT_LOG = LOG_DIR / "resident-daemon.log"
 
 
 def generate_plist_xml(workspace: Path) -> str:
@@ -84,7 +82,8 @@ def install_service(workspace: Path = WORKSPACE) -> dict[str, Any]:
     """安装并启动 LaunchAgent 守护服务."""
     try:
         USER_LAUNCHAGENTS_DIR.mkdir(parents=True, exist_ok=True)
-        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        log_dir = write_path(workspace / "runtime/cron")
+        log_dir.mkdir(parents=True, exist_ok=True)
 
         xml = generate_plist_xml(workspace)
         TARGET_PLIST_FILE.write_text(xml, encoding="utf-8")
@@ -154,7 +153,7 @@ def get_service_status(workspace: Path = WORKSPACE) -> dict[str, Any]:
             pass
 
     # 3. 截取最近 10 行日志
-    log_file = workspace / "runtime/cron/resident-daemon.log"
+    log_file = write_path(workspace / "runtime/cron/resident-daemon.log")
     if log_file.is_file():
         try:
             lines = log_file.read_text(encoding="utf-8").strip().splitlines()
