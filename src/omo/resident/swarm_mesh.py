@@ -23,6 +23,9 @@ NODES_REGISTRY_PATH = code_root() / ".omo/_truth/registry/compute/nodes.yaml"
 MACMINI_TAILSCALE_IP = "100.64.110.118"
 
 
+DYNAMIC_NODES_PATH = code_root() / ".omo/state/compute/dynamic_nodes.json"
+
+
 @dataclass
 class SwarmNodeSpec:
     id: str
@@ -38,6 +41,7 @@ class SwarmNodeSpec:
     supported_tiers: list[str] = field(default_factory=lambda: ["tier1_inspection"])
     priority: int = 50
     description: str = ""
+    source: str = "ssot"  # ssot | dynamic
 
 
 # 默认基础已知节点画像 (与 nodes.yaml 和物理硬件对齐，支持运行时无缝扩展)
@@ -56,6 +60,7 @@ DEFAULT_NODE_SPECS: list[SwarmNodeSpec] = [
         supported_tiers=["tier3_deep_reasoning", "tier2_code_gen", "tier1_inspection"],
         priority=100,
         description="Apple M3 Max 128G 统一内存本地主控",
+        source="ssot",
     ),
     SwarmNodeSpec(
         id="macmini",
@@ -71,6 +76,7 @@ DEFAULT_NODE_SPECS: list[SwarmNodeSpec] = [
         supported_tiers=["tier1_inspection", "tier1_rag_filter"],
         priority=80,
         description="局域网/Tailnet 常驻哨兵，跑 9B 巡检模型",
+        source="ssot",
     ),
     SwarmNodeSpec(
         id="y7000p",
@@ -86,6 +92,7 @@ DEFAULT_NODE_SPECS: list[SwarmNodeSpec] = [
         supported_tiers=["tier2_batch_embed", "tier2_code_gen"],
         priority=70,
         description="Nvidia 独立显卡 PC，适合重度批处理推断与蒸馏",
+        source="ssot",
     ),
 ]
 
@@ -117,15 +124,19 @@ def _fetch_models(host: str, port: int, path: str = "/v1/models", timeout: float
 
 
 class SwarmComputeMesh:
-    """多机异构算力织网管理器."""
+    """多机异构算力织网管理器 (支持动态新机器接入与持久化)."""
 
-    def __init__(self, registry_file: Path | None = None) -> None:
+    def __init__(self, registry_file: Path | None = None, dynamic_nodes_file: Path | None = None) -> None:
+        from omo.resident import write_path
+
         self.registry_file = registry_file or NODES_REGISTRY_PATH
+        self.dynamic_file = dynamic_nodes_file or write_path(DYNAMIC_NODES_PATH)
         self._nodes: list[SwarmNodeSpec] = list(DEFAULT_NODE_SPECS)
         self._load_from_registry()
+        self._load_dynamic_nodes()
 
     def _load_from_registry(self) -> None:
-        """从 SSOT nodes.yaml 动态加载外部与未来新加入机器."""
+        """从 SSOT nodes.yaml 动态加载外部与已知机器."""
         if not self.registry_file.exists():
             return
         try:
@@ -154,16 +165,87 @@ class SwarmComputeMesh:
                         vram_gb=float(r.get("vram_gb", 0.0)),
                         supported_tiers=r.get("supported_tiers", ["tier1_inspection"]),
                         priority=int(r.get("priority", 50)),
-                        description=r.get("description", "动态注册的外部算力节点"),
+                        description=r.get("description", "从 nodes.yaml 注册的算力节点"),
+                        source="ssot",
                     )
                     self._nodes.append(new_node)
         except Exception as exc:
             logger.warning("Failed to parse nodes registry %s: %s", self.registry_file, exc)
 
-    def register_dynamic_node(self, node: SwarmNodeSpec) -> None:
-        """支持运行时热插入新节点."""
+    def _load_dynamic_nodes(self) -> None:
+        """从 dynamic_nodes.json 加载未来新接入机器."""
+        if not self.dynamic_file.is_file():
+            return
+        try:
+            data = json.loads(self.dynamic_file.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                for item in data:
+                    node = SwarmNodeSpec(
+                        id=item["id"],
+                        name=item.get("name", item["id"]),
+                        role=item.get("role", "worker"),
+                        host=item["host"],
+                        inference_port=int(item.get("port", 11434)),
+                        health_path=item.get("health_path", "/api/tags"),
+                        os=item.get("os", "linux"),
+                        arch=item.get("arch", "x86_64"),
+                        memory_gb=float(item.get("memory_gb", 16.0)),
+                        vram_gb=float(item.get("vram_gb", 0.0)),
+                        supported_tiers=item.get("supported_tiers", ["tier1_inspection"]),
+                        priority=int(item.get("priority", 50)),
+                        description=item.get("description", "动态注册的外部新机器"),
+                        source="dynamic",
+                    )
+                    # 避免重复
+                    self._nodes = [n for n in self._nodes if n.id != node.id]
+                    self._nodes.append(node)
+        except Exception as exc:
+            logger.warning("Failed to load dynamic nodes: %s", exc)
+
+    def save_dynamic_nodes(self) -> None:
+        """持久化所有动态注册的新节点."""
+        try:
+            self.dynamic_file.parent.mkdir(parents=True, exist_ok=True)
+            dynamic_list = [
+                {
+                    "id": n.id,
+                    "name": n.name,
+                    "role": n.role,
+                    "host": n.host,
+                    "port": n.inference_port,
+                    "health_path": n.health_path,
+                    "os": n.os,
+                    "arch": n.arch,
+                    "memory_gb": n.memory_gb,
+                    "vram_gb": n.vram_gb,
+                    "supported_tiers": n.supported_tiers,
+                    "priority": n.priority,
+                    "description": n.description,
+                }
+                for n in self._nodes
+                if n.source == "dynamic"
+            ]
+            self.dynamic_file.write_text(json.dumps(dynamic_list, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as exc:
+            logger.warning("Failed to save dynamic nodes: %s", exc)
+
+    def register_dynamic_node(self, node: SwarmNodeSpec, persist: bool = True) -> SwarmNodeSpec:
+        """支持运行时热插入新节点并持久化."""
+        node.source = "dynamic"
         self._nodes = [n for n in self._nodes if n.id != node.id]
         self._nodes.append(node)
+        if persist:
+            self.save_dynamic_nodes()
+        return node
+
+    def unregister_dynamic_node(self, node_id: str) -> bool:
+        """下线或移除动态注册的新节点 (SSOT 节点不可动态移除)."""
+        target = next((n for n in self._nodes if n.id == node_id), None)
+        if not target or target.source != "dynamic":
+            return False
+        self._nodes = [n for n in self._nodes if n.id != node_id]
+        self.save_dynamic_nodes()
+        return True
 
     def probe_mesh(self) -> dict[str, Any]:
         """全量探测所有节点，返回标准集群拓扑（含向后兼容字段）."""
@@ -199,6 +281,7 @@ class SwarmComputeMesh:
                 "supported_tiers": node.supported_tiers,
                 "priority": node.priority,
                 "description": node.description,
+                "source": node.source,
             }
             node_results.append(node_dict)
 
