@@ -172,3 +172,8 @@ class ResidentPatrolRunner:
         except Exception as exc:
             logger.error("Remediation %s failed: %s", action_id, exc)
             return False
+
+
+def patrol_scan(auto_remediate: bool = True, workspace_root: Path | None = None) -> dict[str, Any]:
+    """快捷入口: 执行一轮自治巡检与受控自愈."""
+    return ResidentPatrolRunner(workspace_root).run_patrol_cycle(auto_remediate=auto_remediate)
