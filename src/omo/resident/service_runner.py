@@ -97,7 +97,7 @@ class ResidentServiceRunner:
         try:
             from omo.resident.patrol import patrol_scan
 
-            res = patrol_scan(auto_remediate=True)
+            res = patrol_scan(auto_remediate=True, workspace_root=self.workspace)
             self.state.last_patrol_at = datetime.now(UTC).isoformat()
             self.state.patrol_count += 1
             self.save_state()
