@@ -31,8 +31,8 @@ logger = logging.getLogger("omo.resident.notification")
 
 class AlertLevel(str, Enum):
     P0_CRITICAL = "P0_CRITICAL"  # 集群全宕机、CI 致命阻断、安全门禁高危违规
-    P1_WARNING = "P1_WARNING"    # 踩坑规则待复核、治理升级待办、降级运行
-    P2_INFO = "P2_INFO"          # 晨间简报就绪、夜巡平稳完成、节点上线
+    P1_WARNING = "P1_WARNING"  # 踩坑规则待复核、治理升级待办、降级运行
+    P2_INFO = "P2_INFO"  # 晨间简报就绪、夜巡平稳完成、节点上线
 
 
 @dataclass
@@ -49,13 +49,13 @@ class NotificationEvent:
 
 # 正则脱敏敏感 Key 与 Token
 SENSITIVE_PATTERNS = [
-    re.compile(r"(ghp_[A-Za-z0-9]{30,})"),               # GitHub Personal Access Token
-    re.compile(r"(gho_[A-Za-z0-9]{30,})"),               # GitHub OAuth Token
-    re.compile(r"(xoxb-[A-Za-z0-9-]{20,})"),             # Slack Bot Token
-    re.compile(r"(sk-[A-Za-z0-9]{20,})"),                # OpenAI / LLM API Key
-    re.compile(r"(tskey-auth-[A-Za-z0-9-_]+)"),          # Tailscale Auth Key
+    re.compile(r"(ghp_[A-Za-z0-9]{30,})"),  # GitHub Personal Access Token
+    re.compile(r"(gho_[A-Za-z0-9]{30,})"),  # GitHub OAuth Token
+    re.compile(r"(xoxb-[A-Za-z0-9-]{20,})"),  # Slack Bot Token
+    re.compile(r"(sk-[A-Za-z0-9]{20,})"),  # OpenAI / LLM API Key
+    re.compile(r"(tskey-auth-[A-Za-z0-9-_]+)"),  # Tailscale Auth Key
     re.compile(r"(https?://open\.feishu\.cn/open-apis/bot/v2/hook/)([a-f0-9-]+)"),  # Feishu Webhook Token
-    re.compile(r"([A-Za-z0-9+/]{40,}={0,2})"),           # Base64 Long Secret
+    re.compile(r"([A-Za-z0-9+/]{40,}={0,2})"),  # Base64 Long Secret
 ]
 
 
@@ -129,7 +129,9 @@ class NotificationHub:
         try:
             clean_title = sanitize_text(title)
             clean_body = sanitize_text(body)
-            color_prefix = "🚨 " if level == AlertLevel.P0_CRITICAL else ("⚠️ " if level == AlertLevel.P1_WARNING else "ℹ️ ")
+            color_prefix = (
+                "🚨 " if level == AlertLevel.P0_CRITICAL else ("⚠️ " if level == AlertLevel.P1_WARNING else "ℹ️ ")
+            )
 
             payload = {
                 "msg_type": "text",
