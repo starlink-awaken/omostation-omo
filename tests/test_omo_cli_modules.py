@@ -235,6 +235,73 @@ class TestOmoGoal:
 # -- omo_state --
 
 
+TASKS_INDEX_TEMPLATE = """# Tasks Registry
+
+## Active Tasks (1 个)
+| ID | Title | Status |
+|----|-------|--------|
+| TASK-KEEP-ACTIVE | 保留的活跃任务行 | active |
+
+## Planned Tasks (7 个)
+| ID | Title | Status |
+|----|-------|--------|
+| TASK-KEEP-PLANNED-1 | 保留的规划行一 | candidate |
+| TASK-019B7FD6 | 事故复刻: 真实被删掉的那条规划任务 | candidate |
+
+> **补充规划**: 保留说明。
+
+## Completed Tasks (331 个)
+
+> `tasks/done/` — 331 个顶层 YAML 文件。
+
+## Blocked Tasks (0 个)
+| ID | Title | Status |
+|----|-------|--------|
+
+---
+*Updated: 2026-10-14 (依据 `omo state sync-tasks` 与真实目录重算: done=331, planned=7, active=1, blocked=0, archived=6 顶层)*
+"""
+
+
+def materialize_sync_tasks_index(
+    tmp_path: Path,
+    planes: dict[str, list[tuple[str, str]]],
+) -> Path:
+    """构造 sync-tasks 的 INDEX 重建现场: state/system.yaml + tasks/<面>/ + registry/INDEX.md.
+
+    ``planes`` 的键集合决定磁盘实况: 不含某面 = 该目录不存在 (缺席),
+    含某面但值为空列表 = 目录存在且无 YAML (空面). 返回 INDEX.md 路径.
+    """
+    state_dir = tmp_path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "system.yaml").write_text(
+        yaml.dump(
+            {
+                "active_tasks": 0,
+                "planned_tasks": 0,
+                "blocked_tasks": 0,
+                "completed_tasks": 0,
+                "total_tasks": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    for section in ("active", "planned", "blocked", "done"):
+        task_dir = tmp_path / "tasks" / section
+        if section not in planes:
+            continue
+        task_dir.mkdir(parents=True)
+        for task_id, title in planes[section]:
+            (task_dir / f"{task_id}.yaml").write_text(
+                f"id: {task_id}\ntitle: {title}\nstatus: {section}\n",
+                encoding="utf-8",
+            )
+    index_file = tmp_path / "tasks" / "registry" / "INDEX.md"
+    index_file.parent.mkdir(parents=True, exist_ok=True)
+    index_file.write_text(TASKS_INDEX_TEMPLATE, encoding="utf-8")
+    return index_file
+
+
 class TestOmoState:
     def test_cmd_state_show_no_file(self, capsys, tmp_path: Path) -> None:
         omo_dir = tmp_path
@@ -525,6 +592,108 @@ class TestOmoState:
         assert "当前无活跃任务" not in index
         assert "当前无阻塞任务" not in index
         assert "blocked=1" in index
+
+    def test_cmd_state_sync_tasks_leaves_index_untouched_when_a_plane_is_absent(self, capsys, tmp_path: Path) -> None:
+        """事故复刻: tasks/planned/ 目录不存在 → INDEX.md 一个字节都不许改.
+
+        缺席面 glob 出空列表, 与「该面真任务为 0」同形; 2026-10-22 实测一次 sync
+        把 tracked 的 Planned 7 行 (含 TASK-019B7FD6) 重写成 0 个.
+        """
+        index_file = materialize_sync_tasks_index(
+            tmp_path,
+            {
+                "active": [("TASK-ACTUAL", "真实活跃任务")],
+                "blocked": [("TASK-BLOCKED", "真实阻塞任务")],
+                "done": [("TASK-DONE", "真实完成任务")],
+            },
+        )
+        before = index_file.read_bytes()
+
+        assert cmd_state_sync_tasks(tmp_path, dry_run=False) == 0
+
+        assert index_file.read_bytes() == before
+        captured = capsys.readouterr()
+        assert "未重建" in captured.out
+        # 守卫范围只到 INDEX: system.yaml 的重算语义逐字未变
+        state = yaml.safe_load((tmp_path / "state" / "system.yaml").read_text(encoding="utf-8"))
+        assert state["planned_tasks"] == 0
+        assert state["active_tasks"] == 1
+
+    def test_cmd_state_sync_tasks_still_rebuilds_index_when_plane_exists_but_empty(
+        self, capsys, tmp_path: Path
+    ) -> None:
+        """空面 (目录在、无 YAML) 是真实状态, 仍须重建并把计数写成 0 个."""
+        index_file = materialize_sync_tasks_index(
+            tmp_path,
+            {
+                "active": [("TASK-ACTUAL", "真实活跃任务")],
+                "planned": [],
+                "blocked": [("TASK-BLOCKED", "真实阻塞任务")],
+                "done": [("TASK-DONE", "真实完成任务")],
+            },
+        )
+
+        assert cmd_state_sync_tasks(tmp_path, dry_run=False) == 0
+
+        index = index_file.read_text(encoding="utf-8")
+        assert "TASK-019B7FD6" not in index
+        assert "## Planned Tasks (0 个)" in index
+        assert "## Active Tasks (1 个)" in index
+        assert "未重建" not in capsys.readouterr().out
+
+    def test_rebuild_tasks_registry_index_refuses_absent_plane_and_accepts_present_ones(self, tmp_path: Path) -> None:
+        """正反对照: 摘掉守卫后本用例必红, 放宽成「四面都可有可无」也必红."""
+        from omo.omo_state import _rebuild_tasks_registry_index
+
+        lists = {
+            "active": ["TASK-ACTUAL (真实活跃任务)"],
+            "planned": ["TASK-PLANNED (真实规划任务)"],
+            "blocked": ["TASK-BLOCKED (真实阻塞任务)"],
+        }
+        missing = materialize_sync_tasks_index(
+            tmp_path / "missing",
+            {
+                "active": [("TASK-ACTUAL", "真实活跃任务")],
+                "planned": [("TASK-PLANNED", "真实规划任务")],
+            },
+        )
+        before = missing.read_bytes()
+        assert (
+            _rebuild_tasks_registry_index(
+                tmp_path / "missing",
+                lists["active"],
+                lists["planned"],
+                [],
+                0,
+                "2026-10-22T00:00:00Z",
+            )
+            is False
+        )
+        assert missing.read_bytes() == before
+
+        complete = materialize_sync_tasks_index(
+            tmp_path / "complete",
+            {
+                "active": [("TASK-ACTUAL", "真实活跃任务")],
+                "planned": [("TASK-PLANNED", "真实规划任务")],
+                "blocked": [("TASK-BLOCKED", "真实阻塞任务")],
+                "done": [("TASK-DONE", "真实完成任务")],
+            },
+        )
+        assert (
+            _rebuild_tasks_registry_index(
+                tmp_path / "complete",
+                lists["active"],
+                lists["planned"],
+                lists["blocked"],
+                1,
+                "2026-10-22T00:00:00Z",
+            )
+            is True
+        )
+        index = complete.read_text(encoding="utf-8")
+        assert "TASK-019B7FD6" not in index
+        assert "## Blocked Tasks (1 个)" in index
 
     def test_cmd_state_sync_delegates_to_state_broker_json(self, capsys, tmp_path: Path, monkeypatch) -> None:
         """state sync 统一代理到 omo_ingress_state broker."""

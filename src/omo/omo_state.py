@@ -225,12 +225,19 @@ def _rebuild_tasks_registry_index(
     保留段 (手维护不动): Completed 里程碑列表 / Archived.
     刷新段 (派生): Active/Planned/Blocked 表格、相关标题计数、Completed 计数与 Updated 行.
 
-    Returns False 当 INDEX 缺失或结构不符预期 (不报错, 保留手维护兜底).
+    Returns False 当 INDEX 缺失、四任务面 (tasks/active|planned|blocked|done) 任缺席
+    或结构不符预期 (不报错, 保留手维护兜底).
+    面缺席必须 fail-closed: 调用方对缺席面 glob 出空列表, 与"该面真任务为 0"同形,
+    而 INDEX.md 是跟踪文档 — 2026-10-22 实测一次 sync 把 tracked 的 Planned 7 行
+    (含 TASK-019B7FD6) 重写成 0 个. 空面 (目录在、无 YAML) 仍照常重建.
     """
     import re
 
     index_file = omo_dir / "tasks" / "registry" / "INDEX.md"
     if not index_file.exists():
+        return False
+    tasks_dir = omo_dir / "tasks"
+    if not all((tasks_dir / sub).is_dir() for sub in ("active", "planned", "blocked", "done")):
         return False
     text = index_file.read_text(encoding="utf-8")
     active_n = len(active_list)
