@@ -15,11 +15,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from omo.omo_paths import state_root
 from omo.resident.governor import RISK_R0, RISK_R1, RISK_R2, RISK_R3, Governor
 from omo.resident.pdp_pep import PDP, PEP
 
-ROOT = Path(__file__).resolve().parents[3]
-AUDIT_FILE = ROOT / ".omo" / "state" / "agent-cell" / "governance-audit.jsonl"
+AUDIT_FILE_RELPATH = Path(".omo") / "state" / "agent-cell" / "governance-audit.jsonl"
 
 
 class CellGovernance:
@@ -29,7 +29,13 @@ class CellGovernance:
         self.governor = Governor()
         self.pdp = PDP(policy_set="default")
         self.pep = PEP(self.pdp)
-        AUDIT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        self.audit_file().parent.mkdir(parents=True, exist_ok=True)
+
+    def audit_file(self) -> Path:
+        """Return the canonical Agent Cell governance audit path at call time."""
+        path = state_root() / AUDIT_FILE_RELPATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
 
     def audit_cell_config(self, cell_config: dict) -> dict:
         """审计 Cell 配置合规性."""
@@ -176,14 +182,15 @@ class CellGovernance:
             "timestamp": datetime.now(UTC).isoformat(),
             "result": data,
         }
-        with open(AUDIT_FILE, "a") as f:
+        with self.audit_file().open("a") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
     def _load_audits(self) -> list[dict]:
         """加载审计日志."""
         audits = []
-        if AUDIT_FILE.exists():
-            with open(AUDIT_FILE) as f:
+        audit_file = self.audit_file()
+        if audit_file.exists():
+            with audit_file.open() as f:
                 for line in f:
                     if not line.strip():
                         continue

@@ -16,17 +16,24 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[3]
-NETWORK_DIR = ROOT / ".omo" / "state" / "agent-cell" / "memory-network"
-PUBLISHED_FILE = NETWORK_DIR / "published.jsonl"
-SUBSCRIPTIONS_FILE = NETWORK_DIR / "subscriptions.json"
+from omo.omo_paths import state_root
+
+NETWORK_DIR_RELPATH = Path(".omo") / "state" / "agent-cell" / "memory-network"
+PUBLISHED_FILENAME = "published.jsonl"
+SUBSCRIPTIONS_FILENAME = "subscriptions.json"
 
 
 class MemoryNetwork:
     """跨 Cell 记忆网络."""
 
     def __init__(self):
-        NETWORK_DIR.mkdir(parents=True, exist_ok=True)
+        self.network_dir().mkdir(parents=True, exist_ok=True)
+
+    def network_dir(self) -> Path:
+        """Return the canonical Agent Cell memory network directory at call time."""
+        directory = state_root() / NETWORK_DIR_RELPATH
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory
 
     def publish(self, cell_id: str, memory: dict) -> str:
         """发布记忆到网络. 返回 memory_id."""
@@ -42,7 +49,7 @@ class MemoryNetwork:
             "ttl_hours": memory.get("ttl_hours", 168),  # 7 days default
         }
 
-        with open(PUBLISHED_FILE, "a") as f:
+        with (self.network_dir() / PUBLISHED_FILENAME).open("a") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
         return memory_id
@@ -60,10 +67,11 @@ class MemoryNetwork:
         """搜索网络中的记忆."""
         results = []
 
-        if not PUBLISHED_FILE.exists():
+        published_file = self.network_dir() / PUBLISHED_FILENAME
+        if not published_file.exists():
             return results
 
-        with open(PUBLISHED_FILE) as f:
+        with published_file.open() as f:
             for line in f:
                 if not line.strip():
                     continue
@@ -105,8 +113,9 @@ class MemoryNetwork:
         active_memories = 0
         cells = set()
 
-        if PUBLISHED_FILE.exists():
-            with open(PUBLISHED_FILE) as f:
+        published_file = self.network_dir() / PUBLISHED_FILENAME
+        if published_file.exists():
+            with published_file.open() as f:
                 for line in f:
                     if not line.strip():
                         continue
@@ -136,13 +145,14 @@ class MemoryNetwork:
 
     def cleanup_expired(self) -> int:
         """清理过期记忆. 返回清理数量."""
-        if not PUBLISHED_FILE.exists():
+        published_file = self.network_dir() / PUBLISHED_FILENAME
+        if not published_file.exists():
             return 0
 
         kept = []
         cleaned = 0
 
-        with open(PUBLISHED_FILE) as f:
+        with published_file.open() as f:
             for line in f:
                 if not line.strip():
                     continue
@@ -161,19 +171,20 @@ class MemoryNetwork:
                 else:
                     cleaned += 1
 
-        with open(PUBLISHED_FILE, "w") as f:
+        with published_file.open("w") as f:
             f.writelines(kept)
 
         return cleaned
 
     def _load_subscriptions(self) -> dict:
-        if SUBSCRIPTIONS_FILE.exists():
-            with open(SUBSCRIPTIONS_FILE) as f:
+        subscriptions_file = self.network_dir() / SUBSCRIPTIONS_FILENAME
+        if subscriptions_file.exists():
+            with subscriptions_file.open() as f:
                 return json.load(f)
         return {}
 
     def _save_subscriptions(self, subs: dict) -> None:
-        with open(SUBSCRIPTIONS_FILE, "w") as f:
+        with (self.network_dir() / SUBSCRIPTIONS_FILENAME).open("w") as f:
             f.write(json.dumps(subs, ensure_ascii=False, indent=2))
 
 
