@@ -9,16 +9,20 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[3]
-STATE_DIR = ROOT / ".omo/state/agent-cell"
-STATE_FILE = STATE_DIR / "cell_states.json"
+from omo.omo_paths import state_root
+
+STATE_DIR_RELPATH = Path(".omo") / "state" / "agent-cell"
+STATE_FILENAME = "cell_states.json"
 
 
 class CellStateManager:
     """管理 Cell 状态的保存与恢复."""
 
-    def __init__(self):
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
+    def state_dir(self) -> Path:
+        """Return the canonical Agent Cell state directory at call time."""
+        directory = state_root() / STATE_DIR_RELPATH
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory
 
     def save_state(self, cell_state: dict) -> str:
         """保存 Cell 状态到磁盘. 返回 state_id."""
@@ -92,16 +96,17 @@ class CellStateManager:
         return len(to_remove)
 
     def _load_all_states(self) -> dict[str, dict]:
-        if not STATE_FILE.exists():
+        state_file = self.state_dir() / STATE_FILENAME
+        if not state_file.exists():
             return {}
         try:
-            with open(STATE_FILE, encoding="utf-8") as f:
+            with state_file.open(encoding="utf-8") as f:
                 return json.load(f)
         except (json.JSONDecodeError, OSError):
             return {}
 
     def _save_all_states(self, states: dict[str, dict]) -> None:
-        with open(STATE_FILE, "w", encoding="utf-8") as f:
+        with (self.state_dir() / STATE_FILENAME).open("w", encoding="utf-8") as f:
             json.dump(states, f, ensure_ascii=False, indent=2)
 
 
