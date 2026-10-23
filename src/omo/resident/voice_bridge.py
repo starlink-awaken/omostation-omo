@@ -101,11 +101,13 @@ def speak_text(
     try:
         import urllib.request
 
-        payload = json.dumps({
-            "model": "tts-zh" if is_zh else "tts-en",
-            "input": cleaned[:500],
-            "voice": "vivian" if is_zh else "af_heart",
-        }).encode("utf-8")
+        payload = json.dumps(
+            {
+                "model": "tts-zh" if is_zh else "tts-en",
+                "input": cleaned[:500],
+                "voice": "vivian" if is_zh else "af_heart",
+            }
+        ).encode("utf-8")
         req = urllib.request.Request(
             f"{gateway_url}/audio/speech",
             data=payload,
@@ -114,7 +116,11 @@ def speak_text(
         )
         with urllib.request.urlopen(req, timeout=1.5) as resp:
             audio_data = resp.read()
-            target_file = Path(output_path) if output_path else Path(tempfile.gettempdir()) / f"resident_speech_{int(time.time()*1000)}.wav"
+            target_file = (
+                Path(output_path)
+                if output_path
+                else Path(tempfile.gettempdir()) / f"resident_speech_{int(time.time() * 1000)}.wav"
+            )
             target_file.write_bytes(audio_data)
             if play:
                 subprocess.Popen(["afplay", str(target_file)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -132,8 +138,12 @@ def speak_text(
 
     # 2. 降级为 macOS 原生 say 命令
     try:
-        target_file = Path(output_path) if output_path else Path(tempfile.gettempdir()) / f"resident_speech_{int(time.time()*1000)}.aiff"
-        
+        target_file = (
+            Path(output_path)
+            if output_path
+            else Path(tempfile.gettempdir()) / f"resident_speech_{int(time.time() * 1000)}.aiff"
+        )
+
         # 录制为 aiff 文件
         cmd_record = ["say", "-v", chosen_voice, "-o", str(target_file), cleaned[:600]]
         subprocess.run(cmd_record, check=True, timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
