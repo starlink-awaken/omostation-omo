@@ -42,7 +42,11 @@ def persist_media_image(raw_data_or_path: str, workspace_root: Path | None = Non
     media_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. 检查是否为 Base64
-    if raw_data_or_path.startswith("data:image/") or ";base64," in raw_data_or_path or (len(raw_data_or_path) > 300 and "/" not in raw_data_or_path[:20]):
+    if (
+        raw_data_or_path.startswith("data:image/")
+        or ";base64," in raw_data_or_path
+        or (len(raw_data_or_path) > 300 and "/" not in raw_data_or_path[:20])
+    ):
         b64_str = raw_data_or_path.split(";base64,")[-1] if ";base64," in raw_data_or_path else raw_data_or_path
         try:
             raw_bytes = base64.b64decode(b64_str)

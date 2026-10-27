@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from omo.resident.chat_engine import ChatMessage, ResidentChatEngine, persist_media_image
 from omo.resident.inference_gateway import InferenceResult, SwarmInferenceGateway
 from omo.resident.interact import ask, execute_react_tool
