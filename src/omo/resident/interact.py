@@ -721,7 +721,9 @@ def cmd_ask(
     voice: bool = False,
 ) -> int:
     if not prompt and not with_clip and not screen and not images:
-        print('用法: omo resident ask "你的指令或问题" [-d] [--tier fast|pro] [--clip] [--screen] [--image FILE] [--voice] [--json]')
+        print(
+            '用法: omo resident ask "你的指令或问题" [-d] [--tier fast|pro] [--clip] [--screen] [--image FILE] [--voice] [--json]'
+        )
         return 1
 
     input_images: list[str] = list(images or [])

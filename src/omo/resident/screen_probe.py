@@ -72,7 +72,7 @@ def capture_screen(
     media_dir = write_path(root / ".omo/state/daemon/media") / today
     media_dir.mkdir(parents=True, exist_ok=True)
 
-    temp_file = media_dir / f"temp_{int(time.time()*1000)}.png"
+    temp_file = media_dir / f"temp_{int(time.time() * 1000)}.png"
 
     captured = False
     if not fullscreen:
