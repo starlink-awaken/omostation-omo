@@ -52,6 +52,13 @@ def process_requirement_file(file_path: Path) -> str | None:
                 now_iso,
             ),
         )
+        # 回执链（#20）：裸 INSERT 必须记 card_history，否则裁决链读不到这次写入
+        with conn:
+            conn.execute(
+                "INSERT INTO card_history (card_id, old_status, new_status, changed_at, changed_by, note)"
+                " VALUES (?, NULL, 'identified', ?, 'opc-pipeline', 'auto-created by opc-product-pipeline')",
+                (card_id, now_iso),
+            )
     conn.close()
 
     print(f"✅ OPC 产品管线触发: 为 {file_path.name} 自动开单卡片 {card_id}")
