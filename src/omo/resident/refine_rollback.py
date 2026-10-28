@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from omo.resident import WORKSPACE, write_path
+
 # ── Refinement Version ───────────────────────────────────────────
 
 
@@ -49,7 +51,7 @@ class RefinementStore:
     """版本链管理 — 创建/回滚/列表/查询."""
 
     def __init__(self, store_dir: Path | None = None) -> None:
-        self._store_dir = store_dir or Path(".omo/state/refinements")
+        self._store_dir = store_dir or write_path(WORKSPACE / ".omo/state/refinements")
         self._store_dir.mkdir(parents=True, exist_ok=True)
         self._versions: dict[str, RefinementVersion] = {}
         self._current_id: str | None = None
@@ -152,7 +154,7 @@ class SnapshotManager:
     """快照管理 — 快照/恢复/差异."""
 
     def __init__(self, snapshot_dir: Path | None = None) -> None:
-        self._snapshot_dir = snapshot_dir or Path(".omo/state/refinement-snapshots")
+        self._snapshot_dir = snapshot_dir or write_path(WORKSPACE / ".omo/state/refinement-snapshots")
         self._snapshot_dir.mkdir(parents=True, exist_ok=True)
         self._snapshots: dict[str, SkillSnapshot] = {}
         self._load()

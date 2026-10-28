@@ -9,15 +9,16 @@ from datetime import UTC, datetime, timezone
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[3]
-REPLAY_DIR = ROOT / ".omo/state/agent-cell-replay"
+from omo.resident import WORKSPACE, write_path
+
+REPLAY_DIR = WORKSPACE / ".omo/state/agent-cell-replay"
 EPISODE_LOG = REPLAY_DIR / "episodes.jsonl"
 EVAL_LOG = REPLAY_DIR / "eval_results.jsonl"
 
 
 class ReplayFramework:
     def __init__(self):
-        REPLAY_DIR.mkdir(parents=True, exist_ok=True)
+        write_path(REPLAY_DIR).mkdir(parents=True, exist_ok=True)
 
     def replay_episode(self, episode: dict) -> dict:
         from omo.resident.cell import CellCoordinator
@@ -32,7 +33,7 @@ class ReplayFramework:
             "state": r["state"],
             "replayed_at": datetime.now(UTC).isoformat(),
         }
-        with open(EPISODE_LOG, "a") as f:
+        with open(write_path(EPISODE_LOG), "a") as f:
             f.write(json.dumps(result, ensure_ascii=False) + "\n")
         return result
 
@@ -56,7 +57,7 @@ class ReplayFramework:
             "side_effects": False,
             "executed_at": datetime.now(UTC).isoformat(),
         }
-        with open(EPISODE_LOG, "a") as f:
+        with open(write_path(EPISODE_LOG), "a") as f:
             f.write(json.dumps(result, ensure_ascii=False) + "\n")
         return result
 
@@ -71,14 +72,15 @@ class ReplayFramework:
             "success_rate": round(completed / len(results), 2) if results else 0,
             "evaluated_at": datetime.now(UTC).isoformat(),
         }
-        with open(EVAL_LOG, "a") as f:
+        with open(write_path(EVAL_LOG), "a") as f:
             f.write(json.dumps(result, ensure_ascii=False) + "\n")
         return result
 
     def get_stats(self) -> dict:
+        episode_log, eval_log = write_path(EPISODE_LOG), write_path(EVAL_LOG)
         return {
-            "total_replays": sum(1 for _ in open(EPISODE_LOG)) if EPISODE_LOG.exists() else 0,
-            "total_evals": sum(1 for _ in open(EVAL_LOG)) if EVAL_LOG.exists() else 0,
+            "total_replays": sum(1 for _ in open(episode_log)) if episode_log.exists() else 0,
+            "total_evals": sum(1 for _ in open(eval_log)) if eval_log.exists() else 0,
         }
 
 

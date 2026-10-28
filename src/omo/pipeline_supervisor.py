@@ -19,6 +19,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from omo.omo_paths import code_root, state_root
+
 SCHEMA = "omo.pipeline-supervisor.v1"
 EMBED_NODE_URL = "http://mac-mini-brew:18700/embed"  # Mac mini mesh 节点 (T3-02 P3); MagicDNS 名, 免随 tailscale IP 变更断链 (2026-10-10, 已历一次 IP 漂移)
 INBOUND_DIR = Path.home() / "Inbox" / "ocr-inbound"
@@ -28,15 +30,16 @@ EVENT_LOG = "pipeline-events.jsonl"
 
 
 def _ws() -> Path:
-    cur = Path(__file__).resolve()
-    for parent in cur.parents:
-        if (parent / "docs" / "project-registry.yaml").is_file():
-            return parent
-    return Path.cwd()
+    """代码面锚点：当前检出根（读侧），与 profile 无关 (ADR-0456 / BET-Y2Q4-T10-277)。
+
+    旧的 marker 上溯 + `Path.cwd()` 兜底在 omo 被装进 site-packages 或从别处 CWD 调用时
+    返回调用目录，于是写面落点由 CWD 决定；状态面一律改走 `state_root()`。
+    """
+    return code_root()
 
 
 def _state_path() -> Path:
-    return _ws() / ".omo" / "state" / "pipeline-supervisor-state.json"
+    return state_root() / ".omo" / "state" / "pipeline-supervisor-state.json"
 
 
 def _run(cmd: list[str], timeout: int = 300) -> tuple[bool, str]:
@@ -79,7 +82,7 @@ def _save_state(state: dict[str, Any]) -> None:
 
 
 def _append_jsonl(name: str, record: dict[str, Any]) -> None:
-    p = _ws() / ".omo" / "state" / name
+    p = state_root() / ".omo" / "state" / name
     p.parent.mkdir(parents=True, exist_ok=True)
     with p.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")

@@ -9,8 +9,9 @@ from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[3]
-MEMORY_DIR = ROOT / ".omo/state/agent-cell-memory"
+from omo.resident import WORKSPACE, write_path
+
+MEMORY_DIR = WORKSPACE / ".omo/state/agent-cell-memory"
 CANDIDATE_FILE = MEMORY_DIR / "candidates.jsonl"
 MEMORY_FILE = MEMORY_DIR / "memories.jsonl"
 CONFLICT_FILE = MEMORY_DIR / "conflicts.jsonl"
@@ -18,7 +19,7 @@ CONFLICT_FILE = MEMORY_DIR / "conflicts.jsonl"
 
 class MemoryPipeline:
     def __init__(self):
-        MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+        write_path(MEMORY_DIR).mkdir(parents=True, exist_ok=True)
 
     def generate_candidates(self, episode: dict) -> list[dict]:
         candidates = []
@@ -38,13 +39,13 @@ class MemoryPipeline:
                 }
             )
         if candidates:
-            with open(CANDIDATE_FILE, "a") as f:
+            with open(write_path(CANDIDATE_FILE), "a") as f:
                 for c in candidates:
                     f.write(json.dumps(c, ensure_ascii=False) + "\n")
         return candidates
 
     def detect_conflicts(self) -> list[dict]:
-        candidates = self._load_file(CANDIDATE_FILE)
+        candidates = self._load_file(write_path(CANDIDATE_FILE))
         conflicts = []
         by_ep = {}
         for c in candidates:
@@ -61,13 +62,13 @@ class MemoryPipeline:
                     }
                 )
         if conflicts:
-            with open(CONFLICT_FILE, "a") as f:
+            with open(write_path(CONFLICT_FILE), "a") as f:
                 for c in conflicts:
                     f.write(json.dumps(c, ensure_ascii=False) + "\n")
         return conflicts
 
     def consolidate(self) -> list[dict]:
-        candidates = self._load_file(CANDIDATE_FILE)
+        candidates = self._load_file(write_path(CANDIDATE_FILE))
         by_type = {}
         for c in candidates:
             by_type.setdefault(c.get("type", "semantic"), []).append(c)
@@ -87,13 +88,13 @@ class MemoryPipeline:
                     }
                 )
         if consolidated:
-            with open(MEMORY_FILE, "a") as f:
+            with open(write_path(MEMORY_FILE), "a") as f:
                 for m in consolidated:
                     f.write(json.dumps(m, ensure_ascii=False) + "\n")
         return consolidated
 
     def forget(self, max_age_days: int = 90, min_access: int = 1) -> list[dict]:
-        memories = self._load_file(MEMORY_FILE)
+        memories = self._load_file(write_path(MEMORY_FILE))
         cutoff = datetime.now(UTC) - timedelta(days=max_age_days)
         forgotten, kept = [], []
         for m in memories:
@@ -102,7 +103,7 @@ class MemoryPipeline:
                 forgotten.append(m)
             else:
                 kept.append(m)
-        with open(MEMORY_FILE, "w") as f:
+        with open(write_path(MEMORY_FILE), "w") as f:
             for m in kept:
                 f.write(json.dumps(m, ensure_ascii=False) + "\n")
         return forgotten
@@ -121,9 +122,9 @@ class MemoryPipeline:
 
     def get_stats(self) -> dict:
         return {
-            "candidates": len(self._load_file(CANDIDATE_FILE)),
-            "memories": len(self._load_file(MEMORY_FILE)),
-            "conflicts": len(self._load_file(CONFLICT_FILE)),
+            "candidates": len(self._load_file(write_path(CANDIDATE_FILE))),
+            "memories": len(self._load_file(write_path(MEMORY_FILE))),
+            "conflicts": len(self._load_file(write_path(CONFLICT_FILE))),
         }
 
 
