@@ -24,9 +24,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-DEFAULT_RULES_REL = ".omo/state/hard-negative-rules.jsonl"
-SKILLS_DIR_REL = "agents/skills"  # repo-relative; real mount is .agents/skills
-INDEX_REL = "agents/skills/INDEX.md"
+from omo.resident import WORKSPACE, write_path
+
 CRYSTALLIZED_DIRNAME = "auto-crystallized"
 CRYSTALLIZE_THRESHOLD = 2
 
@@ -188,22 +187,27 @@ def test_clean_draft_passes():
 class SemaCrystallizer:
     """End-to-end pipeline: ledger -> crystallize -> install -> hot reload."""
 
-    def __init__(self, workspace_root: Path, threshold: int = CRYSTALLIZE_THRESHOLD) -> None:
-        self.ws = workspace_root
+    def __init__(self, workspace_root: Path | None = None, threshold: int = CRYSTALLIZE_THRESHOLD) -> None:
+        self.ws = workspace_root or WORKSPACE
         self.ledger = CorrectionLedger(threshold=threshold)
 
     # -- paths -------------------------------------------------------------
 
     def skills_root(self) -> Path:
+        """结晶产物的安装面 —— 代码面（SKILL.md 与测试骨架是要进版本库的资产）。"""
         return self.ws / ".agents" / "skills" / CRYSTALLIZED_DIRNAME
 
     def index_path(self) -> Path:
         return self.ws / ".agents" / "skills" / "INDEX.md"
 
+    def _state_path(self, name: str) -> Path:
+        """状态面 —— 规则库与 manifest 走缝，profile 声明后落 state 根 (BET-Y2Q4-T10-277)。"""
+        return write_path(self.ws / ".omo" / "state" / name)
+
     # -- ingest ------------------------------------------------------------
 
     def ingest_rules(self, rules_path: Path | None = None) -> int:
-        p = rules_path or (self.ws / ".omo/state/hard-negative-rules.jsonl")
+        p = self._state_path("hard-negative-rules.jsonl") if rules_path is None else rules_path
         return self.ledger.load_rules_as_events(p) if Path(p).exists() else 0
 
     # -- crystallize & install ------------------------------------------------
@@ -235,7 +239,7 @@ class SemaCrystallizer:
     def hot_reload(self) -> dict[str, Any]:
         """In-place INDEX/skill refresh; returns latency info (<500ms contract)."""
         t0 = time.perf_counter()
-        sentinel = self.ws / ".omo/state/sema-skills-manifest.json"
+        sentinel = self._state_path("sema-skills-manifest.json")
         skills = sorted(str(p.relative_to(self.skills_root())) for p in self.skills_root().rglob("SKILL.md"))
         payload = {
             "reloaded_at": time.time(),
