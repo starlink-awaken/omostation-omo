@@ -21,8 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from omo import omo_paths
-from omo import pipeline_supervisor
+from omo import omo_paths, pipeline_supervisor
 from omo.resident import WORKSPACE, memory_pipeline, refine_rollback, replay, write_path
 
 OMO_PKG_DIR = Path(omo_paths.__file__).resolve().parent
@@ -60,7 +59,12 @@ def _shape_of(call: ast.Call) -> str | None:
             return "cwd_relative_literal"
         return None
     # Path.cwd() —— CWD 兜底
-    if isinstance(func, ast.Attribute) and func.attr == "cwd" and isinstance(func.value, ast.Name) and func.value.id == "Path":
+    if (
+        isinstance(func, ast.Attribute)
+        and func.attr == "cwd"
+        and isinstance(func.value, ast.Name)
+        and func.value.id == "Path"
+    ):
         return "cwd_fallback"
     return None
 
@@ -82,7 +86,7 @@ def test_anchor_detector_names_a_synthetic_violation() -> None:
             "def _sample(store_dir=None):",
             "    ROOT = Path(__file__).resolve().parents[3]",
             '    MEMORY_DIR = ROOT / ".omo/state/agent-cell-memory"',
-            "    self_dir = store_dir or Path(\".omo/state/refinements\")",
+            '    self_dir = store_dir or Path(".omo/state/refinements")',
             "    return Path.cwd()",
         ]
     )
