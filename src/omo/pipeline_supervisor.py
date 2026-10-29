@@ -42,6 +42,11 @@ def _state_path() -> Path:
     return state_root() / ".omo" / "state" / "pipeline-supervisor-state.json"
 
 
+def _state_dir(name: str) -> Path:
+    """状态面子目录：profile 声明后随 state 根，与代码面 `_ws()` 无关 (BET-Y2Q4-T10-277)。"""
+    return state_root() / ".omo" / "state" / name
+
+
 def _run(cmd: list[str], timeout: int = 300) -> tuple[bool, str]:
     import subprocess
 
@@ -129,7 +134,7 @@ def tick_morning() -> dict[str, Any]:
     radar_out = _station("radar", states, radar)
 
     day = now.strftime("%Y%m%d")
-    brief_path = ws / ".omo" / "state" / "policy-radar" / f"brief-{day}.json"
+    brief_path = _state_dir("policy-radar") / f"brief-{day}.json"
 
     # 2. bus — publish brief items as high-priority events (stream ledger)
     def bus():
@@ -185,7 +190,7 @@ def tick_morning() -> dict[str, Any]:
 
     # 4. render — GB/T DOCX edition (failure keeps brief.md, never blocks)
     def render():
-        md_path = ws / ".omo" / "state" / "policy-radar" / f"brief-{day}.md"
+        md_path = _state_dir("policy-radar") / f"brief-{day}.md"
         if not md_path.is_file():
             return "no-md"
         ok, detail = _run(
@@ -287,7 +292,7 @@ def process_inbound(image: Path) -> dict[str, Any]:
     def card():
         if not md_text:
             raise RuntimeError("no content for card")
-        card_dir = ws / ".omo" / "state" / "im-triage"
+        card_dir = _state_dir("im-triage")
         card_dir.mkdir(parents=True, exist_ok=True)
         card_file = card_dir / f"pipeline-{image.stem}.json"
         card_file.write_text(
@@ -312,7 +317,7 @@ def process_inbound(image: Path) -> dict[str, Any]:
             ),
             encoding="utf-8",
         )
-        return str(card_file.relative_to(ws))
+        return str(card_file.relative_to(state_root()))
 
     card_path = _station("card", states, card)
 
