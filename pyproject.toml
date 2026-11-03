@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "httpx[socks]>=0.28.1",
-    "gitpython>=3.1.0",  # ADR-0412 归并: omo-debt engine 依赖
+    "gitpython>=3.2.1",  # ADR-0412 归并: omo-debt engine 依赖
     "aetherforge-gateway",
     "aetherforge",
     "agora",
