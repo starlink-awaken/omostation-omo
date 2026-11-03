@@ -120,5 +120,5 @@ quote-style = "double"
 
 [dependency-groups]
 dev = [
-    "pytest-asyncio>=1.4.0",
+    "pytest-asyncio>=1.4.1",
 ]
