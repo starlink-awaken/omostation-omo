@@ -1,0 +1,24 @@
+version: 2
+updates:
+  # 这些是 `[tool.uv.sources]` 里指向**兄弟子模块**的 `path` 源。Dependabot 的隔离
+  # updater 容器不 checkout 子模块, 取不到它们, 于是整轮 abort:
+  #   path_dependencies_not_reachable
+  #     "<name>" at /pyproject.toml, ...
+  # 列进 ignore 让其余依赖的更新照常进行。
+  #
+  # 实测 (2026-11-03):
+  #  * **version job 吃这套** —— l4-kernel 加配置后, 2026-10-29 的 version job
+  #    通过 (job definition 里 ignore-conditions 有这两条)。
+  #  * **security job 不吃** —— 它的 ignore-conditions 恒为空 (同仓 2026-11-02 的
+  #    security job 实测 "ignore-conditions":[]), 所以安全更新仍会因同一条 path
+  #    依赖失败。要连安全更新一起修, 只能把 path 源改成 git 源 (会改开发流程:
+  #    需联网解析 / 按 rev pin), 或把包发到 PyPI。
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    ignore:
+      - dependency-name: "aetherforge"
+      - dependency-name: "agora"
+      - dependency-name: "bus-foundation"
+      - dependency-name: "ecos"
