@@ -424,7 +424,9 @@ class TestOmoState:
         assert yaml.safe_load(canonical.read_text())["services"]["agora"]["health_check"] == "healthy"
         assert "system_health.yaml refreshed: 1 services updated" in capsys.readouterr().out
 
-    def test_state_refresh_dispatcher_writes_to_state_root(self, capsys, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_state_refresh_dispatcher_writes_to_state_root(
+        self, capsys, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """ADR-0456: `omo state refresh` 的写面跟随 profile 的 state_root。
 
         反证 (AGENTS.md §7③): 把 dispatcher 里那行换回 `omo_dir`(跟随 code_root)
