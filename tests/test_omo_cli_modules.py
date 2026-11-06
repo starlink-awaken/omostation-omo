@@ -424,6 +424,30 @@ class TestOmoState:
         assert yaml.safe_load(canonical.read_text())["services"]["agora"]["health_check"] == "healthy"
         assert "system_health.yaml refreshed: 1 services updated" in capsys.readouterr().out
 
+    def test_state_refresh_dispatcher_writes_to_state_root(self, capsys, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """ADR-0456: `omo state refresh` 的写面跟随 profile 的 state_root。
+
+        反证 (AGENTS.md §7③): 把 dispatcher 里那行换回 `omo_dir`(跟随 code_root)
+        本用例当场红 —— 文件不会出现在 state_root。不声明 profile 时行为不变
+        (state_root() 回落 WORKSPACE_ROOT), 与历史布局逐字节相同。
+        """
+        from omo.omo_state import main as omo_state_main
+
+        declared = tmp_path / "declared-state-root"
+        (declared / ".omo" / "state").mkdir(parents=True)
+        monkeypatch.setenv("OMOSTATION_STATE_ROOT", str(declared))
+        result = MagicMock(
+            returncode=0,
+            stdout=json.dumps([{"name": "agora", "status": "running", "port": 7430}]),
+        )
+        with patch("subprocess.run", return_value=result):
+            rc = omo_state_main(["refresh"])
+
+        assert rc == 0
+        written = declared / ".omo" / "state" / "runtime" / "system_health.yaml"
+        assert written.exists(), "写面没落在声明的 state_root"
+        assert "services updated" in capsys.readouterr().out
+
     def test_cmd_state_sync_tasks_fixes_drift(self, capsys, tmp_path: Path) -> None:
         """sync-tasks 从 tasks/ 真实文件数重算计数 (治本手动维护漂移, OPT-7)."""
         omo_dir = tmp_path
