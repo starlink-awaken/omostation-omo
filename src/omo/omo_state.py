@@ -13,7 +13,7 @@ import yaml
 from .omo_ingress import write_system_projection_fields
 from .omo_ingress_state import sync_state_projection
 from .omo_io import write_text_atomic
-from .omo_paths import code_root, find_omo_dir, system_yaml_for, system_yaml_read
+from .omo_paths import code_root, find_omo_dir, state_root, system_yaml_for, system_yaml_read
 from .omo_shared import load_yaml, load_yaml_required
 
 
@@ -544,14 +544,21 @@ def main(argv: list[str] | None = None) -> int:
     syncp.add_argument("--json", action="store_true", help="Print JSON report")
     args = parser.parse_args(argv)
     omo_dir = _find_omo_dir()
+    # ADR-0456: system_health.yaml 是运行态投影, 写面跟随 profile 的 state_root
+    # (与 cmd_state_sync 经 sync_state_projection → _resolve_write_root 同口径)。
+    # 此前 refresh/health 直接用 find_omo_dir()(跟随 code_root), 于是入口被改到
+    # 运行时代码安装位时写面跟到安装位、读面仍在检出 —— 2026-11-06 实测该分叉让
+    # meta-doctor 三条心跳全红 (stale_beats=3)。show/set 读的是 system.yaml,
+    # 归 write-owners 管, 不在本次收口。
+    state_omo_dir = state_root() / ".omo"
     if args.command == "show":
         return cmd_state_show(omo_dir, args.format)
     elif args.command == "health":
-        return cmd_state_health(omo_dir)
+        return cmd_state_health(state_omo_dir)
     elif args.command == "set":
         return cmd_state_set(omo_dir, args.key, args.value, args.format)
     elif args.command == "refresh":
-        return cmd_state_refresh(omo_dir, dry_run=args.dry_run)
+        return cmd_state_refresh(state_omo_dir, dry_run=args.dry_run)
     elif args.command == "sync-tasks":
         return cmd_state_sync_tasks(omo_dir, dry_run=args.dry_run)
     elif args.command == "sync":
