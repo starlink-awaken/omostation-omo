@@ -23,6 +23,7 @@ from omo.workflow.lifecycle import (
     closeout_run,
     heartbeat_lock,
     heartbeat_run,
+    lock_scopes_past_expiry,
     prune_stale_locks,
     release_locks,
     run_update_lock,
@@ -724,3 +725,274 @@ def test_heartbeat_run_no_partial_mutation_on_oserror(registry: dict, monkeypatc
     with pytest.raises(WorkflowError):
         heartbeat_run(registry, "run-no-partial-oserr")
     assert first_lock.read_text() == first_before
+
+
+# ---------------------------------------------------------------------------
+# BET-Y2Q4-T10-292 (PITFALL-COO-008): A2A collision predicate + lock expiry
+# ---------------------------------------------------------------------------
+
+
+_DROP = object()
+
+
+def _past_ts(hours: int = 2) -> str:
+    return (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
+
+
+def _future_ts(hours: int = 2) -> str:
+    return (datetime.now(UTC) + timedelta(hours=hours)).isoformat()
+
+
+def _seed_foreign_claim(
+    registry: dict,
+    run_id: str,
+    claim_paths: list[str],
+    *,
+    expires_at: str | None = None,
+    last_heartbeat: str | None = None,
+    status: str = "active",
+    lock_overrides: dict[str, object] | None = None,
+    raw_lock: str | None = None,
+    skip_lock: bool = False,
+) -> Path:
+    """Write another run's record (with claims[].paths) and its scope locks.
+
+    Mirrors the production shape: ``claims[].paths`` and the lock ``scope`` field
+    come from the same normalized string, so ``f"path:{op}"`` is the join key.
+    """
+    ldir = _lock_dir(registry)
+    ldir.mkdir(parents=True, exist_ok=True)
+    created = datetime.now(UTC).isoformat()
+    lock_refs: list[str] = []
+    for claim_path in claim_paths:
+        scope = f"path:{claim_path}"
+        lock_file = ldir / f"{sanitize_lock_name(scope)}.lock.yaml"
+        lock_refs.append(str(lock_file.relative_to(lifecycle_mod.WORKSPACE)))
+        if skip_lock:
+            continue
+        if raw_lock is not None:
+            lock_file.write_text(raw_lock, encoding="utf-8")
+            continue
+        payload: dict[str, object] = {
+            "run_id": run_id,
+            "actor": "other-agent",
+            "scope": scope,
+            "created_at": created,
+            "last_heartbeat": last_heartbeat or created,
+        }
+        if expires_at is not None:
+            payload["expires_at"] = expires_at
+        for key, value in (lock_overrides or {}).items():
+            if value is _DROP:
+                payload.pop(key, None)
+            else:
+                payload[key] = value
+        _make_lock(ldir, lock_file.name, payload)
+
+    rdir = _run_dir(registry)
+    rdir.mkdir(parents=True, exist_ok=True)
+    record = {
+        "run_id": run_id,
+        "workflow_id": "test-wf",
+        "status": status,
+        "actor": "other-agent",
+        "created_at": created,
+        "updated_at": created,
+        "locks": lock_refs,
+        "claims": [
+            {"claimed_at": created, "actor": "other-agent", "paths": claim_paths, "surfaces": []},
+        ],
+    }
+    run_file = rdir / f"{run_id}.yaml"
+    run_file.write_text(yaml.safe_dump(record, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return run_file
+
+
+def _claim_as_mine(
+    registry: dict,
+    monkeypatch: pytest.MonkeyPatch,
+    paths: list[str],
+    run_id: str = "run-mine",
+) -> dict:
+    """Claim ``paths`` from a seeded active run, bypassing the receipt prereq."""
+    _seed_run(registry, run_id, lock_scopes=["path:init.py"])
+    monkeypatch.setattr(
+        lifecycle_mod,
+        "validate_affected_graph_receipt",
+        lambda *_args, **_kwargs: {"receipt_hash": "a" * 64},
+    )
+    return claim_run(
+        registry,
+        run_id,
+        "agent-a",
+        paths=paths,
+        surfaces=[],
+        force_lock=False,
+        affected_receipt="receipt.json",
+    )
+
+
+LEDGER_PATH = "docs/plans/3y-bet-ledger.yaml"
+
+
+def test_claim_admits_foreign_active_run_whose_lock_expired(
+    registry: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """正例: status=active 但锁 expires_at 已过 → claim 放行 (PITFALL-COO-008 正解)."""
+    foreign = _seed_foreign_claim(
+        registry, "run-other", [LEDGER_PATH], expires_at=_past_ts(hours=13)
+    )
+    before = foreign.read_text()
+
+    result = _claim_as_mine(registry, monkeypatch, [LEDGER_PATH])
+
+    assert result["paths"] == [LEDGER_PATH]
+    assert f"path:{LEDGER_PATH}" in result["scopes"]
+    # the foreign run record itself is never touched by the predicate
+    assert foreign.read_text() == before
+    lock = yaml.safe_load(_lock_file_for_scope(registry, f"path:{LEDGER_PATH}").read_text())
+    assert lock["run_id"] == "run-mine"
+
+
+def test_claim_still_blocks_foreign_active_run_whose_lock_is_live(
+    registry: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """反例: status=active 且锁未过期 → 仍拒 (今日行为不得退化)."""
+    _seed_foreign_claim(registry, "run-other", [LEDGER_PATH], expires_at=_future_ts(hours=20))
+
+    with pytest.raises(WorkflowError, match="A2A Path Lock Collision"):
+        _claim_as_mine(registry, monkeypatch, [LEDGER_PATH])
+
+
+def test_claim_blocks_on_stale_heartbeat_with_live_expiry(
+    registry: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """宽度: 心跳已过 _HEARTBEAT_STALE_SECONDS 但 expires_at 未到 → 仍拒.
+
+    钉住判据 1: 本谓词不得复用 _classify_existing_lock() 的 zombie_stale_heartbeat
+    宽度 (PITFALL-COO-008 实测一次 prune-locks 把 22/29 条活锁判成 zombie)。
+    """
+    _seed_foreign_claim(
+        registry,
+        "run-other",
+        [LEDGER_PATH],
+        expires_at=_future_ts(hours=10),
+        last_heartbeat=_past_ts(hours=(_HEARTBEAT_STALE_SECONDS // 3600) + 5),
+    )
+    scope_lock = _lock_file_for_scope(registry, f"path:{LEDGER_PATH}")
+    assert _classify_existing_lock(scope_lock)["kind"] == "zombie_stale_heartbeat"
+
+    with pytest.raises(WorkflowError, match="A2A Path Lock Collision"):
+        _claim_as_mine(registry, monkeypatch, [LEDGER_PATH])
+
+
+def test_claim_blocks_on_hierarchy_overlap_with_expired_child_lock(
+    registry: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """重叠由前缀判定, 但过期只按对方 claim 路径自身的锁证明: 父目录 claim 未过期 → 仍拒."""
+    _seed_foreign_claim(registry, "run-other", ["docs/plans"], expires_at=_future_ts(hours=6))
+
+    with pytest.raises(WorkflowError, match="A2A Path Lock Collision"):
+        _claim_as_mine(registry, monkeypatch, [LEDGER_PATH])
+
+
+def test_claim_admits_hierarchy_overlap_when_parent_claim_lock_expired(
+    registry: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """父目录 claim 的锁已过期 → 子路径 claim 放行 (与锁层 _classify_existing_lock 同向)."""
+    _seed_foreign_claim(registry, "run-other", ["docs/plans"], expires_at=_past_ts(hours=30))
+
+    result = _claim_as_mine(registry, monkeypatch, [LEDGER_PATH])
+
+    assert result["paths"] == [LEDGER_PATH]
+
+
+@pytest.mark.parametrize(
+    ("case", "kwargs"),
+    [
+        ("lock_file_absent", {"skip_lock": True}),
+        ("lock_yaml_unparseable", {"raw_lock": ":::not[yaml::\n"}),
+        ("lock_not_a_mapping", {"raw_lock": "just-a-string\n"}),
+        ("no_expires_at_key", {"expires_at": None}),
+        ("expires_at_unparseable", {"expires_at": "tomorrow-ish"}),
+        ("expires_at_naive_timestamp", {"expires_at": "2026-01-01T00:00:00"}),
+        ("no_scope_key", {"expires_at": _past_ts(), "lock_overrides": {"scope": _DROP}}),
+        ("expires_at_null", {"expires_at": _past_ts(), "lock_overrides": {"expires_at": None}}),
+    ],
+    ids=[
+        "lock_file_absent",
+        "lock_yaml_unparseable",
+        "lock_not_a_mapping",
+        "no_expires_at_key",
+        "expires_at_unparseable",
+        "expires_at_naive_timestamp",
+        "no_scope_key",
+        "expires_at_null",
+    ],
+)
+def test_claim_fail_closed_when_expiry_cannot_be_proven(
+    registry: dict, monkeypatch: pytest.MonkeyPatch, case: str, kwargs: dict
+) -> None:
+    """fail-closed 面: 不能证明过期的一律算冲突 (契约 2)."""
+    _seed_foreign_claim(registry, "run-other", [LEDGER_PATH], **kwargs)
+
+    with pytest.raises(WorkflowError, match="A2A Path Lock Collision") as excinfo:
+        _claim_as_mine(registry, monkeypatch, [LEDGER_PATH])
+    # 契约 5: 报错前缀不变, 既有处置脚本按前缀识别
+    assert str(excinfo.value).startswith("A2A Path Lock Collision:")
+
+
+def test_lock_scopes_past_expiry_selects_only_provably_expired_locks(registry: dict) -> None:
+    """判据面: 混合锁目录里只收「可证明过期」的 scope, 且不看心跳."""
+    ldir = _lock_dir(registry)
+    ldir.mkdir(parents=True, exist_ok=True)
+    _make_lock(
+        ldir,
+        "path_expired.py.lock.yaml",
+        {
+            "run_id": "r1",
+            "scope": "path:expired.py",
+            "expires_at": _past_ts(),
+            "last_heartbeat": datetime.now(UTC).isoformat(),
+        },
+    )
+    _make_lock(
+        ldir,
+        "path_live.py.lock.yaml",
+        {
+            "run_id": "r2",
+            "scope": "path:live.py",
+            "expires_at": _future_ts(),
+            "last_heartbeat": _past_ts(hours=48),
+        },
+    )
+    _make_lock(
+        ldir,
+        "path_broken.py.lock.yaml",
+        {"run_id": "r3", "scope": "path:broken.py", "expires_at": "not-a-time"},
+    )
+
+    assert lock_scopes_past_expiry(ldir) == {"path:expired.py"}
+
+
+def test_lock_scopes_past_expiry_survives_missing_and_unreadable_planes(
+    registry: dict, tmp_path: Path
+) -> None:
+    """判据面: 目录缺失 / 非目录 / 无匹配文件 都返回空集, 不上抛."""
+    assert lock_scopes_past_expiry(tmp_path / "no-such-dir") == set()
+    a_file = tmp_path / "not-a-dir"
+    a_file.write_text("x\n", encoding="utf-8")
+    assert lock_scopes_past_expiry(a_file) == set()
+    empty = tmp_path / "empty-locks"
+    empty.mkdir()
+    assert lock_scopes_past_expiry(empty) == set()
+
+
+def test_lock_scopes_past_expiry_ignores_update_locks(registry: dict) -> None:
+    """判据面: *.update.lock 不是 scope 锁, 不参与过期集合."""
+    ldir = _lock_dir(registry)
+    ldir.mkdir(parents=True, exist_ok=True)
+    (ldir / "run_r1.update.lock").write_text(
+        f"run_id: r1\ncreated_at: {_past_ts()}\n", encoding="utf-8"
+    )
+    assert lock_scopes_past_expiry(ldir) == set()
