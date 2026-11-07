@@ -210,6 +210,104 @@ def test_acquire_blocks_on_live_lock(registry: dict) -> None:
         acquire_locks(registry, ["path:foo.py"], "new-run", "agent-b", False)
 
 
+def test_acquire_same_run_same_scope_renews_instead_of_colliding(registry: dict) -> None:
+    """同 run 补 claim 已持有路径 = 续期, 不是冲突 (BET-Y2Q4-T10-341).
+
+    `claim_run` 的 A2A 循环按 run 文件跳过自己, 所以撞不在那一段; 撞在 acquire_locks
+    的 `live` 分支 —— 它原来不问持锁 run_id 是谁。补 claim (合并型交付) 因此必然报错。
+    """
+    ldir = _lock_dir(registry)
+    now_iso = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    hour_ago = (datetime.now(UTC) - timedelta(hours=1)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    _make_lock(
+        ldir,
+        "path_foo.py.lock.yaml",
+        {
+            "run_id": "run-1",
+            "actor": "agent-a",
+            "scope": "path:foo.py",
+            "created_at": hour_ago,
+            "last_heartbeat": now_iso,  # 心跳新鲜, 才落到 live 分支 (过期心跳会被接管重建, 那是另一条判据)
+            "expires_at": (datetime.now(UTC) + timedelta(minutes=10)).isoformat().replace("+00:00", "Z"),
+        },
+    )
+
+    again = acquire_locks(registry, ["path:foo.py"], "run-1", "agent-a", False)
+
+    assert len(again) == 1 and again[0].endswith("path_foo.py.lock.yaml")  # 同一把锁, 不新增文件
+    assert sorted(p.name for p in ldir.glob("*.lock.yaml")) == ["path_foo.py.lock.yaml"]
+    new = yaml.safe_load((ldir / "path_foo.py.lock.yaml").read_text())
+    assert new["run_id"] == "run-1"
+    assert new["scope"] == "path:foo.py"
+    assert new["actor"] == "agent-a"
+    assert new["created_at"] == hour_ago  # 续期不重建: 创建时刻必须留住
+    assert new["last_heartbeat"] > hour_ago
+    renewed_expiry = datetime.fromisoformat(new["expires_at"].replace("Z", "+00:00"))
+    assert renewed_expiry > datetime.now(UTC) + timedelta(hours=23)
+
+
+def test_acquire_same_run_other_scope_on_same_filename_still_blocks(registry: dict) -> None:
+    """锁文件名会 sanitize + 截断加 hash, 所以「同一文件名」不等于「同一 scope」。
+
+    只在 run_id 上放行会让一个同 run 的 claim 悄悄改写别人 scope 的锁; 这条钉子要求
+    scope 也逐字相等, 否则维持冲突。
+    """
+    ldir = _lock_dir(registry)
+    now = datetime.now(UTC).isoformat()
+    _make_lock(
+        ldir,
+        "path_foo.py.lock.yaml",
+        {
+            "run_id": "run-1",
+            "actor": "agent-a",
+            "scope": "path:other.py",
+            "created_at": now,
+            "last_heartbeat": now,
+            "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+        },
+    )
+    with pytest.raises(WorkflowError, match="lock HELD.*live"):
+        acquire_locks(registry, ["path:foo.py"], "run-1", "agent-a", False)
+    assert yaml.safe_load((ldir / "path_foo.py.lock.yaml").read_text())["scope"] == "path:other.py"
+
+
+def test_acquire_same_run_legacy_lock_without_identity_still_blocks(registry: dict) -> None:
+    """缺 run_id/scope 的老格式锁: 身份算不出来就不是「我自己」, 维持 fail-closed."""
+    ldir = _lock_dir(registry)
+    _make_lock(ldir, "path_foo.py.lock.yaml", {"actor": "agent-a"})
+    with pytest.raises(WorkflowError, match="lock HELD.*live"):
+        acquire_locks(registry, ["path:foo.py"], "run-1", "agent-a", False)
+
+
+def test_acquire_partial_failure_keeps_same_run_existing_lock(registry: dict) -> None:
+    """一次失败的补 claim 不得释放掉本 run 早已持有的锁.
+
+    续期分支不得把这把锁计入回滚集合 (acquired_paths 只收本次新建的锁), 否则第二批
+    scope 撞车时前一批已经隔离好的路径会被反向拆锁。
+    """
+    ldir = _lock_dir(registry)
+    acquire_locks(registry, ["path:mine.py"], "run-1", "agent-a", False)
+    created = yaml.safe_load((ldir / "path_mine.py.lock.yaml").read_text())["created_at"]
+    now = datetime.now(UTC).isoformat()
+    _make_lock(
+        ldir,
+        "path_theirs.py.lock.yaml",
+        {
+            "run_id": "run-2",
+            "actor": "agent-b",
+            "scope": "path:theirs.py",
+            "created_at": now,
+            "last_heartbeat": now,
+            "expires_at": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+        },
+    )
+    with pytest.raises(WorkflowError, match="lock HELD.*live"):
+        acquire_locks(registry, ["path:mine.py", "path:theirs.py"], "run-1", "agent-a", False)
+    kept = yaml.safe_load((ldir / "path_mine.py.lock.yaml").read_text())
+    assert kept["run_id"] == "run-1"
+    assert kept["created_at"] == created
+
+
 def test_heartbeat_updates_timestamp(registry: dict) -> None:
     acquire_locks(registry, ["path:foo.py"], "run-1", "agent-a", False)
     lock_file = _lock_dir(registry) / "path_foo.py.lock.yaml"
