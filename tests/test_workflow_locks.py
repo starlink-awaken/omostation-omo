@@ -1089,7 +1089,7 @@ def test_lock_scopes_past_expiry_ignores_update_locks(registry: dict) -> None:
 
 
 def test_claim_admits_absent_lock_under_explicit_takeover(registry: dict, monkeypatch: pytest.MonkeyPatch) -> None:
-    """正例: 对方 active claim 的锁对象根本不在盘上 → --force 显式接管放行 (PITFALL-COO-009).
+    """正例: 对方 active claim 的锁对象根本不在盘上 → --force 显式接管放行 (PITFALL-COO-008 第三形).
 
     这一形状此前无任何恢复路径: release_locks 只 unlink run_id 等于自己的锁,
     prune_stale_locks 只遍历存在的文件, 对方 closeout 需要那个早已消失的会话。
