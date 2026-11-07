@@ -109,6 +109,46 @@ def _classify_existing_lock(lock_path: Path) -> dict[str, Any]:
     return {"kind": "live", "detail": "holder active", "payload": payload}
 
 
+def lock_scopes_past_expiry(lock_dir: Path) -> set[str]:
+    """Return the lock scopes whose ``expires_at`` is provably in the past.
+
+    A2A 冲突谓词用它放行「对方 run 仍 active、但覆盖该 claim 的锁早已过期」的形态。
+    只读 ``expires_at``, 不读 ``last_heartbeat``: `_HEARTBEAT_STALE_SECONDS` 会把闲置
+    一小时的活 run 判成僵尸 (PITFALL-COO-008 实测 29 条里 22 条), 那个宽度不得进入本判据.
+    任何不能证明过期的情形 (锁缺失/不可读/非 mapping/缺 scope 或 expires_at/时间戳
+    不可解析或无时区) 都不入选, 即维持冲突 —— fail-closed.
+    """
+    try:
+        candidates = sorted(lock_dir.glob("*.lock.yaml"))
+    except OSError:
+        return set()
+
+    expired: set[str] = set()
+    now = datetime.now(UTC)
+    for lock_path in candidates:
+        try:
+            payload = yaml.safe_load(lock_path.read_text(encoding="utf-8"))
+        except (yaml.YAMLError, OSError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        scope = payload.get("scope")
+        expires = payload.get("expires_at")
+        if not isinstance(scope, str) or not scope:
+            continue
+        if not isinstance(expires, str) or not expires:
+            continue
+        try:
+            exp_dt = datetime.fromisoformat(expires.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if exp_dt.tzinfo is None:
+            continue
+        if now > exp_dt:
+            expired.add(scope)
+    return expired
+
+
 def heartbeat_lock(lock_path: Path) -> None:
     """Update last_heartbeat on a lock file to signal liveness."""
     try:

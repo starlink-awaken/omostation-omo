@@ -1408,6 +1408,7 @@ def claim_run(
 
             # Phase 3 A2A Path Locks (Logical Isolation)
             # Check for path hierarchy overlap with other active runs
+            expired_lock_scopes = lock_scopes_past_expiry(lock_state_dir(registry))
             run_dir = run_state_dir(registry)
             if run_dir.exists():
                 for other_run_file in run_dir.glob("*.yaml"):
@@ -1436,6 +1437,10 @@ def claim_run(
                                 or p_norm.startswith(op_norm + "/")
                                 or op_norm.startswith(p_norm + "/")
                             ):
+                                # PITFALL-COO-008: status 活跃不足以构成冲突, 还要该 claim
+                                # 路径上的锁没被证明过期 (fail-closed: 不可证明即算冲突)
+                                if f"path:{op}" in expired_lock_scopes:
+                                    continue
                                 raise WorkflowError(
                                     f"A2A Path Lock Collision: path '{p}' overlaps with active claim '{op}' in run {other_payload.get('run_id', 'unknown')}"
                                 )
@@ -1809,6 +1814,7 @@ from .lifecycle_locks import (  # noqa: F401 -- re-export
     _classify_existing_lock,
     acquire_locks,
     heartbeat_lock,
+    lock_scopes_past_expiry,
     release_locks,
     run_update_lock,
     sanitize_lock_name,
