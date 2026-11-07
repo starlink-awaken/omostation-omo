@@ -23,6 +23,7 @@ from omo.workflow.lifecycle import (
     closeout_run,
     heartbeat_lock,
     heartbeat_run,
+    lock_scope_object_present,
     lock_scopes_past_expiry,
     prune_stale_locks,
     release_locks,
@@ -911,6 +912,7 @@ def _claim_as_mine(
     monkeypatch: pytest.MonkeyPatch,
     paths: list[str],
     run_id: str = "run-mine",
+    force_lock: bool = False,
 ) -> dict:
     """Claim ``paths`` from a seeded active run, bypassing the receipt prereq."""
     _seed_run(registry, run_id, lock_scopes=["path:init.py"])
@@ -925,7 +927,7 @@ def _claim_as_mine(
         "agent-a",
         paths=paths,
         surfaces=[],
-        force_lock=False,
+        force_lock=force_lock,
         affected_receipt="receipt.json",
     )
 
@@ -1084,3 +1086,107 @@ def test_lock_scopes_past_expiry_ignores_update_locks(registry: dict) -> None:
     ldir.mkdir(parents=True, exist_ok=True)
     (ldir / "run_r1.update.lock").write_text(f"run_id: r1\ncreated_at: {_past_ts()}\n", encoding="utf-8")
     assert lock_scopes_past_expiry(ldir) == set()
+
+
+def test_claim_admits_absent_lock_under_explicit_takeover(registry: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+    """正例: 对方 active claim 的锁对象根本不在盘上 → --force 显式接管放行 (PITFALL-COO-009).
+
+    这一形状此前无任何恢复路径: release_locks 只 unlink run_id 等于自己的锁,
+    prune_stale_locks 只遍历存在的文件, 对方 closeout 需要那个早已消失的会话。
+    """
+    foreign = _seed_foreign_claim(registry, "run-other", [LEDGER_PATH], skip_lock=True)
+    before = foreign.read_text()
+
+    result = _claim_as_mine(registry, monkeypatch, [LEDGER_PATH], force_lock=True)
+
+    assert result["paths"] == [LEDGER_PATH]
+    assert f"path:{LEDGER_PATH}" in result["scopes"]
+    assert foreign.read_text() == before
+    lock = yaml.safe_load(_lock_file_for_scope(registry, f"path:{LEDGER_PATH}").read_text())
+    assert lock["run_id"] == "run-mine"
+
+
+def test_absent_lock_without_takeover_names_the_absence_and_the_exit(
+    registry: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """反例配平: 同一份 seed, force_lock=False 仍拒 (契约 2 宽度一字不动)。
+
+    报错仍以 `A2A Path Lock Collision:` 开头 (契约 5), 但必须点名「锁对象缺席」
+    与「--force 显式接管」—— 否则调用方只能读到与「活锁在持」逐字相同的拒绝。
+    """
+    _seed_foreign_claim(registry, "run-other", [LEDGER_PATH], skip_lock=True)
+
+    with pytest.raises(WorkflowError, match="A2A Path Lock Collision") as excinfo:
+        _claim_as_mine(registry, monkeypatch, [LEDGER_PATH])
+    message = str(excinfo.value)
+    assert message.startswith("A2A Path Lock Collision:")
+    assert "lock object for path:" in message
+    assert "--force" in message
+
+
+@pytest.mark.parametrize(
+    ("case", "kwargs"),
+    [("lock_file_present_live", {"expires_at": None}), ("lock_yaml_unparseable", {"raw_lock": ":::not[yaml::\n"})],
+    ids=["lock_file_present_live", "lock_yaml_unparseable"],
+)
+def test_takeover_does_not_widen_present_but_unprovable_locks(
+    registry: dict, monkeypatch: pytest.MonkeyPatch, case: str, kwargs: dict
+) -> None:
+    """反向边界: 锁对象在盘上但证明不了过期 → --force 也拒.
+
+    放行判据是「没有对象可持」, 不是「读不出」—— 后者与活锁同形, 接管会拆掉别人的活锁
+    (PITFALL-COO-008 实测 prune-locks 一次把 22/29 条活锁判成 zombie)。
+    """
+    if case == "lock_file_present_live":
+        kwargs = {"expires_at": _future_ts(hours=20)}
+    _seed_foreign_claim(registry, "run-other", [LEDGER_PATH], **kwargs)
+    assert lock_scope_object_present(_lock_dir(registry), f"path:{LEDGER_PATH}") is True
+
+    with pytest.raises(WorkflowError, match="A2A Path Lock Collision"):
+        _claim_as_mine(registry, monkeypatch, [LEDGER_PATH], force_lock=True)
+
+
+def test_takeover_exemption_is_per_scope_not_per_run(registry: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+    """粒度: 同一个对方 run 的两条 claim 路径, 一条锁在一条锁丢 → 只放行丢锁的那条.
+
+    生产实读: run d825f60f 的 claim 列 3 把锁, 盘上只剩 2 把且均已过期。
+    """
+    _seed_foreign_claim(registry, "run-other", ["src/a.py"], skip_lock=True)
+    _seed_foreign_claim(registry, "run-other-2", ["src/b.py"], expires_at=_future_ts(hours=8))
+
+    with pytest.raises(WorkflowError, match="A2A Path Lock Collision"):
+        _claim_as_mine(registry, monkeypatch, ["src/a.py", "src/b.py"], force_lock=True)
+
+    result = _claim_as_mine(registry, monkeypatch, ["src/a.py"], force_lock=True)
+    assert result["paths"] == ["src/a.py"]
+    still_held = yaml.safe_load(_lock_file_for_scope(registry, "path:src/b.py").read_text())
+    assert still_held["run_id"] == "run-other-2"
+
+
+def test_lock_scope_object_present_matches_writer_bounded_name(registry: dict) -> None:
+    """判据面: 存在性探测与写者按同一个有界名落位, 超长 scope 不得误报缺席."""
+    ldir = _lock_dir(registry)
+    ldir.mkdir(parents=True, exist_ok=True)
+    long_path = "docs/" + "-".join(["segment"] * 60) + "/ledger.yaml"
+    scope = f"path:{long_path}"
+
+    assert lock_scope_object_present(ldir, scope) is False
+    created = acquire_locks(registry, [scope], "run-writer", "agent-a", False)
+    assert len(created) == 1
+    assert lock_scope_object_present(ldir, scope) is True
+    assert len(Path(created[0]).name) <= 255
+
+
+def test_lock_scope_object_present_fails_closed_on_unusable_dir(tmp_path: Path) -> None:
+    """宽度面: 锁目录不可 stat → 报「在」(维持冲突), 探测失败不得被读成无持有者.
+
+    反面是 Path.is_file() 把 ENOTDIR 吞成 False —— 那会让一个坏掉的锁面冒充「无人持有」,
+    正好绕过本 BET 要守的契约 2。
+    """
+    a_file = tmp_path / "not-a-dir"
+    a_file.write_text("x\n", encoding="utf-8")
+    assert lock_scope_object_present(a_file, "path:foo.py") is True
+    empty = tmp_path / "empty-locks"
+    empty.mkdir()
+    assert lock_scope_object_present(empty, "path:foo.py") is False
+    assert lock_scope_object_present(tmp_path / "no-such-dir", "path:foo.py") is False

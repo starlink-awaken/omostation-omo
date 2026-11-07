@@ -1408,7 +1408,8 @@ def claim_run(
 
             # Phase 3 A2A Path Locks (Logical Isolation)
             # Check for path hierarchy overlap with other active runs
-            expired_lock_scopes = lock_scopes_past_expiry(lock_state_dir(registry))
+            a2a_lock_dir = lock_state_dir(registry)
+            expired_lock_scopes = lock_scopes_past_expiry(a2a_lock_dir)
             run_dir = run_state_dir(registry)
             if run_dir.exists():
                 for other_run_file in run_dir.glob("*.yaml"):
@@ -1439,8 +1440,22 @@ def claim_run(
                             ):
                                 # PITFALL-COO-008: status 活跃不足以构成冲突, 还要该 claim
                                 # 路径上的锁没被证明过期 (fail-closed: 不可证明即算冲突)
-                                if f"path:{op}" in expired_lock_scopes:
+                                scope_key = f"path:{op}"
+                                if scope_key in expired_lock_scopes:
                                     continue
+                                # 锁对象根本不存在时, 「不可证明」的原因是「没有东西在持」而不是
+                                # 「读不出」。这一分支只对显式接管 (force_lock) 放行: 普通 claim 的
+                                # fail-closed 宽度 (契约 2) 一字不动。
+                                lock_absent = not lock_scope_object_present(a2a_lock_dir, scope_key)
+                                if lock_absent and force_lock:
+                                    continue
+                                if lock_absent:
+                                    raise WorkflowError(
+                                        f"A2A Path Lock Collision: path '{p}' overlaps with active claim '{op}' "
+                                        f"in run {other_payload.get('run_id', 'unknown')}\n"
+                                        f"  lock object for {scope_key} is absent — no live holder, 该 claim 只剩历史记录;\n"
+                                        f"  确认对方已不在此路径上工作时用 --force 显式接管 (不删对方 run 记录)。"
+                                    )
                                 raise WorkflowError(
                                     f"A2A Path Lock Collision: path '{p}' overlaps with active claim '{op}' in run {other_payload.get('run_id', 'unknown')}"
                                 )
@@ -1814,6 +1829,7 @@ from .lifecycle_locks import (  # noqa: F401 -- re-export
     _classify_existing_lock,
     acquire_locks,
     heartbeat_lock,
+    lock_scope_object_present,
     lock_scopes_past_expiry,
     release_locks,
     run_update_lock,

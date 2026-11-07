@@ -149,6 +149,28 @@ def lock_scopes_past_expiry(lock_dir: Path) -> set[str]:
     return expired
 
 
+def lock_scope_object_present(lock_dir: Path, scope: str) -> bool:
+    """该 scope 现在是否有锁文件对象挂在盘上 (不问 TTL, 不问可读性)。
+
+    ``lock_scopes_past_expiry()`` 只覆盖「有对象且能证明过期」那一类; 对象不在时两者
+    都给不出答案, 于是「锁已释放」与「锁坏了读不出」在 A2A 谓词里同形, 而这条路径
+    再没有自愈通道 (release 只 unlink run_id 等于自己的, prune 只遍历存在的文件)。
+    锁写在 claim 记录之前、且记录写入失败会回滚刚建的锁
+    (`lifecycle.py` 的 ``acquire_locks()`` → ``write_run()``), 所以「记录里 advertise
+    这条路径」蕴含「claim 当时锁存在」—— 缺席即说明它事后已消失, 没有活持有者。
+    不用 ``Path.is_file()``: 它把 OSError 吞成 False, 会让「不可探测」冒充「无持有者」。
+    """
+    name = _bounded_lock_name(scope, _PATH_LOCK_NAME_MAX_LEN)
+    lock_file = lock_dir / f"{name}.lock.yaml"
+    try:
+        lock_file.stat()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
 def heartbeat_lock(lock_path: Path) -> None:
     """Update last_heartbeat on a lock file to signal liveness."""
     try:
