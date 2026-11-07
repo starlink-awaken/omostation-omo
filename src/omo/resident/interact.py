@@ -1069,10 +1069,10 @@ class _GuardedHTTPServer(http.server.HTTPServer):
     """
 
     ALLOWED_CIDRS = (
-        "127.0.0.0/8",      # 本机 loopback
-        "::1/128",          # 本机 loopback (IPv6)
+        "127.0.0.0/8",  # 本机 loopback
+        "::1/128",  # 本机 loopback (IPv6)
         "192.168.17.0/24",  # 家域 LAN（只放第三段 17；**不能写 192.168.17.0/16** —— 那既是非法 CIDR（主机位非 0），又会把实验网 192.168.77.0/24 一并放进来）
-        "100.64.0.0/10",    # Tailscale CGNAT 段（跨机访问走这里）
+        "100.64.0.0/10",  # Tailscale CGNAT 段（跨机访问走这里）
     )
 
     @classmethod

@@ -119,8 +119,8 @@ def test_guarded_web_server_allowlist():
 
     assert _GuardedHTTPServer.client_allowed("127.0.0.1")
     assert _GuardedHTTPServer.client_allowed("::1")
-    assert _GuardedHTTPServer.client_allowed("192.168.17.5")      # 家域 LAN
-    assert _GuardedHTTPServer.client_allowed("100.64.110.118")    # tailnet
+    assert _GuardedHTTPServer.client_allowed("192.168.17.5")  # 家域 LAN
+    assert _GuardedHTTPServer.client_allowed("100.64.110.118")  # tailnet
     assert not _GuardedHTTPServer.client_allowed("192.168.77.2")  # 单位实验域
     assert not _GuardedHTTPServer.client_allowed("203.0.113.9")
 
