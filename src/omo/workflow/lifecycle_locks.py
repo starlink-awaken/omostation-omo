@@ -195,6 +195,20 @@ def acquire_locks(
                 classification = _classify_existing_lock(lock_path)
                 existing = lock_path.read_text(encoding="utf-8").strip()
                 if classification["kind"] == "live":
+                    # 幂等续期要求 run_id 与 scope 两个身份同时成立: 锁文件名经过 sanitize 与
+                    # 截断+hash, 文件名相同不能证明是同一个 scope。payload 不可解析成 mapping、
+                    # 缺 run_id 或 scope 与本次不一致, 都算不出「这把锁是我自己持有的」,
+                    # 维持原有冲突 —— fail-closed.
+                    held = classification.get("payload")
+                    if isinstance(held, dict) and held.get("run_id") == run_id and held.get("scope") == scope:
+                        held["last_heartbeat"] = now_ts
+                        held["expires_at"] = expires_at.isoformat().replace("+00:00", "Z")
+                        lock_path.write_text(
+                            yaml.safe_dump(held, allow_unicode=True, sort_keys=False),
+                            encoding="utf-8",
+                        )
+                        acquired.append(display_path(lock_path))
+                        continue
                     raise WorkflowError(
                         f"lock HELD (live) for {scope}: {lock_path}\n"
                         f"  holder is active — {classification['detail']}\n"
