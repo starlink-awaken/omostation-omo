@@ -835,13 +835,9 @@ def _claim_as_mine(
 LEDGER_PATH = "docs/plans/3y-bet-ledger.yaml"
 
 
-def test_claim_admits_foreign_active_run_whose_lock_expired(
-    registry: dict, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_claim_admits_foreign_active_run_whose_lock_expired(registry: dict, monkeypatch: pytest.MonkeyPatch) -> None:
     """正例: status=active 但锁 expires_at 已过 → claim 放行 (PITFALL-COO-008 正解)."""
-    foreign = _seed_foreign_claim(
-        registry, "run-other", [LEDGER_PATH], expires_at=_past_ts(hours=13)
-    )
+    foreign = _seed_foreign_claim(registry, "run-other", [LEDGER_PATH], expires_at=_past_ts(hours=13))
     before = foreign.read_text()
 
     result = _claim_as_mine(registry, monkeypatch, [LEDGER_PATH])
@@ -864,9 +860,7 @@ def test_claim_still_blocks_foreign_active_run_whose_lock_is_live(
         _claim_as_mine(registry, monkeypatch, [LEDGER_PATH])
 
 
-def test_claim_blocks_on_stale_heartbeat_with_live_expiry(
-    registry: dict, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_claim_blocks_on_stale_heartbeat_with_live_expiry(registry: dict, monkeypatch: pytest.MonkeyPatch) -> None:
     """宽度: 心跳已过 _HEARTBEAT_STALE_SECONDS 但 expires_at 未到 → 仍拒.
 
     钉住判据 1: 本谓词不得复用 _classify_existing_lock() 的 zombie_stale_heartbeat
@@ -975,9 +969,7 @@ def test_lock_scopes_past_expiry_selects_only_provably_expired_locks(registry: d
     assert lock_scopes_past_expiry(ldir) == {"path:expired.py"}
 
 
-def test_lock_scopes_past_expiry_survives_missing_and_unreadable_planes(
-    registry: dict, tmp_path: Path
-) -> None:
+def test_lock_scopes_past_expiry_survives_missing_and_unreadable_planes(registry: dict, tmp_path: Path) -> None:
     """判据面: 目录缺失 / 非目录 / 无匹配文件 都返回空集, 不上抛."""
     assert lock_scopes_past_expiry(tmp_path / "no-such-dir") == set()
     a_file = tmp_path / "not-a-dir"
@@ -992,7 +984,5 @@ def test_lock_scopes_past_expiry_ignores_update_locks(registry: dict) -> None:
     """判据面: *.update.lock 不是 scope 锁, 不参与过期集合."""
     ldir = _lock_dir(registry)
     ldir.mkdir(parents=True, exist_ok=True)
-    (ldir / "run_r1.update.lock").write_text(
-        f"run_id: r1\ncreated_at: {_past_ts()}\n", encoding="utf-8"
-    )
+    (ldir / "run_r1.update.lock").write_text(f"run_id: r1\ncreated_at: {_past_ts()}\n", encoding="utf-8")
     assert lock_scopes_past_expiry(ldir) == set()
