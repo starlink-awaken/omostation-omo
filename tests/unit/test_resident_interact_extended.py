@@ -107,3 +107,31 @@ def test_triage_component_failure_r1():
     assert res["risk_tier"] == "R1"
     assert "Worker" in res["suggested_action"]
     assert res["dispatched"] is True
+
+
+def test_guarded_web_server_allowlist():
+    """resident web 控制面只放行 本机 / 家域 LAN / tailnet; 跨域一律拒。
+
+    背景: 原实现 bind 0.0.0.0 且无来源校验 ⇒ 单位实验域 (192.168.77.0/24)
+    的 bot 可无鉴权直读 /api/status (2026-10-28 实测返回 200)。
+    """
+    from omo.resident.interact import _GuardedHTTPServer
+
+    assert _GuardedHTTPServer.client_allowed("127.0.0.1")
+    assert _GuardedHTTPServer.client_allowed("::1")
+    assert _GuardedHTTPServer.client_allowed("192.168.17.5")  # 家域 LAN
+    assert _GuardedHTTPServer.client_allowed("100.64.110.118")  # tailnet
+    assert not _GuardedHTTPServer.client_allowed("192.168.77.2")  # 单位实验域
+    assert not _GuardedHTTPServer.client_allowed("203.0.113.9")
+
+
+def test_guarded_web_server_rejects_invalid_cidr_loudly(monkeypatch):
+    """非法 CIDR 必须响亮抛错 —— 不能被静默吞掉 (2026-10-28 首版把 /16 写进来,
+    ip_network 抛 ValueError 后被 except 吞掉, 整条家域 LAN 被静默拒绝)。"""
+    import pytest
+
+    from omo.resident.interact import _GuardedHTTPServer
+
+    monkeypatch.setattr(_GuardedHTTPServer, "ALLOWED_CIDRS", ("192.168.17.0/16",))
+    with pytest.raises(ValueError):
+        _GuardedHTTPServer.client_allowed("192.168.17.5")

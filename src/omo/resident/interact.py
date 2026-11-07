@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import argparse
+import http.server
 import json
 import logging
 import os
@@ -1057,6 +1058,53 @@ def triage_component_failure(
     return result
 
 
+class _GuardedHTTPServer(http.server.HTTPServer):
+    """只允许【本机 + 家域 LAN + tailnet】访问；**单位实验域(192.168.77.0/24)与其他来源一律断开**。
+
+    背景（2026-10-28 实测）：原实现 bind 0.0.0.0 ⇒ 单位实验域的 bot 可**无鉴权**直读
+    本机 resident 控制面（自 bot-06 curl http://192.168.77.2:43195/api/status 返回 200）。
+    收口原则：**不砍合法路径**（iPad/手机走家域 LAN 或 tailnet 都应继续可用），
+    **只断跨域面** —— 因此不改成绑 127.0.0.1（那会把"跨机访问"这个设计用途一起砍掉），
+    而是在服务层做来源网段白名单。
+    """
+
+    ALLOWED_CIDRS = (
+        "127.0.0.0/8",  # 本机 loopback
+        "::1/128",  # 本机 loopback (IPv6)
+        "192.168.17.0/24",  # 家域 LAN（只放第三段 17；**不能写 192.168.17.0/16** —— 那既是非法 CIDR（主机位非 0），又会把实验网 192.168.77.0/24 一并放进来）
+        "100.64.0.0/10",  # Tailscale CGNAT 段（跨机访问走这里）
+    )
+
+    @classmethod
+    def client_allowed(cls, ip: str) -> bool:
+        import ipaddress
+
+        for cidr in cls.ALLOWED_CIDRS:
+            # ⚠ 故意**不**静默跳过非法 CIDR：2026-10-28 首版把 192.168.17.0/16 写进来，
+            #   它是非法 CIDR（/16 主机位非 0）→ ip_network 抛 ValueError → 被 except 吞掉 →
+            #   整条家域 LAN 被静默拒绝。**配置错误必须响亮地炸出来，不能装作没这回事。**
+            net = ipaddress.ip_network(cidr, strict=True)
+            if ipaddress.ip_address(ip) in net:
+                return True
+        return False
+
+    def process_request(self, request, client_address):
+        if not self.client_allowed(client_address[0]):
+            # 跨域来源：直接断开，不回任何响应（不泄露服务存在性）。
+            # 但**必须留痕** —— 跨域访问尝试是安全事件，没有日志就等于没发生过。
+            print(
+                f"[resident-web] 拒绝跨域访问: {client_address[0]}:{client_address[1]} "
+                f"（不在 {', '.join(self.ALLOWED_CIDRS)}）",
+                flush=True,
+            )
+            try:
+                self.shutdown_request(request)
+            except Exception:
+                pass
+            return
+        super().process_request(request, client_address)
+
+
 def cmd_web(port: int = 43195, host: str = "0.0.0.0") -> int:  # noqa: S104
     """启动常驻 Copilot 轻量 Web 交互控制台 (支持跨机 iPad/手机/Mac 访问与 ReAct 可视化)."""
     import http.server
@@ -1502,7 +1550,7 @@ def cmd_web(port: int = 43195, host: str = "0.0.0.0") -> int:  # noqa: S104
         def log_message(self, format, *args):
             pass
 
-    server = http.server.HTTPServer((host, port), ResidentWebHandler)
+    server = _GuardedHTTPServer((host, port), ResidentWebHandler)
     print("\n\033[1;32m⚡ Chief Resident Copilot Web Console 已启动\033[0m")
     print(f"👉 本地访问: http://127.0.0.1:{port}")
     print(f"🌐 局域网/Tailscale 跨机访问: http://{host if host != '0.0.0.0' else 'mini'}:{port}")  # noqa: S104
