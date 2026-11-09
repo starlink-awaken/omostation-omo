@@ -109,6 +109,11 @@ def test_promote_writes_index(_env: Path) -> None:
     assert "| governance" in content
     assert "草稿总数" in content
     assert "five_q_filled" in content
+    # index 同样受 omo-knowledge 注册表面约束, 必须带合法四键
+    assert content.startswith("---\n")
+    assert "lifecycle: history" in content
+    assert "owner: governance-team" in content
+    assert "last-reviewed: " in content
 
 
 def test_promote_generates_five_q_skeleton_in_retro(_env: Path) -> None:
