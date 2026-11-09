@@ -160,6 +160,12 @@ def test_promote_writes_frontmatter_retro(sediment_root: Path, tmp_path: Path):
     assert "StepFailed: 2" in text
     assert "trace_count: 1" in text
     assert "## 失败根因画像" in text
+    # 文档治理注册表面要求 status/lifecycle/owner/last-reviewed 四键齐备,
+    # 且取值落在 document-governance.yaml 的合法值域内 (status=candidate 不在其中)。
+    assert "status: draft" in text
+    assert "lifecycle: history" in text
+    assert "owner: governance-team" in text
+    assert "last-reviewed: " in text
     # 主题数 = 2 (governance-state-mutation + mini)
     assert report["promoted_topics"] == 2
 

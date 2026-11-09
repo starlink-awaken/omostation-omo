@@ -46,6 +46,10 @@ def _utc() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+def _utc_date() -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime())
+
+
 def _extract_topic(filename: str) -> str:
     """从草稿文件名提取 workflow 主题 (去时间戳/run_id/event_id 后缀)."""
     match = TOPIC_PATTERN.match(filename)
@@ -130,7 +134,10 @@ def _counts_frontmatter(topic: str, bucket: dict[str, Any], failure_bd: dict[str
         f"schema: {RETRO_SCHEMA}",
         f"topic: {topic}",
         f"generated_at: {_utc()}",
-        "status: candidate",
+        "status: draft",
+        "lifecycle: history",
+        "owner: governance-team",
+        f"last-reviewed: {_utc_date()}",
         "counts:",
         f"  runs: {runs}",
         f"  failures: {failures}",
@@ -161,7 +168,7 @@ def _write_retro(
     body = (
         f"# {topic} 运行复盘聚合 (resident 事件驱动)\n\n"
         f"- generated_at: {_utc()}\n"
-        f"- status: candidate (sediment 草稿聚合, 待运营 agent/人工完善为完整 retro)\n"
+        f"- status: draft (sediment 草稿聚合, 待运营 agent/人工完善为完整 retro)\n"
         f"- sediment 覆盖: {len(runs)} 成功运行 + {len(failures)} 失败模式 = {bucket['total']} 草稿\n"
         f"- 失败率: {len(failures) / max(1, bucket['total']):.2%}\n\n"
         f"## 成功运行 (runs/)\n\n"
@@ -332,6 +339,13 @@ def _write_index(
         rate = round(failures / max(1, total), 4)
         rows.append(f"| {topic} | {total} | {runs} | {failures} | {rate} | {generated_at} |")
     content = (
+        "---\n"
+        "schema: resident-retro-index/v1\n"
+        "status: active\n"
+        "lifecycle: history\n"
+        "owner: governance-team\n"
+        f"last-reviewed: {_utc_date()}\n"
+        "---\n\n"
         "# resident retro 索引 (promote 自动生成)\n\n"
         f"- generated_at: {generated_at}\n"
         f"- 主题数: {len(topics)} · 草稿总数: {total_drafts} · five_q_filled: {five_q_filled}\n\n"
