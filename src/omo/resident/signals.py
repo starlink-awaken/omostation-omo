@@ -95,11 +95,7 @@ def _append_to_events_jsonl(payload: dict[str, Any], trace_id: str) -> None:
 def poll(*, signals_dir: Path, dry_run: bool = False) -> dict[str, Any]:
     watermark = _load_watermark()
     files = sorted(signals_dir.glob("*.md"))
-    new_files = [
-        p
-        for p in files
-        if (digest := _file_digest(p)) is not None and watermark.get(p.name) != digest
-    ]
+    new_files = [p for p in files if (digest := _file_digest(p)) is not None and watermark.get(p.name) != digest]
     report: dict[str, Any] = {"scanned": len(files), "new": len(new_files), "published": 0}
     for path in new_files:
         digest = _file_digest(path)

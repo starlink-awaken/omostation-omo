@@ -100,11 +100,7 @@ def _utc_now() -> str:
 def poll(*, inbox_dir: Path, dry_run: bool = False) -> dict[str, Any]:
     watermark = _load_watermark()
     files = sorted(inbox_dir.glob("*.md"))
-    new_files = [
-        p
-        for p in files
-        if (digest := _file_digest(p)) is not None and watermark.get(p.name) != digest
-    ]
+    new_files = [p for p in files if (digest := _file_digest(p)) is not None and watermark.get(p.name) != digest]
     report: dict[str, Any] = {"scanned": len(files), "new": len(new_files), "published": 0}
     for path in new_files:
         digest = _file_digest(path)
