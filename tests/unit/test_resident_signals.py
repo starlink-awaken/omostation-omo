@@ -111,3 +111,43 @@ def test_poll_publish_failure_still_watermarks(signals_dir: Path, monkeypatch: p
     assert report["published"] == 0
     # 失败也记录水位 (避免无限重试同文件; 内容变化会重新触发)
     assert signals.WATERMARK_FILE.is_file()
+
+
+def test_poll_skips_transiently_unreadable_file(signals_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """瞬时读不到的文件被跳过 —— 与 inbox 同一形状 (两份实现, 同一根因)."""
+    (signals_dir / "good.md").write_text("# 好", encoding="utf-8")
+    (signals_dir / "bad.md").write_text("# 坏", encoding="utf-8")
+
+    real_read_bytes = Path.read_bytes
+
+    def flaky(self: Path) -> bytes:
+        if self.name == "bad.md":
+            raise OSError(11, "Resource deadlock avoided")
+        return real_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", flaky)
+    report = signals.poll(signals_dir=signals_dir, dry_run=True)
+    assert report["scanned"] == 2
+    assert report["new"] == 1
+
+
+def test_poll_does_not_watermark_unreadable_file(signals_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """被跳过的文件不写水位 —— 否则永远不会被重试."""
+    (signals_dir / "good.md").write_text("# 好", encoding="utf-8")
+    (signals_dir / "bad.md").write_text("# 坏", encoding="utf-8")
+    monkeypatch.setattr(signals, "_publish", lambda topic, payload, trace_id: True)
+
+    real_read_bytes = Path.read_bytes
+
+    def flaky(self: Path) -> bytes:
+        if self.name == "bad.md":
+            raise OSError(11, "Resource deadlock avoided")
+        return real_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", flaky)
+    signals.poll(signals_dir=signals_dir, dry_run=False)
+    import json
+
+    watermark = json.loads(signals.WATERMARK_FILE.read_text(encoding="utf-8"))
+    assert "good.md" in watermark
+    assert "bad.md" not in watermark

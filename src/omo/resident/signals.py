@@ -43,8 +43,16 @@ def _save_watermark(processed: dict[str, str]) -> None:
     write_path(WATERMARK_FILE).write_text(json.dumps(processed, indent=2), encoding="utf-8")
 
 
-def _file_digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+def _file_digest(path: Path) -> str | None:
+    """文件摘要; **读不到时返回 None**, 由调用方跳过该文件 (见 `poll`)。
+
+    与 `omo/resident/inbox.py::_file_digest` 是同一形状 (两份实现, 同一根因):
+    瞬时 `OSError` (实测 EDEADLK) 不该让整轮处理失败。
+    """
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+    except OSError:
+        return None
 
 
 def _publish(topic: str, payload: dict[str, Any], trace_id: str) -> bool:
@@ -87,16 +95,26 @@ def _append_to_events_jsonl(payload: dict[str, Any], trace_id: str) -> None:
 def poll(*, signals_dir: Path, dry_run: bool = False) -> dict[str, Any]:
     watermark = _load_watermark()
     files = sorted(signals_dir.glob("*.md"))
-    new_files = [p for p in files if watermark.get(p.name) != _file_digest(p)]
+    new_files = [
+        p
+        for p in files
+        if (digest := _file_digest(p)) is not None and watermark.get(p.name) != digest
+    ]
     report: dict[str, Any] = {"scanned": len(files), "new": len(new_files), "published": 0}
     for path in new_files:
         digest = _file_digest(path)
+        try:
+            st = path.stat()
+        except OSError:
+            continue
+        if digest is None:
+            continue
         payload = {
             "source": "personal-signals",
             "file": path.name,
             "content_digest": f"sha256:{digest}",
-            "size_bytes": path.stat().st_size,
-            "modified_at": path.stat().st_mtime,
+            "size_bytes": st.st_size,
+            "modified_at": st.st_mtime,
         }
         trace_id = f"personal-signal:{path.stem}"
         if dry_run:
