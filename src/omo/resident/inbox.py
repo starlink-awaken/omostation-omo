@@ -45,8 +45,19 @@ def _save_watermark(processed: dict[str, str]) -> None:
     write_path(WATERMARK_FILE).write_text(json.dumps(processed, indent=2), encoding="utf-8")
 
 
-def _file_digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+def _file_digest(path: Path) -> str | None:
+    """文件摘要; **读不到时返回 None**, 由调用方跳过该文件 (见 `poll`)。
+
+    实测 (2026-11-09): `.omo/_delivery/perception-inbox/cron.log` 里 312 条
+    `OSError: [Errno 11] Resource deadlock avoided`, 栈落在 `pathlib.read_bytes` ——
+    每一次都让**整轮** inbox 处理失败, 而该作业每 5 分钟跑一次。同一批文件随后
+    手动逐个数全部能正常读 ⇒ 是**瞬时**不可读 (文件正被外部进程改写/同步), 不是永久
+    损坏。跳过本轮、不写 watermark、下轮再试, 比让整轮失败更合适。
+    """
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+    except OSError:
+        return None
 
 
 def _publish(topic: str, payload: dict[str, Any], trace_id: str) -> bool:
@@ -89,16 +100,23 @@ def _utc_now() -> str:
 def poll(*, inbox_dir: Path, dry_run: bool = False) -> dict[str, Any]:
     watermark = _load_watermark()
     files = sorted(inbox_dir.glob("*.md"))
-    new_files = [p for p in files if watermark.get(p.name) != _file_digest(p)]
+    new_files = [p for p in files if (digest := _file_digest(p)) is not None and watermark.get(p.name) != digest]
     report: dict[str, Any] = {"scanned": len(files), "new": len(new_files), "published": 0}
     for path in new_files:
         digest = _file_digest(path)
+        try:
+            st = path.stat()
+        except OSError:
+            # 与上面同一类瞬时不可读 —— 跳过本轮, 不写 watermark, 下轮再试。
+            continue
+        if digest is None:
+            continue
         payload = {
             "source": "perception-inbox",
             "file": path.name,
             "content_digest": f"sha256:{digest}",
-            "size_bytes": path.stat().st_size,
-            "modified_at": path.stat().st_mtime,
+            "size_bytes": st.st_size,
+            "modified_at": st.st_mtime,
         }
         trace_id = f"inbox:{path.stem}"
         if dry_run:

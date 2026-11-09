@@ -105,3 +105,48 @@ def test_poll_publish_failure_still_watermarks(inbox_dir: Path, monkeypatch: pyt
     assert report["published"] == 0
     # 失败也记录水位 (避免无限重试同文件; 内容变化会重新触发)
     assert inbox.WATERMARK_FILE.is_file()
+
+
+def test_poll_skips_transiently_unreadable_file(inbox_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """瞬时读不到的文件被跳过 —— 不让整轮 inbox 处理失败.
+
+    实测 (2026-11-09): `perception-inbox` 的 cron 日志里 312 条
+    `OSError: [Errno 11] Resource deadlock avoided` (栈在 `pathlib.read_bytes`),
+    每次都让**整轮**失败, 而该作业每 5 分钟跑一次; 同一批文件随后手动读全部正常
+    ⇒ 瞬时不可读, 跳过本轮、下轮再试。
+    """
+    (inbox_dir / "good.md").write_text("# 好", encoding="utf-8")
+    (inbox_dir / "bad.md").write_text("# 坏", encoding="utf-8")
+
+    real_read_bytes = Path.read_bytes
+
+    def flaky(self: Path) -> bytes:
+        if self.name == "bad.md":
+            raise OSError(11, "Resource deadlock avoided")
+        return real_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", flaky)
+    report = inbox.poll(inbox_dir=inbox_dir, dry_run=True)
+    assert report["scanned"] == 2
+    assert report["new"] == 1, "读不到的文件应被跳过, 只有可读的算新"
+
+
+def test_poll_does_not_watermark_unreadable_file(inbox_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """被跳过的文件**不写水位** —— 否则它永远不会被重试."""
+    (inbox_dir / "good.md").write_text("# 好", encoding="utf-8")
+    (inbox_dir / "bad.md").write_text("# 坏", encoding="utf-8")
+    monkeypatch.setattr(inbox, "_publish", lambda topic, payload, trace_id: True)
+
+    real_read_bytes = Path.read_bytes
+
+    def flaky(self: Path) -> bytes:
+        if self.name == "bad.md":
+            raise OSError(11, "Resource deadlock avoided")
+        return real_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", flaky)
+    report = inbox.poll(inbox_dir=inbox_dir, dry_run=False)
+    assert report["published"] == 1
+    watermark = json.loads(inbox.WATERMARK_FILE.read_text(encoding="utf-8"))
+    assert "good.md" in watermark
+    assert "bad.md" not in watermark, "读不到的文件不能写水位, 否则下轮不会再试"
