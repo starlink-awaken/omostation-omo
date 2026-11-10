@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 import sys
 import time
@@ -954,7 +955,7 @@ def test_controlled_process_exit_code_is_archived(tmp_path: Path) -> None:
                 "allowed_operation_level": "L1",
                 "human_approval_required": False,
                 "metadata": {
-                    "command": f'cd "{project_path}" && python -c "raise SystemExit(7)"',
+                    "command": f'cd "{project_path}" && {shlex.quote(sys.executable)} -c "raise SystemExit(7)"',
                     "action_id": "copy-start-command",
                     "controlled_process": True,
                     "cockpit_only": True,
