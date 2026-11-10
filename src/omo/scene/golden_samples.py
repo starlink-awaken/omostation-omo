@@ -44,7 +44,7 @@ class GoldenSample:
     input_digest: str
     result_summary: str
     calibration: float = 1.0
-    created_at: str = field(default_factory=_utcnow)
+    created_at: str = field(default_factory=lambda: _utcnow())
 
     def digest(self) -> str:
         return hashlib.sha256(_canonical_json(asdict(self)).encode("utf-8")).hexdigest()

@@ -21,6 +21,8 @@ def _strip(entries: list[dict]) -> list[dict]:
 
 
 def test_batch_matches_sequential_with_single_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 墙钟字段冻结: 逐条与批量各自取 now, 跨秒即抖动 (CI 2026-11-10 实测 measured_at 差 1s)
+    monkeypatch.setattr(omo_belief, "_utc_now", lambda: "2026-11-10T09:49:53Z")
     seq = MOSBeliefManager(root=tmp_path / "seq", registry_file=tmp_path / "seq-reg.yaml")
     for c in CALS:
         seq.record_capability_calibration(**c)
