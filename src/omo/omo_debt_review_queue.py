@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -14,10 +14,19 @@ GATE_ORDER = {"gate": 0, "watchlist": 1, "none": 2}
 
 
 def _parse_iso8601(value: str) -> datetime:
+    """解析时间戳, naive 一律按 UTC 处理 (与 omo_debt_metrics 同口径)。
+
+    条目里的 `next_review_at` 多为日期-only (naive), 而 `now` 是 aware UTC;
+    直接相减会抛 `TypeError: can't subtract offset-naive and offset-aware
+    datetimes`。见 omo_debt_metrics._parse_iso8601 的同族注释。
+    """
     try:
-        return datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(value)
     except ValueError as exc:
         raise ValueError(value) from exc
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed
 
 
 def _normalize_owner(owner: str) -> str:

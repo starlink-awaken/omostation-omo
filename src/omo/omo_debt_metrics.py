@@ -30,6 +30,22 @@ def _resolve_ref_path(repo_root: Path, ref: str) -> Path:
     return repo_root / ref_path
 
 
+def _parse_iso8601(value: str) -> datetime:
+    """解析债务条目里的时间戳, naive 一律按 UTC 处理。
+
+    条目里的 `last_reviewed_at` / `next_review_at` 绝大多数是日期-only
+    (naive, 如 `2026-11-09`), 而文件 mtime 与 `now` 是 aware UTC —— 直接
+    比较会抛 `TypeError: can't compare offset-naive and offset-aware
+    datetimes`。2026-11-09 实证: 把 21 个未登记条目补登进 seed_items 后,
+    任何一条「非终态 + refs 全部存在 + 日期-only」的条目都会让
+    `collect_stale_evidence_item_ids` 崩溃, 进而整份 dashboard 生成失败。
+    """
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed
+
+
 TERMINAL_STATES = frozenset({"closed", "resolved"})
 """治理词汇契约: resolved 与 closed 同为终结态.
 
@@ -56,17 +72,17 @@ def collect_stale_evidence_item_ids(items: tuple[DebtItem, ...], repo_root: Path
         if not item.last_reviewed_at:
             stale_ids.add(item.id)
             continue
-        last_reviewed = datetime.fromisoformat(item.last_reviewed_at)
+        last_reviewed = _parse_iso8601(item.last_reviewed_at)
         if any(datetime.fromtimestamp(ref.stat().st_mtime, tz=UTC) > last_reviewed for ref in refs):
             stale_ids.add(item.id)
     return stale_ids
 
 
 def compute_debt_metrics(items: tuple[DebtItem, ...], now: str, repo_root: Path | None = None) -> DebtMetrics:
-    current = datetime.fromisoformat(now)
+    current = _parse_iso8601(now)
     open_items = [item for item in items if item.lifecycle_state not in TERMINAL_STATES]
     overdue = [
-        item for item in open_items if item.next_review_at and datetime.fromisoformat(item.next_review_at) < current
+        item for item in open_items if item.next_review_at and _parse_iso8601(item.next_review_at) < current
     ]
     vague = [item for item in open_items if item.dimension in {"other", "unknown"}]
     missing_pointers = [
