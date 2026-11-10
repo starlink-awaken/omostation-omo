@@ -1,6 +1,7 @@
 """test_swarm_mesh — 验证可扩展异构算力网络与自适应切流网关 (Phase 7)."""
 
 import json
+from pathlib import Path
 from unittest.mock import patch
 
 from omo.resident.swarm_mesh import (
@@ -29,9 +30,10 @@ def test_swarm_mesh_default_nodes():
     assert data["macmini_sentinel"]["unified_memory"] == "24.0 GB"
 
 
-def test_swarm_mesh_dynamic_registration_future_machine():
+def test_swarm_mesh_dynamic_registration_future_machine(tmp_path: Path) -> None:
     """验证未来任意新节点即插即用动态注册."""
-    mesh = SwarmComputeMesh()
+    # 写面绑定 tmp: 默认落 state 根, 残留会让下一次跑变成 assert 4 == 4+1
+    mesh = SwarmComputeMesh(dynamic_nodes_file=tmp_path / "dynamic_nodes.json")
     initial_count = len(mesh._nodes)
 
     future_node = SwarmNodeSpec(
