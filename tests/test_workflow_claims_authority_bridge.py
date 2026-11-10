@@ -3548,6 +3548,17 @@ def test_hard_run_digest_unchanged_by_binding_record(tmp_path: Path, monkeypatch
     该不变式的守门人: 摘要一旦变化即说明写错了地方。
     """
     registry = _registry()
+    registry["runner"] = {
+        "workspace_root": str(tmp_path),
+        "run_state_dir": "runs",
+        "lock_state_dir": "locks",
+        "ledger_path": "events.jsonl",
+    }
+    import omo.workflow.core as _core
+
+    monkeypatch.setattr(lifecycle, "WORKSPACE", tmp_path)
+    monkeypatch.setattr(_core, "WORKSPACE", tmp_path)
+    (tmp_path / ".git").mkdir(parents=True, exist_ok=True)
     workflow = {
         "id": "project-code-change",
         "title": "Project code change",
