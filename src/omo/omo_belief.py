@@ -131,7 +131,7 @@ class AgentBelief:
     id: str
     topic: str
     belief: str
-    created_at: str = field(default_factory=_utc_now)
+    created_at: str = field(default_factory=lambda: _utc_now())
     confidence: float = 1.0
     source_run_id: str | None = None
 
@@ -143,7 +143,7 @@ class AgentLesson:
     pitfall: str
     solution: str
     severity: str = "warning"
-    created_at: str = field(default_factory=_utc_now)
+    created_at: str = field(default_factory=lambda: _utc_now())
 
 
 @dataclass
@@ -159,7 +159,7 @@ class WorldSnapshot:
     """世界模型 — agent 对外部世界状态的观察快照"""
 
     id: str
-    observed_at: str = field(default_factory=_utc_now)
+    observed_at: str = field(default_factory=lambda: _utc_now())
     source: str = ""
     domain: str = ""
     observations: dict[str, Any] = field(default_factory=dict)
@@ -173,7 +173,7 @@ class CapabilityCalibration:
 
     id: str
     capability_ref: str = ""
-    measured_at: str = field(default_factory=_utc_now)
+    measured_at: str = field(default_factory=lambda: _utc_now())
     success_rate: float = 0.0
     avg_latency_ms: float = 0.0
     sample_size: int = 0
@@ -185,7 +185,7 @@ class DecisionOutcome:
     """因果模型 — 决策→结果的因果追踪"""
 
     id: str
-    decision_at: str = field(default_factory=_utc_now)
+    decision_at: str = field(default_factory=lambda: _utc_now())
     decision_type: str = ""
     input_summary: str = ""
     expected_outcome: str = ""

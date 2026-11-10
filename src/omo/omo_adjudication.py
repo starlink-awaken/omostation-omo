@@ -104,7 +104,7 @@ class AdjudicationRecord:
     id: str
     decision_id: str
     verdict: str
-    adjudicated_at: str = field(default_factory=_utc_now)
+    adjudicated_at: str = field(default_factory=lambda: _utc_now())
     edit_diff: str = ""
     time_spent_seconds: float = 0.0
     adjudicator: str = ""
