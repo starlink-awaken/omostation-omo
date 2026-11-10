@@ -15,7 +15,7 @@ import re
 import subprocess
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -177,6 +177,83 @@ def prepare_isolated_worktree(session_id: str, dry_run: bool = False) -> tuple[b
         return False, f"创建隔离工作树异常: {exc}", None
 
 
+DISPATCH_DEDUPE_TTL_S = 259200
+
+
+def _norm_objective(text: object) -> str:
+    """归一化 objective 作去重键: 巡检与 triage 侧的同一条件是固定字符串, 差别只在空白."""
+    return " ".join(str(text or "").split())
+
+
+def _record_created_at(data: dict[str, Any]) -> datetime | None:
+    """取建档时间, 无时区按 UTC 解释; 解析不出来就返回 None —— 宁可不折叠, 也不误吞新派发."""
+    try:
+        parsed = datetime.fromisoformat(str(data.get("created_at") or ""))
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed
+
+
+def _find_recent_dispatch(
+    objective: str,
+    ttl_s: int,
+    tasks_dir: Path | None = None,
+) -> dict[str, Any] | None:
+    """同一 objective 在 ttl_s 内已有档案时返回那份档案, 供 dispatch_task 折叠重复派发。
+
+    判据只能是 objective 的新鲜度, 不能是状态: task-object-v1 协议未定义状态枚举, 实测
+    已提交的 33 份派单里 30 份的 status 由 omo.resident.worker 或执行侧按 ADR-0466 手写
+    (`worktree_missing` 全库无代码写入方), 没有任何写入方会把任务标成「已了结」,
+    按状态去重等于永不放行 —— 见 BET-Y2Q4-T10-345 spec §2。
+    """
+    want = _norm_objective(objective)
+    if not want or ttl_s <= 0:
+        return None
+    root = tasks_dir if tasks_dir is not None else write_path(TASKS_DIR)
+    if not root.is_dir():
+        return None
+    cutoff = datetime.now(UTC) - timedelta(seconds=ttl_s)
+    best: tuple[datetime, dict[str, Any]] | None = None
+    for path in sorted(root.glob("*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(data, dict) or _norm_objective(data.get("objective")) != want:
+            continue
+        created_at = _record_created_at(data)
+        if created_at is None or created_at < cutoff:
+            continue
+        if best is None or created_at > best[0]:
+            best = (created_at, data)
+    return best[1] if best else None
+
+
+def _deduped_result(objective: str, existing: dict[str, Any], ttl_s: int) -> dict[str, Any]:
+    """折叠结果: 只读既有档案, 不新建任务、不新建卡片、不 claim 工作树, 也不改写既有记录。
+
+    不改写既有 JSON 是有意的: 那些记录会被执行侧手写 status (ADR-0466 的诚实失败措辞),
+    读改写会与它撞车。
+    """
+    task_id = str(existing.get("task_id") or "")
+    wt_path = (existing.get("execution_context") or {}).get("worktree_path")
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "session_id": str(existing.get("session_id") or ""),
+        "target_agent": existing.get("target_agent"),
+        "objective": objective,
+        "worktree": {
+            "ok": bool(wt_path) and Path(str(wt_path)).exists(),
+            "path": wt_path,
+            "message": f"重复派发已折叠 (TTL {ttl_s}s 内沿用任务 {task_id}, 未新建隔离工作树)",
+        },
+        "card_registered": False,
+        "deduplicated": True,
+        "existing_status": existing.get("status"),
+    }
+
+
 def dispatch_task(
     objective: str,
     target_agent: str | None = None,
@@ -185,6 +262,16 @@ def dispatch_task(
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """主调度入口: 意图解构 -> 任务包封装 -> Worktree 隔离准备 -> Action Desk 卡片注册."""
+    try:
+        ttl_s = int(os.environ.get("OMO_DISPATCH_DEDUPE_TTL_S", DISPATCH_DEDUPE_TTL_S))
+    except ValueError:
+        logger.warning("Invalid OMO_DISPATCH_DEDUPE_TTL_S, falling back to %s", DISPATCH_DEDUPE_TTL_S)
+        ttl_s = DISPATCH_DEDUPE_TTL_S
+
+    existing = _find_recent_dispatch(objective, ttl_s)
+    if existing is not None:
+        return _deduped_result(objective, existing, ttl_s)
+
     envelope = create_task_envelope(
         objective=objective,
         target_agent=target_agent,
