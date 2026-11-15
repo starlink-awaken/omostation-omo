@@ -30,6 +30,13 @@ class DebtItem:
     x1_policy_ref: str = ""
     x2_freshness: str = ""
     x3_tier: str = ""
+    # 闭局证据: 文件 schema 里一直存在, 且被主仓 check-debt-closure-discipline
+    # (终态必须有 closed_at) 与 omo_audit_freshness / omo_audit_checks
+    # (resolution_evidence >= 20 字符) 三处判据依赖 —— 此前 DebtItem 不载它们,
+    # 走 load_debt_ledger 的消费者看不到闭局证据。带默认值, 向后兼容。
+    closed_at: str = ""
+    close_reason: str = ""
+    resolution_evidence: str = ""
 
 
 @dataclass(frozen=True)
@@ -108,6 +115,21 @@ def _as_tuple(value: object) -> tuple:
     return (value,)
 
 
+def _as_text(value: object) -> str:
+    """安全转文本: None→"", 列表/元组→换行拼接, 其余→str()。
+
+    闭局证据三键 (`closed_at` / `close_reason` / `resolution_evidence`) 在册条目里
+    都是 folded 字符串, 但主仓 `check-debt-closure-discipline.py` 与
+    `omo_audit_freshness.py` 都把 `resolution_evidence` 当**列表或字符串**双形态读
+    —— 若这里裸 `str()`, 列表会被写成 Python repr 而静默损坏。
+    """
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple)):
+        return "\n".join(str(v) for v in value)
+    return str(value)
+
+
 def _parse_debt_item(payload: dict) -> DebtItem:
     """容错解析 debt item,兼容两套 schema:
 
@@ -143,4 +165,7 @@ def _parse_debt_item(payload: dict) -> DebtItem:
         x1_policy_ref=str(payload.get("x1_policy_ref", "")),
         x2_freshness=str(payload.get("x2_freshness", "")),
         x3_tier=str(payload.get("x3_tier", "")),
+        closed_at=_as_text(payload.get("closed_at")),
+        close_reason=_as_text(payload.get("close_reason")),
+        resolution_evidence=_as_text(payload.get("resolution_evidence") or payload.get("closed_evidence")),
     )
