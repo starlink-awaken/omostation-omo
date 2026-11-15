@@ -95,7 +95,12 @@ def upsert_debt_item(
         payload["first_seen_at"] = first_seen_at
         payload["last_seen_at"] = timestamp
         payload["occurrence_count"] = occurrence_count
-        payload["status"] = str(payload.get("status") or "open")
+        # 不写 `status`: 它是 schema 外键, 而 `lifecycle_state` 已承载同一语义。
+        # 主仓 `bin/gac/check-debt-closure-discipline.py` 把「status 与
+        # lifecycle_state 并存」判为 A 类违规（单一事实源）, `fix-debt-fields.py`
+        # 也会行级删掉 status —— 于是本 broker 每产出一条, 就会被主仓自己的
+        # 债务工具标记为冲突。kernel 侧 `omo_debt_registry.py` 只在
+        # lifecycle_state 缺席时把 status 当 fallback 读, 所以去掉它不影响装载。
         payload["lifecycle_state"] = str(
             payload.get("lifecycle_state") or existing_payload.get("lifecycle_state") or "identified"
         )

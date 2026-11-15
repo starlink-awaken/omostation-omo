@@ -2029,7 +2029,9 @@ def test_upsert_debt_item_writes_artifacts_and_reuses_same_file(tmp_path: Path) 
     assert payload["first_seen_at"] == "2026-06-18T06:00:00Z"
     assert payload["last_seen_at"] == "2026-06-18T06:01:00Z"
     assert payload["lifecycle_state"] == "identified"
-    assert payload["status"] == "open"
+    # status 是 schema 外键: broker 不再写它 (与 lifecycle_state 并存会被主仓
+    # check-debt-closure-discipline 判为 A 类「单一事实源」违规)。
+    assert "status" not in payload
     assert artifact["kind"] == "debt_upserted"
     assert artifact["occurrence_count"] == 2
     assert artifact["artifact_ref"] == "runtime/omo/_delivery/ingress/debts/DEBT-OPC-P4-BUDGET-DEMO.yaml"
