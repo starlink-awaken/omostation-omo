@@ -17,6 +17,13 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # 每周只开**一个**合并 PR, 而不是每个依赖一个。实测 (2026-11-23): 5 个各自为政的
+    # PR 改的是 pyproject.toml 相邻几行 ⇒ 彼此冲突, 合并要逐个 rebase; 且每个 PR
+    # 各跑一轮 CI。分组后合并面与 CI 成本都从 N 降到 1。
+    groups:
+      python-deps:
+        patterns:
+          - "*"
     ignore:
       - dependency-name: "aetherforge"
       - dependency-name: "agora"
