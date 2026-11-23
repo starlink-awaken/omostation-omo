@@ -23,7 +23,18 @@ class DebtMetrics:
     closed_item_ids: tuple[str, ...]
 
 
-def _resolve_ref_path(repo_root: Path, ref: str) -> Path:
+def _resolve_ref_path(repo_root: Path, ref: object) -> Path | None:
+    """解析条目 ref; 非 str 返回 None 而不是抛 TypeError。
+
+    refs 里写散文注解是既有用法, 而散文一旦出现 ASCII `: ` (如
+    `CI workflow run: / .githooks`), YAML 就把整个**列表项**解析成 mapping;
+    `_as_tuple` 只归一顶层 dict、不校验逐元素, `Path(dict)` 随即抛错。
+    2026-11-23 实证: 一个这样的条目让 `com.omostation.omo-debt-refresh`
+    连崩 59 次 (≈29.5 h), 四份投影冻结, 而冻结读数对外仍报
+    `debt_health: 100.0` —— 一个坏条目不该停摆整个平面。
+    """
+    if not isinstance(ref, str):
+        return None
     ref_path = Path(ref)
     if ref_path.is_absolute():
         return ref_path
@@ -65,7 +76,12 @@ def collect_stale_evidence_item_ids(items: tuple[DebtItem, ...], repo_root: Path
         if not item.evidence_refs or not item.mitigation_refs:
             stale_ids.add(item.id)
             continue
-        refs = tuple(_resolve_ref_path(repo_root, ref) for ref in (*item.evidence_refs, *item.mitigation_refs))
+        resolved = tuple(_resolve_ref_path(repo_root, ref) for ref in (*item.evidence_refs, *item.mitigation_refs))
+        if any(path is None for path in resolved):
+            # 畸形 ref ⇒ 该条目判 stale(可见), 而不是让整个投影平面停摆
+            stale_ids.add(item.id)
+            continue
+        refs = tuple(path for path in resolved if path is not None)
         if any(not ref.exists() for ref in refs):
             stale_ids.add(item.id)
             continue
