@@ -352,6 +352,7 @@ def main(argv: list[str] | None = None) -> int:
             payload,
             "reclassify",
             f"Reclassified to {args.dimension}/{args.subdimension}.",
+            timestamp=_now_iso(),
         )
         _write_yaml(item_path, payload)
         print(f"reclassified {args.id}")
@@ -360,7 +361,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "escalate":
         item_path, payload = update_item(omo_dir, args.id, _load_yaml)
         payload["gate_level"] = args.gate_level
-        append_history(payload, "escalate", f"Escalated to {args.gate_level}.")
+        append_history(
+            payload,
+            "escalate",
+            f"Escalated to {args.gate_level}.",
+            timestamp=_now_iso(),
+        )
         _write_yaml(item_path, payload)
         print(f"escalated {args.id}")
         return 0
@@ -370,7 +376,12 @@ def main(argv: list[str] | None = None) -> int:
         require_matching_revalidate_approval(omo_dir, args.id, bound_run_ref)
         item_path, payload = update_item(omo_dir, args.id, _load_yaml)
         payload["last_reviewed_at"] = args.reviewed_at
-        append_history(payload, "revalidate", f"Reviewed at {args.reviewed_at}.")
+        append_history(
+            payload,
+            "revalidate",
+            f"Reviewed at {args.reviewed_at}.",
+            timestamp=_now_iso(),
+        )
         _write_yaml(item_path, payload)
         if bound_run_ref:
             record_path = execution_record_path(omo_dir, bound_run_ref, args.id)
