@@ -89,7 +89,7 @@ def cmd_debt_close(
         return 0
 
     if not confirm:
-        print("❌ 请显式传入 confirm=True 以关闭债务项")
+        print("❌ 操作已取消: confirm=False (--no-confirm)")
         return 1
 
     _write_yaml(item_path, payload)
@@ -226,33 +226,41 @@ def main(argv: list[str] | None = None) -> int:
     reclassify_parser.add_argument("--id", required=True)
     reclassify_parser.add_argument("--dimension", required=True)
     reclassify_parser.add_argument("--subdimension", required=True)
+    reclassify_parser.add_argument("--actor", default="", help="Who performed this action")
 
     escalate_parser = subparsers.add_parser("escalate")
     escalate_parser.add_argument("--omo-dir", default=".omo")
     escalate_parser.add_argument("--id", required=True)
     escalate_parser.add_argument("--gate-level", required=True)
+    escalate_parser.add_argument("--actor", default="", help="Who performed this action")
 
     revalidate_parser = subparsers.add_parser("revalidate")
     revalidate_parser.add_argument("--omo-dir", default=".omo")
     revalidate_parser.add_argument("--id", required=True)
     revalidate_parser.add_argument("--reviewed-at", required=True)
     revalidate_parser.add_argument("--dispatch-run-ref")
+    revalidate_parser.add_argument("--actor", default="", help="Who performed this action")
 
     close_parser = subparsers.add_parser("close")
     close_parser.add_argument("--omo-dir", default=".omo")
     close_parser.add_argument("--id", required=True)
     close_parser.add_argument("--actor", default="", help="Who performed this action")
     close_parser.add_argument(
-        "--dry-run",
+        "--confirm",
         action="store_true",
-        help="Print what would be done without writing",
+        default=True,
+        help="Confirm closing debt item (default: True)",
     )
     close_parser.add_argument(
         "--no-confirm",
         dest="confirm",
         action="store_false",
-        default=True,
-        help="Refuse to close without this safety flag (default: confirm)",
+        help="Cancel closing debt item (refuse to write)",
+    )
+    close_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print what would be done without writing",
     )
 
     desc_parser = subparsers.add_parser("desc")
@@ -352,6 +360,7 @@ def main(argv: list[str] | None = None) -> int:
             payload,
             "reclassify",
             f"Reclassified to {args.dimension}/{args.subdimension}.",
+            actor=getattr(args, "actor", ""),
             timestamp=_now_iso(),
         )
         _write_yaml(item_path, payload)
@@ -361,7 +370,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "escalate":
         item_path, payload = update_item(omo_dir, args.id, _load_yaml)
         payload["gate_level"] = args.gate_level
-        append_history(payload, "escalate", f"Escalated to {args.gate_level}.", timestamp=_now_iso())
+        append_history(
+            payload,
+            "escalate",
+            f"Escalated to {args.gate_level}.",
+            actor=getattr(args, "actor", ""),
+            timestamp=_now_iso(),
+        )
         _write_yaml(item_path, payload)
         print(f"escalated {args.id}")
         return 0
@@ -371,7 +386,13 @@ def main(argv: list[str] | None = None) -> int:
         require_matching_revalidate_approval(omo_dir, args.id, bound_run_ref)
         item_path, payload = update_item(omo_dir, args.id, _load_yaml)
         payload["last_reviewed_at"] = args.reviewed_at
-        append_history(payload, "revalidate", f"Reviewed at {args.reviewed_at}.", timestamp=_now_iso())
+        append_history(
+            payload,
+            "revalidate",
+            f"Reviewed at {args.reviewed_at}.",
+            actor=getattr(args, "actor", ""),
+            timestamp=_now_iso(),
+        )
         _write_yaml(item_path, payload)
         if bound_run_ref:
             record_path = execution_record_path(omo_dir, bound_run_ref, args.id)

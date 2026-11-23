@@ -927,6 +927,72 @@ class TestOmoDebt:
         data = yaml.safe_load((debt_dir / "DEBT-X.yaml").read_text(encoding="utf-8"))
         assert data["description"] == "old"
 
+    def test_cmd_debt_cli_reclassify_and_escalate_history_timestamp(self, tmp_path: Path) -> None:
+        """reclassify 和 escalate 写入非空 ISO 时间戳和 actor."""
+        from omo.omo_debt_cli import main
+
+        omo_dir = tmp_path
+        debt_dir = omo_dir / "debt" / "items"
+        debt_dir.mkdir(parents=True)
+        (debt_dir / "DEBT-Y.yaml").write_text(
+            yaml.dump(
+                {
+                    "id": "DEBT-Y",
+                    "title": "y",
+                    "dimension": "old_dim",
+                    "subdimension": "old_sub",
+                    "gate_level": "none",
+                    "lifecycle_state": "identified",
+                    "history": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        rc = main(["reclassify", "--omo-dir", str(omo_dir), "--id", "DEBT-Y", "--dimension", "gov", "--subdimension", "ssot", "--actor", "agent-1"])
+        assert rc == 0
+        data = yaml.safe_load((debt_dir / "DEBT-Y.yaml").read_text(encoding="utf-8"))
+        assert data["history"][-1]["action"] == "reclassify"
+        assert data["history"][-1]["actor"] == "agent-1"
+        assert len(data["history"][-1]["at"]) > 10  # valid ISO timestamp, not empty
+
+        rc = main(["escalate", "--omo-dir", str(omo_dir), "--id", "DEBT-Y", "--gate-level", "watchlist", "--actor", "agent-2"])
+        assert rc == 0
+        data = yaml.safe_load((debt_dir / "DEBT-Y.yaml").read_text(encoding="utf-8"))
+        assert data["history"][-1]["action"] == "escalate"
+        assert data["history"][-1]["actor"] == "agent-2"
+        assert len(data["history"][-1]["at"]) > 10
+
+    def test_cmd_debt_cli_close_confirm_flag_semantics(self, tmp_path: Path) -> None:
+        """close 默认关闭，带 --no-confirm 明确取消."""
+        from omo.omo_debt_cli import main
+
+        omo_dir = tmp_path
+        debt_dir = omo_dir / "debt" / "items"
+        debt_dir.mkdir(parents=True)
+        (debt_dir / "DEBT-Z.yaml").write_text(
+            yaml.dump(
+                {
+                    "id": "DEBT-Z",
+                    "title": "z",
+                    "lifecycle_state": "identified",
+                    "history": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        # 1. --no-confirm 明确取消
+        rc = main(["close", "--omo-dir", str(omo_dir), "--id", "DEBT-Z", "--no-confirm"])
+        assert rc == 1
+        data = yaml.safe_load((debt_dir / "DEBT-Z.yaml").read_text(encoding="utf-8"))
+        assert data["lifecycle_state"] == "identified"
+
+        # 2. 默认关闭成功
+        rc = main(["close", "--omo-dir", str(omo_dir), "--id", "DEBT-Z", "--actor", "close-agent"])
+        assert rc == 0
+        data = yaml.safe_load((debt_dir / "DEBT-Z.yaml").read_text(encoding="utf-8"))
+        assert data["lifecycle_state"] == "closed"
+        assert data["history"][-1]["actor"] == "close-agent"
+
 
 # -- omo_knowledge --
 
