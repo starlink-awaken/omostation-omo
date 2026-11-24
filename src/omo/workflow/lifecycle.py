@@ -1025,20 +1025,20 @@ def run_stage(
     return 0 if all(item["ok"] for item in results) else 1
 
 
-def heartbeat_run(registry: dict[str, Any], run_id: str) -> dict[str, Any]:
+def heartbeat_run(registry: dict[str, Any], run_id: str, *, strict: bool = True) -> dict[str, Any]:
     """Serialize and renew every lock owned by one active run."""
     with run_update_lock(registry, run_id):
         with _authority_mutation_locked(registry, run_id, "heartbeat"):
-            return _heartbeat_run_locked(registry, run_id)
+            return _heartbeat_run_locked(registry, run_id, strict=strict)
 
 
-def _heartbeat_run_locked(registry: dict[str, Any], run_id: str) -> dict[str, Any]:
+def _heartbeat_run_locked(registry: dict[str, Any], run_id: str, *, strict: bool = True) -> dict[str, Any]:
     """Renew ``last_heartbeat`` on every lock owned by an active run.
 
     Prevalidates all locks before writing any:
-      - lock file must exist
+      - lock file must exist (if strict)
       - YAML payload must be a mapping
-      - payload ``run_id`` must exactly match
+      - payload ``run_id`` must exactly match (if strict)
       - resolved path must be within the configured lock directory
 
     On validation failure no lock is modified.
@@ -1075,7 +1075,9 @@ def _heartbeat_run_locked(registry: dict[str, Any], run_id: str) -> dict[str, An
             raise WorkflowError(f"lock path escapes lock directory: {lock_display}")
 
         if not lock_path.exists():
-            raise WorkflowError(f"missing lock file: {lock_display}")
+            if strict:
+                raise WorkflowError(f"missing lock file: {lock_display}")
+            continue
 
         try:
             lock_data = yaml.safe_load(lock_path.read_text(encoding="utf-8"))
@@ -1089,9 +1091,11 @@ def _heartbeat_run_locked(registry: dict[str, Any], run_id: str) -> dict[str, An
             raise WorkflowError(f"malformed lock (not a mapping): {lock_display}")
 
         if lock_data.get("run_id") != run_id:
-            raise WorkflowError(
-                f"lock run_id mismatch in {lock_display}: expected {run_id}, found {lock_data.get('run_id')}"
-            )
+            if strict:
+                raise WorkflowError(
+                    f"lock run_id mismatch in {lock_display}: expected {run_id}, found {lock_data.get('run_id')}"
+                )
+            continue
 
         validated.append((lock_path, lock_data, lock_display))
 
@@ -1684,7 +1688,7 @@ def closeout_run(
     keep_locks: bool,
 ) -> dict[str, Any]:
     if status == "ok":
-        heartbeat_run(registry, run_id)  # SR-01: renew before successful closeout
+        heartbeat_run(registry, run_id, strict=False)  # SR-01: renew before successful closeout (graceful)
     from .diagnostics import build_observe_report, build_verify_report
 
     verify_report = build_verify_report(
@@ -1829,6 +1833,7 @@ from .lifecycle_locks import (  # noqa: F401 -- re-export
     _classify_existing_lock,
     acquire_locks,
     heartbeat_lock,
+    is_holder_run_active,
     lock_scope_object_present,
     lock_scopes_past_expiry,
     release_locks,
@@ -1852,6 +1857,9 @@ def prune_stale_locks(registry: dict[str, Any]) -> list[dict[str, Any]]:
         run_id = str(entry.get("run_id") or "")
         raw_path = str(entry.get("path") or "")
         if not run_id or not raw_path:
+            continue
+        if entry.get("kind") == "zombie_stale_heartbeat" and is_holder_run_active(registry, run_id):
+            # OMO-WORKFLOW-STALE-HEARTBEAT-LOCK-THEFT: protect active runs from heartbeat-stale pruning
             continue
         try:
             path = _authority_resolve_lock_path(registry, raw_path)
