@@ -189,6 +189,16 @@ def main(argv: list[str] | None = None) -> int:
         default="",
         help="X3 value tier (Axiom/Principle/Theory/Framework/Knowledge/Skill/Tool)",
     )
+    register_parser.add_argument(
+        "--last-reviewed-at",
+        default=None,
+        help="Last review date (ISO 8601 date, defaults to today UTC)",
+    )
+    register_parser.add_argument(
+        "--next-review-at",
+        default=None,
+        help="Next scheduled review date (ISO 8601 date, defaults to +14d)",
+    )
 
     list_parser = subparsers.add_parser("list")
     list_parser.add_argument("--omo-dir", default=".omo")
@@ -317,14 +327,18 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_debt_list(omo_dir)
 
     if args.command == "schedule":
-        schedule_item(
-            omo_dir,
-            args.id,
-            args.next_review_at,
-            _load_yaml,
-            _write_yaml,
-            _now_iso(),
-        )
+        try:
+            schedule_item(
+                omo_dir,
+                args.id,
+                args.next_review_at,
+                _load_yaml,
+                _write_yaml,
+                _now_iso(),
+            )
+        except FileNotFoundError:
+            print(f"❌ 未知 debt_id: {args.id} (不在 .omo/debt/items)")
+            return 1
         print(f"scheduled {args.id}")
         return 0
 
@@ -376,6 +390,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "reclassify":
         item_path, payload = update_item(omo_dir, args.id, _load_yaml)
+        if not item_path.exists():
+            print(f"❌ 未知 debt_id: {args.id} (不在 .omo/debt/items)")
+            return 1
         payload["dimension"] = args.dimension
         payload["subdimension"] = args.subdimension
         append_history(
@@ -391,6 +408,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "escalate":
         item_path, payload = update_item(omo_dir, args.id, _load_yaml)
+        if not item_path.exists():
+            print(f"❌ 未知 debt_id: {args.id} (不在 .omo/debt/items)")
+            return 1
         payload["gate_level"] = args.gate_level
         append_history(
             payload,
@@ -452,6 +472,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "reopen":
         item_path, payload = update_item(omo_dir, args.id, _load_yaml)
+        if not item_path.exists():
+            print(f"❌ 未知 debt_id: {args.id} (不在 .omo/debt/items)")
+            return 1
         payload["lifecycle_state"] = "identified"
         # 恢复关闭前闸级快照并清空旧结案时间戳
         if "closed_at" in payload:
