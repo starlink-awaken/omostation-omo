@@ -67,14 +67,19 @@ def main(argv: list[str] | None = None) -> int:
 
         return ledger_main(args[1:])
     if args and args[0] == "cell":
-        from omo.resident.cell_cli import main as cell_main
         from omo.workflow_mesh import WorkflowMeshStore, dispatch_backend
 
         omo_dir = _omo_dir()
-        store = WorkflowMeshStore(omo_dir) if omo_dir is not None else None
-        if store is not None:
-            return dispatch_backend(store, "cell", cell_main, args[1:])
-        return cell_main(args[1:])
+        if omo_dir is None:
+            print(
+                "cell: no .omo directory; refusing to run the backend outside Mesh",
+                file=sys.stderr,
+            )
+            return 1
+        from omo.resident.cell_cli import main as cell_main
+
+        store = WorkflowMeshStore(omo_dir)
+        return dispatch_backend(store, "cell", cell_main, args[1:])
 
     if args and args[0] == "bridge":
         print("⚠️ DEPRECATED: 'omo bridge' 已迁移，建议改用 'workspace compass bet'。")

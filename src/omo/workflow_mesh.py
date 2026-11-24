@@ -10,6 +10,7 @@ import hashlib
 import hmac
 import json
 import re
+import sys
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timezone
 from pathlib import Path
@@ -579,9 +580,8 @@ def dispatch_backend(
 ) -> int:
     """B 槽后端经 Mesh（S 槽收件箱）分发。
 
-    发射 ``BackendDispatched`` 事件，让 Mesh 成为该次分发的观察收件箱（满足
-    八律第 3 条：后端不拥有收件箱），随后原样调用 ``fn(args)`` 并返回其返回值。
-    事件写入永不破坏后端：byte-for-byte 等价于直接调用 ``fn(args)``。
+    先写入 ``BackendDispatched``。写入失败时不调用 ``fn``，向 stderr 报告并返回
+    非 0。写入成功后调用 ``fn(args)`` 并返回其后端状态码。
     """
     run_id = uuid4().hex
     try:
@@ -593,8 +593,9 @@ def dispatch_backend(
                 payload={"backend": backend_name, "args": args},
             )
         )
-    except Exception:  # noqa: BLE001 — 事件是观测性的，绝不能破坏后端
-        pass
+    except Exception as exc:  # noqa: BLE001 — 写入失败必须可见，且不得进入后端
+        print(f"cell: Mesh dispatch event write failed: {exc}", file=sys.stderr)
+        return 1
     return fn(args)
 
 
