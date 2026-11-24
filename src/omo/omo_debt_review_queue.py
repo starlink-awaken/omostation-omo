@@ -72,6 +72,7 @@ def build_review_queue(items: tuple[DebtItem, ...], now: str, repo_root: Path) -
     stale_ids = collect_stale_evidence_item_ids(items, repo_root=repo_root)
     due_now: list[dict[str, Any]] = []
     upcoming: list[dict[str, Any]] = []
+    scheduled_later: list[dict[str, Any]] = []
     escalation_candidates: list[dict[str, Any]] = []
     unscheduled: list[dict[str, Any]] = []
 
@@ -90,6 +91,8 @@ def build_review_queue(items: tuple[DebtItem, ...], now: str, repo_root: Path) -
             due_now.append(entry)
         elif due_at <= upcoming_cutoff:
             upcoming.append(entry)
+        else:
+            scheduled_later.append(entry)
 
         if (
             (item.gate_level == "gate" and overdue_by > 0)
@@ -128,6 +131,14 @@ def build_review_queue(items: tuple[DebtItem, ...], now: str, repo_root: Path) -
             entry["id"],
         )
     )
+    scheduled_later.sort(
+        key=lambda entry: (
+            entry["next_review_at"],
+            gate_rank(entry["gate_level"]),
+            severity_rank(entry["severity"]),
+            entry["id"],
+        )
+    )
     unscheduled.sort(key=lambda entry: (severity_rank(entry["severity"]), entry["id"]))
 
     open_items = [item for item in items if item.lifecycle_state not in TERMINAL_STATES]
@@ -139,11 +150,14 @@ def build_review_queue(items: tuple[DebtItem, ...], now: str, repo_root: Path) -
         },
         "due_now": due_now,
         "upcoming": upcoming,
+        "scheduled_later": scheduled_later,
         "escalation_candidates": escalation_candidates,
         "unscheduled": unscheduled,
         "summary": {
             "due_now_count": len(due_now),
             "upcoming_count": len(upcoming),
+            "scheduled_later_count": len(scheduled_later),
+            "open_count": len(open_items),
             "escalation_candidate_count": len(escalation_candidates),
             "unscheduled_count": len(unscheduled),
             "by_severity": {

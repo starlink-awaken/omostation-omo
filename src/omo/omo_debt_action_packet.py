@@ -119,6 +119,21 @@ def build_action_packet(review_queue: dict[str, Any], now: str) -> dict[str, Any
             }
         )
 
+    for entry in review_queue.get("scheduled_later", []):
+        if entry.get("gate_level") not in {"gate", "watchlist"}:
+            continue
+        lanes["watch_only"].append(
+            {
+                **entry,
+                "current_lane": "watch_only",
+                "recommended_action": "watch",
+                "reason": "watchlist_scheduled_later",
+                "command_template": "manual: keep watchlist item on review radar",
+                "shell_command": "manual: keep watchlist item on review radar",
+                "suggested_command": "manual: keep watchlist item on review radar",
+            }
+        )
+
     return {
         "generated_at": now,
         "defaults": defaults,

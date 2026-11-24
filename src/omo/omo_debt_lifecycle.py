@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from .omo_debt_registry import DebtItem
@@ -18,6 +19,15 @@ def append_history(payload: dict, action: str, note: str, actor: str = "", times
 
 
 def register_item(args: argparse.Namespace, timestamp: str) -> dict:
+    default_last = timestamp[:10] if timestamp else None
+    default_next: str | None = None
+    if timestamp:
+        try:
+            default_next = (datetime.fromisoformat(timestamp) + timedelta(days=14)).date().isoformat()
+        except ValueError:
+            default_next = None
+    last_reviewed_at = getattr(args, "last_reviewed_at", None) or default_last
+    next_review_at = getattr(args, "next_review_at", None) or default_next
     payload = {
         "id": args.id,
         "title": args.title,
@@ -34,8 +44,8 @@ def register_item(args: argparse.Namespace, timestamp: str) -> dict:
         "evidence_refs": [],
         "mitigation_refs": [],
         "opened_at": timestamp,
-        "last_reviewed_at": None,
-        "next_review_at": None,
+        "last_reviewed_at": last_reviewed_at,
+        "next_review_at": next_review_at,
         "gate_level": "none",
         "history": [],
         "x1_policy_ref": getattr(args, "x1_policy_ref", ""),
@@ -72,6 +82,8 @@ def schedule_item(
     timestamp: str,
 ) -> None:
     item_path = omo_dir / "debt" / "items" / f"{item_id}.yaml"
+    if not item_path.exists():
+        raise FileNotFoundError(f"unknown debt_id: {item_id}")
     payload = _load_yaml(item_path)
     payload["lifecycle_state"] = "scheduled"
     payload["next_review_at"] = next_review_at
