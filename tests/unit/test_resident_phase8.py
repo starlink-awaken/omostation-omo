@@ -2,6 +2,7 @@
 """projects/omo/tests/unit/test_resident_phase8.py — Phase 8 记忆自结晶与晨间简报单元测试."""
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 from omo.resident.memory_distiller import MemoryDistiller
 from omo.resident.morning_briefing import MorningBriefingGenerator
-from omo.resident.night_patrol import run_night_patrol
+from omo.resident.night_patrol import _effective_cards_dir, _effective_reports_dir, run_night_patrol
 
 
 class TestResidentPhase8(unittest.TestCase):
@@ -89,10 +90,36 @@ class TestResidentPhase8(unittest.TestCase):
     def test_night_patrol_integration_with_briefing(self, mock_power):
         mock_power.return_value = (True, "AC 电源接入 (模拟)")
 
-        report = run_night_patrol(force=True, deep=False)
+        with (
+            patch("omo.resident.night_patrol.WORKSPACE", self.workspace),
+            patch("omo.resident.night_patrol.REPORTS_DIR", self.workspace / "patrol"),
+            patch("omo.resident.night_patrol.PROPOSALS_DIR", self.workspace / "proposals"),
+            patch("omo.resident.night_patrol.CARDS_DIR", self.workspace / "cards"),
+            patch("omo.resident.night_patrol.collect_recent_commits", return_value=[]),
+            patch(
+                "omo.resident.night_patrol.check_architecture_drift",
+                return_value={"drift_detected": False, "items": []},
+            ),
+        ):
+            report = run_night_patrol(force=True, deep=False)
+
         self.assertTrue(report.get("ok"))
         self.assertTrue(report.get("morning_briefing_generated"))
         self.assertIn("memory_crystallization", report)
+        self.assertTrue((self.workspace / "patrol/night-patrol-latest.json").is_file())
+
+    def test_night_patrol_pytest_guard_redirects_unpatched_host_dirs(self):
+        with patch.dict(os.environ, {"PYTEST_CURRENT_TEST": "test_guard"}):
+            reports_dir = _effective_reports_dir()
+            cards_dir = _effective_cards_dir()
+            self.assertNotIn(".local/share/omostation", str(reports_dir))
+            self.assertNotIn(".local/share/omostation", str(cards_dir))
+            self.assertTrue(str(reports_dir).startswith(tempfile.gettempdir()))
+            self.assertTrue(str(cards_dir).startswith(tempfile.gettempdir()))
+
+            custom = self.workspace / "custom"
+            with patch("omo.resident.night_patrol.REPORTS_DIR", custom):
+                self.assertEqual(_effective_reports_dir(), custom)
 
 
 if __name__ == "__main__":

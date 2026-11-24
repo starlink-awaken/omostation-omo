@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import subprocess
+import tempfile
 import time
 from datetime import UTC, datetime, timezone
 from pathlib import Path
@@ -21,9 +22,34 @@ from omo.resident import WORKSPACE, write_path
 
 logger = logging.getLogger("omo.resident.night_patrol")
 
-REPORTS_DIR = Path.home() / ".local/share/omostation/patrol"
+_DEFAULT_REPORTS_DIR = Path.home() / ".local/share/omostation/patrol"
+_DEFAULT_CARDS_DIR = Path.home() / ".local/share/omostation/cards"
+
+REPORTS_DIR = _DEFAULT_REPORTS_DIR
 PROPOSALS_DIR = WORKSPACE / ".omo/_knowledge/decision-proposals"
-CARDS_DIR = Path.home() / ".local/share/omostation/cards"
+CARDS_DIR = _DEFAULT_CARDS_DIR
+
+
+def _in_pytest() -> bool:
+    """Return True when executing inside a pytest session."""
+    return bool(os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("PYTEST_VERSION"))
+
+
+def _effective_host_dir(configured: Path, default: Path, leaf: str) -> Path:
+    """Redirect unpatched host output directories to a temp root under pytest."""
+    if _in_pytest() and configured == default:
+        return Path(tempfile.gettempdir()) / "omo-night-patrol-pytest" / f"pid{os.getpid()}" / leaf
+    return configured
+
+
+def _effective_reports_dir() -> Path:
+    """Resolve night-patrol report output directory with pytest isolation."""
+    return _effective_host_dir(REPORTS_DIR, _DEFAULT_REPORTS_DIR, "patrol")
+
+
+def _effective_cards_dir() -> Path:
+    """Resolve night-patrol card output directory with pytest isolation."""
+    return _effective_host_dir(CARDS_DIR, _DEFAULT_CARDS_DIR, "cards")
 
 
 def check_power_and_idle(force: bool = False) -> tuple[bool, str]:
@@ -133,17 +159,18 @@ def check_architecture_drift() -> dict[str, Any]:
         if len(old_claims) > 10:
             drift_items.append(f"分支认领台账较多 ({len(old_claims)}条)，建议适时归档")
 
-    # 3. 检查并清理孤儿隔离工作树 (Q6 裁定)
-    try:
-        from omo.resident.worker import gc_orphan_worktrees
+    # 3. 检查并清理孤儿隔离工作树 (Q6 裁定; pytest 下跳过以防误删实时工作树)
+    if not _in_pytest():
+        try:
+            from omo.resident.worker import gc_orphan_worktrees
 
-        cleaned_wts = gc_orphan_worktrees(max_age_hours=24, dry_run=False)
-        if cleaned_wts:
-            drift_items.append(
-                f"清理超时孤儿工作树 {len(cleaned_wts)} 个: {', '.join(Path(w).name for w in cleaned_wts[:3])}"
-            )
-    except Exception as exc:
-        logger.debug("Failed running worktree GC in patrol: %s", exc)
+            cleaned_wts = gc_orphan_worktrees(max_age_hours=24, dry_run=False)
+            if cleaned_wts:
+                drift_items.append(
+                    f"清理超时孤儿工作树 {len(cleaned_wts)} 个: {', '.join(Path(w).name for w in cleaned_wts[:3])}"
+                )
+        except Exception as exc:
+            logger.debug("Failed running worktree GC in patrol: %s", exc)
 
     return {
         "drift_detected": len(drift_items) > 0,
@@ -224,8 +251,9 @@ def run_night_patrol(force: bool = False, deep: bool = True) -> dict[str, Any]:
 
     # 持久化报告
     try:
-        REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-        report_file = REPORTS_DIR / "night-patrol-latest.json"
+        reports_dir = _effective_reports_dir()
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        report_file = reports_dir / "night-patrol-latest.json"
         report_file.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
         pass
@@ -257,9 +285,10 @@ def run_night_patrol(force: bool = False, deep: bool = True) -> dict[str, Any]:
     # 若有重大发现推入 SwiftBar Action Desk
     if drafted_proposal:
         try:
-            CARDS_DIR.mkdir(parents=True, exist_ok=True)
+            cards_dir = _effective_cards_dir()
+            cards_dir.mkdir(parents=True, exist_ok=True)
             card_id = f"night-patrol-{int(t0)}"
-            card_file = CARDS_DIR / f"{card_id}.json"
+            card_file = cards_dir / f"{card_id}.json"
             card_data = {
                 "id": card_id,
                 "type": "night_patrol_finding",
