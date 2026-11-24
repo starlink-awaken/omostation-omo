@@ -525,9 +525,9 @@ def test_heartbeat_wired_into_claim(registry: dict, monkeypatch: pytest.MonkeyPa
     heartbeat_called: list[str] = []
     original = lifecycle_mod.heartbeat_run
 
-    def spy(reg: dict, rid: str) -> dict:
+    def spy(reg: dict, rid: str, *args, **kwargs) -> dict:
         heartbeat_called.append(rid)
-        return original(reg, rid)
+        return original(reg, rid, *args, **kwargs)
 
     monkeypatch.setattr(lifecycle_mod, "heartbeat_run", spy)
     monkeypatch.setattr(
@@ -555,9 +555,9 @@ def test_heartbeat_wired_into_closeout_ok(registry: dict, monkeypatch: pytest.Mo
     heartbeat_called: list[str] = []
     original = lifecycle_mod.heartbeat_run
 
-    def spy(reg: dict, rid: str) -> dict:
+    def spy(reg: dict, rid: str, *args, **kwargs) -> dict:
         heartbeat_called.append(rid)
-        return original(reg, rid)
+        return original(reg, rid, *args, **kwargs)
 
     monkeypatch.setattr(lifecycle_mod, "heartbeat_run", spy)
 
@@ -1190,3 +1190,69 @@ def test_lock_scope_object_present_fails_closed_on_unusable_dir(tmp_path: Path) 
     empty.mkdir()
     assert lock_scope_object_present(empty, "path:foo.py") is False
     assert lock_scope_object_present(tmp_path / "no-such-dir", "path:foo.py") is False
+
+
+def test_zombie_stale_heartbeat_protected_when_holder_run_active(registry: dict) -> None:
+    """OMO-WORKFLOW-STALE-HEARTBEAT-LOCK-THEFT:
+
+    If a lock's heartbeat is stale (>4h) but its holder run is still 'active' and
+    the lock has not expired (within 24h), acquire_locks MUST NOT silently steal it,
+    and prune_stale_locks MUST NOT delete it.
+    """
+    _seed_run(registry, "run-active-holder", lock_scopes=["path:protected.py"])
+    lock_file = _lock_file_for_scope(registry, "path:protected.py")
+    lock_data = yaml.safe_load(lock_file.read_text(encoding="utf-8"))
+
+    # Simulate heartbeat being 5 hours old (stale), but lock expires in future
+    stale_hb = (datetime.now(UTC) - timedelta(hours=5)).isoformat().replace("+00:00", "Z")
+    lock_data["last_heartbeat"] = stale_hb
+    lock_file.write_text(yaml.safe_dump(lock_data), encoding="utf-8")
+
+    pruned = prune_stale_locks(registry)
+    assert not any("path:protected.py" in p.get("scope", "") for p in pruned)
+    assert lock_file.exists()
+
+    # acquire_locks by another run must be blocked
+    with pytest.raises(WorkflowError, match="lock HELD.*holder run active"):
+        acquire_locks(registry, ["path:protected.py"], "run-intruder", "agent-b", False)
+
+
+def test_zombie_stale_heartbeat_reclaimed_when_holder_run_closed_or_missing(registry: dict) -> None:
+    """When holder run is closed or dead, stale heartbeat lock can be reclaimed."""
+    _seed_run(registry, "run-dead-holder", lock_scopes=["path:dead.py"], status="closed")
+    lock_file = _lock_file_for_scope(registry, "path:dead.py")
+    lock_data = yaml.safe_load(lock_file.read_text(encoding="utf-8"))
+
+    stale_hb = (datetime.now(UTC) - timedelta(hours=5)).isoformat().replace("+00:00", "Z")
+    lock_data["last_heartbeat"] = stale_hb
+    lock_file.write_text(yaml.safe_dump(lock_data), encoding="utf-8")
+
+    # prune_stale_locks removes it
+    pruned = prune_stale_locks(registry)
+    assert any("path:dead.py" in p.get("scope", "") for p in pruned)
+    assert not lock_file.exists()
+
+
+def test_closeout_run_succeeds_even_if_lock_deleted_graceful(registry: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+    """closeout_run with strict=False does not crash if a lock was somehow removed."""
+    _seed_run(registry, "run-graceful-co", lock_scopes=["path:co_missing.py"])
+    lock_file = _lock_file_for_scope(registry, "path:co_missing.py")
+    lock_file.unlink()
+
+    from omo.workflow import diagnostics as diag_mod
+
+    monkeypatch.setattr(
+        diag_mod,
+        "build_verify_report",
+        lambda *a, **kw: {"ok": True, "check_count": 1, "checks": []},
+    )
+    monkeypatch.setattr(
+        diag_mod,
+        "build_observe_report",
+        lambda *a, **kw: {"ok": True, "decision": "pass", "evidence": {}},
+    )
+
+    report = closeout_run(registry, "run-graceful-co", "ok", [], [], False, False, False, False)
+    assert report["ok"] is True
+    assert report["run"]["status"] == "ok"
+

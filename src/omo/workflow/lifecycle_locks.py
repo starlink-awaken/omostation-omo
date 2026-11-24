@@ -24,7 +24,27 @@ from .core import (
 _LOCK_FILENAME_MAX_LEN = 255
 _RUN_UPDATE_LOCK_NAME_MAX_LEN = _LOCK_FILENAME_MAX_LEN - len("run_.update.lock")
 _PATH_LOCK_NAME_MAX_LEN = _LOCK_FILENAME_MAX_LEN - len(".lock.yaml")
-_HEARTBEAT_STALE_SECONDS = 3600
+_HEARTBEAT_STALE_SECONDS = 14400  # 4 hours (was 3600; OMO-WORKFLOW-STALE-HEARTBEAT-LOCK-THEFT)
+
+
+def is_holder_run_active(registry: dict[str, Any], candidate_run_id: str) -> bool:
+    """Check if candidate run is still active in run_state_dir."""
+    if not candidate_run_id:
+        return False
+    try:
+        from .core import run_state_dir
+        run_dir = run_state_dir(registry)
+        direct = run_dir / f"{candidate_run_id}.yaml"
+        if direct.exists():
+            payload = yaml.safe_load(direct.read_text(encoding="utf-8")) or {}
+            return payload.get("status") == "active"
+        matches = list(run_dir.glob(f"*{candidate_run_id}*.yaml")) if run_dir.exists() else []
+        if len(matches) == 1:
+            payload = yaml.safe_load(matches[0].read_text(encoding="utf-8")) or {}
+            return payload.get("status") == "active"
+    except Exception:
+        pass
+    return False
 
 
 def sanitize_lock_name(scope: str) -> str:
@@ -236,6 +256,17 @@ def acquire_locks(
                         f"  holder is active — {classification['detail']}\n"
                         f"{existing}"
                     )
+                if classification["kind"] == "zombie_stale_heartbeat":
+                    # 保护活跃 Run: 心跳闲置但 holder run 仍为 active 且未到期, 严禁静默抢占
+                    held = classification.get("payload")
+                    held_run_id = held.get("run_id") if isinstance(held, dict) else ""
+                    if is_holder_run_active(registry, held_run_id):
+                        raise WorkflowError(
+                            f"lock HELD (holder run active) for {scope}: {lock_path}\n"
+                            f"  holder run '{held_run_id}' is active in registry ({classification['detail']})\n"
+                            f"  silent takeover blocked (use --force if confirmed abandoned)\n"
+                            f"{existing}"
+                        )
                 lock_path.unlink(missing_ok=True)
             with lock_path.open("w" if force else "x", encoding="utf-8") as handle:
                 yaml.safe_dump(payload, handle, allow_unicode=True, sort_keys=False)
@@ -292,15 +323,23 @@ def scan_locks(registry: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def prune_stale_locks(registry: dict[str, Any]) -> list[dict[str, Any]]:
-    """Remove zombie locks (expired or stale heartbeat). Return pruned entries."""
+    """Remove zombie locks (expired or dead holder with stale heartbeat). Return pruned entries."""
     from .core import WORKSPACE
 
     pruned: list[dict[str, Any]] = []
     for entry in scan_locks(registry):
-        if entry["kind"] in ("zombie_expired", "zombie_stale_heartbeat"):
+        if entry["kind"] == "zombie_expired":
             lock_file = Path(entry["path"])
             if not lock_file.is_absolute():
                 lock_file = WORKSPACE / lock_file
             lock_file.unlink(missing_ok=True)
             pruned.append(entry)
+        elif entry["kind"] == "zombie_stale_heartbeat":
+            # 保护活跃 Run: 心跳闲置但 holder run 仍为 active 且未到期的锁, 严禁 prune
+            if not is_holder_run_active(registry, entry.get("run_id", "")):
+                lock_file = Path(entry["path"])
+                if not lock_file.is_absolute():
+                    lock_file = WORKSPACE / lock_file
+                lock_file.unlink(missing_ok=True)
+                pruned.append(entry)
     return pruned
