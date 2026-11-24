@@ -61,6 +61,8 @@ def cmd_debt_close(
     dry_run: bool = False,
     confirm: bool = True,
     actor: str = "",
+    close_reason: str = "",
+    resolution_evidence: str = "",
 ) -> int:
     """Close a canonical debt item."""
     from omo.omo_debt import _load_yaml, _write_yaml
@@ -71,16 +73,26 @@ def cmd_debt_close(
         print(f"❌ 未知 debt_id: {debt_id} (不在 .omo/debt/items)")
         return 1
 
+    # 保存关闭前的闸级快照 (防 close->reopen 环路静默去闸)
+    cur_gate = payload.get("gate_level")
+    if cur_gate and cur_gate != "none":
+        payload["gate_level_before_close"] = cur_gate
+
     payload["lifecycle_state"] = "closed"
     payload["gate_level"] = "none"
     payload["closed_at"] = _now_iso()
+    if close_reason:
+        payload["close_reason"] = close_reason
+    if resolution_evidence:
+        payload["resolution_evidence"] = resolution_evidence
     # 治本: 剥离越权的 legacy `status` 字段 (yaml-bypass lint 期望 lifecycle_state 唯一)
     if "status" in payload:
         payload.pop("status")
+    note = close_reason or "Closed debt item."
     append_history(
         payload,
         "close",
-        "Closed debt item.",
+        note,
         actor=actor,
         timestamp=_now_iso(),
     )
@@ -262,6 +274,16 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Print what would be done without writing",
     )
+    close_parser.add_argument(
+        "--close-reason",
+        default="",
+        help="Reason for closing debt item",
+    )
+    close_parser.add_argument(
+        "--resolution-evidence",
+        default="",
+        help="Resolution evidence string",
+    )
 
     desc_parser = subparsers.add_parser("desc")
     desc_parser.add_argument("--omo-dir", default=".omo")
@@ -416,6 +438,8 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run,
             confirm=args.confirm,
             actor=getattr(args, "actor", ""),
+            close_reason=getattr(args, "close_reason", ""),
+            resolution_evidence=getattr(args, "resolution_evidence", ""),
         )
 
     if args.command == "desc":
@@ -429,6 +453,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "reopen":
         item_path, payload = update_item(omo_dir, args.id, _load_yaml)
         payload["lifecycle_state"] = "identified"
+        # 恢复关闭前闸级快照并清空旧结案时间戳
+        if "closed_at" in payload:
+            payload.pop("closed_at")
+        if "gate_level_before_close" in payload:
+            payload["gate_level"] = payload.pop("gate_level_before_close")
         append_history(
             payload,
             "reopen",

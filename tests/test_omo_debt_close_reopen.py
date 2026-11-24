@@ -106,6 +106,32 @@ def test_reopen_writes_lifecycle_state_and_history(tmp_omo_dir: Path) -> None:
     assert "test-actor-step2" in actors
 
 
+def test_close_and_reopen_preserves_gate_level(tmp_omo_dir: Path) -> None:
+    """Close preserves gate_level_before_close, and reopen restores it while dropping closed_at."""
+    yaml_path = tmp_omo_dir / "debt" / "items" / "DEBT-TEST-CLOSE-REOPEN.yaml"
+    data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    data["gate_level"] = "watchlist"
+    yaml_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+    # 1. Close with watchlist gate
+    rc_close = _run_omo_debt(tmp_omo_dir, "close", "DEBT-TEST-CLOSE-REOPEN", "actor-close-gate")
+    assert rc_close == 0
+    closed_data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    assert closed_data["lifecycle_state"] == "closed"
+    assert closed_data["gate_level"] == "none"
+    assert closed_data["gate_level_before_close"] == "watchlist"
+    assert closed_data.get("closed_at")
+
+    # 2. Reopen restores gate_level to watchlist and removes closed_at & gate_level_before_close
+    rc_reopen = _run_omo_debt(tmp_omo_dir, "reopen", "DEBT-TEST-CLOSE-REOPEN", "actor-reopen-gate")
+    assert rc_reopen == 0
+    reopened_data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    assert reopened_data["lifecycle_state"] == "identified"
+    assert reopened_data["gate_level"] == "watchlist"
+    assert "gate_level_before_close" not in reopened_data
+    assert "closed_at" not in reopened_data
+
+
 def test_close_unknown_id_returns_nonzero(tmp_omo_dir: Path) -> None:
     """omo-debt close 对不存在的 id 走 update_item 抛 FileNotFoundError 路径."""
     rc = _run_omo_debt(tmp_omo_dir, "close", "DEBT-DOES-NOT-EXIST", "test-actor")

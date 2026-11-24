@@ -50,9 +50,13 @@ def _parse_iso8601(value: str) -> datetime:
     datetimes`。2026-11-09 实证: 把 21 个未登记条目补登进 seed_items 后,
     任何一条「非终态 + refs 全部存在 + 日期-only」的条目都会让
     `collect_stale_evidence_item_ids` 崩溃, 进而整份 dashboard 生成失败。
+    特别地，对长度为 10 的 date-only 字符串 (YYYY-MM-DD)，将其解释为当日 23:59:59.999999 UTC，
+    消除当天检出的 worktree (文件 mtime 等于检出时刻) 与当天复审之间的假 stale 漂移。
     """
     parsed = datetime.fromisoformat(value)
     if parsed.tzinfo is None:
+        if len(value.strip()) == 10:
+            return parsed.replace(hour=23, minute=59, second=59, microsecond=999999, tzinfo=UTC)
         return parsed.replace(tzinfo=UTC)
     return parsed
 
