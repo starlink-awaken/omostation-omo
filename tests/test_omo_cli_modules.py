@@ -25,7 +25,12 @@ import yaml
 # Ensure omo src is importable
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from omo.omo_debt_cli import cmd_debt_close, cmd_debt_desc, cmd_debt_list
+from omo.omo_debt_cli import (
+    cmd_debt_close,
+    cmd_debt_desc,
+    cmd_debt_list,
+    read_debt_items,
+)
 from omo.omo_delivery import cmd_delivery_archive, cmd_delivery_list, write_delivery_template
 from omo.omo_evidence import cmd_evidence_list
 from omo.omo_goal import (
@@ -796,6 +801,55 @@ class TestOmoDebt:
         assert "2 total: 1 open / 1 resolved" in out
         assert "DEBT-X" in out
         assert "DEBT-Y" in out
+
+    def test_cmd_debt_list_prefers_items_dir_over_dead_system_field(
+        self, capsys, tmp_path: Path
+    ) -> None:
+        """条目目录优先 —— `debt_weight_items` 无生产方且同步面拒写, 拿它当源会恒报 0。"""
+        items = tmp_path / "debt" / "items"
+        items.mkdir(parents=True)
+        (items / "A.yaml").write_text(
+            "id: DEBT-A\nlifecycle_state: identified\n", encoding="utf-8"
+        )
+        (items / "B.yaml").write_text(
+            "id: DEBT-B\nlifecycle_state: resolved\n", encoding="utf-8"
+        )
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        (state_dir / "system.yaml").write_text(
+            "debt_weight_items:\n  DEBT-Z:\n    resolved: false\n    desc: stale\n",
+            encoding="utf-8",
+        )
+
+        assert cmd_debt_list(tmp_path) == 0
+        out = capsys.readouterr().out
+
+        assert "2 total: 1 open / 1 resolved" in out
+        assert "DEBT-A [open]" in out
+        assert "DEBT-B [resolved]" in out
+        assert "DEBT-Z" not in out
+
+    def test_cmd_debt_list_counts_closed_as_resolved(self, tmp_path: Path, capsys) -> None:
+        items = tmp_path / "debt" / "items"
+        items.mkdir(parents=True)
+        (items / "C.yaml").write_text(
+            "id: DEBT-C\nlifecycle_state: closed\n", encoding="utf-8"
+        )
+
+        assert cmd_debt_list(tmp_path) == 0
+        assert "1 total: 0 open / 1 resolved" in capsys.readouterr().out
+
+    def test_read_debt_items_returns_none_without_directory(self, tmp_path: Path) -> None:
+        """目录缺席 → 回退旧口径，不报 0。"""
+        assert read_debt_items(tmp_path) is None
+
+    def test_read_debt_items_skips_unparseable_entries(self, tmp_path: Path) -> None:
+        items = tmp_path / "debt" / "items"
+        items.mkdir(parents=True)
+        (items / "good.yaml").write_text("id: DEBT-G\nlifecycle_state: identified\n", encoding="utf-8")
+        (items / "bad.yaml").write_text("not: [valid\n", encoding="utf-8")
+
+        assert read_debt_items(tmp_path) == [("DEBT-G", "identified")]
 
     def test_cmd_debt_close_marks_resolved(self, capsys, tmp_path: Path) -> None:
         """close 改 canonical debt item lifecycle_state=closed."""
