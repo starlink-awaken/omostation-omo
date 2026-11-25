@@ -12,10 +12,13 @@ P110 关联: TASK-F7114ABA (omo lint god-module 硬规则 800L, omo_debt 1085L
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
+
+from .omo_debt_receipt import record_broker_write
 
 
 def _now_iso() -> str:
@@ -63,10 +66,12 @@ def cmd_debt_close(
     actor: str = "",
     close_reason: str = "",
     resolution_evidence: str = "",
+    evidence_refs: Sequence[str] = (),
+    mitigation_refs: Sequence[str] = (),
 ) -> int:
     """Close a canonical debt item."""
     from omo.omo_debt import _load_yaml, _write_yaml
-    from omo.omo_debt_lifecycle import append_history, update_item
+    from omo.omo_debt_lifecycle import append_history, update_item, update_item_refs
 
     item_path, payload = update_item(omo_dir, debt_id, _load_yaml)
     if not item_path.exists():
@@ -85,6 +90,12 @@ def cmd_debt_close(
         payload["close_reason"] = close_reason
     if resolution_evidence:
         payload["resolution_evidence"] = resolution_evidence
+    if evidence_refs or mitigation_refs:
+        update_item_refs(
+            payload,
+            add_evidence=evidence_refs,
+            add_mitigation=mitigation_refs,
+        )
     # 治本: 剥离越权的 legacy `status` 字段 (yaml-bypass lint 期望 lifecycle_state 唯一)
     if "status" in payload:
         payload.pop("status")
@@ -105,7 +116,51 @@ def cmd_debt_close(
         return 1
 
     _write_yaml(item_path, payload)
+    record_broker_write(omo_dir, item_path, command="close", debt_id=debt_id, actor=actor)
     print(f"closed {debt_id} (债务项已关闭)")
+    return 0
+
+
+def cmd_debt_refs(
+    omo_dir: Path,
+    debt_id: str,
+    *,
+    add_evidence: Sequence[str] = (),
+    remove_evidence: Sequence[str] = (),
+    add_mitigation: Sequence[str] = (),
+    remove_mitigation: Sequence[str] = (),
+    actor: str = "",
+    dry_run: bool = False,
+) -> int:
+    """Add or remove evidence_refs / mitigation_refs on a canonical debt item."""
+    from omo.omo_debt import _load_yaml, _write_yaml
+    from omo.omo_debt_lifecycle import append_history, update_item, update_item_refs
+
+    item_path, payload = update_item(omo_dir, debt_id, _load_yaml)
+    if not item_path.exists():
+        print(f"❌ 未知 debt_id: {debt_id} (不在 .omo/debt/items)")
+        return 1
+
+    updated = update_item_refs(
+        payload,
+        add_evidence=add_evidence,
+        remove_evidence=remove_evidence,
+        add_mitigation=add_mitigation,
+        remove_mitigation=remove_mitigation,
+    )
+    append_history(
+        payload,
+        "update_refs",
+        (f"Updated refs (evidence={len(updated['evidence_refs'])}, mitigation={len(updated['mitigation_refs'])})."),
+        actor=actor,
+        timestamp=_now_iso(),
+    )
+    if dry_run:
+        print(f"[dry-run] would update refs for {debt_id}")
+        return 0
+    _write_yaml(item_path, payload)
+    record_broker_write(omo_dir, item_path, command="refs", debt_id=debt_id, actor=actor)
+    print(f"{debt_id} refs 已更新")
     return 0
 
 
@@ -139,6 +194,7 @@ def cmd_debt_desc(
         print(f"[dry-run] would update description for {debt_id}")
         return 0
     _write_yaml(item_path, payload)
+    record_broker_write(omo_dir, item_path, command="desc", debt_id=debt_id, actor=actor)
     print(f"{debt_id} description 已更新")
     return 0
 
@@ -168,6 +224,7 @@ def main(argv: list[str] | None = None) -> int:
         register_item,
         schedule_item,
         update_item,
+        update_item_refs,
     )
 
     parser = argparse.ArgumentParser(prog="omo-debt")
@@ -198,6 +255,18 @@ def main(argv: list[str] | None = None) -> int:
         "--next-review-at",
         default=None,
         help="Next scheduled review date (ISO 8601 date, defaults to +14d)",
+    )
+    register_parser.add_argument(
+        "--evidence-ref",
+        action="append",
+        default=[],
+        help="Evidence reference path to attach (repeatable)",
+    )
+    register_parser.add_argument(
+        "--mitigation-ref",
+        action="append",
+        default=[],
+        help="Mitigation reference path to attach (repeatable)",
     )
 
     list_parser = subparsers.add_parser("list")
@@ -294,12 +363,39 @@ def main(argv: list[str] | None = None) -> int:
         default="",
         help="Resolution evidence string",
     )
+    close_parser.add_argument(
+        "--evidence-ref",
+        action="append",
+        default=[],
+        help="Evidence reference path to attach (repeatable)",
+    )
+    close_parser.add_argument(
+        "--mitigation-ref",
+        action="append",
+        default=[],
+        help="Mitigation reference path to attach (repeatable)",
+    )
 
     desc_parser = subparsers.add_parser("desc")
     desc_parser.add_argument("--omo-dir", default=".omo")
     desc_parser.add_argument("--id", required=True)
     desc_parser.add_argument("--description", required=True)
+    desc_parser.add_argument("--actor", default="", help="Who performed this action")
     desc_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print what would be done without writing",
+    )
+
+    refs_parser = subparsers.add_parser("refs")
+    refs_parser.add_argument("--omo-dir", default=".omo")
+    refs_parser.add_argument("--id", required=True)
+    refs_parser.add_argument("--add-evidence", action="append", default=[])
+    refs_parser.add_argument("--remove-evidence", action="append", default=[])
+    refs_parser.add_argument("--add-mitigation", action="append", default=[])
+    refs_parser.add_argument("--remove-mitigation", action="append", default=[])
+    refs_parser.add_argument("--actor", default="", help="Who performed this action")
+    refs_parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print what would be done without writing",
@@ -316,10 +412,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "register":
         timestamp = _now_iso()
         payload = register_item(args, timestamp=timestamp)
+        if args.evidence_ref or args.mitigation_ref:
+            update_item_refs(
+                payload,
+                add_evidence=args.evidence_ref,
+                add_mitigation=args.mitigation_ref,
+            )
         item_ref = f".omo/debt/items/{args.id}.yaml"
         item_path = omo_dir / "debt" / "items" / f"{args.id}.yaml"
         _write_yaml(item_path, payload)
-        append_registry_ref(omo_dir, item_ref, _load_yaml, _write_yaml)
+        record_broker_write(omo_dir, item_path, command="register", debt_id=args.id, actor=args.actor)
+        registry_path = append_registry_ref(omo_dir, item_ref, _load_yaml, _write_yaml)
+        if registry_path.exists():
+            record_broker_write(omo_dir, registry_path, command="register", debt_id=args.id, actor=args.actor)
         print(f"registered {args.id}")
         return 0
 
@@ -339,6 +444,12 @@ def main(argv: list[str] | None = None) -> int:
         except FileNotFoundError:
             print(f"❌ 未知 debt_id: {args.id} (不在 .omo/debt/items)")
             return 1
+        record_broker_write(
+            omo_dir,
+            omo_dir / "debt" / "items" / f"{args.id}.yaml",
+            command="schedule",
+            debt_id=args.id,
+        )
         print(f"scheduled {args.id}")
         return 0
 
@@ -403,6 +514,13 @@ def main(argv: list[str] | None = None) -> int:
             timestamp=_now_iso(),
         )
         _write_yaml(item_path, payload)
+        record_broker_write(
+            omo_dir,
+            item_path,
+            command="reclassify",
+            debt_id=args.id,
+            actor=getattr(args, "actor", ""),
+        )
         print(f"reclassified {args.id}")
         return 0
 
@@ -420,6 +538,13 @@ def main(argv: list[str] | None = None) -> int:
             timestamp=_now_iso(),
         )
         _write_yaml(item_path, payload)
+        record_broker_write(
+            omo_dir,
+            item_path,
+            command="escalate",
+            debt_id=args.id,
+            actor=getattr(args, "actor", ""),
+        )
         print(f"escalated {args.id}")
         return 0
 
@@ -436,6 +561,13 @@ def main(argv: list[str] | None = None) -> int:
             timestamp=_now_iso(),
         )
         _write_yaml(item_path, payload)
+        record_broker_write(
+            omo_dir,
+            item_path,
+            command="revalidate",
+            debt_id=args.id,
+            actor=getattr(args, "actor", ""),
+        )
         if bound_run_ref:
             record_path = execution_record_path(omo_dir, bound_run_ref, args.id)
             if record_path.exists():
@@ -460,6 +592,8 @@ def main(argv: list[str] | None = None) -> int:
             actor=getattr(args, "actor", ""),
             close_reason=getattr(args, "close_reason", ""),
             resolution_evidence=getattr(args, "resolution_evidence", ""),
+            evidence_refs=getattr(args, "evidence_ref", ()),
+            mitigation_refs=getattr(args, "mitigation_ref", ()),
         )
 
     if args.command == "desc":
@@ -467,6 +601,19 @@ def main(argv: list[str] | None = None) -> int:
             omo_dir,
             args.id,
             args.description,
+            dry_run=args.dry_run,
+            actor=getattr(args, "actor", ""),
+        )
+
+    if args.command == "refs":
+        return cmd_debt_refs(
+            omo_dir,
+            args.id,
+            add_evidence=args.add_evidence,
+            remove_evidence=args.remove_evidence,
+            add_mitigation=args.add_mitigation,
+            remove_mitigation=args.remove_mitigation,
+            actor=getattr(args, "actor", ""),
             dry_run=args.dry_run,
         )
 
@@ -489,6 +636,13 @@ def main(argv: list[str] | None = None) -> int:
             timestamp=_now_iso(),
         )
         _write_yaml(item_path, payload)
+        record_broker_write(
+            omo_dir,
+            item_path,
+            command="reopen",
+            debt_id=args.id,
+            actor=getattr(args, "actor", ""),
+        )
         print(f"reopened {args.id}")
         return 0
 

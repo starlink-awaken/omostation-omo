@@ -49,6 +49,7 @@ PROFILE_ENVS = (
     "OMO_EXTERNAL_ROOT",  # omo_phase16
     "EXECUTION_LOG",  # omo_observability._execution_log_path
     "OMO_PATH_ACL_PROFILE",  # omo_path_acl._default_profile_path
+    "OMO_DEBT_RECEIPT_LOG",  # omo_debt_receipt.resolve_receipt_log_path
 )
 
 _MODULE_DIR = Path(__file__).resolve().parent
