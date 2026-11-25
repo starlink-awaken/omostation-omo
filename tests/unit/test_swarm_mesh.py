@@ -64,8 +64,10 @@ def test_swarm_mesh_tier_routing_and_fallback():
 
     # 模拟所有远端离线，仅本地在线
     with patch("omo.resident.swarm_mesh._probe_socket") as mock_probe:
-        # 仅 local-mac (127.0.0.1) 在线
-        mock_probe.side_effect = lambda host, port, *args: host == "127.0.0.1"
+        # 仅 local-mac 在线。注册表节点缺 host/port 时兜底成 (127.0.0.1, 11434)
+        # （见 _load_from_registry），只按 host 判定会把它们一并算作在线 ——
+        # 这里按 (host, port) 精确指定，才能真的「只有本地旗舰在线」。
+        mock_probe.side_effect = lambda host, port, *args: (host, port) == ("127.0.0.1", 1234)
 
         # 调度轻量巡检任务 (Tier 1 优先 macmini) -> 因 macmini 离线自动降级回 local
         route = mesh.route_task("tier1_inspection")
@@ -75,7 +77,7 @@ def test_swarm_mesh_tier_routing_and_fallback():
 
     # 模拟 macmini 在线
     with patch("omo.resident.swarm_mesh._probe_socket") as mock_probe:
-        mock_probe.side_effect = lambda host, port, *args: host == "100.64.110.118"
+        mock_probe.side_effect = lambda host, port, *args: (host, port) == ("100.64.110.118", 11434)
 
         route = mesh.route_task("tier1_inspection")
         assert route["routed"] is True
