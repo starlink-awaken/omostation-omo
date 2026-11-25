@@ -802,18 +802,12 @@ class TestOmoDebt:
         assert "DEBT-X" in out
         assert "DEBT-Y" in out
 
-    def test_cmd_debt_list_prefers_items_dir_over_dead_system_field(
-        self, capsys, tmp_path: Path
-    ) -> None:
+    def test_cmd_debt_list_prefers_items_dir_over_dead_system_field(self, capsys, tmp_path: Path) -> None:
         """条目目录优先 —— `debt_weight_items` 无生产方且同步面拒写, 拿它当源会恒报 0。"""
         items = tmp_path / "debt" / "items"
         items.mkdir(parents=True)
-        (items / "A.yaml").write_text(
-            "id: DEBT-A\nlifecycle_state: identified\n", encoding="utf-8"
-        )
-        (items / "B.yaml").write_text(
-            "id: DEBT-B\nlifecycle_state: resolved\n", encoding="utf-8"
-        )
+        (items / "A.yaml").write_text("id: DEBT-A\nlifecycle_state: identified\n", encoding="utf-8")
+        (items / "B.yaml").write_text("id: DEBT-B\nlifecycle_state: resolved\n", encoding="utf-8")
         state_dir = tmp_path / "state"
         state_dir.mkdir()
         (state_dir / "system.yaml").write_text(
@@ -832,9 +826,7 @@ class TestOmoDebt:
     def test_cmd_debt_list_counts_closed_as_resolved(self, tmp_path: Path, capsys) -> None:
         items = tmp_path / "debt" / "items"
         items.mkdir(parents=True)
-        (items / "C.yaml").write_text(
-            "id: DEBT-C\nlifecycle_state: closed\n", encoding="utf-8"
-        )
+        (items / "C.yaml").write_text("id: DEBT-C\nlifecycle_state: closed\n", encoding="utf-8")
 
         assert cmd_debt_list(tmp_path) == 0
         assert "1 total: 0 open / 1 resolved" in capsys.readouterr().out
@@ -1002,14 +994,30 @@ class TestOmoDebt:
             ),
             encoding="utf-8",
         )
-        rc = main(["reclassify", "--omo-dir", str(omo_dir), "--id", "DEBT-Y", "--dimension", "gov", "--subdimension", "ssot", "--actor", "agent-1"])
+        rc = main(
+            [
+                "reclassify",
+                "--omo-dir",
+                str(omo_dir),
+                "--id",
+                "DEBT-Y",
+                "--dimension",
+                "gov",
+                "--subdimension",
+                "ssot",
+                "--actor",
+                "agent-1",
+            ]
+        )
         assert rc == 0
         data = yaml.safe_load((debt_dir / "DEBT-Y.yaml").read_text(encoding="utf-8"))
         assert data["history"][-1]["action"] == "reclassify"
         assert data["history"][-1]["actor"] == "agent-1"
         assert len(data["history"][-1]["at"]) > 10  # valid ISO timestamp, not empty
 
-        rc = main(["escalate", "--omo-dir", str(omo_dir), "--id", "DEBT-Y", "--gate-level", "watchlist", "--actor", "agent-2"])
+        rc = main(
+            ["escalate", "--omo-dir", str(omo_dir), "--id", "DEBT-Y", "--gate-level", "watchlist", "--actor", "agent-2"]
+        )
         assert rc == 0
         data = yaml.safe_load((debt_dir / "DEBT-Y.yaml").read_text(encoding="utf-8"))
         assert data["history"][-1]["action"] == "escalate"
