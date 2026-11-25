@@ -25,8 +25,46 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+TERMINAL_LIFECYCLE_STATES = frozenset({"resolved", "closed"})
+
+
+def read_debt_items(omo_dir: Path) -> list[tuple[str, str]] | None:
+    """从 ``<omo_dir>/debt/items/*.yaml`` 读 (id, lifecycle_state)；目录缺席返回 None。
+
+    该目录是债务台账的真实载体（130+ 条目）。`state/system.yaml::debt_weight_items`
+    **没有任何生产方**且同步面主动拒写它（债条目
+    OMO-DEBT-LIST-READS-UNPRODUCED-SYSTEM-STATE-FIELD），恒为空 —— 拿它当数据源
+    会让 ``omo-debt list`` 恒报 “0 total”。目录不在时才回退旧口径。
+    """
+    items_dir = omo_dir / "debt" / "items"
+    if not items_dir.is_dir():
+        return None
+    entries: list[tuple[str, str]] = []
+    for path in sorted(items_dir.glob("*.yaml")):
+        try:
+            doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError):
+            continue
+        if not isinstance(doc, dict):
+            continue
+        item_id = str(doc.get("id") or path.stem)
+        state = str(doc.get("lifecycle_state") or "").strip().lower()
+        entries.append((item_id, state))
+    return entries
+
+
 def cmd_debt_list(omo_dir: Path) -> int:
-    """List debt items from state/system.yaml."""
+    """列债务条目：优先读 debt/items 目录，缺席时回退 state/system.yaml。"""
+    entries = read_debt_items(omo_dir)
+    if entries is not None:
+        resolved_count = sum(1 for _, state in entries if state in TERMINAL_LIFECYCLE_STATES)
+        total = len(entries)
+        print(f"{total} total: {total - resolved_count} open / {resolved_count} resolved")
+        for item_id, state in entries:
+            status = "resolved" if state in TERMINAL_LIFECYCLE_STATES else "open"
+            print(f"  {item_id} [{status}] {state or 'unknown'}")
+        return 0
+
     system_path = omo_dir / "state" / "system.yaml"
     if not system_path.exists():
         print("No debt state found.")
