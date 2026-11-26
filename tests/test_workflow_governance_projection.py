@@ -142,6 +142,19 @@ def test_lock_paths_are_repo_relative_and_foreign_lose_identity(tmp_path: Path) 
     assert "someone-else" not in blob and "/Users/" not in blob
 
 
+def test_classifier_flags_are_derived_without_free_text(tmp_path: Path) -> None:
+    """两个 flag 是分类器读到的唯一 objective 语义，必须各自可钉住。"""
+    root = tmp_path / "repo"
+    root.mkdir(parents=True)
+    base = {"event": "agent_workflow_start", "workflow_id": "wf", "agent_profile": "p", "locks": []}
+    collab = build_projection_event({**base, "run_id": "c1", "objective": "跨机 Collaboration 收敛"}, root)
+    plain = build_projection_event({**base, "run_id": "c2", "objective": "归档报告"}, root)
+    assert collab["is_collaboration"] is True, "协作腿不再被识别会把它算进治理桶"
+    assert plain["is_collaboration"] is False
+    assert collab["human_approval"] is False, "无 [human] 前缀不该自带全局豁免"
+    assert "跨机" not in json.dumps(collab, ensure_ascii=False)
+
+
 def test_non_start_event_is_not_projected(tmp_path: Path) -> None:
     assert build_projection_event({"event": "agent_workflow_closeout", "run_id": "r"}, tmp_path) is None
     assert write_projection({"runner": {"workspace_root": str(tmp_path)}}, {"event": "other"}) is None
