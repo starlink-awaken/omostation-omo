@@ -162,8 +162,14 @@ def test_non_start_event_is_not_projected(tmp_path: Path) -> None:
 
 def test_write_projection_is_idempotent_and_fail_soft(tmp_path: Path) -> None:
     reg = {"runner": {"workspace_root": str(tmp_path)}}
-    event = {"event": "agent_workflow_start", "run_id": "dup", "workflow_id": "w",
-             "agent_profile": "p", "objective": "o", "locks": []}
+    event = {
+        "event": "agent_workflow_start",
+        "run_id": "dup",
+        "workflow_id": "w",
+        "agent_profile": "p",
+        "objective": "o",
+        "locks": [],
+    }
     first = write_projection(reg, event)
     before = first.read_text(encoding="utf-8")
     assert write_projection(reg, event) == first

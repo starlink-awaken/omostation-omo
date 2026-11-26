@@ -119,9 +119,7 @@ def write_projection(registry: dict[str, Any], start_event: dict[str, Any]) -> P
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
         tmp = target.with_suffix(f".json.{os.getpid()}.tmp")
-        tmp.write_text(
-            json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8"
-        )
+        tmp.write_text(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
         os.replace(tmp, target)
     except OSError:
         return None
