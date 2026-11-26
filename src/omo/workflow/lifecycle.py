@@ -37,6 +37,14 @@ except ImportError:  # graceful degradation during refactoring
 
 
 try:
+    from .governance_projection import write_projection
+except ImportError:  # graceful degradation during refactoring
+
+    def write_projection(registry: dict[str, Any], start_event: dict[str, Any]) -> Any:
+        return None
+
+
+try:
     from .scene_bridge import extract_scene_binding
 except ImportError:
 
@@ -1222,6 +1230,7 @@ def start_run(
     if parent_agent:
         start_event["parent_agent"] = parent_agent
     append_ledger_event(registry, start_event)
+    write_projection(registry, start_event)
     # Phase 1b/4: Bridge to Workflow Mesh with scene_binding
     _scene_binding = extract_scene_binding(context=context, workflow=workflow)
     mesh_payload: dict[str, Any] = {
