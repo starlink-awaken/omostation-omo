@@ -73,9 +73,7 @@ graph TB
 | `src/omo/omo_self_healing*.py` | 自愈引擎 (2 模块) |
 | `src/omo/omo_promotion_*.py` | 晋升流程 (5 模块) |
 | `src/omo/omo_task_policy.py` | Reusable task policy checker |
-| `src/omo/model_driven_bridge.py` | model-driven 桥接 (factory 模式, 不硬依赖) |
 | `src/omo/omo_agora_pool.py` | Agora 连接池 |
-| `src/omo/omo_bus_adapter.py` | bus-foundation 适配器 |
 | `src/omo/omo_cockpit_bridge.py` | cockpit 桥接 |
 
 ## 4. 测试
